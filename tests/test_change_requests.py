@@ -44,7 +44,7 @@ def _hash(dep, who, rid):
 def test_propose_then_confirm_applies_exactly_once(dep):
     proposed = _propose_access(dep)
     rid = proposed["id"]
-    assert proposed["confirm_path"] == f"/portal/#/confirm/{rid}"
+    assert proposed["confirm_path"] == f"/settings#/confirm/{rid}"
     assert "ledger" in proposed["summary"].lower() or "Ledger" in proposed["summary"]
     assert not dep.gs.can("ann@x.org", "finance", "ledger")  # nothing yet
     row = _row(dep, rid)

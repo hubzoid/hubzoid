@@ -63,6 +63,24 @@ def declare(tool: Any, cls: str, *, action: str | None = None) -> Any:
     return tool
 
 
+def copy_tool(tool: Any, **changes) -> Any:
+    """``dataclasses.replace(tool, **changes)`` that keeps what was recorded on
+    the tool object itself (its class and action here, a hub tool's source, other
+    markers): a wrapper must never turn a declared read into an external write.
+    Pure: no runtime imports."""
+    import dataclasses
+
+    new = dataclasses.replace(tool, **changes)
+    names = {f.name for f in dataclasses.fields(tool)}
+    for key, value in vars(tool).items():
+        if key not in names and key not in vars(new):
+            try:
+                setattr(new, key, value)
+            except Exception:  # noqa: BLE001 - a frozen copy keeps only its fields
+                pass
+    return new
+
+
 def classify(tool: Any) -> str:
     """The tool's class: what it declared, else the built-in table, else
     ``external_write``. Accepts a tool object or a tool name."""

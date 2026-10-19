@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approval</title>
+<style>/*HZ_CARD_CSS*/</style>
+</head>
+<body>
+<main id="card" aria-live="polite"></main>
+<script>
+/*HZ_CARD_JS*/
+(function () {
+  "use strict";
+  // An approval card shows what waits and links to Hub. It has no approve or
+  // deny control: the decision is made on the work item page, where Hub checks
+  // the person and the exact action digest.
+  var el = HZ.el;
+  var TERMINAL = { succeeded: 1, rejected: 1, failed_before_send: 1, resolved_done: 1, abandoned: 1, changed: 1 };
+  var TONE = { succeeded: "ok", resolved_done: "ok", rejected: "bad", failed_before_send: "bad", abandoned: "bad",
+               changed: "bad", ambiguous: "warn", awaiting_approval: "warn", sending: "" };
+  var data = null;
+  var timer = null;
+
+  function when(t) { return t ? new Date(t * 1000).toLocaleString() : ""; }
+
+  function render(st, error) {
+    var f = (st && st.facts) || {};
+    var parts = [
+      el("h2", { text: "Approval" }),
+      el("p", {}, [el("span", { "class": "state " + (st ? TONE[st.state] || "" : ""), text: st ? st.label : "checking…" })]),
+      data.summary ? el("p", { text: data.summary }) : null,
+      st ? el("dl", {}, [
+        el("dt", { text: "Action" }), el("dd", { text: f.action || "" }),
+        el("dt", { text: "Asked by" }), el("dd", { text: f.requester || "" }),
+        el("dt", { text: "Since" }), el("dd", { text: when(f.created) }),
+        el("dt", { text: "Digest" }), el("dd", { "class": "muted", text: (data.digest || "").slice(0, 23) + "…" })
+      ]) : null,
+      error ? el("p", { "class": "note error", role: "alert", text: error }) : null,
+      el("p", { "class": "muted", text: "Decide in Hub. This card cannot approve or deny." }),
+      el("div", { "class": "bar" }, [
+        el("button", { type: "button", "class": "btn", text: "Refresh", onclick: function () { refresh(); } }),
+        st && /^https:\/\//.test(st.link || "") ? el("button", { type: "button", "class": "btn primary",
+          text: "Review in Hub", onclick: function () { HZ.openLink(st.link); } }) : null
+      ])
+    ];
+    HZ.mount(el("div", {}, parts));
+  }
+
+  function refresh() {
+    var id = HZ.state.meta && HZ.state.meta.instance_id;
+    if (!id) { render(null, "This card has no live state here."); return; }
+    HZ.call("hub_app_status", { instance_id: id }).then(function (r) {
+      var st = r.structuredContent && r.structuredContent.status;
+      render(st, null);
+      clearTimeout(timer);
+      if (st && !TERMINAL[st.state]) timer = setTimeout(function () { if (!document.hidden) refresh(); }, 5000);
+    }).catch(function (e) { render(null, e.message); });
+  }
+
+  HZ.start({ name: "approval", label: "approval", onResult: function (d) {
+    data = d;
+    render(null, null);
+    refresh();
+  } });
+})();
+</script>
+</body>
+</html>

@@ -18,7 +18,7 @@ workflow to copy from.
 
 Both kinds run on the hub's [DBOS](https://docs.dbos.dev) engine, so they share
 one run history (`hubzoid schedule status`, each agent's **Runs & schedules**
-tab in the Console), the same pause, resume and cancel commands, and the same
+tab in Settings), the same pause, resume and cancel commands, and the same
 backup.
 
 ## Requirements
@@ -97,7 +97,7 @@ inside the engine too.
 
 Each call is saved as a step, so a workflow that resumes after a restart does
 not pay for the same call twice. Each call also writes a usage row: tokens and
-cost appear on the Console's **Agents** dashboard. Cost is the provider's own
+cost appear in the **Agents** section of Settings. Cost is the provider's own
 figure when it reports one (Jev always does), otherwise an estimate.
 
 ## Decisions with Jev
@@ -187,8 +187,8 @@ again and may be billed twice. Jev calls are at least once, not exactly once.
 ### In chat
 
 The same adapter is also a chat tool, `call_jev`, disabled until an
-administrator grants the **Call Jev** capability (`jev`) in the
-Console. It is not available on Slack, WhatsApp, Telegram or the hosted MCP
+administrator grants the **Call Jev** capability (`jev`) in
+Settings. It is not available on Slack, WhatsApp, Telegram or the hosted MCP
 server. See [access management](access-management.md#decisions-with-jev-in-chat).
 
 ## Who a workflow acts as
@@ -256,7 +256,7 @@ hubzoid schedule resume <hub> <name>
 hubzoid schedule cancel <hub> <run-id>
 ```
 
-These work for both kinds and are recorded in the access log. The Console
+These work for both kinds and are recorded in the access log. Settings
 shows paused work and the log, but has no run buttons. On the server, controls
 act with the authority of whoever runs the command. People you grant it can
 also use them from chat or an assistant (next section). `hubzoid backup` also
@@ -266,7 +266,7 @@ holds new runs while it copies, then releases them.
 
 An agent can list its workflows, report on runs, start a run, and pause,
 resume or cancel, for the people you allow. Nobody has these tools until a
-manager grants them in the Console: **Agents → the agent → Access**, then
+manager grants them in Settings: **Agents → the agent → Access**, then
 under **Hubzoid tools → Workflows**:
 
 | Capability | Tools | What it allows |
@@ -291,12 +291,7 @@ under **Hubzoid tools → Workflows**:
   never offered on Slack or inside a scheduled run, so a workflow cannot
   start or pause another one.
 - `HUBZOID_WORKFLOW_TOOLS=false` in a hub's `.env` removes them from that
-  agent. The Console then shows the capabilities as disabled.
-- On an agent whose access is still managed in the chat app (not yet migrated
-  to the Console), these capabilities are granted the legacy way, like
-  restricted tools: membership in an Open WebUI group named `workflows_view`
-  or `workflows_manage`. Nobody has them until an administrator creates that
-  group. The access tools work only on Console-managed agents.
+  agent. Settings then shows the capabilities as disabled.
 
 Workflows can't be created or edited from chat. Write them in `workflows/` or
 `schedule/` as described above. To let people run a report for themselves, see
@@ -341,15 +336,15 @@ def program_report():
 
 | Option | What it does |
 |---|---|
-| `inputs=Model` | A Pydantic model. The run reads it as `hub.input`. Chat and MCP tools take its JSON schema, the Console's Run now builds a form from it, and the CLI takes `--input key=value`. Inputs are validated on every run. Keep them short and never secret: they are stored with the run. `Field(json_schema_extra={"hidden": True})` shows a value as •••• in lists. |
+| `inputs=Model` | A Pydantic model. The run reads it as `hub.input`. Chat and MCP tools take its JSON schema, Run now in Settings builds a form from it, and the CLI takes `--input key=value`. Inputs are validated on every run. Keep them short and never secret: they are stored with the run. `Field(json_schema_extra={"hidden": True})` shows a value as •••• in lists. |
 | `max_input_kb=200` | Raises the inputs limit (4 KB) for a large value such as a diff, up to 256 KB. Not with `schedulable=True`. |
 | `schedule_input={...}` | The inputs for the declared schedule. Required when the model has required fields and the workflow has a schedule. |
-| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before handing back a run id ("is it ready?" finds it). Return `{"answer": "..."}` to show text in chat after any links (up to 8,000 characters, marked as data); return `{"refused": "..."}` to show a refusal as is. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
+| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before handing back a run id ("is it ready?" finds it). Return `{"answer": "..."}` to show text in chat after any links (up to 8,000 characters, marked as data); return `{"refused": "..."}` to show a refusal as is. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in Settings. |
 | `schedulable=True` | People can save their own schedule of it from chat (needs `as_tool`). `min_interval="6h"` raises the shortest cadence for this workflow. |
 | `catch_up=True` | The declared schedule runs once after downtime, unless the next slot is close. |
 
 In the run, `hub.team_run` is true for the declared schedule, a webhook and a
-Console or CLI run (the workflow's own account); false for Run for me and
+Settings or CLI run (the workflow's own account); false for Run for me and
 personal schedules. `hub.trigger` and `hub.started_by` say how it started.
 
 **Access.** Each `as_tool` workflow adds a row to the agent's Access screen
@@ -378,11 +373,8 @@ inputs change. Nobody is emailed unless the hub sets `notify_by_email: true` in
 `workflows/settings.yaml` and email delivery is set up; then the owner hears when
 a run changes the report, fails or pauses, and when a long Run for me finishes.
 "My schedules", "pause", "resume", "run now", "change to daily" and "stop" work
-in chat, and in the Hubzoid portal (`/portal/`), the same Console admins use,
-showing each person what their access allows: their **Schedules & reports**,
-their **Connections** and the **Agents** they can use. The web app links it from
-the account menu, Open WebUI's sidebar has a "My workspace" link,
-and the agent's "my schedules" reply links it everywhere. It lists their own
+in chat, and in the web app's **Settings → Schedules**, which the agent's "my
+schedules" reply links everywhere. It lists their own
 schedules and report links on every agent, each with its latest runs. In 1.3.1,
 **Edit** changes saved inputs and timing, and **Recent requests** shows completed
 one-off answers and files without workflow-administration access. The report
@@ -412,7 +404,7 @@ out.result, out.artifacts, out.emails      # nothing is published or sent
 ## Watching it
 
 - `hubzoid schedule status <hub>`: definitions, recent runs and errors.
-- The Console's **Runs & schedules** tab on each agent: its runs, steps and errors.
+- Each agent's **Runs & schedules** tab in Settings: its runs, steps and errors.
   A hub's managers see each run's workflow, status, timing and a failure
   summary. What a run produced (its result, step outputs and data-bearing
   errors) is shown only to the account the run acted as. The exception is a
@@ -508,14 +500,14 @@ fallback. Retries belong to Hubzoid: by default three attempts, after 60 and 300
 seconds. External actions remain at-least-once across a crash. A checkpoint
 cannot undo or guarantee deduplication of a remote write.
 
-The Console shows each webhook under the agent's **Runs & schedules**: its URL,
+Settings shows each webhook under the agent's **Runs & schedules**: its URL,
 the workflows it starts, the last 24 hours of events by state, and the latest
 failures with the redrive command to run on the server. It never shows payloads,
 headers or digests, and it has no redrive button.
 
 Inspect deliveries with `hubzoid schedule deliveries <hub>`. Failed events can
 be retried explicitly with `hubzoid schedule redrive <event-id> --hub <hub>` after
-checking side effects. Cancelling a webhook run from the Console fails its event
+checking side effects. Cancelling a webhook run from Settings fails its event
 with that advice instead of retrying it. Event identity and digest records have
 no automatic retention expiry, so old sender retries remain deduplicated.
 Include the operational store in backups.
@@ -580,9 +572,9 @@ evals, overdue runs, failure streaks, schedules that stop dispatching and engine
 health. Run failures and timeouts have a default one-hour cooldown, and
 suppressed occurrences are counted in the next alert. Twenty consecutive failed
 **scheduled** runs pause that schedule through the existing controls. Manual,
-Console and webhook runs neither count toward that nor reset it. Set
+Runs started from Settings or a webhook neither count toward that nor reset it. Set
 `pause_after_failures: 0` to disable auto-pause. Webhook events are not paused.
-Resume from the Console or `hubzoid schedule resume` after fixing the cause.
+Resume from Settings or `hubzoid schedule resume` after fixing the cause.
 
 The engine checks for finished runs every 30 seconds. It reads only runs that
 finished since its last check, by completion time, from a cursor kept in the
@@ -610,7 +602,7 @@ visible in `schedule deliveries`. They do not disappear as successful sends.
 Delivery is durable and retried up to five times, at-least-once. Webhook messages
 carry `Idempotency-Key`, `X-Hubzoid-Timestamp` and, when `HUBZOID_ALERT_SECRET` is
 set, `X-Hubzoid-Signature` (HMAC-SHA256 of timestamp + `.` + raw body). The body
-is JSON with `hub`, `kind`, `url` (a Console link) and, when they apply,
+is JSON with `hub`, `kind`, `url` (a Settings link) and, when they apply,
 `workflow`, `run_id` and `count`. Private outputs and raw exception text stay
 out. Slack and email receivers may still see a duplicate after an ambiguous
 transport failure.

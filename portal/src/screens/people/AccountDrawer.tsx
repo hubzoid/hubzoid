@@ -93,7 +93,7 @@ export function OneTimePassword({ password }: { password: string }) {
         </Button>
       </Space.Compact>
       <Text type="secondary" className="field-help">
-        Share it with them directly. It won’t be shown again. They can change it after signing in.
+        Copy and share privately. It won’t be shown again.
       </Text>
     </div>
   );
@@ -124,8 +124,7 @@ export function OneTimeLink({ link, expiresAt }: { link: string; expiresAt?: num
         </Button>
       </Space.Compact>
       <Text type="secondary" className="field-help">
-        Share it with them directly. It works once{expiresAt ? `, until ${formatTime(expiresAt)}` : ""}, and lets them
-        set their own password. It won’t be shown again.
+        Copy and share privately. Shown only once.{expiresAt ? ` Expires ${formatTime(expiresAt)}.` : ""}
       </Text>
     </div>
   );
@@ -192,13 +191,11 @@ export function NewUserSignIn({
       </div>
       {google ? (
         <Text type="secondary" className="field-help">
-          They sign in with Google using this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No
-          password is set that anyone knows.
+          Use Google with this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No password to share.
         </Text>
       ) : links ? (
         <Text type="secondary" className="field-help" id={id}>
-          <Link2 size={14} style={{ verticalAlign: "-2px" }} /> They set their own password with a one-time sign-in
-          link. You copy the link after saving and share it with them.
+          <Link2 size={14} style={{ verticalAlign: "-2px" }} /> Copy a sign-in link after saving. They use it to set a password.
         </Text>
       ) : (
         <>
@@ -257,8 +254,7 @@ export function SignInDetails({
     return (
       <>
         <Paragraph style={{ margin: 0 }}>
-          They open the link, set a password and are signed in. Afterwards they sign in at{" "}
-          <Text className="identity">{chat}</Text> as <Text className="identity">{email}</Text>.
+          Send this link so they can set a password and sign in.
         </Paragraph>
         {link ? (
           <OneTimeLink link={link} expiresAt={expiresAt} />
@@ -267,7 +263,7 @@ export function SignInDetails({
             type="warning"
             showIcon
             title="The sign-in link couldn’t be made"
-            description={linkError || "Open their details and use Reset password to make a new link."}
+            description={linkError || "Open the user’s profile and choose Reset password."}
           />
         )}
       </>
@@ -463,7 +459,7 @@ export function AccountDrawer({
 
   const hubName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
   const accessLine = (g: Record<string, string[]>) =>
-    Object.keys(g).length ? `Access granted in ${Object.keys(g).map(hubName).join(", ")}.` : "No agent access was granted yet.";
+    Object.keys(g).length ? `Access: ${Object.keys(g).map(hubName).join(", ")}.` : "No agent access was granted yet.";
 
   const title = busy
     ? "Saving…"
@@ -808,7 +804,7 @@ export function AccountDrawer({
             <Alert
               type="success"
               showIcon
-              title={`${created.name} can now sign in as ${created.subject}`}
+              title={`${created.name} · ${created.subject}`}
               description={accessLine(created.grants)}
             />
             <SignInDetails
@@ -818,7 +814,7 @@ export function AccountDrawer({
               {...linkProps(created, links)}
             />
             <a href={personHref(created.subject)} onClick={finish}>
-              Open their details
+              View user
             </a>
           </>
         )}
@@ -836,7 +832,7 @@ export function AccountDrawer({
             <Space wrap>
               {me.org_admin && (
                 <a href={personHref(subject)} onClick={finish}>
-                  Open their details
+                  View user
                 </a>
               )}
               {Object.entries(selected)
@@ -863,7 +859,7 @@ export function AccountDrawer({
               <Paragraph style={{ margin: 0 }}>
                 It may be the account your earlier attempt created.{" "}
                 {me.org_admin
-                  ? "Open their details and use Reset password to make a sign-in link for them."
+                  ? "Open the user’s profile and choose Reset password."
                   : "Ask an Administrator to reset its password to make a sign-in link for them."}
               </Paragraph>
             )}

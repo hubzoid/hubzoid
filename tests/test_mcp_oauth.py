@@ -27,13 +27,12 @@ REDIRECT = "http://localhost:54321/callback"
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    from hubzoid.auth import users
+
     hub = _mk_hub(tmp_path, oauth_fixture=False)
     db = tmp_path / "owui.db"
     _mk_owui_db(db)
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    # Open WebUI accounts: the legacy UI mode (test_auth_session_dispatch
-    # covers MCP consent on Hubzoid accounts).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    users.store(hub).create(email="alice@example.com", name="Alice", id="u1", source="admin")
     monkeypatch.setenv("MCP_SERVER", "true")
     monkeypatch.delenv("MCP_AUTH_MODE", raising=False)
     monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
@@ -274,10 +273,9 @@ def test_persistence_revocation_and_account_deletion(setup):
         assert (await rpc(c, state["access_token"])).status_code == 200
         r = await c.get("/mcp/oauth/connections")
         assert "Claude Test" in r.text
-        import sqlite3
+        from hubzoid.auth import users
 
-        with sqlite3.connect(db) as con:
-            con.execute("DELETE FROM user")
+        users.store(hub).delete("u1")
         assert (await rpc(c, state["access_token"])).status_code == 401
 
     run_flow(hub, after_restart)
@@ -379,26 +377,24 @@ def test_gateway_metadata_and_cross_resource_token(setup, monkeypatch):
     run_flow(hub, flow)
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        "DELETE FROM user",
-        "UPDATE user SET id='replacement'",
-        "UPDATE user SET email='someone-else@example.com'",
-    ],
-)
+@pytest.mark.parametrize("change", ["deleted", "replaced", "suspended"])
 def test_account_changes_invalidate_grant(setup, change):
     hub, db = setup
 
     async def flow(c):
-        import sqlite3
+        from hubzoid.auth import users
 
         client = await register(c)
         q = await consent(c, client)
         token = (await exchange(c, client, q["code"][0])).json()["access_token"]
         assert (await rpc(c, token)).status_code == 200
-        with sqlite3.connect(db) as con:
-            con.execute(change)
+        accounts = users.store(hub)
+        if change == "suspended":  # back to awaiting approval
+            accounts.set_status("u1", "pending")
+        else:
+            accounts.delete("u1")
+            if change == "replaced":  # a new account reusing the email is someone else
+                accounts.create(email="alice@example.com", name="Alice", id="replacement", source="admin")
         assert (await rpc(c, token)).status_code == 401
 
     run_flow(hub, flow)

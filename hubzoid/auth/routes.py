@@ -15,8 +15,10 @@ Activity page shows to organization administrators.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -27,7 +29,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.background import BackgroundTask
 
 from .. import appmode
-from . import AuthUser, current_user, links, oidc, passwords, ratelimit, require_user, users
+from . import (AuthUser, current_user, links, oidc, passwords, ratelimit, require_admin,
+               require_user, users)
 from . import sessions as sessionlib
 
 log = logging.getLogger("hubzoid.auth")
@@ -163,6 +166,19 @@ def _console(hub_dir: Path, user: AuthUser) -> bool:
         return False
 
 
+def _hub_changes(hub_dir: Path, user: AuthUser) -> bool:
+    """Whether this person may read this hub's proposed changes (they may
+    propose or review them), so Settings shows Hub changes to curators too.
+    Only shows a section: the routes check again."""
+    try:
+        from ..hub_changes import service as hub_changes
+
+        return hub_changes.can_propose(hub_dir, (user.email or "").lower())
+    except Exception:  # noqa: BLE001 — only hides a menu item
+        log.warning("auth: could not check hub change access")
+        return False
+
+
 def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     """The signed-in person for the web app: the public fields, how this
     session signed in, whether there is a password to change, and whether the
@@ -175,7 +191,20 @@ def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     return {**user.public(), "method": user.method,
             "password_enabled": bool(row.get("password_enabled")),
             "has_password": bool(row.get("has_password")),
-            "console": console, **({"version": __version__} if console else {})}
+            "console": console, "hub_changes": console or _hub_changes(hub_dir, user),
+            **({"version": __version__} if console else {})}
+
+
+def _unsafe_network(request: Request) -> bool:
+    """Sign-in is off and this server listens beyond this computer, by the
+    operator's explicit opt-out (``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK``,
+    the Docker try-out): the page shows a warning that stays."""
+    if not _truthy(os.environ.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
+        return False
+    server = request.scope.get("server") or ()
+    host = str(server[0]).strip("[]") if server else ""
+    return not appmode.is_loopback_host(host) or bool(os.environ.get("HUBZOID_IN_CONTAINER")) \
+        or Path("/.dockerenv").exists()
 
 
 def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:  # noqa: ARG001 — ctx is for other parts
@@ -203,21 +232,69 @@ def build_router(hub_dir: Path) -> APIRouter:
         if local_mode():
             raise error(409, "sign_in_off", "Sign-in is off on this server.")
 
-    def complete(request: Request, user: dict, *, method: str) -> JSONResponse:
-        """Start a session for a verified person and answer with it. ``user``
-        is the account as read with the credential just checked; if it changed
-        since (a reset, a role or status change), no session starts."""
+    def complete(request: Request, user: dict, *, method: str,
+                 directory_mfa: bool = False) -> JSONResponse:
+        """A verified first step (password, provider, link). When the person
+        uses two-step sign-in, or must set it up, answer with that step (and
+        its cookie) instead of a session. ``user`` is the account as read with
+        the credential just checked; if it changed since, no session starts."""
         from ..access import store_for
+        from . import mfa
+        from . import settings as auth_settings
 
+        if user["status"] == "disabled":
+            raise error(403, "account_disabled",
+                        "Your company directory turned this account off. Ask your IT team.")
         if user["status"] != "active":
             raise error(403, "pending", "Your account is waiting for an administrator's approval.")
         users.on_sign_in(hub_dir, user)
         if store_for(hub_dir).is_suspended(user["email"]):
             raise error(403, "suspended", "This account is blocked. Ask an administrator.")
+        if directory_mfa:
+            # The company's identity provider ran its own sign-in policy
+            # (including its MFA); Hubzoid doesn't ask for a second code.
+            return start_session(request, user, method=method, mfa_done=True)
+        if mfa.enrolled(hub_dir, user["id"]):
+            token = mfa.start_challenge(hub_dir, user, "mfa_login",
+                                        {"method": method, "updated_at": user["updated_at"]})
+            return _with_challenge(request, JSONResponse(
+                {"state": "mfa_required", "email": user["email"]}, headers=_NO_STORE), token)
+        if auth_settings.mfa_required_for(hub_dir, user["role"]):
+            secret = mfa.new_secret()
+            token = mfa.start_challenge(hub_dir, user, "mfa_setup",
+                                        {"method": method, "updated_at": user["updated_at"],
+                                         "secret": secret})
+            return _with_challenge(request, JSONResponse(
+                {"state": "mfa_setup", "email": user["email"], "setup": _setup_view(user, secret)},
+                headers=_NO_STORE), token)
+        return start_session(request, user, method=method)
+
+    def _setup_view(user: dict, secret: str) -> dict:
+        from . import mfa
+
+        issuer = _branding_name(hub_dir) or "Hubzoid"
+        uri = mfa.otpauth_uri(secret, user["email"], issuer)
+        return {"qr": mfa.qr_svg(uri), "key": mfa.format_secret(secret), "uri": uri,
+                "issuer": issuer}
+
+    def _with_challenge(request: Request, response: Response, token: str | None) -> Response:
+        from . import mfa
+
+        if token is None:
+            response.delete_cookie(mfa.CHALLENGE_COOKIE, path="/api", httponly=True,
+                                   samesite="lax", secure=sessionlib.is_https(request))
+        else:
+            response.set_cookie(mfa.CHALLENGE_COOKIE, token, max_age=mfa.CHALLENGE_SECONDS,
+                                path="/api", httponly=True, samesite="lax",
+                                secure=sessionlib.is_https(request))
+        return response
+
+    def start_session(request: Request, user: dict, *, method: str,
+                      mfa_done: bool = False) -> JSONResponse:
         old = sessionlib.current_token(request)
         try:
             token = sessionlib.create_session(hub_dir, user, method=method, request=request,
-                                              expect_updated_at=user["updated_at"])
+                                              expect_updated_at=user["updated_at"], mfa=mfa_done)
         except sessionlib.SessionRace:
             raise error(409, "sign_in_changed",
                         "Your account changed while you were signing in. Sign in again.")
@@ -225,11 +302,15 @@ def build_router(hub_dir: Path) -> APIRouter:
             sessionlib.revoke(hub_dir, old)
         users.touch_login(hub_dir, user["id"])
         sessionlib.forget(request)
-        _audit(hub_dir, user["email"], "signed_in", subject=user["email"], detail=method)
+        _audit(hub_dir, user["email"], "signed_in", subject=user["email"],
+               detail=method + ("+code" if mfa_done else ""))
         signed_in = AuthUser(id=user["id"], email=user["email"], name=user.get("name") or "",
                              role=user["role"], method=method)
-        response = JSONResponse({"user": _user_view(hub_dir, signed_in)}, headers=_NO_STORE)
+        response = JSONResponse({"state": "signed_in", "user": _user_view(hub_dir, signed_in)},
+                                headers=_NO_STORE)
         sessionlib.set_cookie(response, token, request)
+        if mfa_done:
+            _with_challenge(request, response, None)
         return response
 
     # ---- state ------------------------------------------------------------------
@@ -240,7 +321,8 @@ def build_router(hub_dir: Path) -> APIRouter:
         if local_mode():
             owner = current_user(request, hub_dir)
             body = {"authenticated": owner is not None, "mode": "local", "providers": [],
-                    "password": False, "signup": False, "branding_name": name}
+                    "password": False, "signup": False, "branding_name": name,
+                    "unsafe_network": _unsafe_network(request)}
             if owner is not None:
                 body["user"] = _user_view(hub_dir, owner)
             return JSONResponse(body, headers=_NO_STORE)
@@ -249,8 +331,11 @@ def build_router(hub_dir: Path) -> APIRouter:
             view = _user_view(hub_dir, user) if user else None
         except SQLAlchemyError:
             raise _unavailable()
+        from .directory.routes import public_providers
+
         body = {"authenticated": user is not None, "mode": "accounts",
-                "providers": oidc.public_list(), "password": password_login_enabled(),
+                "providers": oidc.public_list() + public_providers(hub_dir),
+                "password": password_login_enabled(),
                 "signup": signup_enabled(), "branding_name": name}
         if view is not None:
             body["user"] = view
@@ -466,6 +551,460 @@ def build_router(hub_dir: Path) -> APIRouter:
                            method=user.method)
         return JSONResponse({"user": _user_view(hub_dir, renamed)}, headers=_NO_STORE)
 
+    # ---- two-step sign-in ------------------------------------------------------------
+
+    def _challenge(request: Request, purposes: tuple[str, ...]) -> dict:
+        from . import mfa
+
+        try:
+            return mfa.read_challenge(hub_dir, request.cookies.get(mfa.CHALLENGE_COOKIE), purposes)
+        except mfa.ChallengeInvalid:
+            raise error(410, "step_expired",
+                        "This sign-in step expired. Sign in again to get a new one.")
+
+    def _code_fields(body: Any) -> tuple[str, str]:
+        if not isinstance(body, dict):
+            raise error(422, "invalid_request", "Send a JSON object.")
+        code = body.get("code") if isinstance(body.get("code"), str) else ""
+        recovery = body.get("recovery_code") if isinstance(body.get("recovery_code"), str) else ""
+        if (not code and not recovery) or len(code) > 32 or len(recovery) > 64:
+            raise error(422, "invalid_request", "Enter the 6-digit code from your app.")
+        return code, recovery
+
+    def _wrong(request: Request, step: dict, email: str, recovery: bool) -> HTTPException:
+        from . import mfa
+
+        left = mfa.wrong_code(hub_dir, step["token"])
+        locked = ratelimit.record_failure(hub_dir, ip=sessionlib.client_ip(request), email=email)
+        if locked:
+            return _rate_limited(locked)
+        if left <= 0:
+            return error(410, "step_expired", "Too many wrong codes. Sign in again.")
+        what = "That recovery code isn't right or was already used." if recovery else \
+            "That code isn't right. Check the time on your phone and try the newest code."
+        return error(401, "invalid_code", what, tries_left=left)
+
+    @router.post("/api/auth/mfa/verify")
+    def mfa_verify(request: Request, body: Any = Body(None)):
+        """The second step: an authenticator code or a recovery code."""
+        from . import mfa
+
+        _same_origin(request)
+        require_accounts()
+        code, recovery = _code_fields(body)
+        step = _challenge(request, ("mfa_login",))
+        try:
+            user = users.get(hub_dir, step["user_id"])
+            if user is None or user["status"] != "active":
+                raise error(410, "step_expired", "Sign in again.")
+            ip = sessionlib.client_ip(request)
+            wait = ratelimit.admit(hub_dir, ip=ip, email=user["email"])
+            if wait:
+                raise _rate_limited(wait)
+            ok = (mfa.use_recovery_code(hub_dir, user["id"], recovery) if recovery
+                  else mfa.verify_code(hub_dir, user["id"], code))
+            if not ok:
+                raise _wrong(request, step, user["email"], bool(recovery))
+            if not mfa.finish_challenge(hub_dir, step["token"]):
+                raise error(410, "step_expired", "This sign-in step was already used. Sign in again.")
+            ratelimit.record_success(hub_dir, ip=ip, email=user["email"])
+            response = start_session(request, {**user, "updated_at": step["data"]["updated_at"]},
+                                     method=step["data"].get("method") or "password", mfa_done=True)
+        except SQLAlchemyError:
+            raise _unavailable()
+        if recovery:
+            _audit(hub_dir, user["email"], "mfa_recovery_code_used", subject=user["email"])
+            left = mfa.status(hub_dir, user["id"])["recovery_codes_left"]
+            payload = json.loads(response.body)
+            payload["recovery_codes_left"] = left
+            fresh = JSONResponse(payload, headers=_NO_STORE)
+            for value in response.headers.getlist("set-cookie"):
+                fresh.headers.append("set-cookie", value)
+            return fresh
+        return response
+
+    @router.get("/api/auth/mfa/setup")
+    def mfa_setup_info(request: Request):
+        """The set-up step again (after a reload): its QR code and key."""
+        step = _challenge(request, ("mfa_setup",))
+        user = users.get(hub_dir, step["user_id"]) or {}
+        return JSONResponse({"state": "mfa_setup", "email": user.get("email", ""),
+                             "setup": _setup_view(user, step["data"]["secret"]),
+                             "expires_at": step["expires_at"]}, headers=_NO_STORE)
+
+    @router.post("/api/auth/mfa/setup")
+    def mfa_setup_confirm(request: Request, body: Any = Body(None)):
+        """Someone who must use two-step sign-in sets it up while signing in:
+        the first code saves the authenticator and the session starts. The
+        recovery codes come back once."""
+        from . import mfa
+
+        _same_origin(request)
+        require_accounts()
+        code, _ = _code_fields(body)
+        step = _challenge(request, ("mfa_setup",))
+        try:
+            user = users.get(hub_dir, step["user_id"])
+            if user is None or user["status"] != "active":
+                raise error(410, "step_expired", "Sign in again.")
+            matched = mfa.matching_step(step["data"]["secret"], code)
+            if matched is None:
+                raise _wrong(request, step, user["email"], False)
+            if not mfa.finish_challenge(hub_dir, step["token"]):
+                raise error(410, "step_expired", "This sign-in step was already used. Sign in again.")
+            codes = mfa.activate(hub_dir, user["id"], step["data"]["secret"], matched)
+            response = start_session(request, {**user, "updated_at": step["data"]["updated_at"]},
+                                     method=step["data"].get("method") or "password", mfa_done=True)
+        except SQLAlchemyError:
+            raise _unavailable()
+        _audit(hub_dir, user["email"], "mfa_enabled", subject=user["email"])
+        payload = json.loads(response.body)
+        payload["recovery_codes"] = codes
+        fresh = JSONResponse(payload, headers=_NO_STORE)
+        for value in response.headers.getlist("set-cookie"):
+            fresh.headers.append("set-cookie", value)
+        return fresh
+
+    # ---- proving a recent sign-in -----------------------------------------------------
+
+    def need_recent(request: Request) -> None:
+        if not sessionlib.recently_verified(request, hub_dir):
+            raise error(403, "reauth_required",
+                        "Confirm it's you to continue.", reauth=_reauth_options(request))
+
+    def _reauth_options(request: Request) -> dict:
+        from . import mfa
+
+        user = current_user(request, hub_dir)
+        if user is None:
+            return {}
+        row = users.get(hub_dir, user.id) or {}
+        linked = sorted({i["provider"] for i in users.store(hub_dir).identities_for(user.id)})
+        options = {"password": bool(row.get("has_password")), "code": mfa.enrolled(hub_dir, user.id),
+                   "providers": [p for p in linked if oidc.provider(p) is not None]}
+        if row.get("managed_by"):
+            # A company directory account confirms with its directory.
+            from .directory import store as directory_store
+
+            p = directory_store.get_provider(hub_dir, row["managed_by"])
+            if p is not None and p["enabled"]:
+                options["company"] = {"id": p["id"], "name": p["name"]}
+        return options
+
+    @router.post("/api/auth/reauth")
+    def reauth(request: Request, body: Any = Body(None)):
+        """Confirm it's you before a sensitive change: your password (when you
+        have one) and, when you use two-step sign-in, a code. A provider-only
+        account confirms by signing in with its provider again
+        (``/oauth/<provider>/login?reauth=1``)."""
+        from . import mfa
+
+        _same_origin(request)
+        user = require_user(request, hub_dir)
+        if user.via_key:
+            raise error(403, "key_not_allowed", "An API key can't confirm a sign-in.")
+        if local_mode():
+            return JSONResponse({"verified": True}, headers=_NO_STORE)
+        if not isinstance(body, dict):
+            raise error(422, "invalid_request", "Send a JSON object.")
+        password = body.get("password") if isinstance(body.get("password"), str) else ""
+        code = body.get("code") if isinstance(body.get("code"), str) else ""
+        recovery = body.get("recovery_code") if isinstance(body.get("recovery_code"), str) else ""
+        options = _reauth_options(request)
+        ip = sessionlib.client_ip(request)
+        try:
+            wait = ratelimit.admit(hub_dir, ip=ip, email=user.email)
+            if wait:
+                raise _rate_limited(wait)
+            if not options.get("password") and not options.get("code"):
+                raise error(409, "reauth_with_provider",
+                            "Sign in again with your provider to confirm.", reauth=options)
+            if options.get("password"):
+                stored = users.store(hub_dir).password_hash(user.id)
+                ok, _ = passwords.verify_and_update(password, stored)
+                if not ok:
+                    locked = ratelimit.record_failure(hub_dir, ip=ip, email=user.email)
+                    if locked:
+                        raise _rate_limited(locked)
+                    raise error(401, "invalid_credentials", "Your password is not right.")
+            if options.get("code"):
+                ok = (mfa.use_recovery_code(hub_dir, user.id, recovery) if recovery
+                      else mfa.verify_code(hub_dir, user.id, code))
+                if not ok:
+                    locked = ratelimit.record_failure(hub_dir, ip=ip, email=user.email)
+                    if locked:
+                        raise _rate_limited(locked)
+                    raise error(401, "invalid_code", "That code isn't right. Try the newest one.")
+            ratelimit.record_success(hub_dir, ip=ip, email=user.email)
+            sessionlib.mark_verified(hub_dir, request)
+        except SQLAlchemyError:
+            raise _unavailable()
+        return JSONResponse({"verified": True}, headers=_NO_STORE)
+
+    # ---- your security: two-step sign-in, devices, keys ----------------------------------
+
+    def _session_user(request: Request) -> AuthUser:
+        user = require_user(request, hub_dir)
+        return user
+
+    @router.post("/api/me/identity-links/check")
+    def link_check(request: Request):
+        """Before adding a provider sign-in: confirm it's you (the browser then
+        goes to ``/oauth/<provider>/login?link=1``, which checks again)."""
+        _same_origin(request)
+        user = require_user(request, hub_dir)
+        if user.via_key:
+            raise error(403, "key_not_allowed", "An API key can't add a sign-in.")
+        need_recent(request)
+        return JSONResponse({"ok": True}, headers=_NO_STORE)
+
+    @router.get("/api/me/security")
+    def my_security(request: Request):
+        from . import api_keys, mfa
+        from . import settings as auth_settings
+
+        user = _session_user(request)
+        try:
+            row = users.get(hub_dir, user.id) or {}
+            body = {
+                "mode": "local" if local_mode() else "accounts",
+                "mfa": mfa.status(hub_dir, user.id),
+                "mfa_policy": auth_settings.mfa_policy(hub_dir),
+                "mfa_required": auth_settings.mfa_required_for(hub_dir, user.role),
+                "recently_verified": sessionlib.recently_verified(request, hub_dir),
+                "reauth": _reauth_options(request),
+                "has_password": bool(row.get("has_password")),
+                "sessions": ([] if local_mode() else
+                             sessionlib.list_sessions(hub_dir, user.id, sessionlib.current_token(request))),
+                "api_keys": api_keys.list_for(hub_dir, user.id),
+                "linked": [{"provider": i["provider"], "email": i.get("email") or ""}
+                           for i in users.store(hub_dir).identities_for(user.id)],
+                "providers": oidc.public_list(),
+            }
+        except SQLAlchemyError:
+            raise _unavailable()
+        return JSONResponse(body, headers=_NO_STORE)
+
+    @router.post("/api/me/mfa/enroll")
+    def mfa_enroll(request: Request):
+        """Start setting up an authenticator from Settings: returns its QR code
+        and key. ``/api/me/mfa/confirm`` with the first code turns it on."""
+        from . import mfa
+
+        _same_origin(request)
+        user = _session_user(request)
+        require_accounts()
+        need_recent(request)
+        row = users.get(hub_dir, user.id)
+        if row is None:
+            raise error(404, "not_found", "This account no longer exists.")
+        secret = mfa.new_secret()
+        token = mfa.start_challenge(hub_dir, row, "mfa_enroll", {"secret": secret}, seconds=900)
+        response = JSONResponse({"setup": _setup_view(row, secret)}, headers=_NO_STORE)
+        return _with_challenge(request, response, token)
+
+    @router.post("/api/me/mfa/confirm")
+    def mfa_confirm(request: Request, body: Any = Body(None)):
+        from . import mfa
+
+        _same_origin(request)
+        user = _session_user(request)
+        code, _ = _code_fields(body)
+        step = _challenge(request, ("mfa_enroll",))
+        if step["user_id"] != user.id:
+            raise error(410, "step_expired", "Start setting up again.")
+        matched = mfa.matching_step(step["data"]["secret"], code)
+        if matched is None:
+            raise _wrong(request, step, user.email, False)
+        if not mfa.finish_challenge(hub_dir, step["token"]):
+            raise error(410, "step_expired", "Start setting up again.")
+        codes = mfa.activate(hub_dir, user.id, step["data"]["secret"], matched)
+        sessionlib.mark_verified(hub_dir, request)
+        _audit(hub_dir, user.email, "mfa_enabled", subject=user.email)
+        response = JSONResponse({"recovery_codes": codes, "mfa": mfa.status(hub_dir, user.id)},
+                                headers=_NO_STORE)
+        return _with_challenge(request, response, None)
+
+    @router.post("/api/me/mfa/recovery-codes")
+    def mfa_new_codes(request: Request):
+        from . import mfa
+
+        _same_origin(request)
+        user = _session_user(request)
+        need_recent(request)
+        try:
+            codes = mfa.new_recovery_codes(hub_dir, user.id)
+        except KeyError:
+            raise error(409, "mfa_off", "Turn on two-step sign-in first.")
+        _audit(hub_dir, user.email, "mfa_recovery_codes_replaced", subject=user.email)
+        return JSONResponse({"recovery_codes": codes}, headers=_NO_STORE)
+
+    @router.delete("/api/me/mfa")
+    def mfa_off(request: Request):
+        from . import mfa
+        from . import settings as auth_settings
+
+        _same_origin(request)
+        user = _session_user(request)
+        need_recent(request)
+        if auth_settings.mfa_required_for(hub_dir, user.role):
+            raise error(409, "mfa_required", "Two-step sign-in is required for your account, so "
+                                             "it can't be turned off. You can set up a new authenticator.")
+        mfa.remove(hub_dir, user.id)
+        _audit(hub_dir, user.email, "mfa_disabled", subject=user.email)
+        return JSONResponse({"mfa": mfa.status(hub_dir, user.id)}, headers=_NO_STORE)
+
+    @router.get("/api/me/sessions")
+    def my_sessions(request: Request):
+        user = _session_user(request)
+        return JSONResponse({"sessions": sessionlib.list_sessions(
+            hub_dir, user.id, sessionlib.current_token(request))}, headers=_NO_STORE)
+
+    @router.delete("/api/me/sessions/{sid}", status_code=204)
+    def end_my_session(sid: str, request: Request):
+        _same_origin(request)
+        user = _session_user(request)
+        if not sessionlib.revoke_session_id(hub_dir, user.id, sid):
+            raise error(404, "not_found", "That device is already signed out.")
+        _audit(hub_dir, user.email, "session_ended", subject=user.email)
+        return Response(status_code=204, headers=_NO_STORE)
+
+    @router.post("/api/me/sessions/revoke-others")
+    def end_other_sessions(request: Request):
+        _same_origin(request)
+        user = _session_user(request)
+        ended = sessionlib.revoke_user(hub_dir, user.id, except_token=sessionlib.current_token(request))
+        _audit(hub_dir, user.email, "sessions_ended", subject=user.email, detail=str(ended))
+        return JSONResponse({"ended": ended}, headers=_NO_STORE)
+
+    @router.get("/api/me/api-keys")
+    def my_keys(request: Request):
+        from . import api_keys
+
+        user = _session_user(request)
+        return JSONResponse({"api_keys": api_keys.list_for(hub_dir, user.id),
+                             "operations": list(api_keys.OPERATIONS)}, headers=_NO_STORE)
+
+    @router.post("/api/me/api-keys", status_code=201)
+    def make_key(request: Request, body: Any = Body(None)):
+        from . import api_keys
+
+        _same_origin(request)
+        user = _session_user(request)
+        need_recent(request)
+        if not isinstance(body, dict):
+            raise error(422, "invalid_request", "Send a JSON object.")
+        ops = body.get("operations")
+        if isinstance(body.get("preset"), str):
+            ops = list(api_keys.PRESETS.get(body["preset"], ()))
+        days = body.get("expires_in_days", 90)
+        if days is not None and not isinstance(days, int):
+            raise error(422, "invalid_request", "expires_in_days must be a whole number of days.")
+        hubs = body.get("hubs")
+        if hubs is not None and not (isinstance(hubs, list) and all(isinstance(h, str) for h in hubs)):
+            raise error(422, "invalid_request", "hubs must be a list of agent keys.")
+        try:
+            details, token = api_keys.create(hub_dir, user, name=str(body.get("name") or ""),
+                                             operations=ops if isinstance(ops, list) else [],
+                                             hubs=hubs, expires_in_days=days)
+        except api_keys.KeyRefused as exc:
+            raise error(422, "invalid_key", exc.message)
+        except SQLAlchemyError:
+            raise _unavailable()
+        _audit(hub_dir, user.email, "api_key_created", subject=user.email, detail=details["prefix"])
+        return JSONResponse({"api_key": details, "key": token}, status_code=201, headers=_NO_STORE)
+
+    @router.delete("/api/me/api-keys/{key_id}", status_code=204)
+    def drop_key(key_id: str, request: Request):
+        from . import api_keys
+
+        _same_origin(request)
+        user = _session_user(request)
+        api_keys.revoke(hub_dir, user.id, key_id)
+        _audit(hub_dir, user.email, "api_key_revoked", subject=user.email, detail=key_id[:16])
+        return Response(status_code=204, headers=_NO_STORE)
+
+    # ---- administrators ---------------------------------------------------------------
+
+    @router.get("/api/auth/mfa/policy")
+    def get_mfa_policy(request: Request):
+        from . import settings as auth_settings
+
+        require_user(request, hub_dir)
+        return JSONResponse({"policy": auth_settings.mfa_policy(hub_dir),
+                             "choices": list(auth_settings.MFA_POLICIES)}, headers=_NO_STORE)
+
+    @router.put("/api/auth/mfa/policy")
+    def put_mfa_policy(request: Request, body: Any = Body(None)):
+        from . import settings as auth_settings
+
+        _same_origin(request)
+        user = require_admin(request, hub_dir)
+        f = _fields(body, policy=16)
+        before = auth_settings.mfa_policy(hub_dir)
+        order = {p: i for i, p in enumerate(auth_settings.MFA_POLICIES)}
+        if order.get(f["policy"], 0) < order.get(before, 0):
+            need_recent(request)  # weakening the rule needs a recent sign-in
+        try:
+            policy = auth_settings.set_mfa_policy(hub_dir, f["policy"], actor=user.email)
+        except ValueError as exc:
+            raise error(422, "invalid_policy", str(exc))
+        _audit(hub_dir, user.email, "mfa_policy_changed", detail=policy)
+        return JSONResponse({"policy": policy}, headers=_NO_STORE)
+
+    @router.post("/api/people/{account_id}/reset-mfa")
+    def admin_reset_mfa(account_id: str, request: Request):
+        """An administrator turns off someone's two-step sign-in (a lost phone).
+        Their authenticator, recovery codes, sessions, keys and MCP grants end
+        together; they set it up again at their next sign-in."""
+        from . import mfa
+
+        _same_origin(request)
+        admin = require_admin(request, hub_dir)
+        need_recent(request)
+        target = users.get(hub_dir, account_id)
+        if target is None or target["status"] == users.DELETED:
+            raise error(404, "not_found", "This account no longer exists.")
+        if target["id"] == admin.id:
+            raise error(409, "self_change", "Use your own Security settings for your account.")
+        st = users.store(hub_dir)
+        with st.engine.begin() as conn:
+            mfa.remove(hub_dir, target["id"], conn=conn)
+            st._revoke(conn, target["id"], time.time(), credentials=True)  # noqa: SLF001
+        _audit(hub_dir, admin.email, "mfa_reset", subject=target["email"])
+        return JSONResponse({"reset": True}, headers=_NO_STORE)
+
+    @router.post("/api/people/{account_id}/revoke-credentials")
+    def admin_revoke_credentials(account_id: str, request: Request):
+        """Sign someone out everywhere and end every API key and MCP grant."""
+        _same_origin(request)
+        admin = require_admin(request, hub_dir)
+        target = users.get(hub_dir, account_id)
+        if target is None or target["status"] == users.DELETED:
+            raise error(404, "not_found", "This account no longer exists.")
+        ended = users.store(hub_dir).revoke_credentials(target["id"])
+        _audit(hub_dir, admin.email, "credentials_revoked", subject=target["email"])
+        return JSONResponse({"sessions_ended": ended}, headers=_NO_STORE)
+
+    @router.post("/api/me/revoke-credentials")
+    def my_revoke_credentials(request: Request):
+        _same_origin(request)
+        user = _session_user(request)
+        need_recent(request)
+        ended = users.revoke_credentials(hub_dir, user.id, except_token=sessionlib.current_token(request))
+        _audit(hub_dir, user.email, "credentials_revoked", subject=user.email)
+        return JSONResponse({"sessions_ended": ended}, headers=_NO_STORE)
+
+    # ---- company directories (SAML) ------------------------------------------------
+
+    from .directory import routes as directory_routes
+
+    directory_routes.add_routes(
+        router, hub_dir, complete=complete, error=error, same_origin=_same_origin,
+        require_admin=require_admin, need_recent=need_recent, current_user=current_user,
+        audit=lambda h, actor, action, detail=None: _audit(h, actor, action, detail=detail),
+        sessionlib=sessionlib)
+
     # ---- external providers ----------------------------------------------------------
 
     def to_auth(code: str) -> RedirectResponse:
@@ -473,15 +1012,35 @@ def build_router(hub_dir: Path) -> APIRouter:
                                 headers=_NO_STORE)
 
     @router.get("/oauth/{provider_id}/login")
-    def oauth_login(provider_id: str, request: Request, redirect: str | None = None):
+    def oauth_login(provider_id: str, request: Request, redirect: str | None = None,
+                    link: str | None = None, reauth: str | None = None):
         if local_mode():
             return to_auth("sign_in_off")
         p = oidc.provider(provider_id)
         if p is None:
             return to_auth("not_configured")
+        intent, owner = "sign_in", None
+        if link or reauth:
+            from . import mfa
+
+            signed_in = current_user(request, hub_dir)
+            if signed_in is None or signed_in.via_key:
+                return to_auth("sign_in_first")
+            intent, owner = ("link" if link else "reauth"), signed_in.id
+            refusal = None
+            if link and not sessionlib.recently_verified(request, hub_dir):
+                refusal = "confirm_first"  # a stolen session can't add its own sign-in
+            elif reauth and mfa.enrolled(hub_dir, signed_in.id):
+                refusal = "use_code"  # two-step accounts confirm with their code
+            if refusal:
+                back = oidc.safe_redirect(redirect)
+                sep = "&" if "?" in back else "?"
+                return RedirectResponse(f"{back}{sep}{intent}={refusal}", status_code=302,
+                                        headers=_NO_STORE)
         try:
             url, handshake = oidc.start(hub_dir, p, redirect_uri=oidc.callback_url(request, p.id),
-                                        return_to=oidc.safe_redirect(redirect))
+                                        return_to=oidc.safe_redirect(redirect), intent=intent,
+                                        user_id=owner)
         except oidc.SignInRefused as exc:
             return to_auth(exc.code)
         response = RedirectResponse(url, status_code=302, headers=_NO_STORE)
@@ -511,6 +1070,36 @@ def build_router(hub_dir: Path) -> APIRouter:
                                 else "provider_error"))
         if handshake is None:
             return done(to_auth("state_mismatch"))
+        back = oidc.safe_redirect(handshake.get("r"))
+        intent = handshake.get("i") or "sign_in"
+        if intent in ("link", "reauth"):
+            signed_in = current_user(request, hub_dir)
+            if signed_in is None or signed_in.id != handshake.get("a"):
+                return done(to_auth("sign_in_first"))
+            try:
+                from . import mfa
+
+                claims = oidc.finish(p, handshake, code=code or "", state=state or "")
+                if not oidc.fresh_enough(claims, handshake):
+                    outcome = "not_fresh"
+                elif intent == "reauth" and mfa.enrolled(hub_dir, signed_in.id):
+                    outcome = "use_code"
+                elif intent == "link":
+                    outcome = oidc.link_to(hub_dir, p, claims, signed_in.id)
+                    _audit(hub_dir, signed_in.email, "sign_in_linked", subject=signed_in.email,
+                           detail=p.id)
+                elif oidc.same_person(hub_dir, claims, signed_in.id):
+                    sessionlib.mark_verified(hub_dir, request)
+                    outcome = "verified"
+                else:
+                    outcome = "not_you"
+            except oidc.SignInRefused as exc:
+                outcome = exc.code
+            except SQLAlchemyError:
+                outcome = "unavailable"
+            sep = "&" if "?" in back else "?"
+            return done(RedirectResponse(f"{back}{sep}{intent}={quote(outcome, safe='')}",
+                                         status_code=302, headers=_NO_STORE))
         try:
             claims = oidc.finish(p, handshake, code=code or "", state=state or "")
             user = oidc.account_for(hub_dir, p, claims)
@@ -525,8 +1114,14 @@ def build_router(hub_dir: Path) -> APIRouter:
         except SQLAlchemyError:
             log.warning("auth: %s sign-in failed (database error)", p.id)
             return done(to_auth("unavailable"))
-        response = RedirectResponse(oidc.safe_redirect(handshake.get("r")), status_code=302,
-                                    headers=_NO_STORE)
+        step = json.loads(answer.body).get("state")
+        if step in ("mfa_required", "mfa_setup"):
+            # The provider was the first step; the code comes next on /auth.
+            target = "/auth?step=" + ("code" if step == "mfa_required" else "setup") + \
+                "&redirect=" + quote(back, safe="")
+        else:
+            target = back
+        response = RedirectResponse(target, status_code=302, headers=_NO_STORE)
         for value in answer.headers.getlist("set-cookie"):
             response.headers.append("set-cookie", value)
         return done(response)

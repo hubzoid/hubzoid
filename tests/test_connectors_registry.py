@@ -261,7 +261,6 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
     assert gmail["group"] == "connectors" and gmail["available"] is True
     assert docs["available"] is False and docs["status"] == "Switched off"
     # Open WebUI mode: the same Console connectors.
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     rows = {r["permission"] for r in capabilities.catalog(hub)}
     assert "connector_gmail" in rows and "connector_hr" not in rows
 

@@ -185,7 +185,11 @@ def test_load_restricted_empty_without_folder(tmp_path):
 
 def test_apply_unchanged_without_restricted_folder(tmp_path):
     registry = {"a": sample_tool}
-    assert access.apply(tmp_path, registry) is registry  # same object, no-op
+    out = access.apply(tmp_path, registry)
+    # Nothing is added or renamed; each tool only gains the per-call account check.
+    assert list(out) == ["a"] and out["a"].name == sample_tool.name
+    assert out["a"].params_json_schema == sample_tool.params_json_schema
+    assert getattr(out["a"].on_invoke_tool, "hubzoid_run_checked", False)
 
 
 def test_apply_guards_restricted_tools_end_to_end(tmp_path):
@@ -230,3 +234,23 @@ def test_audit_read_missing_is_empty(tmp_path):
 # ---------------------------------------------------------------------------
 # Access management wires restricted tools (Apache-2.0, no license gate)
 # ---------------------------------------------------------------------------
+
+
+def test_core_tools_added_after_apply_are_run_checked_and_the_check_comes_first(tmp_path):
+    # Hub memory, personal memory, Jev and ask_question join after access.apply;
+    # each still stops when the run's account loses the hub or its credential
+    # ends, and the check runs before any approval card or question.
+    from types import SimpleNamespace
+
+    from hubzoid import factory, hitl
+
+    (tmp_path / "AGENTS.md").write_text("---\nname: t\n---\nHelp.\n")
+    ctx = SimpleNamespace(hub_dir=tmp_path)
+    registry = access.apply(tmp_path, {"a": sample_tool})
+    factory._add_curator_tool(ctx, registry, access)
+    factory._add_jev_tool(ctx, registry, access)
+    registry = hitl.equip(tmp_path, registry)
+    assert {"remember", "call_jev"} <= set(registry)
+    unchecked = [n for n, ft in registry.items()
+                 if not getattr(ft.on_invoke_tool, "hubzoid_run_checked", False)]
+    assert unchecked == []

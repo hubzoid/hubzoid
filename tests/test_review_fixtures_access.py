@@ -46,7 +46,6 @@ NEW = "new.person@example.org"
 def dep(tmp_path, monkeypatch):
     # The review deployment fronts Open WebUI (its chat requests carry Open
     # WebUI's forwarded email): Open WebUI mode.
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     return make_review_deployment(tmp_path, monkeypatch)
 
 
@@ -85,9 +84,9 @@ def test_a_new_account_with_entry_uses_unrestricted_tools_only(dep):
     review = dep.hubs[REVIEW]
 
     # Chat entry is allowed in review-hub, and only there.
-    _enforce_use_hub(chat_request(NEW, account_id), review)
+    _enforce_use_hub(chat_request(NEW, account_id, hub=review), review)
     with pytest.raises(HTTPException) as err:
-        _enforce_use_hub(chat_request(NEW, account_id), dep.hubs[OPERATIONS])
+        _enforce_use_hub(chat_request(NEW, account_id, hub=dep.hubs[OPERATIONS]), dep.hubs[OPERATIONS])
     assert err.value.status_code == 403
 
     # The unrestricted hub tool is shown and runs.
@@ -152,7 +151,7 @@ def test_a_grant_in_review_hub_does_not_open_operations_hub(dep):
     out = call(operations, "read_sample_inventory", person(NEW))
     assert _denied(out) and "bolts" not in out
     with pytest.raises(HTTPException):
-        _enforce_use_hub(chat_request(NEW), operations)
+        _enforce_use_hub(chat_request(NEW, hub=operations), operations)
 
     assert dep.gs.permissions_for(NEW, REVIEW) == {"use_hub", "sample_inventory"}
     assert dep.gs.permissions_for(NEW, OPERATIONS) == set()
@@ -174,7 +173,7 @@ def test_revocation_applies_on_the_next_call(dep):
     assert _denied(call(review, "read_sample_report", person(NEW)))
     assert "read_sample_report" not in shown_to(review, person(NEW))
     # Entry survives a tool revoke; the unrestricted tool still works.
-    _enforce_use_hub(chat_request(NEW), review)
+    _enforce_use_hub(chat_request(NEW, hub=review), review)
     assert call(review, "word_count", person(NEW), {"text": "x"}).startswith("1 words")
     assert [r["decision"] for r in auditlib.read(review)] == ["allow", "deny"]
 
@@ -190,7 +189,7 @@ def test_revoking_entry_through_the_service_removes_every_tool(dep):
     assert _denied(call(review, "read_sample_budget", person(NEW)))
     assert _denied(call(review, "read_sample_inventory", person(NEW)))
     with pytest.raises(HTTPException):
-        _enforce_use_hub(chat_request(NEW), review)
+        _enforce_use_hub(chat_request(NEW, hub=review), review)
 
 
 # ---- organization administration is not tool access -----------------------------
@@ -204,7 +203,7 @@ def test_organization_administration_alone_does_not_run_restricted_tools(dep):
 
     # ...and may chat, but holds none of them, so none is shown or runs.
     for hub in (REVIEW, OPERATIONS):
-        _enforce_use_hub(chat_request(OWNER), dep.hubs[hub])
+        _enforce_use_hub(chat_request(OWNER, hub=dep.hubs[hub]), dep.hubs[hub])
         assert shown_to(dep.hubs[hub], person(OWNER)) == {UNRESTRICTED[hub]}
         for tool in _restricted_tools(hub):
             assert _denied(call(dep.hubs[hub], tool, person(OWNER)))

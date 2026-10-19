@@ -159,7 +159,7 @@ def test_proposes_on_allowed_surfaces(dep, monkeypatch, surface):
         out = _invoke(tools["propose_access_change"],
                       {"person": "ann@x.org", "hub": "finance", "grant": ["ledger"]})
     assert out.startswith("Proposed, not applied"), out
-    assert "https://hub.example.com/portal/#/confirm/" in out
+    assert "https://hub.example.com/settings#/confirm/" in out
     assert not dep.gs.can("ann@x.org", "finance", "ledger")
     assert _requests(dep) == [dict(actor=DELEGATE, surface=surface, kind="access",
                                    target="ann@x.org", status="pending")]
@@ -234,9 +234,7 @@ def test_confirm_url(monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com/b/sales")
     assert access_admin.confirm_url("/portal/#/confirm/x") == "https://hub.example.com/portal/#/confirm/x"
     monkeypatch.delenv("HUBZOID_PUBLIC_URL")
-    monkeypatch.setenv("WEBUI_URL", "https://chat.example.com/")
-    assert access_admin.confirm_url("/p") == "https://chat.example.com/p"
-    monkeypatch.delenv("WEBUI_URL")
+    monkeypatch.setenv("WEBUI_URL", "https://chat.example.com/")  # Open WebUI's name: not read
     assert access_admin.confirm_url("/p") == "/p"
 
 

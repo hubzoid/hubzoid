@@ -11,11 +11,13 @@ export type SessionUser = {
   role: Role | string;
   /** True when the Console opens for this person (Manage access on an agent or more). */
   console?: boolean;
+  /** May read this hub's proposed changes (curators as well as managers). */
+  hub_changes?: boolean;
   /** The Hubzoid version; sent only to people the Console opens for. */
   version?: string;
 };
 
-export type Provider = { id: string; name: string };
+export type Provider = { id: string; name: string; kind?: string; login_url?: string };
 
 export type Session = {
   authenticated: boolean;
@@ -25,6 +27,8 @@ export type Session = {
   password?: boolean;
   signup?: boolean;
   branding_name?: string;
+  /** Sign-in is off and the server listens beyond this computer (an explicit opt-out). */
+  unsafe_network?: boolean;
 };
 
 export type Agent = {

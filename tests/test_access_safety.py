@@ -36,12 +36,8 @@ def test_deployment_rejects_split_configuration(tmp_path, monkeypatch):
         tmp_path / "deployment.json",
         hubs=[dict(path=str(hub), key="finance", dbos_url="sqlite:///registered.db")],
         operational_url="sqlite:///shared.db",
-        owui_url="http://shared-ui",
         owui_db="unused",
     )
-    monkeypatch.setenv("OWUI_INTERNAL_URL", "http://different-ui")
-    with pytest.raises(ValueError, match="OWUI_INTERNAL_URL"):
-        deployment.owui_url(hub)
     with pytest.raises(ValueError, match="HUBZOID_DBOS_DB"):
         db.dbos_url(hub, {"HUBZOID_DBOS_DB": "sqlite:///different.db"})
     with pytest.raises(ValueError, match="not registered"):
@@ -122,33 +118,3 @@ def test_chat_account_binding_denies_recycled_email(tmp_path):
     with pytest.raises(HTTPException) as error:
         _enforce_use_hub(request, tmp_path)
     assert error.value.status_code == 403
-
-
-@pytest.mark.parametrize(
-    "pages",
-    [
-        [{}],
-        [{"users": [], "total": 1}],
-        [
-            {"users": [{"id": "a", "email": "a@example.com"}], "total": 2},
-            {"users": [], "total": 1},
-        ],
-        [
-            {"users": [{"id": "a", "email": "a@example.com"}], "total": 2},
-            {"users": [{"id": "a", "email": "a@example.com"}], "total": 2},
-        ],
-    ],
-)
-def test_directory_refuses_incomplete_snapshots(pages):
-    import httpx
-    from hubzoid.access.owui import users
-
-    iterator = iter(pages)
-    with httpx.Client(
-        base_url="http://owui",
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=next(iterator))
-        ),
-    ) as client:
-        with pytest.raises(ValueError):
-            users(client)

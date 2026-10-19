@@ -13,6 +13,11 @@ import pytest
 # openrouter/anthropic/claude-haiku-4.5), so tests read the shipped copy.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+# 2.0 asks administrators to set up two-step sign-in by default. Tests that are
+# about something else sign in with a password alone; the MFA tests turn the
+# policy on themselves (tests/test_auth_mfa.py).
+os.environ.setdefault("HUBZOID_MFA_REQUIRED", "none")
+
 # A test must never signal "every process I own": os.kill(-1) or os.killpg(0/1)
 # (killpg(1) is kill(-1)). On a CI runner that kills the runner itself, and the
 # job hangs with no log. A stand-in process (MagicMock pid == 1) is the usual way in.

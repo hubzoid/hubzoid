@@ -126,11 +126,12 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
 
-def test_release_validation_covers_legacy_mode_and_a_core_only_install():
+def test_release_validation_runs_the_suite_and_a_core_only_install():
     jobs = WORKFLOW["jobs"]
     suite = next(s["run"] for s in jobs["tests"]["steps"] if "--splits" in s.get("run", ""))
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
-    assert ".[dev,openwebui]" in install and '-m "not heavy"' in suite and "--splits 2" in suite
+    assert ".[dev,postgres]" in install and "openwebui" not in install
+    assert '-m "not heavy"' in suite and "--splits 2" in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
     # Prerequisites must persist into the broad suite, not just one focused step.
     assert 'echo "$(pg_config --bindir)" >> "$GITHUB_PATH"' in install

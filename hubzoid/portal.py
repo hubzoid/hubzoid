@@ -7,17 +7,12 @@ inspect the state already held by the access store, DBOS and the audit log.
 Served by the bridge's FastAPI at `/portal`; the JSON API is under
 `/portal/api`.
 
-Auth is the same OWUI/OIDC session as chat, resolved by an injected
+Auth is the same Hubzoid session as chat, resolved by an injected
 `admin_resolver(request) -> PortalAdmin | None`. The production resolver
-validates the OWUI session server-side and strips any inbound identity header
-(so a browser can't assert its own identity); a dev resolver keys off an env
-var. Entry requires organization-wide or per-hub `manage_access`; a chat-app admin
-role alone does not grant Console access.
-
-Every endpoint also accepts `Authorization: Bearer sk-...`, an Open WebUI API
-key verified server-side against Open WebUI's key table (the same check as the
-hosted MCP surface). A key caller has no ambient cookie, so the same-origin
-rule applies only to session callers. Any other Authorization value is ignored.
+validates the session server-side and never reads a client-sent identity
+header; a dev resolver keys off an env var. Entry requires organization-wide
+or per-hub `manage_access`; a chat-app admin role alone does not grant
+Console access. The web app's Settings page shows these screens.
 
 Authority is decided by `access.service.AccessService`, never in a handler:
 every mutation builds an `Actor` from the verified identity and calls it.
@@ -73,14 +68,14 @@ class PortalAdmin:
     subject: str
     is_org_admin: bool
     manageable: list[str]
-    # How the identity was verified: "session" (Open WebUI cookie, or the local
-    # dev override) or "api-key" (an Open WebUI API key as a Bearer token).
+    # How the identity was verified: "session" (the Hubzoid session, or the
+    # local dev override).
     via: str = "session"
 
     def actor(self) -> Actor:
         return Actor(
             subject=normalize(self.subject),
-            surface="api" if self.via == "api-key" else "console",
+            surface="console",
             via=self.via,
         )
 
@@ -233,8 +228,8 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     """Resolve the portal admin from the request.
 
     Dev: `HUBZOID_PORTAL_DEV_USER=<subject>` trusts that subject (local only).
-    Prod: validate the OWUI session cookie via OWUI `GET /api/v1/auths/` and use
-    the verified email — never a client-sent identity header. Gated by
+    Prod: the verified email of the Hubzoid session — never a client-sent
+    identity header. Gated by
     `can(subject, *, manage_access)` (org) or any hub's manage_access.
     """
     hub_dir = Path(hub_dir)
@@ -244,22 +239,21 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     def resolve(request: Request) -> "PortalAdmin | None":
         # The dev override is a deliberate TWO-part opt-in: both
         # HUBZOID_PORTAL_DEV=1 AND HUBZOID_PORTAL_DEV_USER must be set. It bypasses
-        # the OWUI session, so it is strictly for `hubzoid run` local development
+        # the session check, so it is strictly for `hubzoid run` local development
         # and MUST NOT be set on any deployment with a public edge (the edge
         # proxies over loopback, so a client-IP check can't distinguish local from
-        # remote). Everywhere else, identity comes only from a verified OWUI
-        # session.
+        # remote). Everywhere else, identity comes only from a verified session.
         subject = ""
         dev = (os.environ.get("HUBZOID_PORTAL_DEV_USER") or "").strip()
         if dev and _truthy_env("HUBZOID_PORTAL_DEV"):
             log.warning(
-                "portal: HUBZOID_PORTAL_DEV is ON — trusting dev user %r without an "
-                "OWUI session. NEVER set this on a public deployment.",
+                "portal: HUBZOID_PORTAL_DEV is ON — trusting dev user %r without a "
+                "session. NEVER set this on a public deployment.",
                 dev,
             )
             subject = dev
         if not subject:
-            subject = _verify_owui_session(request, hub_dir)
+            subject = _verify_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
         try:
@@ -274,64 +268,19 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     return resolve
 
 
-def api_key(request: Request) -> str | None:
-    """The Open WebUI API key in `Authorization: Bearer sk-...`, else None.
-
-    Only that form selects the API-key path. Any other Authorization value (for
-    example HTTP Basic added by a reverse proxy, or a chat-app session token) is
-    ignored and the request is treated as a cookie session, as before."""
-    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
-    token = token.strip()
-    if scheme.lower() == "bearer" and token.startswith("sk-"):
-        from . import appmode
-
-        # Open WebUI's keys belong to Open WebUI mode only. In the web app mode
-        # an old database may still be on disk after the move, and its keys
-        # must not keep opening the Console: the header is ignored and the
-        # request falls back to the session cookie like any other.
-        if not appmode.is_openwebui():
-            return None
-        return token
-    return None
-
-
-def _key_email(request: Request, hub_dir: Path) -> str:
-    from .access import owui_api_keys
-
-    email = owui_api_keys.resolve_email(hub_dir, api_key(request))
-    if not email:
-        raise HTTPException(401, "This API key is not valid.")
-    return normalize(email)
-
-
-def api_key_admin(request: Request, hub_dir: Path) -> "PortalAdmin | None":
-    """Resolve `Authorization: Bearer sk-...` to its Open WebUI owner, with the
-    same management scope checks as a session."""
-    email = _key_email(request, hub_dir)
-    try:
-        scope = AccessService(hub_dir).scope(Actor(normalize(email), "api", "api-key"))
-    except Denied as exc:
-        raise HTTPException(exc.status, exc.message)
-    if not scope.any:
-        return None
-    return PortalAdmin(subject=normalize(email), is_org_admin=scope.org_admin,
-                       manageable=sorted(scope.hubs), via="api-key")
-
-
 def _is_loopback(request: Request) -> bool:
     host = getattr(request.client, "host", "") if request.client else ""
     return host in ("127.0.0.1", "::1", "localhost")
 
 
 _check_same_origin = require_same_origin
-_verify_owui_session = verified_email
+_verify_session = verified_email
 
 
 def _check_mutation(request: Request, admin: PortalAdmin) -> None:
-    """Session callers carry an ambient cookie, so their writes must come from
-    our own origin. An API-key caller sends its credential explicitly."""
-    if admin.via != "api-key":
-        _check_same_origin(request)
+    """Callers carry an ambient session cookie, so their writes must come from
+    our own origin."""
+    _check_same_origin(request)
 
 
 # ---- account state ----------------------------------------------------------
@@ -360,7 +309,7 @@ def _account_flags(gs, subject: str) -> dict:
 def _account_status(subject: str, identity: dict, flags: dict) -> str:
     """One display status per subject. Precedence: an admin block beats
     everything; then the structural kinds; then signup/approval progress; an
-    OWUI-side unavailable account that is *not* pending (deleted/missing) is
+    unavailable account that is *not* pending (deleted/missing) is
     reported as `blocked` with `account_unavailable=true` alongside."""
     if flags["suspended"]:
         return "blocked"
@@ -396,10 +345,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     service = AccessService(hub_dir)
 
     def require_admin(request: Request) -> PortalAdmin:
-        if api_key(request):
-            admin = api_key_admin(request, hub_dir)
-        else:
-            admin = resolver(request)
+        admin = resolver(request)
         if admin is None:
             raise HTTPException(
                 403, "Sign in with an account allowed to manage agent access."
@@ -409,8 +355,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def require_person(request: Request) -> Actor:
         """Any verified caller, manager or not: for change requests, whose own
         check is "only the proposer may see or decide it"."""
-        if api_key(request):
-            return Actor(_key_email(request, hub_dir), "api", "api-key")
         if admin_resolver is not None:
             admin = admin_resolver(request)
             if admin is None:
@@ -418,7 +362,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             return admin.actor()
         dev = (os.environ.get("HUBZOID_PORTAL_DEV_USER") or "").strip()
         subject = dev if dev and _truthy_env("HUBZOID_PORTAL_DEV") else ""
-        subject = subject or _verify_owui_session(request, hub_dir)
+        subject = subject or _verify_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
         return Actor(normalize(subject), "console", "session")
@@ -450,28 +394,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             return [h for h in allowed_hubs(admin) if h["key"] == hub]
         return allowed_hubs(admin)
 
-    @router.get("/chat-access")
-    def chat_access(request: Request):
-        """Used by the edge to filter OWUI's picker, including OWUI admins.
-
-        This is not the Console admin gate. Ordinary signed-in members need
-        their own effective entry decision too. The bridge still enforces entry.
-        """
-        # Scripts and chat clients call the chat app's API with a bearer token
-        # and no cookie. They got the model list before the edge filtered it.
-        subject = _verify_owui_session(request, hub_dir, bearer=True)
-        if not subject:
-            raise HTTPException(401, "Sign in to see your agents.")
-        gs = store_for(hub_dir)
-        blocked = gs.is_suspended(subject)
-        denied = []
-        hubs = deployment.hubs(hub_dir)
-        for h in hubs:
-            if blocked or not gs.can(subject, h["key"], USE_HUB):
-                denied.append(h["model_id"])
-        # `blocked` and `allowed` let the chat explain an empty agent list.
-        return {"denied": denied, "blocked": blocked, "allowed": len(hubs) - len(denied)}
-
     @router.get("/me")
     @_denied
     def me(brief: bool = False, admin=Depends(require_admin)):
@@ -482,11 +404,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         if brief:  # the chat sidebar link only needs to know the Console opens
             return out
-        # The Hubzoid web app (not Open WebUI) owns sign-in and personal
-        # connections in this mode.
-        from . import appmode
-
-        out["web_app"] = not appmode.is_openwebui(hub_dir)
+        # The web app owns sign-in and personal connections (always, since 2.0;
+        # kept for clients that still read it).
+        out["web_app"] = True
         from .access import accounts as accountlib
 
         actor = admin.actor()
@@ -494,7 +414,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             grantable=service.grantable(actor),
             account_admin=admin.is_org_admin,
             can_create_accounts=service.can_create_accounts(actor),
-            accounts_configured=accountlib.configured(hub_dir),
+            accounts_configured=True,
             # How a new account can sign in: {"password", "google", "google_domains"?}.
             sign_in=accountlib.sign_in_options(hub_dir),
             via=admin.via,
@@ -707,8 +627,15 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         _check_mutation(request, admin)
         path = Path(require_hub(admin, payload.hub))
         gs = store_for(hub_dir)
-        if not (admin.is_org_admin or gs.can(admin.subject, payload.hub, "workflows_manage")):
-            raise HTTPException(403, "Running workflows needs \u201cRun and control workflows\u201d.")
+        from .workflows import access as wf_access
+
+        try:
+            key = wf_access.canonical(path, payload.workflow)
+        except wf_access.AccessError:
+            key = payload.workflow
+        if not wf_access.authorize(path, admin.subject, key, "run").allowed:
+            raise HTTPException(403, f"You can't run {payload.workflow}. Give yourself run access in "
+                                     "Settings, Workflow access.")
         if control._engine_here(path):
             try:
                 out = control.start_now(path, payload.workflow, actor=admin.subject, surface="console",
@@ -814,11 +741,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             is_admin = resolver(request) is not None
         except HTTPException:
             is_admin = False
-        from . import appmode
         from .access.store import USE_HUB
 
         gs = store_for(hub_dir)
-        owui = appmode.is_openwebui(hub_dir)
         blocked = gs.is_suspended(email)
         bases = api_bases(hub_dir)
         agents, schedules, reports, catalog = [], [], [], []
@@ -831,7 +756,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if not (mine or made or usable):
                 continue
             model = h.get("model_id") or key
-            chat = (f"/?models={quote(model)}" if owui else f"/?agent={quote(model)}") if usable else None
+            chat = f"/?agent={quote(model)}" if usable else None
             agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api",
                                chat=chat))
             schemas = input_schemas(path, key) if mine or usable else {}
@@ -840,15 +765,17 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 from .capabilities import switched_off
                 from .tools.report_tools import SCHEDULE_REPORTS, RESERVED_NAMES
                 from .workflows.boot import schedules_enabled
+                from .workflows import access as wf_access
 
                 if schedules_enabled() and not switched_off(SCHEDULE_REPORTS):
                     for wf in definitions(path):
                         if (not wf.get("as_tool") or wf.get("error") or wf["name"].lower() in RESERVED_NAMES
                                 or (wf.get("surfaces") and "web" not in wf["surfaces"])
-                                or not gs.can(email, key, tool_permission(wf["name"]))):
+                                or not wf_access.authorize(path, email, wf["name"], "run").allowed):
                             continue
                         catalog.append(dict(hub=key, workflow=wf["name"], title=wf["title"],
-                            schedulable=bool(wf.get("schedulable") and gs.can(email, key, "schedule_reports")),
+                            schedulable=bool(wf.get("schedulable")
+                                             and wf_access.authorize(path, email, wf["name"], "schedule").allowed),
                             schema=schemas.get(wf["name"])))
             for s in mine:
                 links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))
@@ -859,7 +786,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 reports.append(dict(id=x.id, hub=key, title=x.title or x.key, report=title_for(x.workflow),
                                     url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
                                     company_on=bool(series_lib.domain_token(path, x))))
-        return {"subject": email, "admin": is_admin, "blocked": blocked, "web_app": not owui, "agents": agents,
+        return {"subject": email, "admin": is_admin, "blocked": blocked, "web_app": True, "agents": agents,
                 "schedules": schedules, "reports": reports, "catalog": catalog,
                 "connections": _has_connections(hub_dir, account, email)}
 
@@ -1202,13 +1129,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             )
         }
 
-    @router.post("/sync")
-    @_denied
-    def sync(request: Request, admin=Depends(require_admin)):
-        _check_mutation(request, admin)
-        return service.sync_visibility(admin.actor())
-
-    # ---- accounts (Open WebUI logins, created and changed as the service account)
+    # ---- accounts
 
     @router.post("/accounts")
     @_denied
@@ -1307,8 +1228,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @_denied
     def confirm_change_request(request_id: str, request: Request, body: Any = Body(None),
                                actor=Depends(require_person)):
-        if actor.via != "api-key":
-            _check_same_origin(request)
+        _check_same_origin(request)
         payload = _validated(ConfirmRequest, body)
         return service.confirm(
             actor, request_id, plan_hash=payload.plan_hash,
@@ -1319,8 +1239,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @_denied
     def reject_change_request(request_id: str, request: Request,
                               actor=Depends(require_person)):
-        if actor.via != "api-key":
-            _check_same_origin(request)
+        _check_same_origin(request)
         service.reject(actor, request_id)
         return dict(ok=True, id=request_id, status="rejected")
 
@@ -1451,8 +1370,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     @router.get("/overview")
     def overview(admin=Depends(require_admin)):
-        from .access.reconcile import sync_status
-
         gs = store_for(hub_dir)
         hs = allowed_hubs(admin)
         keys = {h["key"] for h in hs}
@@ -1461,7 +1378,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             hubs=len(hs),
             grants=len(grants),
             people=len({g[0] for g in grants if g[0] != "*"}),
-            visibility=sync_status(hub_dir),
         )
 
     from . import portal_evals
@@ -1473,6 +1389,14 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                               lambda actor, hub: deployment.hub_path(hub_dir, hub))
     work_item_routes.register_stations(router, require_person,
                                        lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    work_item_routes.register_budgets(router, require_person,
+                                      lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Sandboxes: metadata for viewers, controls for managers.
+    from .sandbox import routes as sandbox_routes
+    sandbox_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Cards (MCP Apps): settings for administrators, instances for their requester.
+    from .apps import routes as app_routes
+    app_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
     return router
 
 

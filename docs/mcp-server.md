@@ -11,7 +11,7 @@ In the hub's `.env`:
 ```dotenv
 MCP_SERVER=true
 MCP_PUBLIC_URL=https://your-domain.example/mcp
-WEBUI_AUTH=true
+HUBZOID_AUTH=true
 ```
 
 Restart Hubzoid, then connect:
@@ -20,9 +20,9 @@ Restart Hubzoid, then connect:
 claude mcp add --transport http --scope user hubzoid https://your-domain.example/mcp
 ```
 
-In Claude Code, run `/mcp` and authenticate. The browser opens Open WebUI login,
-then Hubzoid consent, then returns to Claude. Existing login sessions skip the
-login form. Static API-key support and legacy/dual modes have been removed.
+In Claude Code, run `/mcp` and authenticate. The browser opens the Hubzoid
+sign-in page, then Hubzoid consent, then returns to Claude. An existing
+sign-in skips the form, never the consent. Static API keys are not accepted.
 
 See [the complete Claude setup guide](mcp-oauth-claude.md) for deployment,
 gateway discovery, remote Claude connectors, migration and revocation. An
@@ -32,9 +32,10 @@ OAuth with PKCE and Streamable HTTP.
 
 ## Identity & access
 
-Hosted MCP accepts only Hubzoid-issued OAuth credentials. Open WebUI login
-establishes identity and Hubzoid consent authorizes the connection. Static OWUI
-API keys, login JWTs and bridge keys cannot authenticate MCP. Current account
+Hosted MCP accepts only Hubzoid-issued OAuth credentials. Signing in to
+Hubzoid establishes identity and Hubzoid consent authorizes the connection.
+Session cookies, Open WebUI (1.x) API keys and bridge keys cannot authenticate
+MCP. Current account
 status and hub permissions are checked on every request. Set `MCP_SERVER=false`
 and restart to disable MCP.
 
@@ -43,7 +44,7 @@ the same access guard as chat:
 
 * The caller needs `use_hub` to connect, plus the named grant for each
   restricted capability. The built-in `remember` tool requires `curator`,
-  shown in Console as **Save shared knowledge**.
+  shown in Settings as **Save shared knowledge**.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
@@ -73,22 +74,19 @@ mcp_instructions: |
 
 Each MCP-enabled hub gets its own endpoint: `https://<host>/b/<slug>/mcp`.
 Detection is strictly per-hub: `MCP_SERVER=true` must be in **that hub's**
-`.env` file. The gateway registers the shared Open WebUI database URL and
-optional `DATABASE_SCHEMA` in its deployment manifest. Account, group and OAuth
-lookups support SQLite and PostgreSQL; a configured database failure denies
-access rather than falling back to a local SQLite copy.
+`.env` file. Accounts and OAuth grants live in the deployment's operational
+database, which the gateway records in its deployment manifest. SQLite and
+PostgreSQL are supported; a configured database failure denies access rather
+than falling back to a local SQLite copy.
 
-Separately managed bridges (`--no-bridges`, systemd) should use the same
-deployment manifest, or the same `DATABASE_URL`/`DATABASE_SCHEMA` as Open WebUI.
-For SQLite without a manifest, set `HUBZOID_OWUI_DB=<gateway-data>/webui.db`.
-Keep that path in separate bridges for shared uploads even with PostgreSQL;
-`DATABASE_URL` takes precedence for database lookups.
+Separately managed bridges (`--no-bridges`, systemd) use the same deployment
+manifest, or the same `DATABASE_URL`/`HUBZOID_OPERATIONAL_DB`.
 
 A shared account does not grant entry to every hub. Grant
 **Use this agent** in each intended hub; the same `use_hub` check protects chat
-and MCP. Open WebUI model visibility is not the MCP authorization boundary.
+and MCP.
 
-`MCP_ACCESS_GROUP` is no longer read: Open WebUI groups grant nothing, and
+`MCP_ACCESS_GROUP` is no longer read: groups grant nothing, and
 `hubzoid doctor` warns while it is set. See [access management](access-management.md).
 
 ## Operational notes

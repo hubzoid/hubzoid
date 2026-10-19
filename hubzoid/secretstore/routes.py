@@ -97,7 +97,7 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
         from ..auth import LOCAL_OWNER_EMAIL
         from ..connectors.routes import signed_in
 
-        if not appmode.is_openwebui(hub_dir) and not appmode.auth_enabled(hub_dir):
+        if not appmode.auth_enabled(hub_dir):
             _trusted_host(request)
         user = signed_in(request, hub_dir)
         if user is None:
@@ -109,7 +109,7 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
             scope = AccessService(hub_dir).scope(Actor(email, "console", "session"))
         except Denied as exc:
             raise error(exc.status, exc.code, exc.message) from None
-        org = scope.org_admin and (appmode.is_openwebui(hub_dir) or getattr(user, "is_admin", False))
+        org = scope.org_admin and getattr(user, "is_admin", False)
         return Viewer(email, org, org or own in scope.hubs)
 
     def _trusted_host(request: Request) -> None:

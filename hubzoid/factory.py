@@ -176,11 +176,18 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
     # has no restricted/ folder, so existing hubs are unchanged.
     from . import access  # deferred to avoid circular import via __init__.py
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
 
-    mcp_servers = load_mcp_servers(mcp_loader.load_all_raw(hub_dir))
+    from .hitl import gate as hitl_gate
+
+    # The access check per call (milestone B) first, then the approval gate.
+    mcp_servers = [access.guard.checked_server(hitl_gate.guard_mcp_server(s, hub_dir), hub_dir)
+                   for s in load_mcp_servers(mcp_loader.load_all_raw(hub_dir))]
 
     # Delegates run as within-turn subagents the main agent calls (as_tool),
     # each on its own model. Built from the gated registry so their tool scope
@@ -232,21 +239,31 @@ def _with_core_skills(skills: list) -> list:
 
 
 def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
-    """Add the core-shipped, `curator`-gated `remember` tool to the registry.
+    """Add the core-shipped hub memory and hub change tools (`curator`-gated)
+    and the personal memory tools to the registry.
 
     Present on every hub but hidden/denied unless the caller is in the hub's
     `curator` Open WebUI group on a verified-login surface (same wall as
     restricted/ tools). A hub that already defines its own tool of the same
     name keeps it — hub wins over the core tool.
     """
+    from .hub_changes.tools import gate
     from .tools import curator as curator_tool
 
     for ft in curator_tool.make(ctx):
         if ft.name in registry:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
-                                               ctx.hub_dir)
+        # Added after access.apply, so the per-call run check is applied here.
+        registry[ft.name] = access.guard.run_checked(
+            gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION), ctx.hub_dir)
+    # Personal memory: each person's own notes. No grant needed; a call with
+    # nobody signed in is refused by the tool itself. Like every tool, it stops
+    # when the run's account loses the hub or its credential ends.
+    from . import personal_memory
+
+    for ft in personal_memory.make(ctx.hub_dir):
+        registry.setdefault(ft.name, access.guard.run_checked(ft, ctx.hub_dir))
 
 
 def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
@@ -262,7 +279,8 @@ def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
         if ft.name in registry:
             log.info("hub tool %r overrides the core call_jev tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir)
+        registry[ft.name] = access.guard.run_checked(
+            access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir), ctx.hub_dir)
 
 
 def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
@@ -378,8 +396,8 @@ def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
 
 
 def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
-    """The hub's pre-shipped and local tools, gated as for the main agent, for
-    a station to pick from. A station gets only the names it lists; nothing
+    """The hub's pre-shipped and local tools, gated as for the main agent
+    (access and approvals), for a station to pick from. A station gets only the names it lists; nothing
     else here (skills, delegates, MCP servers) reaches it."""
     hub_dir = Path(hub_dir).resolve()
     settings = settingslib.load(hub_dir)
@@ -389,5 +407,7 @@ def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
                      knowledge=knowledge_loader.load_all(hub_dir))
     connlib.attach(ctx)
     registry: dict[str, FunctionTool] = {**make_builtin_tools(ctx), **tools_local_loader.load_all(hub_dir)}
-    from . import access
-    return access.apply(hub_dir, registry)
+    from . import access, hitl
+    # The same approval gate as every agent's tools; an unattended station call
+    # that needs a person is refused by it, and no question tool is added.
+    return hitl.equip(hub_dir, access.apply(hub_dir, registry), questions=False)

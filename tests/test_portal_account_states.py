@@ -154,7 +154,7 @@ def test_reactivate_when_only_owui_marker_is_set_is_honest_noop(client):
         suspended=False, account_unavailable=True, blocked=True, status="blocked"
     )
     assert body["message"].startswith("Not blocked by an admin.")
-    assert "Open WebUI" in body["message"]
+    assert "People" in body["message"]
     # the OWUI marker is untouched, enforcement unchanged, no bogus audit row
     assert client.gs.is_suspended("gone@x.org") is True
     actions = [
@@ -192,7 +192,7 @@ def test_grant_409_messages_name_the_real_cause(client):
     r = _grant(client, "pend@x.org")
     assert r.status_code == 409
     assert "Reactivate" not in r.json()["detail"]
-    assert "Open WebUI" in r.json()["detail"]
+    assert "People" in r.json()["detail"]
 
 
 def test_block_endpoint_rejects_wildcard_and_last_admin(client):
