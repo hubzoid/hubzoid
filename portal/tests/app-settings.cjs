@@ -53,6 +53,24 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
       avatarRight: cell.parentElement.previousElementSibling.getBoundingClientRect().right,
     })));
     assert.ok(identities.every((cell) => cell.width >= 170 && cell.left >= cell.avatarRight + 5), "person names and avatars do not overlap in embedded Settings");
+    await page.goto(`${base}/settings#/agents/finance/access`);
+    await page.getByRole("list", { name: "Access to Finance Assistant", exact: true }).waitFor();
+    const agentNav = page.getByRole("navigation", { name: "Agent sections" });
+    const runsLink = agentNav.getByRole("link", { name: "Runs & schedules", exact: true });
+    await runsLink.focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("list", { name: "Workflows", exact: true }).waitFor();
+    assert.equal(await runsLink.getAttribute("aria-current"), "page");
+    await page.setViewportSize({ width: 390, height: 844 });
+    const workflowRows = page.locator(".hz-workflow-list > li");
+    const actionBounds = await workflowRows.first().getByRole("button", { name: "Run now", exact: true }).boundingBox();
+    assert.ok(actionBounds && actionBounds.x >= 0 && actionBounds.x + actionBounds.width <= 390, "workflow actions fit without horizontal scrolling");
+    await agentNav.getByRole("link", { name: "Access", exact: true }).click();
+    const editAccess = page.getByRole("button", { name: /^Edit access for/ }).first();
+    await editAccess.waitFor();
+    const editBounds = await editAccess.boundingBox();
+    assert.ok(editBounds && editBounds.x + editBounds.width <= 390 && editBounds.height >= 44, "access actions are reachable on phones");
+    await page.setViewportSize({ width: 1172, height: 740 });
     // Navigate within the app: the lazy Console stylesheet must remain loaded.
     await page.locator(".hz-set-backlink").click();
     const input = page.getByRole("textbox", { name: /^Message / });

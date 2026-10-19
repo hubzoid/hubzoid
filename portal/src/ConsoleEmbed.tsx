@@ -42,7 +42,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
     return () => setLeaveGuard(null);
   }, []);
   return (
-    <ConfigProvider theme={config}>
+    <ConfigProvider theme={config} drawer={{ classNames: { root: "hz-native-overlay" } }} modal={{ classNames: { root: "hz-native-overlay" } }}>
       <App>
         <div className="console-embed">
           {personal ? (
