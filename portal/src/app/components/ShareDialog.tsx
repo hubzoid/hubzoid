@@ -1,6 +1,7 @@
 // Share a conversation: a snapshot link (previewed, then published for named
 // people, everyone signed in here, or the public when allowed), or live
 // collaborators who read along or write on their own branches.
+import { Select } from "./Select";
 import { useEffect, useId, useState } from "react";
 import { CircleHelp, Copy, Link2, Link2Off, UserMinus, Users } from "lucide-react";
 import { t } from "../i18n/en";
@@ -8,7 +9,7 @@ import { del, enc, get, post, put } from "../lib/api";
 import { describeError } from "../lib/errors";
 import type { Conversation, ShareLink } from "../lib/types";
 import { toast } from "./toast";
-import { Button, Field, Modal, Notice, Spinner, Tip, cx } from "./ui";
+import { Button, Field, Modal, Notice, Spinner, Tip } from "./ui";
 
 export function shareUrl(link: ShareLink): string {
   if (link.url && /^https?:\/\//.test(link.url)) return link.url;
@@ -267,11 +268,8 @@ export function ShareDialog({
             <div className="flex-1">
               <Field label={t.share.addPerson} value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="name@company.com" />
             </div>
-            <select className={cx("hz-input !w-auto")} value={role} onChange={(e) => setRole(e.target.value as "viewer" | "editor")} aria-label={t.share.role}>
-              <option value="viewer">{t.share.roles.viewer}</option>
-              <option value="editor">{t.share.roles.editor}</option>
-            </select>
-            <Button type="submit" size="sm" loading={busy} disabled={!invite.trim()}>
+            <Select className="!w-auto" value={role} onValueChange={value => setRole(value as "viewer" | "editor")} aria-label={t.share.role} options={[{value: "viewer", label: t.share.roles.viewer}, {value: "editor", label: t.share.roles.editor}]} />
+            <Button type="submit" variant="primary" size="sm" loading={busy} disabled={!invite.trim()}>
               {t.share.add}
             </Button>
           </form>

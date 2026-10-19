@@ -6,6 +6,7 @@
 // (/api/chat/artifact-frame): an opaque origin, scripts allowed, nothing else,
 // and no network. The page's source reaches the frame as a message; this
 // window never inserts it into its own document.
+import { Select } from "../components/Select";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -187,33 +188,11 @@ export function ArtifactPanel({
     <aside className="hz-artifact-panel" aria-label={t.artifacts.panel}>
       <div className="hz-artifact-head">
         {artifacts.length > 1 ? (
-          <select
-            className="hz-artifact-select font-semibold"
-            value={artifact.artifact_id}
-            onChange={(e) => onSelect(e.target.value)}
-            aria-label={t.artifacts.choose}
-          >
-            {artifacts.map((a) => (
-              <option key={a.artifact_id} value={a.artifact_id}>
-                {a.title}
-              </option>
-            ))}
-          </select>
+          <Select className="hz-artifact-select font-semibold" value={artifact.artifact_id} onValueChange={onSelect} aria-label={t.artifacts.choose} options={artifacts.map(a => ({value: a.artifact_id, label: a.title}))} />
         ) : (
           <span className="truncate text-[13px] font-semibold text-ink">{artifact.title}</span>
         )}
-        <select
-          className="hz-artifact-select"
-          value={current ?? ""}
-          onChange={(e) => setVersionId(e.target.value)}
-          aria-label={t.artifacts.version}
-        >
-          {[...artifact.versions].reverse().map((v) => (
-            <option key={v.version_id} value={v.version_id}>
-              {t.artifacts.versionLabel(v.ordinal, v.provenance, v.version_id === artifact.current_version_id)}
-            </option>
-          ))}
-        </select>
+        <Select className="hz-artifact-select" value={current ?? ""} onValueChange={setVersionId} aria-label={t.artifacts.version} options={[...artifact.versions].reverse().map(v => ({value: v.version_id, label: t.artifacts.versionLabel(v.ordinal, v.provenance, v.version_id === artifact.current_version_id)}))} />
         <span className="flex-1" />
         {TEXT_KINDS.has(artifact.kind) && text !== null && <CopyButton text={text} label={t.artifacts.copy} />}
         <a

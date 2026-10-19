@@ -59,7 +59,7 @@ export function ProfileForm() {
         <div className="hz-label">{t.account.role}</div>
         <p className="m-0 text-[14px] text-body">{app.isAdmin ? t.account.admin : t.account.member}</p>
       </div>
-      <Button type="submit" loading={busy} disabled={!dirty}>
+      <Button type="submit" variant="primary" loading={busy} disabled={!dirty}>
         {busy ? t.saving : t.save}
       </Button>
     </form>
@@ -132,7 +132,7 @@ export function PasswordForm() {
         onChange={(e) => setConfirm(e.target.value)}
         error={errors.confirm}
       />
-      <Button type="submit" loading={busy}>
+      <Button type="submit" variant="primary" loading={busy}>
         {t.account.changePassword}
       </Button>
     </form>

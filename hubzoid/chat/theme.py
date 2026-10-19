@@ -42,14 +42,14 @@ TOKENS = (
 )
 
 _LIGHT = {
-    # Warm paper: a quiet page, a slightly deeper sidebar, white raised surfaces.
-    "canvas": "#FAFAF8", "surface": "#F3F2EF", "elevated": "#FFFFFF", "sunken": "#EEECE7",
-    "hover": "#ECEBE7", "pressed": "#E3E1DB",
-    "text": "#242421", "bodyText": "#2B2B27", "mutedText": "#69665E",
-    "border": "#DEDCD4", "borderSoft": "#E8E6E0", "input": "#898479",
-    "action": "#A94224", "actionText": "#FFFFFF", "actionHover": "#90361C",
-    "actionActive": "#7D2E18", "actionSoft": "#F8E8DF", "link": "#A94224",
-    "focus": "#A94224", "selection": "#F8E8DF", "selectionText": "#242421",
+    # Studio: white page, soft neutral sidebar, restrained boundaries.
+    "canvas": "#FFFFFF", "surface": "#FAFAF8", "elevated": "#FFFFFF", "sunken": "#F2F2F0",
+    "hover": "#E7E6E2", "pressed": "#DDDCDA",
+    "text": "#0B0B0C", "bodyText": "#242426", "mutedText": "#5E5E65",
+    "border": "#E7E6E2", "borderSoft": "#EFEFEC", "input": "#89898F",
+    "action": "#B5471F", "actionText": "#FFFFFF", "actionHover": "#913617",
+    "actionActive": "#7D2E18", "actionSoft": "#F8E8DF", "link": "#B5471F",
+    "focus": "#6B6B70", "selection": "#F8E8DF", "selectionText": "#242421",
     "danger": "#B3312C", "dangerText": "#FFFFFF",
     "successText": "#286841", "successBackground": "#EAF4EC", "successBorder": "#C9E2D1",
     "warningText": "#795416", "warningBackground": "#FAF0DB", "warningBorder": "#EFDCA6",
@@ -58,15 +58,14 @@ _LIGHT = {
 }
 
 _DARK = {
-    # Neutral near-black, as in the desktop chat tools: the page, a darker
-    # sidebar, raised menus and composer, quiet hairlines, a soft coral.
-    "canvas": "#151515", "surface": "#111111", "elevated": "#1F1F1F", "sunken": "#232323",
-    "hover": "#1E1E1E", "pressed": "#252525",
-    "text": "#ECECEC", "bodyText": "#E2E2E2", "mutedText": "#9B9B9B",
-    "border": "#2A2A2A", "borderSoft": "#222222", "input": "#666666",
-    "action": "#D97757", "actionText": "#111111", "actionHover": "#E48A6B",
-    "actionActive": "#C96A4B", "actionSoft": "#2B1F1A", "link": "#E39274",
-    "focus": "#E48A6B", "selection": "#3A2A22", "selectionText": "#ECECEC",
+    # Studio: neutral near-black, raised menus, quiet hairlines and Signal Orange.
+    "canvas": "#111113", "surface": "#151516", "elevated": "#222224", "sunken": "#222224",
+    "hover": "#222224", "pressed": "#2C2C30",
+    "text": "#FAFAF8", "bodyText": "#EBEBE9", "mutedText": "#B5B5BC",
+    "border": "#29292E", "borderSoft": "#232327", "input": "#6B6B70",
+    "action": "#E5572A", "actionText": "#0B0B0C", "actionHover": "#F06A40",
+    "actionActive": "#DE5126", "actionSoft": "#2B1F1A", "link": "#F28B66",
+    "focus": "#B5B5BC", "selection": "#3A2A22", "selectionText": "#ECECEC",
     "danger": "#E0716A", "dangerText": "#111111",
     "successText": "#9FD0AE", "successBackground": "#17261C", "successBorder": "#2D4A39",
     "warningText": "#E6C283", "warningBackground": "#2B2518", "warningBorder": "#5A4826",
@@ -259,6 +258,7 @@ def css_variables(resolved: dict, mode: str) -> dict[str, str]:
         "--hz-ink": p["text"], "--hz-body": p["bodyText"], "--hz-mute": p["mutedText"],
         "--hz-line": p["border"], "--hz-line-soft": p["borderSoft"], "--hz-input": p["input"],
         "--hz-accent": p["action"], "--hz-accent-hover": p["actionHover"],
+        "--hz-accent-active": p["actionActive"],
         "--hz-accent-ink": p["actionText"], "--hz-accent-soft": p["actionSoft"],
         "--hz-accent-text": p["link"], "--hz-danger": p["errorText"],
         "--hz-danger-solid": p["danger"], "--hz-danger-ink": p["dangerText"],

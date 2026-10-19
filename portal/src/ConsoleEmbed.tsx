@@ -2,7 +2,7 @@
 // data and checks as the standalone Console, chosen by the URL hash, without
 // the Console's own navigation (Settings has its own).
 import { Suspense, useCallback, useEffect } from "react";
-import { Alert, App, Button, ConfigProvider, Spin, theme } from "antd";
+import { Alert, App, Button, ConfigProvider, Spin, theme, type ThemeConfig } from "antd";
 import type { Hub, Me, MyData } from "./api";
 import { useData } from "./hooks/useData";
 import { hasPendingChanges, useRoute } from "./hooks/useRoute";
@@ -23,15 +23,18 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "w
   const ink = v("--hz-ink", "#ececec");
   const mute = v("--hz-mute", "#9b9b9b");
   const scale = parseFloat(css.fontSize) / 14;
-  const config = {
+  const config: ThemeConfig = {
     ...base,
     // Compact spacing should not shrink text a second time. Keep the native
     // app's type scale, including the person's text-size preference.
     algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-    token: { ...base.token, fontSize: 13 * scale, fontSizeSM: 12 * scale, fontSizeHeading2: 19 * scale, fontSizeHeading3: 15 * scale, borderRadius: 8, controlHeight: view.density === "compact" ? 30 : 34 },
+    token: { ...base.token, fontSize: 13 * scale, fontSizeSM: 12 * scale, fontSizeHeading2: 19 * scale, fontSizeHeading3: 15 * scale, borderRadius: 8, controlHeight: view.density === "compact" ? 32 : 36 },
     components: {
       ...base.components,
-      Button: { ...(base.components?.Button ?? {}), colorPrimary: ink, colorPrimaryHover: v("--hz-secondary", "#b5b5b5"), colorPrimaryActive: ink, primaryColor: v("--hz-bg", "#151515"), primaryShadow: "none" },
+      Button: { ...(base.components?.Button ?? {}), colorPrimary: v("--hz-accent", "#B5471F"), colorPrimaryHover: v("--hz-accent-hover", "#913617"), colorPrimaryActive: v("--hz-accent-active", "#7D2E18"), primaryColor: v("--hz-accent-ink", "#FFFFFF"), primaryShadow: "none", defaultColor: ink, defaultHoverColor: ink, defaultActiveColor: ink, defaultHoverBg: v("--hz-hover", "#E7E6E2"), defaultActiveBg: v("--hz-active", "#DDDCDA"), defaultHoverBorderColor: v("--hz-input", "#89898F"), defaultActiveBorderColor: v("--hz-input", "#89898F"), textHoverBg: v("--hz-hover", "#E7E6E2") },
+      Select: { ...(base.components?.Select ?? {}), optionSelectedBg: v("--hz-active", "#DDDCDA"), optionSelectedColor: ink, optionActiveBg: v("--hz-hover", "#E7E6E2"), optionSelectedFontWeight: 500, activeBorderColor: v("--hz-focus", "#6B6B70"), hoverBorderColor: v("--hz-input", "#89898F"), activeOutlineColor: "transparent" },
+      Segmented: { ...(base.components?.Segmented ?? {}), itemSelectedBg: v("--hz-active", "#DDDCDA"), itemSelectedColor: ink, itemHoverBg: v("--hz-hover", "#E7E6E2"), itemHoverColor: ink },
+      Menu: { ...(base.components?.Menu ?? {}), itemSelectedBg: v("--hz-active", "#DDDCDA"), itemSelectedColor: ink, itemHoverColor: ink, itemHoverBg: v("--hz-hover", "#E7E6E2") },
       Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
       Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale },
@@ -43,7 +46,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "w
     return () => setLeaveGuard(null);
   }, []);
   return (
-    <ConfigProvider theme={config} drawer={{ classNames: { root: "hz-native-overlay" } }} modal={{ classNames: { root: "hz-native-overlay" } }}>
+    <ConfigProvider theme={config} select={{ classNames: { popup: { root: "hz-native-popup" } } }} dropdown={{ classNames: { root: "hz-native-popup" } }} drawer={{ classNames: { root: "hz-native-overlay" } }} modal={{ classNames: { root: "hz-native-overlay" } }}>
       <App>
         <div className="console-embed">
           {personal === "work" ? (
