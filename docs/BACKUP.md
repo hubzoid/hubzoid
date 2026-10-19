@@ -90,13 +90,14 @@ upgrade or once a quarter:
 hubzoid restore hubzoid-2026-09-25.tar.gz --rehearse
 ```
 
-For an archive with a PostgreSQL dump, give a scratch database to restore it
-into. Its URL is read from an environment variable, never the command line,
-and whatever that database holds is replaced:
+For an archive with a PostgreSQL dump, name a PostgreSQL server to rehearse
+on. The rehearsal creates a temporary database there, restores into it and
+drops it, so the role in the URL needs permission to create databases. The
+URL is read from an environment variable, never the command line:
 
 ```bash
-export SCRATCH_DATABASE_URL=postgresql://hubzoid@localhost/hubzoid_rehearsal
-hubzoid restore hubzoid-2026-09-25.tar.gz --rehearse --postgres-env SCRATCH_DATABASE_URL
+export REHEARSAL_DATABASE_URL=postgresql://hubzoid@localhost/postgres
+hubzoid restore hubzoid-2026-09-25.tar.gz --rehearse --postgres-env REHEARSAL_DATABASE_URL
 ```
 
 ## Restoring

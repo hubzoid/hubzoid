@@ -30,7 +30,8 @@ traces and upgrade fencing wait for milestone D.
   `PGPASSWORD`, never on a command line. `hubzoid restore --postgres` loads it
   back into the database named by an environment variable.
 - **Rehearsal.** `hubzoid restore ARCHIVE --rehearse` restores into a scratch
-  folder (and a scratch PostgreSQL database named by `--postgres-env`),
+  folder (and a temporary database on the PostgreSQL server named by
+  `--postgres-env`, dropped afterwards),
   upgrades each operational store to this release, reports what came back
   and removes the scratch copy. The deployment is never touched.
 - **Weekly by default.** The bridge looks every half hour and backs up when

@@ -14,8 +14,8 @@ Every file's SHA-256 is in the index, and `verify` reads the archive back:
 every checksum, an SQLite integrity check of each database and a listing of
 each PostgreSQL dump. A backup that fails verification is deleted and never
 recorded as done. `rehearse` restores an archive into a scratch folder (and a
-scratch PostgreSQL database), upgrades the copies to this release and reports,
-without touching the deployment.
+temporary PostgreSQL database it drops afterwards), upgrades the copies to this
+release and reports, without touching the deployment.
 
 Not in the archive:
   - hub content (AGENTS.md, skills, knowledge, tools). It belongs in the hub's
@@ -42,6 +42,7 @@ restoring data in place never replaces the deployment key or the link secret.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -288,6 +289,8 @@ def _files(root: Root, include_secrets: bool, exclude: set[Path], exclude_dirs: 
             rel = path.relative_to(root.path)
             if path.is_symlink() or not path.is_file() or path.resolve() in exclude:
                 continue
+            if any(path.resolve().is_relative_to(d) for d in exclude_dirs):
+                continue  # an earlier archive, in a backups folder that is itself a saved folder
             if _skip(rel, root, include_secrets):
                 continue
             yield path, rel
@@ -390,6 +393,27 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
     try:
         for s in stores:
             s.put(HOLD_KEY, {"reason": "backup", "by": actor, "until": time.time() + wait + _HOLD_MARGIN})
+        index, checked = _take(p, out, include_secrets, wait, poll, settle, say, stores, actor)
+        for s in stores:  # read by `hubzoid doctor` (backup.age)
+            s.put("backup:last", {"at": time.time(), "path": str(out), "by": actor, "verified": True,
+                                  "bytes": out.stat().st_size, "files": checked["files"]})
+        index["verified"] = checked
+    finally:
+        for s in stores:
+            try:
+                s.drop(HOLD_KEY)
+            except Exception:  # noqa: BLE001 — the hold also expires on its own
+                log.warning("backup: could not clear the schedule hold", exc_info=True)
+            s.engine.dispose()
+        say("Scheduled runs resumed.")
+    return index
+
+
+def _take(p: Plan, out: Path, include_secrets: bool, wait: float, poll: float, settle: float, say,
+          stores: list, actor: str) -> tuple[dict, dict]:
+    """Wait for running work, write the archive and verify it. Any failure is
+    recorded for doctor (`backup:failed`) and raised."""
+    try:
         say("New scheduled runs are held. Chat keeps working.")
         unknown: list[str] = []
         deadline = time.monotonic() + wait
@@ -411,33 +435,20 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
         if unknown:
             say("Run history could not be read for: " + ", ".join(unknown)
                 + ". If those hubs are running scheduled work, stop them first.")
-        try:
-            index = _write_archive(p, out, include_secrets)
-            checked = verify(out)
-            if not checked["ok"]:
-                out.unlink(missing_ok=True)
-                raise BackupError("The backup did not pass verification and was deleted: "
-                                  + "; ".join(checked["problems"][:5]))
-        except BaseException as exc:
-            for s in stores:  # read by `hubzoid doctor` (backup.age)
-                try:
-                    s.put("backup:failed", {"at": time.time(), "by": actor, "error": str(exc)[:500]})
-                except Exception:  # noqa: BLE001 — the failure itself is what is raised
-                    log.warning("backup: could not record the failure", exc_info=True)
-            raise
-        index["verified"] = checked
-        for s in stores:  # read by `hubzoid doctor` (backup.age)
-            s.put("backup:last", {"at": time.time(), "path": str(out), "by": actor, "verified": True,
-                                  "bytes": out.stat().st_size, "files": checked["files"]})
-    finally:
-        for s in stores:
+        index = _write_archive(p, out, include_secrets)
+        checked = verify(out)
+        if not checked["ok"]:
+            out.unlink(missing_ok=True)
+            raise BackupError("The backup did not pass verification and was deleted: "
+                              + "; ".join(checked["problems"][:5]))
+        return index, checked
+    except BaseException as exc:
+        for s in stores:  # read by `hubzoid doctor` (backup.age) and the schedule's retry delay
             try:
-                s.drop(HOLD_KEY)
-            except Exception:  # noqa: BLE001 — the hold also expires on its own
-                log.warning("backup: could not clear the schedule hold", exc_info=True)
-            s.engine.dispose()
-        say("Scheduled runs resumed.")
-    return index
+                s.put("backup:failed", {"at": time.time(), "by": actor, "error": str(exc)[:500]})
+            except Exception:  # noqa: BLE001 — the failure itself is what is raised
+                log.warning("backup: could not record the failure", exc_info=True)
+        raise
 
 
 def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
@@ -467,6 +478,9 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
             for root in p.roots:
                 for path, rel in _files(root, include_secrets, exclude, p.exclude_dirs):
                     arc = f"{root.id}/{rel.as_posix()}"
+                    if path.resolve() in p.sqlite_paths and not _is_sqlite(path):
+                        raise BackupError(f"{path} is a database this deployment uses, but it is not a "
+                                          "readable SQLite file. Check it before backing up.")
                     if _is_sqlite(path):
                         copy = Path(tmp) / f"{len(index['sqlite'])}.db"
                         _snapshot(path, copy, drop_hold=path.resolve() in p.operational_paths)
@@ -484,9 +498,13 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
                         tar.addfile(info, io.BytesIO(clean))
                         index["redacted"].append(arc)
                     else:
-                        if path.is_file():
-                            index["files"][arc] = _sha256(path)
-                        tar.add(path, arcname=arc, recursive=False)
+                        # Hash what goes into the archive, not a second read of a file that
+                        # may be growing (a log).
+                        info = tar.gettarinfo(path, arcname=arc)
+                        with path.open("rb") as source:
+                            hashing = _Hashing(source)
+                            tar.addfile(info, hashing)
+                        index["files"][arc] = hashing.hexdigest()
             for n, (url, roles) in enumerate(p.postgres.items()):
                 arc = f"postgres/{n}.dump"
                 dump = Path(tmp) / f"pg{n}.dump"
@@ -506,6 +524,21 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
         part.unlink(missing_ok=True)
         raise
     return index
+
+
+class _Hashing:
+    """A file wrapper that hashes what is read through it."""
+
+    def __init__(self, fh):
+        self.fh, self.digest = fh, hashlib.sha256()
+
+    def read(self, n: int = -1) -> bytes:
+        data = self.fh.read(n)
+        self.digest.update(data)
+        return data
+
+    def hexdigest(self) -> str:
+        return self.digest.hexdigest()
 
 
 def _sha256(path: Path) -> str:
@@ -530,21 +563,48 @@ def _pg_tool(name: str) -> str:
     return found
 
 
-def _pg_connection(url: str) -> tuple[list[str], dict]:
-    """Connection flags and environment for a PostgreSQL URL. The password
-    goes in PGPASSWORD, never on a command line another process can read."""
+_PG_KEYS = re.compile(r"[a-z_]+")
+_PG_SERVICE = "service=hubzoid"      # a connection string naming the private service file's entry
+
+
+@contextlib.contextmanager
+def _pg_env(url: str, database: str | None = None):
+    """The environment for a pg tool to reach ``url``: every connection
+    parameter of the URL, query ones included, in a private libpq service file.
+    Nothing reaches a command line another process can read, and no inherited
+    PG* variable can point the tool elsewhere. ``database`` names another
+    database on the same server."""
     from sqlalchemy.engine import make_url
 
     u = make_url(url)
-    args = ["--host", u.host or "localhost", "--port", str(u.port or 5432),
-            "--username", u.username or "postgres", "--dbname", u.database or "postgres"]
-    env = {**os.environ, "PGCONNECT_TIMEOUT": "15"}
-    password = u.password or u.query.get("password")
-    if password:
-        env["PGPASSWORD"] = str(password)
-    if u.query.get("sslmode"):
-        env["PGSSLMODE"] = str(u.query["sslmode"])
-    return args, env
+    params: dict[str, str] = {}
+    for key, value in u.query.items():
+        if isinstance(value, tuple) or not _PG_KEYS.fullmatch(key):
+            raise BackupError(f"The database URL has a parameter pg_dump cannot take: {key}")
+        params[key] = str(value)
+    for key, value in (("host", u.host), ("port", u.port), ("user", u.username), ("password", u.password),
+                       ("dbname", u.database)):
+        if value is None:
+            continue
+        if key in params and params[key] != str(value):
+            raise BackupError(f"The database URL gives {key} twice, with different values. Give it once.")
+        params[key] = str(value)
+    if database:
+        params["dbname"] = database
+    params.setdefault("connect_timeout", "15")
+    if any("\n" in v or "\r" in v for v in params.values()):
+        raise BackupError("The database URL has a line break in it.")
+    folder = tempfile.mkdtemp(prefix="hubzoid-pg-")
+    try:
+        service = Path(folder) / "pg_service.conf"
+        fd = os.open(service, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write("[hubzoid]\n" + "".join(f"{k}={v}\n" for k, v in params.items()))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
+        env.update(PGSERVICEFILE=str(service), PGSERVICE="hubzoid", PGPASSFILE=os.devnull)
+        yield env
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def _pg_run(cmd: list[str], env: dict, what: str, timeout: float = 3600) -> subprocess.CompletedProcess:
@@ -559,18 +619,51 @@ def _pg_run(cmd: list[str], env: dict, what: str, timeout: float = 3600) -> subp
 
 
 def _pg_dump(url: str, dest: Path) -> None:
-    args, env = _pg_connection(url)
-    _pg_run([_pg_tool("pg_dump"), "--format=custom", "--no-owner", "--no-privileges",
-             "--file", str(dest), *args], env, f"pg_dump of {_redact(url)}")
+    with _pg_env(url) as env:
+        _pg_run([_pg_tool("pg_dump"), "--format=custom", "--no-owner", "--no-privileges",
+                 "--file", str(dest), "--dbname", _PG_SERVICE], env, f"pg_dump of {_redact(url)}")
 
 
-def _pg_restore(dump: Path, url: str) -> None:
-    """Load a dump into the database at ``url``, replacing what it holds, in
-    one transaction: a failure leaves the database as it was."""
-    args, env = _pg_connection(url)
-    _pg_run([_pg_tool("pg_restore"), "--clean", "--if-exists", "--no-owner", "--no-privileges",
-             "--single-transaction", "--exit-on-error", *args, str(dump)], env,
-            f"pg_restore into {_redact(url)}")
+def _pg_restore(dump: Path, url: str, database: str | None = None) -> None:
+    """Load a dump into the database at ``url`` (or ``database`` on its
+    server), replacing what it holds, in one transaction: a failure leaves the
+    database as it was."""
+    with _pg_env(url, database) as env:
+        _pg_run([_pg_tool("pg_restore"), "--clean", "--if-exists", "--no-owner", "--no-privileges",
+                 "--single-transaction", "--exit-on-error", "--dbname", _PG_SERVICE, str(dump)],
+                env, f"pg_restore into {_redact(url)}")
+
+
+@contextlib.contextmanager
+def _scratch_database(url: str):
+    """A new, empty database on the server of ``url``, dropped afterwards, so a
+    rehearsal leaves nothing behind. The URL's role must be allowed to create
+    databases."""
+    import uuid
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    from . import db
+
+    name = f"hubzoid_rehearsal_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(db.sqlalchemy_url(url), isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as c:
+            c.execute(text(f'CREATE DATABASE "{name}"'))
+    except Exception as exc:  # noqa: BLE001 — the reason is reported, not the URL
+        admin.dispose()
+        raise BackupError(f"Could not create a scratch database on {_redact(url)}: the role needs "
+                          f"permission to create databases ({type(exc).__name__}).") from None
+    try:
+        yield name, make_url(db.sqlalchemy_url(url)).set(database=name).render_as_string(hide_password=False)
+    finally:
+        try:
+            with admin.connect() as c:
+                c.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        except Exception:  # noqa: BLE001
+            log.warning("rehearsal: could not drop the scratch database %s", name)
+        admin.dispose()
 
 
 # ------------------------------------------------------------------ verify
@@ -633,6 +726,8 @@ def verify(archive: Path) -> dict:
             out["problems"].append(f"The archive cannot be read to the end: {exc}")
     if sums is not None:
         out["problems"] += [f"{arc}: missing from the archive" for arc in sorted(set(sums) - seen)]
+    out["problems"] += [f"{arc}: the index lists this database, but it was not checked"
+                        for arc in sorted((sqlite_arcs | dumps) - seen)]
     out["ok"] = not out["problems"]
     return out
 
@@ -654,10 +749,11 @@ def _sqlite_problem(path: Path) -> str | None:
 
 
 def rehearse(archive: Path, *, postgres_url: str | None = None, say=log.info) -> dict:
-    """Restore an archive into a scratch folder (and ``postgres_url``, a
-    scratch database that is overwritten), upgrade every copy of an
+    """Restore an archive into a scratch folder (and a temporary database on
+    the PostgreSQL server at ``postgres_url``), upgrade every copy of an
     operational store to this release, and report what came back. The
-    deployment itself is never touched; the scratch folder is removed."""
+    deployment itself is never touched; the scratch folder and database are
+    removed."""
     from sqlalchemy import create_engine, inspect, text
 
     from . import db, migrations
@@ -682,6 +778,10 @@ def rehearse(archive: Path, *, postgres_url: str | None = None, say=log.info) ->
             path = base if root["kind"] == "file" else base / rel
             entry = {"database": arc, "path_was": str(Path(root["path"]) / rel) if root["kind"] != "file"
                      else root["path"], "problems": []}
+            if not path.resolve().is_relative_to(Path(tmp).resolve()):
+                entry["problems"].append("its path leaves the scratch folder; not opened")
+                report["databases"].append(entry)
+                continue
             problem = _sqlite_problem(path)
             if problem:
                 entry["problems"].append(problem)
@@ -698,10 +798,11 @@ def rehearse(archive: Path, *, postgres_url: str | None = None, say=log.info) ->
             with tarfile.open(archive, "r:gz") as tar:
                 dump.write_bytes(tar.extractfile(d["arc"]).read())
             try:
-                _pg_restore(dump, postgres_url)
-                if "operational" in d.get("roles", []):
-                    entry.update(_upgrade_and_count(create_engine(db.sqlalchemy_url(postgres_url)),
-                                                    migrations, inspect, text))
+                with _scratch_database(postgres_url) as (name, scratch_url):
+                    _pg_restore(dump, postgres_url, database=name)
+                    if "operational" in d.get("roles", []):
+                        entry.update(_upgrade_and_count(create_engine(db.sqlalchemy_url(scratch_url)),
+                                                        migrations, inspect, text))
             except BackupError as exc:
                 entry["problems"].append(str(exc))
             finally:
@@ -776,9 +877,14 @@ def _check_index(index: dict, tar: tarfile.TarFile) -> None:
     def refuse(why: str):
         raise BackupError(f"Refusing this archive: {why}")
 
-    members = {m.name: m for m in tar.getmembers()}
+    listing = tar.getmembers()
+    members = {m.name: m for m in listing}
+    if len(members) != len(listing):
+        refuse("it holds the same entry more than once")
     for name, m in members.items():
-        if Path(name).is_absolute() or ".." in Path(name).parts or not (m.isfile() or m.isdir()):
+        segments = name.split("/")
+        if (Path(name).is_absolute() or any(seg in ("", ".", "..") for seg in segments)
+                or not (m.isfile() or m.isdir())):
             refuse(f"unsafe entry {name}")
     roots, sqlite, redacted = index.get("roots"), index.get("sqlite"), index.get("redacted", [])
     if not (isinstance(roots, list) and roots and isinstance(sqlite, list)
@@ -820,8 +926,11 @@ def _check_index(index: dict, tar: tarfile.TarFile) -> None:
         if name != INDEX and name.split("/", 1)[0] not in ids:
             refuse(f"the entry {name} belongs to no saved location")
     for arc in sqlite + redacted:
-        if not isinstance(arc, str) or arc not in members:
-            refuse(f"the index names {arc!r}, which the archive does not hold")
+        if not isinstance(arc, str) or arc not in members or not members[arc].isfile():
+            refuse(f"the index names {arc!r}, which the archive does not hold as a file")
+    for d in dumps:
+        if not members[d["arc"]].isfile():
+            refuse(f"the PostgreSQL entry {d['arc']} is not a file")
 
 
 def _targets(index: dict, moves: list[tuple[str, str]]) -> dict[str, Path]:
@@ -899,6 +1008,14 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, postgres_url: s
                 "Do not delete journal files to force a restore."
             )
 
+    if postgres_url:
+        # Before any file, in one transaction: if it fails, nothing has been touched.
+        with tempfile.TemporaryDirectory(prefix="hubzoid-restore-pg-") as tmp, tarfile.open(archive, "r:gz") as tar:
+            dump = Path(tmp) / "pg.dump"
+            dump.write_bytes(tar.extractfile(dumps[0]["arc"]).read())
+            _pg_restore(dump, postgres_url)
+        say(f"Restored the PostgreSQL database into {_redact(postgres_url)}")
+
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     first_parent = next(iter(targets.values())).parent
     first_parent.mkdir(parents=True, exist_ok=True)
@@ -930,14 +1047,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, postgres_url: s
 
     if any(a != b for a, b in moves):
         _rewrite_paths(index, targets, move_text)
-    restored_pg = []
-    if postgres_url:
-        with tempfile.TemporaryDirectory(prefix="hubzoid-restore-pg-") as tmp, tarfile.open(archive, "r:gz") as tar:
-            dump = Path(tmp) / "pg.dump"
-            dump.write_bytes(tar.extractfile(dumps[0]["arc"]).read())
-            _pg_restore(dump, postgres_url)
-        restored_pg.append(_redact(postgres_url))
-        say(f"Restored the PostgreSQL database into {_redact(postgres_url)}")
+    restored_pg = [_redact(postgres_url)] if postgres_url else []
     redacted = [targets[arc.split("/", 1)[0]] / arc.split("/", 1)[1]
                 for arc in index.get("redacted", [])]
     return {"restored": [str(t) for t in targets.values()], "kept": kept,

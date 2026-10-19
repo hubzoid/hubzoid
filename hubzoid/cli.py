@@ -1485,8 +1485,8 @@ def restore_cmd(
     postgres: bool = typer.Option(False, "--postgres", help="Also load the archive's PostgreSQL dump into the "
                                                             "database named by --postgres-env."),
     postgres_env: str = typer.Option(None, "--postgres-env", help="The environment variable holding that "
-                                     "database's URL (default DATABASE_URL). With --rehearse: a scratch "
-                                     "database, which is overwritten."),
+                                     "database's URL (default DATABASE_URL). With --rehearse: a server "
+                                     "where a temporary database is created and dropped."),
     as_json: bool = typer.Option(False, "--json", help="With --rehearse: print the report as JSON."),
 ) -> None:
     """Put a backup back. Stop the hub or gateway first.

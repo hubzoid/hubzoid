@@ -215,9 +215,15 @@ def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatc
     assert [d["roles"] for d in index["postgres"]] == [["operational"]] and index["verified"]["postgres"] == 1
     assert "hz_test" in index["postgres"][0]["url"] and index["not_included"] == []
 
+    def databases():
+        with create_engine(postgres_url).connect() as c:
+            return set(c.execute(text("SELECT datname FROM pg_database")).scalars())
+
+    before = databases()
     report = bk.rehearse(archive, postgres_url=scratch)
     assert report["ok"], report["problems"]
     assert report["postgres"][0]["upgraded"]
+    assert databases() == before                       # its temporary database is gone
 
     engine = create_engine(postgres_url)
     with engine.begin() as c:
@@ -226,3 +232,103 @@ def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatc
     with engine.connect() as c:
         assert c.execute(text("SELECT COUNT(*) FROM hz_grants WHERE subject='pg@example.org'")).scalar_one() == 1
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Review findings
+# ---------------------------------------------------------------------------
+def _crafted(tmp_path: Path, members: list[tuple[str, bytes | None]], index: dict) -> Path:
+    archive = tmp_path / "crafted.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        for name, data in [*members, (bk.INDEX, json.dumps(index).encode())]:
+            info = tarfile.TarInfo(name)
+            if data is None:
+                info.type = tarfile.DIRTYPE
+                t.addfile(info)
+            else:
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+    return archive
+
+
+def test_an_archive_with_odd_or_repeated_entries_is_refused(tmp_path):
+    root = {"id": "r0", "path": str(tmp_path / "live" / "hub" / ".hubzoid"), "kind": "state"}
+    base = {"format": 1, "roots": [root], "sqlite": [], "files": {}}
+    escaping = _crafted(tmp_path, [("r0//srv/live/.hubzoid/hub.db", b"SQLite format 3\x00")],
+                        {**base, "sqlite": ["r0//srv/live/.hubzoid/hub.db"]})
+    repeated = _crafted(tmp_path / "b", [("r0/a.txt", b"one"), ("r0/a.txt", b"two")], base) \
+        if (tmp_path / "b").mkdir() is None else None
+    as_folder = _crafted(tmp_path / "c", [("r0/hub.db", None)], {**base, "sqlite": ["r0/hub.db"]}) \
+        if (tmp_path / "c").mkdir() is None else None
+    for archive, why in ((escaping, "unsafe entry"), (repeated, "more than once"), (as_folder, "as a file")):
+        with pytest.raises(bk.BackupError, match=why):
+            bk.read_index(archive)
+        assert not bk.verify(archive)["ok"]
+        assert not bk.rehearse(archive)["ok"]
+
+
+def test_postgres_connection_details_never_reach_a_command_line(monkeypatch):
+    seen = {}
+
+    def run(cmd, env, what, timeout=3600):
+        seen["cmd"], seen["service"] = cmd, Path(env["PGSERVICEFILE"]).read_text()
+        seen["inherited"] = {k for k in env if k.startswith("PG")}
+
+    monkeypatch.setenv("PGHOST", "elsewhere")
+    monkeypatch.setattr(bk, "_pg_run", run)
+    monkeypatch.setattr(bk, "_pg_tool", lambda name: name)
+    bk._pg_dump("postgresql+psycopg://hz:s3cret@db.internal:6543/app?sslmode=require", Path("/tmp/x.dump"))
+    assert "s3cret" not in " ".join(seen["cmd"]) and "db.internal" not in " ".join(seen["cmd"])
+    assert {"host=db.internal", "port=6543", "password=s3cret", "dbname=app", "sslmode=require"} \
+        <= set(seen["service"].splitlines())
+    assert seen["inherited"] == {"PGSERVICEFILE", "PGSERVICE", "PGPASSFILE"}       # no stray PGHOST
+    with pytest.raises(bk.BackupError, match="twice"):
+        bk._pg_dump("postgresql://u@prod/app?host=scratch", Path("/tmp/x.dump"))
+
+
+def test_a_failed_postgres_restore_touches_no_file(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    archive = tmp_path / "b.tar.gz"
+    monkeypatch.setenv("HUBZOID_DBOS_DB", "postgresql://hz@127.0.0.1:1/app")   # its dump is faked here
+    monkeypatch.setattr(bk, "_pg_dump", lambda url, dest: dest.write_bytes(b"PGDMP"))
+    monkeypatch.setattr(bk, "_pg_run", lambda *a, **k: None)
+    bk.backup(hub, archive, wait=0)
+
+    def refuse(dump, url, database=None):
+        raise bk.BackupError("pg_restore into postgresql://hz@127.0.0.1:1/app failed: refused")
+
+    monkeypatch.setattr(bk, "_pg_restore", refuse)
+    target = tmp_path / "moved"
+    with pytest.raises(bk.BackupError, match="refused"):
+        bk.restore(archive, [(str(tmp_path / "live"), str(target))], postgres_url="postgresql://hz@127.0.0.1:1/app")
+    assert not target.exists()
+
+
+def test_a_damaged_known_database_fails_the_backup(tmp_path):
+    hub = _standalone(tmp_path)
+    dbos = hub / ".hubzoid" / "dbos.db"
+    dbos.write_bytes(b"not a database at all")
+    with pytest.raises(bk.BackupError, match="not a readable SQLite file"):
+        bk.backup(hub, tmp_path / "b.tar.gz", wait=0)
+    assert "not a readable SQLite file" in _meta(hub, "backup:failed")["error"]
+
+
+def test_waiting_on_busy_work_is_recorded_as_a_failure(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setattr(bk, "running_runs", lambda plan, unknown=None: ["hub: wf-1"])
+    with pytest.raises(bk.BackupError, match="still in progress"):
+        bk.backup(hub, tmp_path / "b.tar.gz", wait=0.01, poll=0.01, settle=0)
+    assert "still in progress" in _meta(hub, "backup:failed")["error"]
+
+
+def test_a_backups_folder_that_is_a_saved_folder_is_never_archived(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.DIR_SETTING, str(hub / ".hubzoid"))      # the state folder itself
+    names = iter(["hubzoid-backup-20261011-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz"])
+    real_backup = bk.backup
+    monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
+        hub_dir, out.with_name(next(names)), wait=0, **{k: v for k, v in kw.items() if k != "wait"}))
+    sched.run_once(hub)
+    sched.run_once(hub)
+    with tarfile.open(sched.archives(hub)[0]["path"]) as tar:
+        assert not any(n.endswith(".tar.gz") for n in tar.getnames())
