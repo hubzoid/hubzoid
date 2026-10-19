@@ -83,6 +83,12 @@ def build_app() -> FastAPI:
 
     migrations.upgrade(dblib.operational_engine(hub_dir), "operational")
     migrations.upgrade(dblib.engine_for(hub_dir), "hub")
+    # Second phase: secrets stored in the Console fill the keys no operator
+    # source sets, read once now and never changed while serving.
+    from .secretstore import layer as secret_layer
+
+    secret_layer.enable(hub_dir)
+    settings = settingslib.load(hub_dir)
     rt = runtime_lib.build(hub_dir)
 
     # Model label shown in /v1/models. Falls back to the runtime's name

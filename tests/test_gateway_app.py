@@ -57,6 +57,10 @@ def test_plan_routes_hub_scoped_web_app_calls(tmp_path):
     sales, support = _hub(tmp_path, "sales", 3611), _hub(tmp_path, "support", 3612)
     gp = gateway.plan([sales, support])
     routes = {r["prefix"]: r for r in gp.edge_routes()}
+    # The hub-scoped API goes by hub key, with its path unchanged.
+    for key, port in (("sales", 3611), ("support", 3612)):
+        assert routes[f"/api/hubs/{key}"] == {"prefix": f"/api/hubs/{key}",
+                                               "upstream": f"http://127.0.0.1:{port}"}
     for slug, port in (("sales", 3611), ("support", 3612)):
         for part in ("api", "artifacts", "branding", "portal/api"):
             r = routes[f"/b/{slug}/{part}"]
