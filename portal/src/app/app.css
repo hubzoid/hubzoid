@@ -2149,6 +2149,76 @@
 }
 
 /* ==== Settings ======================================================================= */
+.hz-preference-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 28px;
+  border-bottom: 1px solid var(--hz-line-soft);
+}
+.hz-preference-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 0 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--hz-mute);
+  font-size: .9286rem;
+  text-decoration: none;
+}
+.hz-preference-tabs a:hover { color: var(--hz-ink); }
+.hz-preference-tabs a[aria-current="page"] {
+  border-color: var(--hz-ink);
+  color: var(--hz-ink);
+}
+.hz-set-main section > .grid {
+  grid-template-columns: minmax(140px, .8fr) minmax(0, 1.5fr);
+  gap: 24px;
+}
+.hz-set-main section form { max-width: 340px; }
+.hz-set-main:has(.hz-preference-tabs) { max-width: 960px; }
+.hz-set-main .hz-label { font-size: .8929rem; }
+.hz-set-main .hz-input { font-size: .9286rem; }
+.hz-set-main .hz-btn { font-size: .8929rem; }
+.hz-auth .hz-signin { padding: 0; }
+.hz-auth .hz-input { min-height: 42px; background: var(--hz-bg); }
+.hz-auth .hz-btn-lg { min-height: 42px; font-size: .9286rem; }
+.hz-auth .hz-btn-primary {
+  background: var(--hz-ink);
+  color: var(--hz-bg);
+}
+.hz-auth .hz-btn-primary:hover:not(:disabled) { opacity: .9; background: var(--hz-ink); }
+/* Console CSS is unlayered and loaded on demand. Keep these compound-field
+   rules unlayered too, so visiting Settings cannot add a second focus ring. */
+.hz-composer textarea:focus-visible,
+.hz-search-input input:focus-visible,
+.hz-set-find input:focus-visible { outline: none; box-shadow: none; }
+.hz-composer:has(textarea:focus-visible) {
+  outline: 2px solid var(--hz-mute);
+  outline-offset: 2px;
+}
+.hz-search-input:has(input:focus-visible),
+.hz-set-find:has(input:focus-visible) {
+  outline: 2px solid var(--hz-mute);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.hz-search-input:has(input:focus-visible) { border-radius: 12px 12px 0 0; }
+.hz-input:focus-visible { outline: none; }
+@media (max-width: 767px) {
+  .hz-set-main section > .grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .hz-set-main section form { max-width: none; }
+  .hz-preference-tabs { gap: 4px 14px; margin-bottom: 22px; }
+  .hz-preference-tabs a, .hz-auth .hz-btn, .hz-auth .hz-input,
+  .hz-set .hz-btn, .hz-set .hz-input, .hz-set button[role="radio"],
+  .hz-auth button[role="radio"], .hz-set .hz-set-back { min-height: 44px; }
+  .hz-auth button[role="radio"], .hz-set button[role="radio"] { min-width: 44px; }
+  .hz-composer-bar .hz-icon-btn[data-size="lg"], .hz-send, .hz-split,
+  .hz-model, .hz-empty .hz-chip { min-height: 44px; min-width: 44px; }
+  .hz-set-find, .hz-set-main label:has(input[type="checkbox"]),
+  .hz-stop-ghost, .hz-split > button { min-height: 44px; }
+  .hz-split > button { min-width: 44px; }
+}
 @layer components {
   /* Settings sits against the app's sidebar, like a native preferences window:
      the section list on the left, the section beside it, both from the top. */
@@ -2242,8 +2312,9 @@
   }
   .hz-set-main {
     min-width: 0;
-    max-width: 960px;
-    padding: 56px 40px 64px;
+    width: 100%;
+    max-width: 1040px;
+    padding: 32px 32px 64px;
   }
   .hz-set-main .hz-input {
     max-width: 420px;
@@ -2344,8 +2415,55 @@
 }
 .console-embed .ant-card {
   background: transparent !important;
-  border-color: var(--hz-line) !important;
-  border-radius: 12px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--hz-line-soft) !important;
+  border-radius: 0 !important;
+}
+.console-embed .ant-card-head {
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  font-size: .9286rem;
+}
+.console-embed .ant-card-body { padding: 12px 0 24px; }
+.console-embed .ant-card-head-title { white-space: normal; }
+.console-embed .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.console-embed .toolbar > .ant-input-affix-wrapper,
+.console-embed .toolbar > .ant-select { flex: 1 1 180px; min-width: 0 !important; }
+.console-embed .ant-input-affix-wrapper > input { min-width: 0; }
+.console-embed .ant-table-wrapper { max-width: 100%; overflow-x: auto; }
+.console-embed .ant-space-item { min-width: 0; }
+.console-embed .ant-card .ant-select { max-width: 100%; }
+.hz-set-chat .ant-card-body > .ant-space-vertical > .ant-space-item > div {
+  display: grid;
+  grid-template-columns: minmax(150px, .8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 8px 24px;
+  padding: 8px 0;
+}
+.hz-set-chat .ant-card-body > .ant-space-vertical > .ant-space-item > div > br { display: none; }
+.hz-set-chat .ant-card-body > .ant-space-vertical > .ant-space-item > div > :not(:first-child) { grid-column: 2; }
+.hz-set-chat .ant-card-body .ant-typography strong { font-weight: 500; }
+.hz-set-chat .ant-card-body .ant-select,
+.hz-set-chat .ant-card-body .ant-input { width: 100% !important; min-width: 0 !important; }
+.hz-set-chat .ant-card-body label:has(.ant-switch) { min-height: 32px; }
+@media (max-width: 767px) {
+  .hz-set-chat .ant-card-body > .ant-space-vertical > .ant-space-item > div { display: flex; flex-direction: column; }
+  .console-embed .ant-btn, .console-embed .ant-input:not(textarea),
+  .console-embed .ant-select, .console-embed .ant-segmented-item-label,
+  .console-embed .ant-tabs-tab { min-height: 44px; }
+  .console-embed .ant-select { min-width: 0 !important; max-width: 100%; }
+  .console-embed .ant-checkbox-wrapper, .console-embed label:has(.ant-switch) {
+    min-height: 44px;
+    align-items: center;
+  }
+  .console-embed .page-header { flex-wrap: wrap; }
+  .console-embed .toolbar > * { max-width: 100%; }
 }
 .console-embed .ant-table {
   background: transparent !important;

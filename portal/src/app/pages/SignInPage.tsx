@@ -123,9 +123,9 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
 
   return (
     <AuthLayout title={mode === "signin" ? t.auth.signIn : t.auth.signupSubmit}>
-      <div className="hz-card px-6 py-7 sm:px-8 sm:py-8">
-        <h1 className="m-0 text-[22px] font-semibold tracking-tight text-ink">{heading}</h1>
-        <p className="m-0 mt-1.5 whitespace-pre-line text-[14px] text-mute">{subtitle}</p>
+      <div className="hz-signin">
+        <h1 className="m-0 text-[1.7143rem] font-semibold tracking-tight text-ink">{heading}</h1>
+        <p className="m-0 mt-2 whitespace-pre-line text-[0.9286rem] leading-relaxed text-mute">{subtitle}</p>
 
         {message && (
           <Notice tone={message.tone} className="mt-5">

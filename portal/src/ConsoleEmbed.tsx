@@ -2,32 +2,38 @@
 // data and checks as the standalone Console, chosen by the URL hash, without
 // the Console's own navigation (Settings has its own).
 import { Suspense, useCallback, useEffect } from "react";
-import { Alert, App, Button, ConfigProvider, Spin } from "antd";
+import { Alert, App, Button, ConfigProvider, Spin, theme } from "antd";
 import type { Hub, Me } from "./api";
 import { useData } from "./hooks/useData";
 import { hasPendingChanges, useRoute } from "./hooks/useRoute";
 import { setLeaveGuard } from "./app/lib/router";
 import { useThemeMode } from "./lib/theme";
+import { usePresentation } from "./lib/presentation";
 import { displayName } from "./app/lib/format";
 import { consoleScreen, SchedulesScreen } from "./consoleScreens";
 import "./portal.css";
 
 export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
-  const { config: base } = useThemeMode();
+  const { config: base, isDark } = useThemeMode();
+  const view = usePresentation();
   // Inside Settings the screens use the chat app's quieter scale: 13px text,
   // neutral tabs, ink as the selected colour.
   const css = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   const ink = v("--hz-ink", "#ececec");
   const mute = v("--hz-mute", "#9b9b9b");
+  const scale = parseFloat(css.fontSize) / 14;
   const config = {
     ...base,
-    token: { ...base.token, fontSize: 13, fontSizeHeading2: 19, fontSizeHeading3: 15, borderRadius: 8, controlHeight: 30 },
+    // Compact spacing should not shrink text a second time. Keep the native
+    // app's type scale, including the person's text-size preference.
+    algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+    token: { ...base.token, fontSize: 13 * scale, fontSizeSM: 12 * scale, fontSizeHeading2: 19 * scale, fontSizeHeading3: 15 * scale, borderRadius: 8, controlHeight: view.density === "compact" ? 30 : 34 },
     components: {
       ...base.components,
-      Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 },
+      Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
-      Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 },
+      Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale },
     },
   };
   // Leaving Settings for another page asks first when a screen has unsaved changes.
