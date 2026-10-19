@@ -1,8 +1,3 @@
-# Reviewed runtime dependency set for the Docker image and deployments: the
-# core install (the Hubzoid web app) plus PostgreSQL support.
-#   pip install -r requirements.lock
-# Regenerate after changing pyproject.toml (uv keeps the pins already here):
-#   uv pip compile pyproject.toml --extra postgres --python-version 3.12 --universal --no-header -o requirements.lock
 aiofile==3.12.3
     # via py-key-value-aio
 aiohappyeyeballs==2.7.1
@@ -21,8 +16,11 @@ annotated-types==0.8.0
     # via pydantic
 anyio==4.15.1
     # via
+    #   anysqlite
     #   claude-agent-sdk
     #   composio-client
+    #   githubkit
+    #   hishel
     #   httpx
     #   mcp
     #   openai
@@ -30,6 +28,8 @@ anyio==4.15.1
     #   sse-starlette
     #   starlette
     #   watchfiles
+anysqlite==0.0.5
+    # via hishel
 argon2-cffi==25.1.0
     # via pwdlib
 argon2-cffi-bindings==26.1.0
@@ -131,6 +131,16 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.9.0
     # via huggingface-hub
+githubkit==0.16.1
+    # via
+    #   hubzoid (pyproject.toml)
+    #   githubkit-schemas
+githubkit-schemas==26.9.29
+    # via
+    #   githubkit
+    #   githubkit-schemas-2026-03-10
+githubkit-schemas-2026-03-10==26.9.29
+    # via githubkit-schemas
 greenlet==3.5.6
     # via sqlalchemy
 griffelib==2.3.0
@@ -143,6 +153,8 @@ h11==0.16.0
     #   uvicorn
 hf-xet==1.6.0 ; platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
     # via huggingface-hub
+hishel==1.4.0
+    # via githubkit
 httpcore==1.0.9
     # via httpx
 httptools==0.8.0
@@ -152,6 +164,8 @@ httpx==0.28.1
     #   hubzoid (pyproject.toml)
     #   composio-client
     #   fastmcp-slim
+    #   githubkit
+    #   hishel
     #   huggingface-hub
     #   litellm
     #   mcp
@@ -244,6 +258,8 @@ more-itertools==11.1.0
     # via
     #   jaraco-classes
     #   jaraco-functools
+msgpack==1.2.3
+    # via hishel
 multidict==6.9.1
     # via
     #   aiohttp
@@ -301,6 +317,7 @@ pydantic==2.13.4
     #   composio-client
     #   fastapi
     #   fastmcp-slim
+    #   githubkit
     #   json-schema-to-pydantic
     #   litellm
     #   mcp
@@ -319,7 +336,9 @@ pygments==2.21.0
     #   rich
     #   rich-rst
 pyjwt==2.13.0
-    # via mcp
+    # via
+    #   githubkit
+    #   mcp
 pypdf==6.7.5
     # via hubzoid (pyproject.toml)
 pyperclip==1.11.0
@@ -444,6 +463,8 @@ typing-extensions==4.16.0
     #   exceptiongroup
     #   fastapi
     #   fastmcp-slim
+    #   githubkit
+    #   hishel
     #   huggingface-hub
     #   mcp
     #   openai

@@ -407,7 +407,8 @@ def _providers() -> None:
     """Provider command groups: `hubzoid channels slack ...` and the rest."""
     import importlib
 
-    for name, module in (("slack", "hubzoid.channels.slack.cli"),):
+    for name, module in (("slack", "hubzoid.channels.slack.cli"), ("github", "hubzoid.channels.github.cli"),
+                         ("linear", "hubzoid.channels.linear.cli")):
         try:
             mod = importlib.import_module(module)
         except ImportError:
