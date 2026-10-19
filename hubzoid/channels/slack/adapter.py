@@ -252,10 +252,19 @@ class SlackAdapter(Adapter):
     def reply(self, conn, origin: Origin, outbound) -> Receipt:
         from slack_sdk.errors import SlackApiError
 
+        from ...work_items.errors import Rejected
+
         channel = origin.coordinates["channel"]
         _limiter.wait(channel)
         web = client(conn, writes=True)
         try:
+            if not channel.startswith("D"):
+                # A channel can become shared with another organization while
+                # work waits. Check right before the answer goes out.
+                info = web.conversations_info(channel=channel).get("channel") or {}
+                if info.get("is_ext_shared") or info.get("is_pending_ext_shared"):
+                    raise Rejected("blocked_destination: the channel is now shared outside the workspace, so the "
+                                   "answer was not posted.")
             resp = web.chat_postMessage(
                 channel=channel, thread_ts=origin.coordinates["thread_ts"], text=outbound.text,
                 reply_broadcast=False, unfurl_links=False, unfurl_media=False,
@@ -411,7 +420,10 @@ class SlackAdapter(Adapter):
         if inputs.get("channel_id") and inputs["channel_id"] not in cfg.allowed_channel_ids:
             out.append(Check("slack:channel_allowed", "fail", f"{inputs['channel_id']} is not in allowed_channel_ids.",
                              "channel_not_allowed", "Add it to allowed_channel_ids and apply."))
-        if bot_user and (conn.state or {}).get("bot_user_id") != bot_user:
+        if bot_user and team == cfg.installation_team_id and app == cfg.app_id and \
+                (conn.state or {}).get("bot_user_id") != bot_user:
+            # Only the configured workspace and app's bot is learned; doctor
+            # changes no credential and nothing in Slack.
             from .. import store
 
             store.set_connection_state(conn.hub_dir, conn.hub, conn.id, bot_user_id=bot_user)

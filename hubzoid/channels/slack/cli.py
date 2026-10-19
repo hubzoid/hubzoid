@@ -49,6 +49,7 @@ def manifest_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"),
 @slack_app.command("import-legacy")
 def import_legacy_cmd(hub: Path = HUB, cid: str = typer.Option("slack-main", "--id"),
                       output: Path = typer.Option(None, "--output", help="Default channels/<id>.yaml"),
+                      force: bool = typer.Option(False, "--force", help="Replace an existing channel file"),
                       as_json: bool = typer.Option(False, "--json")):
     """Write a disabled channel file for today's SLACK_BOT_TOKEN and SLACK_APP_TOKEN setup. The tokens stay where they are (env: references); no value is copied. The workspace and app ids are read from Slack with the bot token (read-only)."""
     from ...config_secrets import apply_layers
@@ -80,6 +81,9 @@ def import_legacy_cmd(hub: Path = HUB, cid: str = typer.Option("slack-main", "--
                 "bot_token_ref": "env:SLACK_BOT_TOKEN", "app_token_ref": "env:SLACK_APP_TOKEN",
                 "allowed_channel_ids": [], "allow_direct_messages": True}}
     target = output or (config.channels_dir(hub, create=True) / f"{cid}.yaml")
+    if target.exists() and not force:
+        _fail("already_exists", f"{target} already exists. Nothing was changed. Pass --force to replace it.", 409,
+              as_json)
     text = ("# Imported from the Slack environment variables. Before enabling:\n"
             "# 1. list the groups who may ask in allowed_groups and the channel ids in allowed_channel_ids\n"
             "# 2. link each person: hubzoid channels link <hub> " + cid + " --external-id U... --account email\n"

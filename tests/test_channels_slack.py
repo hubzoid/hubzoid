@@ -51,8 +51,10 @@ class FakeWeb:
     def bots_info(self, bot):
         return {"ok": True, "bot": {"app_id": "A0APP"}}
 
+    shared = False
+
     def conversations_info(self, channel):
-        return {"ok": True, "channel": {"id": channel, "name": "ops", "is_member": True}}
+        return {"ok": True, "channel": {"id": channel, "name": "ops", "is_member": True, "is_ext_shared": self.shared}}
 
 
 @pytest.fixture
@@ -356,3 +358,28 @@ def test_legacy_listener_refuses_when_a_channel_serves_slack(hub_dir):
     assert _channel_conflict(hub_dir) is None
     conn_for(hub_dir)
     assert _channel_conflict(hub_dir) == "slack-main"
+
+
+def test_reply_refused_when_the_channel_became_shared(hub_dir, web):
+    from hubzoid.work_items.errors import Rejected
+
+    conn = conn_for(hub_dir)
+    web.shared = True
+    with pytest.raises(Rejected) as exc:
+        conn.adapter.reply(conn, slack.Origin("slack", "T0TEAM", "slack:C0OPS:1.0", {"channel": "C0OPS",
+                                                                                     "thread_ts": "1.0"}),
+                           SimpleNamespace(text="the answer", marker="m1"))
+    assert "shared outside" in str(exc.value) and web.posts == []
+
+
+def test_import_legacy_never_overwrites(hub_dir, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    monkeypatch.setenv("SLACK_BOT_TOKEN", BOT)
+    (hub_dir / "channels").mkdir()
+    (hub_dir / "channels" / "slack-main.yaml").write_text("# mine\n")
+    out = CliRunner().invoke(app, ["channels", "slack", "import-legacy", str(hub_dir), "--json"])
+    assert out.exit_code != 0 and "already_exists" in out.output
+    assert (hub_dir / "channels" / "slack-main.yaml").read_text() == "# mine\n"

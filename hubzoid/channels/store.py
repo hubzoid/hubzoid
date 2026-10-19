@@ -101,6 +101,24 @@ def set_connection_state(hub_dir, hub: str, cid: str, **state) -> None:
                   {"s": dumps(merged), "h": hub, "i": cid})
 
 
+def swap_connection_state(hub_dir, hub: str, cid: str, fn):
+    """Read, decide and write the connection state in one locked step, under
+    the same lock as `set_connection_state`. `fn(state)` returns
+    `(patch or None, result)`; the patch is merged and `result` returned. Used
+    to consume a one-time setup attempt or take a refresh lease exactly once."""
+    with locked(hub_dir, f"channel:{hub}:{cid}") as c:
+        row = c.execute(text("SELECT state_json FROM hz_channel_connections WHERE hub=:h AND id=:i"),
+                        {"h": hub, "i": cid}).first()
+        if row is None:
+            return fn({})[1]
+        state = json.loads(row[0] or "{}")
+        patch, result = fn(dict(state))
+        if patch:
+            c.execute(text("UPDATE hz_channel_connections SET state_json=:s WHERE hub=:h AND id=:i"),
+                      {"s": dumps({**state, **patch}), "h": hub, "i": cid})
+        return result
+
+
 def delete_connection(conn, hub: str, cid: str) -> None:
     conn.execute(text("DELETE FROM hz_channel_connections WHERE hub=:h AND id=:i"), {"h": hub, "i": cid})
 

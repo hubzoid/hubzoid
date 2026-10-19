@@ -229,12 +229,12 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
         if not conn.enabled:
             _finish(hub_dir, row["id"], "disabled", "connection_disabled")
             return "disabled", None
+        if event.data.get("signal") == "stop":     # a control signal, before any text check
+            return _stop(hub_dir, conn, row, thread, event, app)
         if event.trigger and not event.text.strip() and not event.files:
             _notice(conn, thread, event, "empty_request")
             _finish(hub_dir, row["id"], "ignored", "empty_request")
             return "ignored", None
-        if event.data.get("signal") == "stop":
-            return _stop(hub_dir, conn, row, thread, event, app)
         taken = conn.adapter.route(hub_dir, conn, row, thread, event)
         if taken is not NotImplemented:
             return taken
