@@ -202,12 +202,26 @@ def pending_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, kind: str
     return None
 
 
-def count_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, title: str) -> int:
+def requests_url() -> str:
+    """"Waiting for you" as an absolute link. Only the public URL's origin is
+    used: the page lives at the site root, also when a gateway gives the hub
+    a ``/b/<hub>`` public URL."""
+    from urllib.parse import urlsplit
+
+    from ..appmode import public_url
+
+    base = (public_url() or "").strip()
+    parts = urlsplit(base)
+    origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+    return f"{origin}/requests"
+
+
+def count_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, title: str | None) -> int:
     """How many requests a workflow run already made with this title (plan versions)."""
     with engine(hub_dir).connect() as conn:
         return int(conn.execute(sa.select(sa.func.count()).select_from(st.requests).where(
             st.requests.c.hub_id == hub_id, st.requests.c.workflow_id == workflow_id,
-            st.requests.c.title == title)).scalar() or 0)
+            *(() if title is None else (st.requests.c.title == title,)))).scalar() or 0)
 
 # -- requests ----------------------------------------------------------------------
 def create(hub_dir: Path, hub_id: str, caller: Caller, *, kind: str, title: str, tool: str | None = None,

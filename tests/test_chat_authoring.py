@@ -139,3 +139,122 @@ def test_openapi_import_converts_only_selected_operations(client):
     assert r.status_code == 422 and r.json()["detail"]["code"] == "remote_reference"
     broken = client.post(f"{A}/openapi/preview", headers=ORIGIN, json={"spec": {"openapi": "3.0.3", "paths": {}}})
     assert broken.status_code == 422
+
+
+def _approve(client, path, content=None, new=None):
+    d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": path, **({"content": content} if content else {})}).json()
+    if new is not None:
+        d = client.patch(f"{A}/drafts/{d['id']}", headers=ORIGIN, json={"content": new, "expected_revision": 1}).json()
+    d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": d["revision"]}).json()
+    client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN, json={"decision": "approve", "digest": d["digest"]})
+    return d
+
+
+def test_a_publication_is_one_commit_like_a_hub_change(client, hub):
+    import subprocess
+
+    git = lambda *a: subprocess.run(["git", "-C", str(hub), *a], capture_output=True, text=True, check=True).stdout
+    git("init", "-q")
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "start")
+    before = (hub / "AGENTS.md").read_text()
+    d = _approve(client, "AGENTS.md", new=before + "\nA reviewed rule.\n")
+    pub = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]}).json()
+    assert pub["commit_sha"] and git("rev-parse", "HEAD").strip() == pub["commit_sha"]
+    body = git("log", "-1", "--format=%B")
+    assert f"Hubzoid-Workspace-Draft: {hub.name.lower()}#{d['id']}" in body
+    assert git("status", "--porcelain", "--", "AGENTS.md") == ""  # nothing left uncommitted
+    author = git("log", "-1", "--format=%ae").strip()        # W28: by the person who published it
+    assert "@" in author and author != "hub-changes@hubzoid.invalid"
+
+
+def test_flat_and_differently_spelt_skill_folders_are_listed(client, hub):
+    import shutil
+
+    if (hub / "skills").exists():
+        shutil.move(str(hub / "skills"), str(hub / "Skill"))
+    (hub / "Skill").mkdir(exist_ok=True)
+    (hub / "Skill" / "triage.md").write_text("---\nname: triage\ndescription: Sort tickets\n---\nSort them.\n")
+    files = {f["path"]: f["kind"] for f in client.get(f"{A}/files").json()["items"]}
+    assert files.get("Skill/triage.md") == "skill"
+    bad = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "Skill/triage.md"}).json()
+    bad = client.patch(f"{A}/drafts/{bad['id']}", headers=ORIGIN,
+                       json={"content": "---\nname: x\n---\nno description\n", "expected_revision": 1}).json()
+    assert any(p["code"] == "invalid_frontmatter" for p in bad["problems"])  # checked like SKILL.md
+    # A new skill goes into the folder the hub already has.
+    d = _approve(client, "skills/notes/SKILL.md", content="---\nname: notes\ndescription: Notes\n---\nTake notes.\n")
+    client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert (hub / "Skill" / "notes" / "SKILL.md").is_file() and not (hub / "skills").exists()
+
+
+def test_broken_frontmatter_is_explained_in_plain_words():
+    from hubzoid.chat.authoring import validate
+
+    problems = validate("AGENTS.md", "---\nname: a\ndescription: x\nbad line: : here\n  oops\n---\nBody.\n")
+    assert problems and "settings block" in problems[0]["message"]
+    assert "while scanning" not in problems[0]["message"] and "unicode string" not in problems[0]["message"]
+
+
+def test_a_rebuilt_runtime_opens_and_closes_in_the_lifespan_task(monkeypatch, tmp_path):
+    """Publishing rebuilds the chat runtime in one long-lived task; a replaced
+    runtime is closed there once nothing runs, and the original never is."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from hubzoid import runtime as runtime_lib
+    from hubzoid.chat import authoring_routes as ar
+
+    events = []
+
+    class Fake:
+        def __init__(self, n):
+            self.n = n
+
+        async def aopen(self):
+            events.append(("open", self.n, asyncio.current_task()))
+
+        async def aclose(self):
+            events.append(("close", self.n, asyncio.current_task()))
+
+    made = iter(range(1, 10))
+    monkeypatch.setattr(runtime_lib, "build", lambda hub: Fake(next(made)))
+    original = Fake(0)
+    ctx = SimpleNamespace(runtime=original, models=None)
+    running = {"busy": True}
+
+    async def main():
+        loop = asyncio.create_task(ar.runtime_reloader(ctx, tmp_path, original, lambda: running["busy"],
+                                                       idle_check=0.01))
+        await asyncio.sleep(0)
+        assert await ar._reload_runtime(ctx) is True and ctx.runtime.n == 1
+        assert await ar._reload_runtime(ctx) is True and ctx.runtime.n == 2
+        await asyncio.sleep(0.05)
+        assert not [e for e in events if e[0] == "close"]  # a reply is still running
+        running["busy"] = False
+        await asyncio.sleep(0.05)
+        assert [e[1] for e in events if e[0] == "close"] == [1]
+        loop.cancel()
+        try:
+            await loop
+        except asyncio.CancelledError:
+            pass
+        return loop
+
+    task = asyncio.run(main())
+    assert [e[1] for e in events if e[0] == "close"] == [1, 2]  # never the original
+    assert {e[2] for e in events} == {task}
+    assert ar._reload_runtime.__doc__ and asyncio.run(ar._reload_runtime(SimpleNamespace())) is False
+
+
+def test_a_failed_commit_is_finished_by_publishing_again(client, hub, monkeypatch):
+    from hubzoid.hub_changes import service as hub_files
+
+    real = hub_files.commit_files
+    monkeypatch.setattr(hub_files, "commit_files", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index.lock")))
+    d = _approve(client, "AGENTS.md", new=(hub / "AGENTS.md").read_text() + "\nOne more rule.\n")
+    first = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert first.status_code == 503 and first.json()["detail"]["code"] == "commit_failed"
+    monkeypatch.setattr(hub_files, "commit_files", real)
+    again = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert again.status_code == 200, again.text
+    assert client.get(f"{A}/drafts/{d['id']}").json()["state"] == "published"

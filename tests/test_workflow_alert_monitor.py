@@ -56,6 +56,29 @@ def test_outbox_deduplicates_and_retries_with_injected_sender(hub):
     assert _rows(hub)[0].state == "sent"
 
 
+def test_failed_delivery_names_the_workflow_and_config_reason(hub, caplog):
+    alerts.record(hub, hub.name, "run_failed", "run-3", {"workflow": "check", "run_id": "run-3"})
+    with events._engine(hub).connect() as conn:
+        aid = conn.execute(text("SELECT id FROM hz_workflow_alerts")).scalar_one()
+
+    async def unconfigured(_, row):
+        raise ValueError("No alert destination configured")
+
+    async def http_failure(_, row):
+        raise RuntimeError("POST https://hooks.example.test/secret-path failed")
+
+    with caplog.at_level("WARNING", logger=alerts.log.name):
+        asyncio.run(alerts.deliver(hub, aid, sender=unconfigured))
+    assert f"{hub.name}/check" in caplog.text and "No alert destination configured" in caplog.text
+    with events._engine(hub).begin() as conn:
+        conn.execute(text("UPDATE hz_workflow_alerts SET due=0"))
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=alerts.log.name):
+        asyncio.run(alerts.deliver(hub, aid, sender=http_failure))
+    # Other errors keep only their type: their text can hold a webhook URL.
+    assert "RuntimeError" in caplog.text and "secret-path" not in caplog.text
+
+
 def test_concurrent_delivery_claim_sends_once(hub):
     alerts.record(hub, hub.name, "run_failed", "run-2", {"workflow": "check", "run_id": "run-2"})
     with events._engine(hub).connect() as conn:

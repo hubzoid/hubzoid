@@ -1,14 +1,17 @@
 """Tool-result cap with overflow spillover.
 
 When a tool result exceeds `cap` characters, write the full payload to a
-file under the session output dir and return a truncated head plus a
-short recovery hint that tells the model exactly where the rest is and
-how to fetch more.
+file in a ``tool-output/`` folder of the session output dir and return a
+truncated head plus a short recovery hint that tells the model exactly where
+the rest is and how to fetch more. The subfolder keeps these internal files
+out of the chat's documents (only files directly in the folder become one).
 """
 from __future__ import annotations
 
 import uuid
 from pathlib import Path
+
+TOOL_OUTPUT = "tool-output"
 
 
 def truncate_with_overflow(
@@ -29,8 +32,9 @@ def truncate_with_overflow(
     if len(text) <= cap:
         return text, None
 
-    overflow_dir.mkdir(parents=True, exist_ok=True)
-    spill = overflow_dir / f"{label}-overflow-{uuid.uuid4().hex[:8]}.txt"
+    folder = overflow_dir / TOOL_OUTPUT
+    folder.mkdir(parents=True, exist_ok=True)
+    spill = folder / f"{label}-overflow-{uuid.uuid4().hex[:8]}.txt"
     spill.write_text(text, encoding="utf-8")
 
     shown_path: Path | str = spill

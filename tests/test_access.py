@@ -254,3 +254,15 @@ def test_core_tools_added_after_apply_are_run_checked_and_the_check_comes_first(
     unchecked = [n for n, ft in registry.items()
                  if not getattr(ft.on_invoke_tool, "hubzoid_run_checked", False)]
     assert unchecked == []
+
+
+def test_a_stopped_reply_runs_no_more_tools_on_any_runtime(tmp_path):
+    """Stop is checked in the shared wrapper, not only in Claude's hook."""
+    from hubzoid import _request_ctx
+
+    tool = access.apply(tmp_path, {"a": sample_tool})["a"]
+    for running, expected in ((True, "ran:ALL"), (False, access.guard.STOPPED)):
+        slot = _request_ctx.SessionSlot()
+        slot.guard = lambda running=running: running
+        with _request_ctx.native_session_scope(slot):
+            assert _invoke(tool) == expected

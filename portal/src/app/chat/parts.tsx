@@ -33,15 +33,19 @@ function shortValue(value: unknown): string {
 
 export function summarizeArgs(args: unknown): string {
   if (!args || typeof args !== "object") return "";
-  const entries = Object.entries(args as Record<string, unknown>).filter(([, v]) => v !== undefined);
+  // A readable line: empty values left out, names in words, values without
+  // quotes. The exact arguments stay under "Exact action".
+  const entries = Object.entries(args as Record<string, unknown>).filter(
+    ([, v]) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
   if (entries.length === 0) return "";
   if (entries.length === 1 && typeof entries[0][1] === "string") return truncate(entries[0][1] as string, 64);
   return truncate(
     entries
       .slice(0, 3)
-      .map(([k, v]) => `${k}: ${shortValue(v)}`)
-      .join(", "),
-    72,
+      .map(([k, v]) => `${k.replace(/_/g, " ")} ${typeof v === "string" ? truncate(v.replace(/\s+/g, " "), 32) : shortValue(v)}`)
+      .join(" · "),
+    80,
   );
 }
 
