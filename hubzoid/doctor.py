@@ -456,6 +456,28 @@ def _model(hub: Path) -> Check:
                  f"{model}: missing {', '.join(missing) or 'provider credentials'}", missing)
 
 
+def _backup_age(last: dict | None, failed: dict | None) -> Check:
+    """The last verified backup, or why the last one failed."""
+    from . import backup_schedule
+
+    try:
+        every = backup_schedule.interval()
+        schedule = "Scheduled backups are off (HUBZOID_BACKUPS=off)." if every is None else \
+            f"Scheduled backups run {'weekly' if every > 86400 else 'daily'}."
+    except backup_schedule.ScheduleError as exc:
+        return Check("backup.age", "fail", str(exc), {"recovery": "Set HUBZOID_BACKUPS to weekly, daily or off."})
+    if failed and float(failed.get("at") or 0) > float((last or {}).get("at") or 0):
+        days = (time.time() - float(failed["at"])) / 86400
+        return Check("backup.age", "warn", f"The last backup failed {days:.1f} days ago: {failed.get('error', '')}"[:400],
+                     {**failed, "recovery": "Fix the cause, then run `hubzoid backup`."})
+    if not last:
+        return Check("backup.age", "warn", f"No backup recorded. {schedule} Run `hubzoid backup` now.")
+    days = (time.time() - float(last.get("at", 0))) / 86400
+    verified = "" if last.get("verified") else " (not verified: made by an earlier release)"
+    return Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
+                 f"Last backup {days:.1f} days ago{verified}. {schedule}", last)
+
+
 def _meta(engine, key: str, default=None):
     import json
 
@@ -491,13 +513,7 @@ def _store_checks(hub: Path) -> list[Check]:
     try:
         if not inspect(engine).has_table("hz_meta"):
             return []
-        last = _meta(engine, "backup:last")
-        if not last:
-            out.append(Check("backup.age", "warn", "No backup recorded. Run `hubzoid backup`."))
-        else:
-            days = (time.time() - float(last.get("at", 0))) / 86400
-            out.append(Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
-                             f"Last backup {days:.1f} days ago", last))
+        out.append(_backup_age(_meta(engine, "backup:last"), _meta(engine, "backup:failed")))
         out.append(_scheduler(hub, engine))
         if inspect(engine).has_table("hz_grants"):
             out.append(_who_may_use(hub, engine))

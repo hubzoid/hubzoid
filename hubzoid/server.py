@@ -154,6 +154,9 @@ def build_app() -> FastAPI:
         chat_ctx = getattr(app.state, "chat", None)
         from .hitl import routes as hitl_routes
         hitl_task = asyncio.create_task(hitl_routes.recovery_loop(chat_ctx)) if chat_ctx is not None else None
+        from . import backup_schedule
+
+        backup_task = asyncio.create_task(backup_schedule.loop(hub_dir))  # weekly by default
         if chat_ctx is not None:
             from .hub_changes import service as hub_changes
 
@@ -173,6 +176,7 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            backup_task.cancel()
             reaper_task.cancel()
             try:
                 await reaper_task

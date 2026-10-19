@@ -42,8 +42,13 @@
 # not start.
 FROM python:3.12-slim-trixie
 
-# The image needs no system packages: every dependency ships wheels for amd64
-# and arm64.
+# Every Python dependency ships wheels for amd64 and arm64. The one system
+# package is the PostgreSQL client, for `hubzoid backup` of a deployment on
+# PostgreSQL: pg_dump must be the server's major version or newer (Debian 13
+# ships 17).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 # Non-root user.
 RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
