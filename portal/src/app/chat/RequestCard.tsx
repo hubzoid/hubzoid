@@ -2,7 +2,7 @@
 // where it happened in the chat. The server is the only source of state: the
 // card reads the request, sends one decision with the revision and digest it
 // showed, and never claims success it did not get back.
-import { useCallback, useContext, useEffect, useId, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import { Check, ChevronDown, CircleSlash, Hand, Loader2, MessageCircleQuestion, X } from "lucide-react";
 import { ApiError, enc, get, hubUrl, post } from "../lib/api";
 import { t } from "../i18n/en";
@@ -57,7 +57,7 @@ function useRequest(id: string) {
   return { req, setReq, error, load, url };
 }
 
-function outcomeLine(req: HitlRequest): { icon: JSX.Element; text: string } {
+function outcomeLine(req: HitlRequest): { icon: ReactNode; text: string } {
   const who = req.decided_by_email ? ` · ${req.decided_by_email}` : "";
   switch (req.status) {
     case "approved":
@@ -188,7 +188,7 @@ export function RequestCard({ requestId, toolName, args }: { requestId: string; 
       <div className="hz-request-head">
         <Hand size={14} className="flex-none text-secondary" aria-hidden />
         <span className="text-ink">{pending ? (isPlan ? t.requests.planNeeded : t.requests.needed) : t.requests.title}</span>
-        <span className="min-w-0 truncate text-secondary">· {isPlan ? req.title : humanTool(label.tool || req.title)}</span>
+        <span className="min-w-0 truncate text-secondary">· {isPlan || !req.tool ? req.title : humanTool(label.tool)}</span>
         {label.server && <span className="hz-tag is-quiet">{label.server}</span>}
       </div>
       {isPlan && req.subject?.url ? (

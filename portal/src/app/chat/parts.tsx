@@ -152,10 +152,14 @@ export function ToolGroup({ startIndex, endIndex, children }: { startIndex: numb
       .filter((p) => p.type === "tool-call" && (p as { result?: unknown }).result === undefined).length,
   );
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
+  // A card waiting for the person is never folded away.
+  const asking = useAuiState((s) =>
+    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && !!waitingRequest((p as { result?: unknown }).result)),
+  );
   const failed = useAuiState((s) =>
     s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && (p as { isError?: boolean }).isError),
   );
-  if (count < 2) return <>{children}</>;
+  if (count < 2 || asking) return <>{children}</>;
   const busy = running && pending > 0;
   return (
     <div className="hz-act" data-testid="tool-group">

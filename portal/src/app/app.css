@@ -1150,6 +1150,17 @@
     opacity: 0;
     transition: opacity 120ms var(--hz-ease);
   }
+  .hz-nav-hint.is-count {
+    opacity: 1;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--hz-accent);
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    line-height: 18px;
+  }
   .hz-nav:hover .hz-nav-hint,
   .hz-nav:focus-visible .hz-nav-hint {
     opacity: 1;

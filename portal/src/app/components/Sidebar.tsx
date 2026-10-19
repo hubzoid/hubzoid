@@ -163,6 +163,7 @@ function NavRow({
   onClick,
   current,
   hint,
+  count,
   testId,
 }: {
   icon: ReactNode;
@@ -171,6 +172,7 @@ function NavRow({
   onClick?: () => void;
   current?: boolean;
   hint?: string;
+  count?: number;
   testId?: string;
 }) {
   const body = (
@@ -178,6 +180,11 @@ function NavRow({
       {icon}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {hint && <span className="hz-nav-hint">{hint}</span>}
+      {!!count && (
+        <span className="hz-nav-hint is-count" data-testid={testId ? `${testId}-count` : undefined}>
+          {count}
+        </span>
+      )}
     </>
   );
   if (href)
@@ -990,7 +997,7 @@ function WaitingRow({ current }: { current: boolean }) {
       label={t.requests.inboxTitle}
       href="/requests"
       current={current}
-      hint={count ? String(count) : undefined}
+      count={count}
       testId="nav-requests"
     />
   );

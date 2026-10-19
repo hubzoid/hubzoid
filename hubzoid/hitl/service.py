@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -309,6 +310,9 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
                 raise RequestError(422, "validation_failed", "Type an answer or pick an option.")
             if len(answer) > MAX_ANSWER:
                 raise RequestError(422, "validation_failed", f"Keep the answer under {MAX_ANSWER} characters.")
+            # A picked option is its label, without the agent's "(Recommended)" marker.
+            if any(answer == (o.get("label") or "") for o in (req.get("options") or [])):
+                answer = re.sub(r"\s*\(recommended\)\s*$", "", answer, flags=re.I) or answer
         if decision == "request_changes" and not note:
             raise RequestError(422, "validation_failed", "Say what should change.")
         status = {"reject": "rejected", "answer": "answered", "request_changes": "rejected"}.get(decision, "approved")

@@ -149,6 +149,17 @@ class Orchestrator:
         from . import titles
         from .history import build_prompt
 
+        if plan.kind == "send":
+            # Writing instead of answering (sent now or from the queue): the
+            # waiting requests on this branch are cancelled, so the new
+            # message steers the agent.
+            from ..hitl import service as hitl_service
+
+            try:
+                await db(hitl_service.cancel_waiting_in_branch, self.ctx.hub_dir, self.ctx.hub, plan.branch_id,
+                         reason="The person wrote a new message instead.")
+            except Exception:  # noqa: BLE001 - never blocks the reply
+                log.warning("chat: could not cancel waiting requests on %s", plan.branch_id, exc_info=True)
         try:
             conv = await db(self.ctx.store.get_conversation, plan.conversation_id)
             path = await db(self.engine.path, plan.conversation_id, plan.prompt_message_id)
@@ -420,13 +431,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare"):
             await call(admission, actor)
         out, plan = await call(engine.submit, cid, actor, body, key=key)
-        if body.get("kind") == "send" and not out.replayed and isinstance(body.get("branch_id"), str):
-            # Writing instead of answering: the person's waiting requests on
-            # this branch are cancelled, so the new message steers the agent.
-            from ..hitl import service as hitl_service
 
-            await db(hitl_service.cancel_waiting_in_branch, ctx.hub_dir, ctx.hub, body["branch_id"],
-                     reason="The person wrote a new message instead.")
         await orch.launch(plan)
         if body.get("kind") == "fork" and not out.replayed and out.status == 201:
             await db(_copy_files, ctx.hub_dir, out.body)

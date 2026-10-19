@@ -33,6 +33,8 @@ hitl_app = typer.Typer(help="When the agent asks a person first (hitl.yaml).", n
 requests_app = typer.Typer(help="Approvals and questions waiting for a person.", no_args_is_help=True)
 
 HUB = typer.Argument(Path("."), help="Hub folder. Default: current folder.")
+HUB_REQ = typer.Argument(..., help="Hub folder.")
+RID = typer.Argument(..., help="Request id (the first 8 characters are enough).")
 JSON = typer.Option(False, "--json", help="Print the API's JSON object.")
 USER = typer.Option(None, "--user", help="Act as this account (email). Default: the local owner.")
 
@@ -137,7 +139,7 @@ def r_list(hub: Path = HUB, all_: bool = typer.Option(False, "--all", help="Incl
 
 
 @requests_app.command("show")
-def r_show(request_id: str, hub: Path = HUB, user: str = USER, as_json: bool = JSON) -> None:
+def r_show(hub: Path = HUB_REQ, request_id: str = RID, user: str = USER, as_json: bool = JSON) -> None:
     hub = _hub(hub, as_json)
     _migrated(hub)
     uid, email = _who(hub, user, as_json)
@@ -157,7 +159,7 @@ def _full_id(hub: Path, short: str) -> str:
 
 
 @requests_app.command("decide")
-def r_decide(request_id: str, hub: Path = HUB, user: str = USER,
+def r_decide(hub: Path = HUB_REQ, request_id: str = RID, user: str = USER,
              decision: str = typer.Option(None, "--decision",
                                           help="approve, approve_chat, approve_always, reject, request_changes or answer."),
              answer: str = typer.Option(None, "--answer"), note: str = typer.Option(None, "--note"),
@@ -187,7 +189,7 @@ def r_decide(request_id: str, hub: Path = HUB, user: str = USER,
 
 
 @requests_app.command("cancel")
-def r_cancel(request_id: str, hub: Path = HUB, user: str = USER, as_json: bool = JSON) -> None:
+def r_cancel(hub: Path = HUB_REQ, request_id: str = RID, user: str = USER, as_json: bool = JSON) -> None:
     hub = _hub(hub, as_json)
     _migrated(hub)
     uid, email = _who(hub, user, as_json)
