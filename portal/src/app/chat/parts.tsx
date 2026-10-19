@@ -13,6 +13,7 @@ import { formatBytes, truncate } from "../lib/format";
 import { cx } from "../components/ui";
 import { fileRefOf, fileUrl } from "./convert";
 import { safeStringify } from "./stream";
+import { CardEntry, cardOf } from "./cards/cards";
 import { RequestCard } from "./RequestCard";
 import { HubChangeCard } from "./HubChangeCard";
 
@@ -104,6 +105,21 @@ export const ToolEntry: ToolCallMessagePartComponent = (props) => {
   if (requestId) return <RequestCard requestId={requestId} toolName={props.toolName} args={props.args} />;
   const changeId = hubChange(props.result);
   if (changeId !== null) return <HubChangeCard id={changeId} />;
+  if (!props.isError && cardOf(props.result)) {
+    const label = toolLabel(props.toolName);
+    return (
+      <CardEntry
+        {...props}
+        header={
+          <span className="hz-act-row is-static">
+            {stateIcon.done}
+            <span className="flex-none text-secondary">{humanTool(label.tool)}</span>
+            {label.server && <span className="hz-tag is-quiet">{label.server}</span>}
+          </span>
+        }
+      />
+    );
+  }
   return <ToolActivity {...props} />;
 };
 
@@ -179,7 +195,11 @@ export function ToolGroup({ startIndex, endIndex, children }: { startIndex: numb
   const failed = useAuiState((s) =>
     s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && (p as { isError?: boolean }).isError),
   );
-  if (count < 2 || asking) return <>{children}</>;
+  // A card is a result to look at, so a group holding one is never folded.
+  const hasCard = useAuiState((s) =>
+    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && !!cardOf((p as { result?: unknown }).result)),
+  );
+  if (count < 2 || asking || hasCard) return <>{children}</>;
   const busy = running && pending > 0;
   const stopped = pending > 0 && messageStatus?.type === "incomplete" && messageStatus.reason === "cancelled";
   const hasFailure = failed || (pending > 0 && messageStatus?.type === "incomplete" && !stopped);

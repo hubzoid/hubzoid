@@ -62,11 +62,27 @@ function StateTag({ state, reason }: { state: string; reason?: string | null }) 
   );
 }
 
-/** `mine`: only the work this person asked for (their own page), even when they manage the hub. */
-export function WorkItemsScreen({ hubs, mine = false }: { hubs: HubOption[]; mine?: boolean }) {
-  const [hub, setHub] = useState<string | undefined>(hubs[0]?.key);
+/** `selected`: a work item to open at once (a card's "Review in Hub" link).
+ *  `mine`: only the work this person asked for (their own page), even when they manage the hub. */
+export function WorkItemsScreen({ hubs, selected, mine = false }: {
+  hubs: HubOption[];
+  selected?: { hub: string; item: string };
+  mine?: boolean;
+}) {
+  const linked = selected && hubs.some((h) => h.key === selected.hub) ? selected : undefined;
+  const [hub, setHub] = useState<string | undefined>(linked?.hub ?? hubs[0]?.key);
   const [state, setState] = useState<string>("");
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(linked?.item ?? null);
+  // A later link while this page is open (another card's "Review in Hub") opens its item too.
+  const linkKey = linked ? `${linked.hub}/${linked.item}` : "";
+  const [shownLink, setShownLink] = useState(linkKey);
+  if (linkKey !== shownLink) {
+    setShownLink(linkKey);
+    if (linked) {
+      setHub(linked.hub);
+      setOpen(linked.item);
+    }
+  }
   const path = hub ? `/hubs/${encodeURIComponent(hub)}/work-items${query({ state, mine: mine || undefined })}` : null;
   const items = useData<{ items: WorkItem[] }>(path, { keepStale: true });
   useVisibleRefresh(items.reload, items.refreshing, !open);

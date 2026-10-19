@@ -61,7 +61,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     screen = <AllRunsScreen hubs={list} />;
   } else if (area === "work") {
     active = "work";
-    screen = <WorkItemsScreen hubs={list} />;
+    screen = <WorkItemsScreen hubs={list} selected={rest[0] && rest[1] ? { hub: rest[0], item: rest[1] } : undefined} />;
   } else if (area === "sandboxes") {
     active = "sandboxes";
     screen = <SandboxesScreen hubs={list} />;

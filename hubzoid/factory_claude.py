@@ -367,7 +367,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # as the OpenAI path). The deny check runs at on_invoke, which the Claude
     # adapter calls, so it holds here too. No-op when there is no restricted/.
     from . import access
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
@@ -1203,7 +1204,9 @@ class ClaudeRuntime:
                             # For an eval's result preview; a no-op in chat.
                             _request_ctx.record_tool_result(tid, getattr(block, "content", None))
                             if not bool(getattr(block, "is_error", False)):
-                                yield run_events.ToolResult(id=tid, name=tool_name, ok=True)
+                                yield run_events.ToolResult(
+                                    id=tid, name=tool_name, ok=True,
+                                    card=_request_ctx.take_card(getattr(block, "content", None), tool=tool_name))
                                 continue
                             closing = tw.close()
                             if closing:

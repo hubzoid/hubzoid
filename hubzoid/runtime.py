@@ -369,8 +369,10 @@ class OpenAIAgentsRuntime:
                         failed = _openai_tool_failed(item)
                         # For an eval's result preview; a no-op in chat.
                         _request_ctx.record_tool_result(call_id, getattr(item, "output", None))
+                        card = None if failed else _request_ctx.take_card(
+                            getattr(item, "output", None), call_id=call_id, tool=called.get(call_id))
                         yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
-                                         message=run_events.TOOL_FAILED if failed else None)
+                                         message=run_events.TOOL_FAILED if failed else None, card=card)
             # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.

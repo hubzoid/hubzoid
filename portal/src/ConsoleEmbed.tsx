@@ -66,7 +66,10 @@ function MyWork() {
   const my = useData<MyData>("/my");
   if (my.error) return <Alert type="error" showIcon title="Couldn’t load your work" description={my.error} />;
   if (!my.data) return <Spin />;
-  return <Suspense fallback={<Spin />}><WorkItemsScreen hubs={my.data.agents} mine /></Suspense>;
+  // A card's "Review in Hub" opens #/me/work/<hub>/<item>.
+  const [, , hub, item] = location.hash.replace(/^#\/?/, "").split(/[/?]/);
+  const selected = hub && item ? { hub: decodeURIComponent(hub), item: decodeURIComponent(item) } : undefined;
+  return <Suspense fallback={<Spin />}><WorkItemsScreen hubs={my.data.agents} mine selected={selected} /></Suspense>;
 }
 
 function Embedded() {
