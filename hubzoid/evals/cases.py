@@ -177,6 +177,15 @@ def _as_int(value: Any, *, key: str, where: str, lo: int, hi: int, default: int)
     return n
 
 
+def _as_bool(value: Any, *, key: str, where: str) -> bool:
+    """A YAML true or false. A quoted "false" is refused: it would read as true."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise EvalCaseError(f"{where}: {key} must be true or false")
+    return value
+
+
 def _split_body(body: str, *, where: str = "case") -> tuple[str, str | None, list[str]]:
     """Return (prompt, criteria, turns) from a case body.
 
@@ -350,12 +359,13 @@ def parse(path: Path, *, case_id: str | None = None) -> EvalCase:
         expect_tool_args=_expect_tool_args(meta.get("expect_tool_args"), where=where),
         fake_tools=fakes,
         real_tools=real,
-        allow_real_mcp=bool(meta.get("allow_real_mcp", False)),
+        allow_real_mcp=_as_bool(meta.get("allow_real_mcp"), key="allow_real_mcp", where=where),
         digest="sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
     )
 
 
-def discover(hub_dir: Path, *, strict: bool = True) -> list[EvalCase]:
+def discover(hub_dir: Path, *, strict: bool = True,
+             errors: list[tuple[str, str]] | None = None) -> list[EvalCase]:
     """Load every case under `<hub>/evals/`, subfolders included, sorted by id.
 
     A case's id is its path under evals/ without `.md`: `refund.md` is
@@ -367,7 +377,9 @@ def discover(hub_dir: Path, *, strict: bool = True) -> list[EvalCase]:
     `strict` (the default, used by the CLI) raises on the first unparseable
     file: a suite that silently drops a case reports a pass it never ran. The
     scheduler passes strict=False so one broken file cannot stop the other
-    cases from firing — it logs and moves on.
+    cases from firing — it logs and moves on. With strict=False, `errors`
+    (when given) collects (path under evals/, problem) for each skipped file,
+    so a caller can still show it.
     """
     root = resolve_bucket(hub_dir, "evals")
     if root is None:
@@ -388,14 +400,18 @@ def discover(hub_dir: Path, *, strict: bool = True) -> list[EvalCase]:
             if strict:
                 raise EvalCaseError(message)
             log.warning("skipping eval case: %s", message)
+            if errors is not None:
+                errors.append((rel.as_posix(), message))
             continue
         seen[case_id.lower()] = case_id
         try:
             cases.append(parse(path, case_id=case_id))
-        except EvalCaseError:
+        except EvalCaseError as exc:
             if strict:
                 raise
             log.warning("skipping unparseable eval case %s", case_id, exc_info=True)
+            if errors is not None:
+                errors.append((rel.as_posix(), str(exc)))
     return cases
 
 

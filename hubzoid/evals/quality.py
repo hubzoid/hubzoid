@@ -8,14 +8,14 @@
 ``hubzoid doctor`` shows one row per required case:
 
     ok        its latest result passed, for the case and hub as they are now
-    fail      its latest result failed
-    pending   it never ran, or the case or the hub's instructions and tools
-              changed since it ran (rerun it)
+    fail      its latest result failed, or the case file cannot be read
+    pending   it never ran, ran without its judge, or the case or the hub's
+              instructions, tools or configuration changed since (rerun it)
 
 A result counts only for what it tested: each case result records the digest
 of its case file, and each run the digest of the hub's instructions, skills,
-knowledge, tools, workflows and settings. A pending case never counts as
-passing.
+knowledge, tools, workflows, settings and non-secret configuration. A pending
+case never counts as passing, and doctor is not ok until it passes.
 """
 from __future__ import annotations
 
@@ -29,18 +29,46 @@ import yaml
 MANIFEST = Path("quality") / "manifest.yaml"
 _HUB_PARTS = ("AGENTS.md", "agents", "skills", "knowledge", "tools_local", "restricted", "workflows",
               "connectors", "settings.yaml", "hub.settings.yaml")
+_ENV_FILES = (".env", "restricted/.env")      # names and non-secret values only
 _SKIP_DIRS = {"__pycache__", ".hubzoid", "output", "logs", ".git"}
-_MAX_FILE = 5 * 1024 * 1024
-_MAX_FILES = 20000
+_MAX_FILES = 100_000
+_CHUNK = 1024 * 1024
+INCOMPLETE = "incomplete"
 
 
 class QualityError(ValueError):
     """quality/manifest.yaml cannot be used. The message names the problem."""
 
 
+def _configuration(hub_dir: Path) -> bytes:
+    """The hub's .env files as they shape answers: every name, and the value of
+    each one that is not secret-looking (MODEL, say). Secret values never enter
+    the digest; rotating a key does not make results stale."""
+    from dotenv import dotenv_values
+
+    from .calls import is_secret_key
+
+    lines = []
+    for name in _ENV_FILES:
+        path = hub_dir / name
+        if not path.is_file():
+            continue
+        try:
+            values = dotenv_values(path, interpolate=False)
+        except (OSError, UnicodeDecodeError, ValueError):
+            lines.append(f"{name}: unreadable")
+            continue
+        for key in sorted(values):
+            shown = "" if is_secret_key(key) else (values[key] or "")
+            lines.append(f"{name}:{key}={shown}")
+    return "\n".join(lines).encode()
+
+
 def hub_digest(hub_dir: Path) -> str:
     """One digest of what a hub's answers depend on: its instructions, skills,
-    knowledge, tools, workflows and settings. File order and paths count."""
+    knowledge, tools, workflows, settings and non-secret configuration. File
+    order, paths and every byte count. A hub with more than 100,000 such files
+    gets a digest marked incomplete, which no result can match."""
     from .._fs import resolve_bucket
 
     hub_dir = Path(hub_dir)
@@ -55,12 +83,15 @@ def hub_digest(hub_dir: Path) -> str:
             for f in path.rglob("*"):
                 if f.is_file() and not f.is_symlink() and not (set(f.relative_to(hub_dir).parts) & _SKIP_DIRS):
                     files.append(f)
-    digest = hashlib.sha256()
-    for f in sorted(files, key=lambda p: p.relative_to(hub_dir).as_posix())[:_MAX_FILES]:
+                    if len(files) > _MAX_FILES:
+                        return INCOMPLETE
+    digest = hashlib.sha256(_configuration(hub_dir) + b"\0")
+    for f in sorted(files, key=lambda p: p.relative_to(hub_dir).as_posix()):
         digest.update(f.relative_to(hub_dir).as_posix().encode() + b"\0")
         try:
-            size = f.stat().st_size
-            digest.update(f.read_bytes() if size <= _MAX_FILE else f"size:{size}".encode())
+            with f.open("rb") as handle:
+                while chunk := handle.read(_CHUNK):
+                    digest.update(chunk)
         except OSError:
             digest.update(b"unreadable")
         digest.update(b"\0")
@@ -88,9 +119,11 @@ def manifest(hub_dir: Path) -> dict | None:
     return data
 
 
-def required(hub_dir: Path, cases) -> list:
+def required(hub_dir: Path, cases, *, unreadable=()) -> list:
     """The required cases, in id order. Raises QualityError for a requirement
-    that matches no case, so a typo can never read as satisfied."""
+    that matches no case, so a typo can never read as satisfied. A requirement
+    that only an `unreadable` case file might meet is not raised here: the
+    caller reports that file instead."""
     data = manifest(hub_dir)
     if data is None:
         return []
@@ -98,12 +131,12 @@ def required(hub_dir: Path, cases) -> list:
     chosen: dict[str, object] = {}
     for pattern in data.get("required") or []:
         matched = [c for cid, c in by_id.items() if fnmatch(cid, pattern)]
-        if not matched:
+        if not matched and not any(fnmatch(cid, pattern) for cid in unreadable):
             raise QualityError(f"{MANIFEST}: no eval case matches {pattern!r}")
         chosen.update({c.name: c for c in matched})
     for tag in data.get("required_tags") or []:
         matched = [c for c in cases if tag in c.tags]
-        if not matched:
+        if not matched and not unreadable:
             raise QualityError(f"{MANIFEST}: no eval case has the tag {tag!r}")
         chosen.update({c.name: c for c in matched})
     return [chosen[k] for k in sorted(chosen)]
@@ -126,14 +159,18 @@ def evidence(hub_dir: Path, *, history: int = 200) -> list[Evidence]:
     hub_dir = Path(hub_dir)
     if manifest(hub_dir) is None:
         return []
-    cases = cases_lib.discover(hub_dir, strict=False)
-    wanted = required(hub_dir, cases)
+    problems: list[tuple[str, str]] = []
+    cases = cases_lib.discover(hub_dir, strict=False, errors=problems)
+    # A case file that cannot be read may be a required one: it fails, and
+    # never quietly drops out of the requirement.
+    out = [Evidence(rel.removesuffix(".md"), "fail", f"The case cannot be read: {error}"[:300],
+                    f"hubzoid eval list {hub_dir}") for rel, error in problems]
+    wanted = required(hub_dir, cases, unreadable=[e.case_id for e in out])
     now = hub_digest(hub_dir)
     latest: dict[str, tuple[object, object]] = {}
     for _path, suite in reversed(report.load_runs(hub_dir, limit=history)):
         for result in suite.cases:
             latest.setdefault(result.name, (suite, result))
-    out = []
     for case in wanted:
         fix = f"hubzoid eval run {hub_dir} --case '{case.name}'"
         found = latest.get(case.name)
@@ -144,10 +181,16 @@ def evidence(hub_dir: Path, *, history: int = 200) -> list[Evidence]:
         when = suite.finished_at or suite.started_at
         if not result.case_digest or result.case_digest != case.digest:
             out.append(Evidence(case.name, "pending", f"The case changed since it last ran ({when}).", fix))
+        elif now == INCOMPLETE:
+            out.append(Evidence(case.name, "pending",
+                                "The hub has too many files to confirm its results are current.", fix))
         elif not getattr(suite, "hub_digest", None) or suite.hub_digest != now:
             out.append(Evidence(case.name, "pending",
-                                f"The hub's instructions, tools or settings changed since it last ran ({when}).",
+                                f"The hub's instructions, tools or configuration changed since it last ran ({when}).",
                                 fix))
+        elif result.passed and case.is_judged and result.judge is None:
+            out.append(Evidence(case.name, "pending",
+                                f"It last ran without its judge ({when}), so its criteria were not checked.", fix))
         elif result.passed:
             out.append(Evidence(case.name, "ok", f"Passed ({when}).", fix))
         else:

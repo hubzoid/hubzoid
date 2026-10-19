@@ -80,6 +80,15 @@ def test_cases_in_subfolders_get_path_ids_and_notes_are_skipped(tmp_path):
     assert [c.name for c in cases_lib.select(found, case="approvals/*")] == ["approvals/reply-reject"]
 
 
+def test_the_console_lists_nested_cases_and_names_a_broken_one(tmp_path):
+    from hubzoid.portal_evals import read_cases
+
+    hub = make_hub(tmp_path, {"safety/no-send.md": "Send?", "safety/bad.md": "---\ntimeout: soon\n---\nHi"})
+    folder, found, errors = read_cases(hub)
+    assert folder and [c.name for c in found] == ["safety/no-send"]
+    assert errors == [{"file": "evals/safety/bad.md", "error": "safety/bad.md: timeout must be a whole number"}]
+
+
 def test_two_ids_that_differ_only_in_case_are_refused(tmp_path):
     hub = make_hub(tmp_path, {"Refund.md": "a", "refund.md": "b"})
     if len(list((hub / "evals").iterdir())) < 2:
@@ -93,6 +102,7 @@ def test_two_ids_that_differ_only_in_case_are_refused(tmp_path):
     ("fake_tools:\n  - {tool: send_email}", "exactly one of output or error"),
     ("fake_tools:\n  - {tool: x, output: 1, colour: red}", "unknown key"),
     ("real_tools: [read_knowledge]", "only applies with fake_tools"),
+    ('fake_tools:\n  - {tool: x, output: 1}\nallow_real_mcp: "false"', "true or false"),
 ])
 def test_bad_fake_declarations_are_refused(tmp_path, front, why):
     hub = make_hub(tmp_path, {"c.md": f"---\n{front}\n---\nHi"})
@@ -148,6 +158,13 @@ def test_a_fully_faked_case_passes_and_outside_a_case_tools_run_for_real(tmp_pat
     assert asyncio.run(rt.registry["lookup_order"].on_invoke_tool(None, "{}")) == "REAL lookup_order"
 
 
+def test_the_fakes_check_names_the_connectors_left_out():
+    from hubzoid.evals.runner import _fakes_check
+
+    session = tool_fakes.Session(fakes=[], left_out=["mail"])
+    assert _fakes_check(session).detail == "0 call(s) answered by fakes; the person's connectors (mail) were left out"
+
+
 def test_a_faked_case_refuses_a_hub_with_mcp_servers_unless_allowed(tmp_path, monkeypatch):
     hub = make_hub(tmp_path, {"refund.md": CASE.replace("{prompt}", "Hi")})
     (hub / "connectors").mkdir()
@@ -192,6 +209,10 @@ def test_junit_marks_failures_and_errors():
     assert cases["approvals/bad"].find("failure").text == "contains: missing 'refund'"
     assert cases["boom"].find("error").get("message") == "timed out after 120s"
 
+    xml = junit.to_xml(suite_with(CaseResult(name="leak", error="\x1b[31mapi_key: sk-live-123\x1b[0m failed")))
+    error = ET.fromstring(xml).find("testsuite/testcase/error")      # parses: no escape characters left
+    assert "sk-live-123" not in xml.decode() and "[31m" in error.text
+
 
 def test_eval_commands_print_json(tmp_path, monkeypatch):
     from hubzoid.cli import app
@@ -201,11 +222,18 @@ def test_eval_commands_print_json(tmp_path, monkeypatch):
     listed = json.loads(runner.invoke(app, ["eval", "list", str(hub), "--json"]).output)
     assert [c["id"] for c in listed["cases"]] == ["deep/one", "refund"]
     assert json.loads(runner.invoke(app, ["eval", "status", str(hub), "--json"]).output) == {"hub": "desk", "runs": 0}
-    monkeypatch.setattr("hubzoid.runtime.build", lambda *a, **k: ToolRuntime({}, {}))
+    class Leaky(ToolRuntime):
+        async def run(self, prompt):
+            return "token: sk-live-123"
+
+    monkeypatch.setattr("hubzoid.runtime.build", lambda *a, **k: Leaky({}, {}))
+    pushed = []
+    monkeypatch.setattr("hubzoid.evals.langfuse.push", lambda hub_dir, suite: pushed.append(suite.passed))
     out = tmp_path / "ci" / "evals.xml"
     r = runner.invoke(app, ["eval", "run", str(hub), "--no-judge", "--json", "--junit", str(out)])
     body = json.loads(r.output)
     assert r.exit_code == 0 and body["passed"] == 2 and body["junit"] == str(out) and out.is_file()
+    assert "sk-live-123" not in r.output and pushed == [2]
     status = json.loads(runner.invoke(app, ["eval", "status", str(hub), "--json"]).output)
     assert status["ok"] and status["total"] == 2
     explained = json.loads(runner.invoke(app, ["eval", "explain", str(hub), "deep/one", "--json"]).output)
@@ -225,6 +253,7 @@ def test_doctor_reports_missing_failed_and_out_of_date_required_evals(tmp_path, 
     (hub / "quality" / "manifest.yaml").write_text("version: 1\nrequired: [refund]\nrequired_tags: [safety]\n")
     rows = {c.id: c for c in doctor._eval_checks(hub)}
     assert set(rows) == {"eval.refund", "eval.safety/no-send"} and rows["eval.refund"].status == "pending"
+    assert doctor.report(hub, list(rows.values()))["ok"] is False      # not run yet: not ready
 
     found = {c.name: c for c in cases_lib.discover(hub)}
     suite = suite_with(CaseResult(name="refund", case_digest=found["refund"].digest),
@@ -239,9 +268,54 @@ def test_doctor_reports_missing_failed_and_out_of_date_required_evals(tmp_path, 
     (hub / "evals" / "refund.md").write_text("Refund, please?")          # the case changed
     assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "pending"
     (hub / "evals" / "refund.md").write_text("Refund?")
+    (hub / ".env").write_text("OPENAI_API_KEY=sk-a\n")
+    suite.hub_digest = quality.hub_digest(hub)
+    report.save(hub, suite)
+    (hub / ".env").write_text("OPENAI_API_KEY=sk-b\n")                # a rotated key changes nothing
+    assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "ok"
+    (hub / ".env").write_text("OPENAI_API_KEY=sk-b\nMODEL=codex-local\n")  # another model: rerun
+    assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "pending"
+    (hub / ".env").write_text("OPENAI_API_KEY=sk-b\n")
     (hub / "AGENTS.md").write_text("---\nname: desk\n---\nNew rule: refunds need a receipt.\n")  # the hub changed
     row = {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"]
     assert row.status == "pending" and "instructions" in row.summary
+
+
+def test_a_judged_case_run_without_its_judge_stays_pending(tmp_path):
+    from hubzoid import doctor
+
+    hub = make_hub(tmp_path, {"tone.md": "# Prompt\nRefund?\n# Criteria\nPolite."})
+    (hub / "quality").mkdir()
+    (hub / "quality" / "manifest.yaml").write_text("version: 1\nrequired: [tone]\n")
+    (case,) = cases_lib.discover(hub)
+    suite = suite_with(CaseResult(name="tone", case_digest=case.digest))   # passed free checks, no judge
+    suite.hub_digest = quality.hub_digest(hub)
+    report.save(hub, suite)
+    (row,) = doctor._eval_checks(hub)
+    assert row.status == "pending" and "without its judge" in row.summary
+
+
+def test_an_unreadable_required_case_fails_instead_of_dropping_out(tmp_path):
+    from hubzoid import doctor
+
+    hub = make_hub(tmp_path, {"safety/ok.md": "Hi", "safety/bad.md": "---\ntimeout: soon\n---\nHi"})
+    (hub / "quality").mkdir()
+    (hub / "quality" / "manifest.yaml").write_text("version: 1\nrequired: [safety/*]\n")
+    rows = {c.id: c for c in doctor._eval_checks(hub)}
+    assert rows["eval.safety/bad"].status == "fail" and "cannot be read" in rows["eval.safety/bad"].summary
+    assert rows["eval.safety/ok"].status == "pending"
+
+
+def test_the_hub_digest_covers_every_byte_of_large_files(tmp_path, monkeypatch):
+    hub = make_hub(tmp_path, {})
+    (hub / "knowledge").mkdir()
+    big = hub / "knowledge" / "manual.md"
+    big.write_bytes(b"a" * (3 * 1024 * 1024))
+    before = quality.hub_digest(hub)
+    big.write_bytes(b"a" * (3 * 1024 * 1024 - 1) + b"b")                 # same size, one byte changed
+    assert quality.hub_digest(hub) != before
+    monkeypatch.setattr(quality, "_MAX_FILES", 0)
+    assert quality.hub_digest(hub) == quality.INCOMPLETE
 
 
 def test_a_requirement_that_matches_nothing_fails(tmp_path):

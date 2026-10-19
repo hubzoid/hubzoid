@@ -1,20 +1,33 @@
 """JUnit XML for a suite, for CI systems that show test reports.
 
 One <testcase> per eval case: a failed check or judge verdict is a <failure>,
-a case that crashed or timed out is an <error>. Text is already redacted by the
-time it reaches a SuiteResult (``calls.redact``); responses are not included.
+a case that crashed or timed out is an <error>. The suite is redacted the way
+saved results are (``calls.redact``), characters XML cannot hold (terminal
+colour codes, say) are dropped, and responses are not included.
 """
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .calls import redact
 from .results import SuiteResult
+
+_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _clean(element: ET.Element) -> None:
+    for el in element.iter():
+        el.attrib = {k: _NOT_XML.sub("", v) for k, v in el.attrib.items()}
+        if el.text:
+            el.text = _NOT_XML.sub("", el.text)
 
 
 def to_xml(suite: SuiteResult) -> bytes:
+    suite = SuiteResult.from_dict(redact(suite.to_dict()))
     errors = sum(1 for c in suite.cases if c.error)
     failures = sum(1 for c in suite.cases if not c.passed and not c.error)
     total_time = sum(c.duration for c in suite.cases)
@@ -39,6 +52,7 @@ def to_xml(suite: SuiteResult) -> bytes:
             ET.SubElement(tc, "failure", message=case.reason[:500]).text = "\n".join(lines)
         if case.tool_calls:
             ET.SubElement(tc, "system-out").text = "tools: " + ", ".join(case.tool_calls)
+    _clean(root)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 

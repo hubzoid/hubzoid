@@ -1940,7 +1940,8 @@ def doctor(
 ) -> None:
     """Check a hub and its deployment: files, configuration layers and secrets,
     agent build, schedules, schema, auth, exposure, model credentials, backups
-    and scheduled work. Read only. Exits 1 when any check fails."""
+    and scheduled work. Read only. Exits 1 when any check fails or a required
+    eval is pending."""
     import json as _json
 
     from . import doctor as doctor_lib
@@ -3415,7 +3416,10 @@ def eval_run(
 
         junit_lib.write(suite, junit)
     if as_json:
-        print(json.dumps({"path": str(path), **(junit and {"junit": str(junit)} or {}), **suite.to_dict()},
+        from .evals.calls import redact
+
+        _push_to_langfuse(hub, suite, Console(stderr=True))  # stdout holds only the JSON
+        print(json.dumps({"path": str(path), **(junit and {"junit": str(junit)} or {}), **redact(suite.to_dict())},
                          indent=2, default=str))
         raise typer.Exit(0 if suite.ok else 1)
 
@@ -3440,17 +3444,18 @@ def eval_run(
         raise typer.Exit(1)
 
 
-def _push_to_langfuse(hub: Path, suite) -> None:
+def _push_to_langfuse(hub: Path, suite, out: Console | None = None) -> None:
     """Best-effort push. Never fails a run — the local JSON is the record."""
     from .evals import langfuse as lf
 
+    out = out or console
     try:
         pushed = lf.push(hub, suite)
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[yellow]langfuse push skipped: {exc}[/yellow]")
+        out.print(f"[yellow]langfuse push skipped: {escape(str(exc))}[/yellow]")
         return
     if pushed:
-        console.print(f"[dim]langfuse: {pushed}[/dim]")
+        out.print(f"[dim]langfuse: {pushed}[/dim]")
 
 
 @eval_app.command("list")

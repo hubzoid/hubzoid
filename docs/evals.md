@@ -447,7 +447,10 @@ How a faked case runs:
   its fake, so a person who may not use the tool is still refused.
 - **MCP servers are not covered.** Their calls do not pass through Hubzoid's
   tool layer. A faked case on a hub with MCP servers fails unless it sets
-  `allow_real_mcp: true` (do that only when those servers just read).
+  `allow_real_mcp: true` (do that only when those servers just read). A
+  case with `run_as` gets none of that person's own connectors either; the
+  `fake_tools` check names the ones left out. `allow_real_mcp` takes `true`
+  or `false`, unquoted.
 - **Other cases are untouched.** Cases without `fake_tools` run every tool for
   real, as before.
 
@@ -467,8 +470,13 @@ required_tags: [safety]                  # every case with one of these tags
 | Row | Meaning |
 |---|---|
 | `ok` | its latest result passed, for the case and the hub as they are now |
-| `fail` | its latest result failed. `hubzoid eval explain` shows why |
-| `pending` | it never ran, or the case file or the hub's instructions, skills, knowledge, tools, workflows or settings changed since it ran. Run it again |
+| `fail` | its latest result failed (`hubzoid eval explain` shows why), or the case file cannot be read |
+| `pending` | it never ran, it last ran with `--no-judge` although it has criteria, or the case file or the hub's instructions, skills, knowledge, tools, workflows, settings or configuration changed since it ran. Run it again |
+
+Configuration means the names in the hub's `.env` and `restricted/.env`, and
+the values of the ones that are not secret (`MODEL`, say): switching the
+model makes results pending, rotating an API key does not.
 
 A requirement that matches no case fails the `evals.quality` row, so a typo
-never reads as satisfied. A pending case never counts as passing.
+never reads as satisfied. A pending case never counts as passing: doctor
+exits 1 until every required eval is `ok`.

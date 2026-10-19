@@ -19,7 +19,8 @@ a person who may not use a tool is still refused.
 
 Outside a case nothing changes: the wrapper reads one ContextVar and calls
 the tool. MCP servers are not covered (their calls never pass through here),
-so the runner refuses a faked case on a hub that has MCP servers unless the
+so the runner refuses a faked case on a hub that has MCP servers, and the
+person's own connectors are left out of the case (``withheld``), unless the
 case says ``allow_real_mcp: true``.
 """
 from __future__ import annotations
@@ -63,11 +64,23 @@ class Session:
     survives the context copies runtimes make for tool calls."""
     fakes: list[Fake]
     real: frozenset[str] = frozenset()
+    allow_mcp: bool = False
     used: list[str] = field(default_factory=list)
     blocked: list[tuple[str, Any]] = field(default_factory=list)
+    left_out: list[str] = field(default_factory=list)   # the person's connectors, not offered
 
 
 _active: ContextVar[Session | None] = ContextVar("hubzoid_eval_fakes", default=None)
+
+
+def withheld(connector_ids) -> bool:
+    """True while a faked case runs that may not use real MCP servers: the
+    person's connectors (``connector_ids``) are then not offered, and noted."""
+    session = _active.get()
+    if session is None or session.allow_mcp:
+        return False
+    session.left_out.extend(c for c in connector_ids if c not in session.left_out)
+    return True
 
 
 @contextmanager

@@ -647,5 +647,6 @@ def report(hub: Path, checks: list[Check]) -> dict:
     from . import __version__
 
     return {"format": FORMAT, "hub": str(Path(hub).resolve()), "hubzoid": __version__,
-            "ok": not any(c.status == "fail" for c in checks),
+            # A pending required eval has not passed yet: the hub is not ready.
+            "ok": not any(c.status in ("fail", "pending") for c in checks),
             "checks": [asdict(c) for c in checks]}

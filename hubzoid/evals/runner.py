@@ -252,7 +252,8 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
             return result
         from .. import tool_fakes
 
-        fakes = tool_fakes.Session(fakes=list(case.fake_tools), real=frozenset(case.real_tools))
+        fakes = tool_fakes.Session(fakes=list(case.fake_tools), real=frozenset(case.real_tools),
+                                   allow_mcp=case.allow_real_mcp)
 
     ident = None
     who = case.run_as or run_as
@@ -363,12 +364,14 @@ def _fakes_check(session) -> Check:
     """A faked case passes this check only if no hub tool had to be blocked."""
     from .calls import key_args, safe_args
 
+    note = (f"; the person's connectors ({', '.join(session.left_out)}) were left out"
+            if session.left_out else "")
     if session.blocked:
         shown = "; ".join(f"{name}({key_args(safe_args(args) if isinstance(args, dict) else None)})"
                           for name, args in session.blocked[:3])
         return Check(kind="fake_tools", passed=False,
-                     detail=f"blocked {len(session.blocked)} call(s) with no fake result: {shown}")
-    return Check(kind="fake_tools", passed=True, detail=f"{len(session.used)} call(s) answered by fakes")
+                     detail=f"blocked {len(session.blocked)} call(s) with no fake result: {shown}{note}")
+    return Check(kind="fake_tools", passed=True, detail=f"{len(session.used)} call(s) answered by fakes{note}")
 
 
 def _on_turn(case: EvalCase, turn_no: int) -> str:
