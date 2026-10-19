@@ -209,7 +209,7 @@ sessions and rate limits are in [authentication](../auth.md).
 | `POST /api/chat` | hub | see below | the reply as a stream (6.3) |
 | `POST /api/runs/{message_id}/cancel` | hub | | 202 `{status: "cancelling"}` |
 | `GET /api/runs/{message_id}` | hub | | `{status, message}`, for a page that reloads while a reply runs |
-| `GET`, `POST`, `DELETE /api/conversations/{id}/share` | deployment | | `{share_id, url}`, or 204 for `DELETE` |
+| `GET`, `DELETE /api/conversations/{id}/share` | deployment | | a pre-2.0 link: `{share_id, url}`, or 204 for `DELETE`. New links go through `/api/shares/previews` |
 | `GET /api/shares/{share_id}` | deployment | | `{title, agent, owner_name, created_at, messages}` for any signed-in person |
 
 `POST /api/chat` body:

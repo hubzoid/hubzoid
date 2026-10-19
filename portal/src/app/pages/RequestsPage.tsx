@@ -43,12 +43,18 @@ export function usePendingCount(): number {
     const load = () =>
       void loadPending(bases).then((rows) => alive && setCount(rows.filter((r) => r.allowed_actions.length > 0).length));
     load();
-    const timer = window.setInterval(load, 15_000);
+    // One count for the sidebar: refreshed on focus, and every minute only
+    // while this tab is visible (each agent is one request, so hidden tabs
+    // and short intervals multiply quickly).
+    const timer = window.setInterval(() => document.visibilityState === "visible" && load(), 60_000);
+    const onVisible = () => document.visibilityState === "visible" && load();
     window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
       window.clearInterval(timer);
       window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

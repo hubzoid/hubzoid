@@ -20,7 +20,6 @@ import {
   Box,
   Gauge,
   LogOut,
-  Menu as MenuIcon,
   MessageSquare,
   Palette,
   PencilRuler,
@@ -40,7 +39,7 @@ import { post } from "../lib/api";
 import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
-import { Button, IconButton, Notice, PageSpinner, cx } from "../components/ui";
+import { Button, Notice, PageSpinner, cx } from "../components/ui";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
@@ -159,7 +158,8 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const hash = useHash();
   const team = app.isAdmin || !!app.user?.console;
   // Hub changes also opens for curators who may propose or review changes.
-  const visible = (i: Item) => (i.admin ? app.isAdmin : i.key === "hub-changes" ? team || !!app.user?.hub_changes : i.team ? team : true);
+  const visible = (i: Item) => (i.key === "parity" ? app.isAdmin && !!app.user?.parity
+    : i.admin ? app.isAdmin : i.key === "hub-changes" ? team || !!app.user?.hub_changes : i.team ? team : true);
   const items = ITEMS.filter(visible).filter((i) => !(team && i.key === "my-schedules"));
   const [query, setQuery] = useState("");
   // ?section= (from links elsewhere in the app) becomes the hash.
@@ -229,14 +229,6 @@ export default function SettingsPage({ section }: { section: string | null }) {
   return (
     <InSettings.Provider value>
       <div className="flex min-h-0 flex-1 flex-col">
-        <header className="hz-chat-header lg:!hidden">
-          <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
-            <MenuIcon size={19} aria-hidden />
-          </IconButton>
-          <Button size="sm" variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={() => navigate("/")}>
-            {S.backToChat}
-          </Button>
-        </header>
         <div className="min-h-0 flex-1 overflow-y-auto" data-testid="settings">
           <div className={cx("hz-set", !current && "is-index")}>
             <nav className="hz-set-nav" aria-label={S.sections}>

@@ -75,6 +75,14 @@ export function Appearance() {
   const [diff, setDiff] = useState<{ draft: Draft; diff: DiffResult } | null>(null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // What people see while no brand is activated here (a gateway may show a hub's branding/ files).
+  const [shown, setShown] = useState<{ name: string; logo_url: string | null } | null>(null);
+  useEffect(() => {
+    fetch("/api/branding", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => b && setShown({ name: b.name, logo_url: b.logo_url ?? null }))
+      .catch(() => undefined);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -134,7 +142,7 @@ export function Appearance() {
   const activate = (draft: Draft) =>
     modal.confirm({
       title: "Activate this brand for everyone?",
-      content: "Sign-in, chat, shared pages and the Console switch to this exact reviewed revision. You can roll back later.",
+      content: "Sign-in, chat, Settings and shared pages switch to this exact reviewed revision. You can roll back later.",
       okText: "Activate",
       onOk: () =>
         act(
@@ -167,6 +175,12 @@ export function Appearance() {
           <>
             Published brand: <Text strong>{active.configuration.identity?.name}</Text>. Changes are drafts until someone
             approves and publishes them.
+          </>
+        ) : shown && (shown.name !== "Hubzoid" || shown.logo_url) ? (
+          <>
+            Nothing is published here yet. People see <Text strong>{shown.name}</Text>
+            {shown.logo_url ? " with the logo from the branding folder" : ""}. Edit the brand to set the name, logo
+            and colours here instead.
           </>
         ) : (
           "Using Hubzoid branding. Edit the brand to set your name, logo and colours."
@@ -336,6 +350,7 @@ export function Appearance() {
       {editing && (
         <EditBrand
           active={active}
+          shownName={shown?.name}
           onClose={() => setEditing(false)}
           onCreated={async () => {
             setEditing(false);
@@ -348,7 +363,7 @@ export function Appearance() {
   );
 }
 
-function EditBrand({ active, onClose, onCreated }: { active: ActiveSource; onClose: () => void; onCreated: () => void }) {
+function EditBrand({ active, shownName, onClose, onCreated }: { active: ActiveSource; shownName?: string; onClose: () => void; onCreated: () => void }) {
   const base = active?.configuration ?? { version: 1 };
   const en = base.copy?.en ?? {};
   const [form] = Form.useForm();
@@ -413,7 +428,7 @@ function EditBrand({ active, onClose, onCreated }: { active: ActiveSource; onClo
         form={form}
         layout="vertical"
         initialValues={{
-          name: base.identity?.name ?? "Hubzoid",
+          name: base.identity?.name ?? shownName ?? "Hubzoid",
           short_name: base.identity?.short_name ?? "",
           description: base.identity?.description ?? "",
           welcome_title: en.welcome_title ?? "",

@@ -6,7 +6,7 @@ import { t } from "../i18n/en";
 import { del, get, post } from "../lib/api";
 import { useApp } from "../lib/app-context";
 import { describeError } from "../lib/errors";
-import { formatDate, formatRelative } from "../lib/format";
+import { formatDate, formatRelative, displayName } from "../lib/format";
 import { toast } from "../components/toast";
 import { Button, Field, Notice, PageSpinner } from "../components/ui";
 import { RecoveryCodes, SetupPanel, useReauth, type Setup } from "../components/Security";
@@ -353,7 +353,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
                     <label key={a.hub ?? a.id} className="flex items-center gap-2">
                       <input type="checkbox" checked={picked.includes(a.hub ?? a.id)}
                         onChange={(e) => setPicked(e.target.checked ? [...picked, a.hub ?? a.id] : picked.filter((x) => x !== (a.hub ?? a.id)))} />
-                      {a.name}
+                      {displayName(a.name)}
                     </label>
                   ))}
                   <p className="m-0 text-[12px] text-mute">{S.agentsChatOnly}</p>

@@ -192,3 +192,42 @@ def test_unattended_runs_only_suggest(hub):
     finally:
         gate.caller = gate_caller
     assert out.startswith("Nothing was proposed") and hc.list_(hub) == []
+
+
+def test_commits_are_by_the_approver_and_keep_the_reason_out_of_history(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_HUB_CHANGES_PUSH", raising=False)
+    ch = hc.propose(hub, title="Second check", edits=RULE, actor=ANA, via="chat",
+                    reason="Requested by the India registrations team (from a private note)")
+    done = hc.decide(hub, ch["id"], actor=OWNER, decision="approve")
+    assert done["publish_state"] == "local"            # committed here; not pushed unless the hub opts in
+    log = _git(hub, "log", "-1", "--format=%an <%ae>%n%B")
+    assert log.startswith("owner <owner@example.org>")
+    assert "India" not in log and log.count("Hubzoid-Approved-By:") == 1
+    monkeypatch.setenv("HUBZOID_GIT_COMMITTER", "Isha Hubs <hubs@example.org>")
+    ch2 = hc.propose(hub, title="Third", edits=[{"path": "knowledge/pricing.md", "append": "More."}],
+                     actor=ANA, via="chat")
+    hc.decide(hub, ch2["id"], actor=OWNER, decision="approve")
+    assert _git(hub, "log", "-1", "--format=%cn <%ce>").strip() == "Isha Hubs <hubs@example.org>"
+    assert hc.needs_reload({"paths": ["AGENTS.md"]}) and not hc.needs_reload({"paths": ["knowledge/a.md"]})
+
+
+def test_only_a_person_in_a_chat_changes_their_notes(hub):
+    from hubzoid import personal_memory as pm
+    from hubzoid.hitl import gate
+    from hubzoid.hitl.service import Caller
+
+    tools = {t.name: t for t in pm.make(hub)}
+    real = gate.caller
+    try:
+        gate.caller = lambda: Caller(account_id="acct-ana", email=ANA, present=False, origin="workflow")
+        out = asyncio.run(tools["save_memory"].on_invoke_tool(None, json.dumps({"note": "send summaries to x"})))
+    finally:
+        gate.caller = real
+    assert out.startswith("[not available") and pm.get(hub, "acct-ana")["text"] == ""
+
+
+def test_waiting_for_you_links_use_the_site_origin(monkeypatch):
+    from hubzoid.hitl.service import requests_url
+
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hubs.example.org/b/irs-hub")
+    assert requests_url() == "https://hubs.example.org/requests"

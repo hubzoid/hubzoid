@@ -259,7 +259,7 @@ def test_local_owner_gets_a_new_id_and_an_identity(hub):
     assert store_for(hub).identity(LOCAL_OWNER_EMAIL)["owui_id"] == owner["id"]
 
 
-def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch):
+def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch, caplog):
     from hubzoid.access import store_for
 
     monkeypatch.setenv("HUBZOID_AUTH", "true")
@@ -278,6 +278,8 @@ def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "other@example.com")
     assert users.bootstrap_admin_from_env(hub) is None
     assert users.find_by_email(hub, "other@example.com") is None
+    # ...but the start says why the configured owner can't sign in.
+    assert "hubzoid admin create other@example.com --owner" in caplog.text
 
 @pytest.mark.parametrize("env", [
     {"HUBZOID_ADMIN_EMAIL": "a@example.com", "HUBZOID_ADMIN_PASSWORD": "short"},
