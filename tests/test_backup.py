@@ -559,9 +559,9 @@ def test_a_run_waiting_for_a_person_does_not_hold_a_backup(tmp_path, monkeypatch
     assert bk.running_runs(p) == ["hub: wf-busy", "hub: wf-just-asked"]
 
 
-def test_a_decision_during_a_backup_waits_out_its_hold(tmp_path, monkeypatch):
-    # The woken run waits, marked so the backup does not wait for it in turn,
-    # and keeps waiting through a store it cannot read for a moment.
+def _held_run(tmp_path, monkeypatch, *, unreadable_at: int | None):
+    """Wait out a hold the way a woken run does; the hold ends after the
+    second pause, and the store can't be read once if asked."""
     import time
 
     from hubzoid import access
@@ -570,24 +570,53 @@ def test_a_decision_during_a_backup_waits_out_its_hold(tmp_path, monkeypatch):
 
     hub = _hub(tmp_path)
     store_for(hub).set_schedule_hold("backup", 600, actor="test")
-    real_store_for, steps = access.store_for, []
+    real_store_for, steps, seen = access.store_for, [], []
 
-    def flaky_store_for(hub_dir):
-        if len(steps) == 1:
+    def store(hub_dir):
+        if unreadable_at is not None and len(steps) == unreadable_at:
             raise OSError("database is locked")
         return real_store_for(hub_dir)
 
     def sleep(seconds):
         steps.append(seconds)
-        if len(steps) == 1:
-            assert bk._waiting_for_people(hub) >= {"wf-1"}  # the backup sees it waits
+        seen.append(set(bk._waiting_for_people(hub)))
         if len(steps) == 2:
             real_store_for(hub).clear_schedule_hold()  # the backup finished
 
-    monkeypatch.setattr(access, "store_for", flaky_store_for)
+    monkeypatch.setattr(access, "store_for", store)
     monkeypatch.setattr(time, "sleep", sleep)
     context._wait_out_hold(hub, "wf-1")
-    assert len(steps) == 2 and "wf-1" not in bk._waiting_for_people(hub)
+    return hub, steps, seen
+
+
+def test_a_decision_during_a_backup_waits_out_its_hold(tmp_path, monkeypatch):
+    # Marked so the backup does not wait for it in turn, and still waiting
+    # through a store it cannot read for a moment.
+    hub, steps, seen = _held_run(tmp_path, monkeypatch, unreadable_at=1)
+    assert len(steps) == 2 and "wf-1" in seen[0]
+    assert "wf-1" not in bk._waiting_for_people(hub)
+
+
+def test_a_readable_hold_is_waited_out_however_long(tmp_path, monkeypatch):
+    from hubzoid.workflows import context
+
+    monkeypatch.setattr(context, "HOLD_WAIT_LIMIT", 0)  # caps only a hold that cannot be read
+    _hub_dir, steps, _seen = _held_run(tmp_path, monkeypatch, unreadable_at=None)
+    assert len(steps) == 2
+
+
+def test_a_hold_waiting_mark_left_by_a_crash_is_cleared_or_ignored(tmp_path):
+    import time
+
+    from hubzoid.access import store_for
+    from hubzoid.workflows import context
+
+    hub = _hub(tmp_path)
+    store_for(hub).set_metadata(context.HOLD_WAITING + "wf-old", {"at": time.time() - 7 * 3600})
+    store_for(hub).set_metadata(context.HOLD_WAITING + "wf-2", {"at": time.time()})
+    assert bk._waiting_for_people(hub) >= {"wf-2"} and "wf-old" not in bk._waiting_for_people(hub)
+    context._wait_out_hold(hub, "wf-2")  # replayed after recovery, with no hold
+    assert "wf-2" not in bk._waiting_for_people(hub)
 
 
 def test_backing_up_an_older_release_changes_no_schema(tmp_path):

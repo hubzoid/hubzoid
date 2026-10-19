@@ -214,7 +214,11 @@ def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
                        key=len, reverse=True)
         candidates = [(s, rest[len(s) + 2:]) for s in known] + candidates
     if cfg is not None and len(candidates) > 1:
-        server, tool = max(candidates, key=lambda c: _STRICTNESS.get(cfg.rule_for(c[1] or name, c[0]).ask, 3))
+        def strictness(c):
+            rule = cfg.rule_for(c[1] or name, c[0])
+            return _STRICTNESS.get(rule.ask, 3), not rule.allow_always
+
+        server, tool = max(candidates, key=strictness)
     else:
         server, tool = candidates[0]
     return server or None, tool or name

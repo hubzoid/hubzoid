@@ -332,6 +332,7 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
 # as running until this long after it asked.
 PARKED_SETTLE_SECONDS = 300
 _HOLD_WAITING = "hold-waiting:"  # workflows.context.HOLD_WAITING
+_HOLD_MARK_MAX_AGE = 6 * 3600
 
 
 def _waiting_for_people(hub_dir: Path) -> set[str]:
@@ -353,14 +354,20 @@ def _waiting_for_people(hub_dir: Path) -> set[str]:
         with engine.connect() as conn:
             for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending' AND created_at <= :c",
                         "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input') "
-                        "AND updated <= :c",
-                        # woken by a decision, waiting out this backup's hold
-                        "SELECT substr(k, :n) FROM hz_meta WHERE k LIKE :p"):
+                        "AND updated <= :c"):
                 try:
-                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff, "n": len(_HOLD_WAITING) + 1,
-                                                                       "p": _HOLD_WAITING + "%"}) if r[0]}
+                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff}) if r[0]}
                 except Exception:  # noqa: BLE001 - an older store without the table
                     conn.rollback()
+            # Woken by a decision, waiting out this backup's hold. A mark left
+            # by a process that died is ignored once it is older than any hold.
+            try:
+                for k, v in conn.execute(sa.text("SELECT k, v FROM hz_meta WHERE k LIKE :p"),
+                                         {"p": _HOLD_WAITING + "%"}):
+                    if float((json.loads(v or "{}") or {}).get("at") or 0) >= time.time() - _HOLD_MARK_MAX_AGE:
+                        out.add(k[len(_HOLD_WAITING):])
+            except Exception:  # noqa: BLE001
+                conn.rollback()
     except Exception:  # noqa: BLE001 - unknown: the backup waits for every run
         log.warning("backup: could not read what waits for people in %s", hub_dir, exc_info=True)
     finally:

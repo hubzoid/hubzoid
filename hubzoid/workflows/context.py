@@ -693,34 +693,40 @@ HOLD_WAIT_LIMIT = 1800
 def _wait_out_hold(hub_dir, run_id: str = "") -> None:
     """A backup copies the hub's state without waiting for runs parked on a
     person (``backup.running_runs``): one woken by a decision meanwhile waits
-    until the backup's hold ends, marked so the backup knows it is waiting
-    too. If the hold cannot be read it keeps looking, for at most
-    ``HOLD_WAIT_LIMIT`` seconds (a hold expires on its own)."""
+    until the backup's hold ends (a hold expires on its own), marked so the
+    backup knows it is waiting too. A hold it cannot read is looked at again,
+    for at most ``HOLD_WAIT_LIMIT`` seconds without an answer. The mark is
+    always cleared on the way out, also when a recovered run replays this."""
     import time
 
     from ..access import store_for
 
     key = f"{HOLD_WAITING}{run_id}" if run_id else None
-    marked = None
-    give_up = time.monotonic() + HOLD_WAIT_LIMIT
+    marked = False
+    unreadable_since = None
     try:
-        while time.monotonic() < give_up:
+        while True:
             try:
                 st = store_for(Path(hub_dir))
                 if not st.schedule_hold():
                     return
-                if key and marked is None:
+                unreadable_since = None
+                if key and not marked:
                     st.set_metadata(key, {"at": time.time()})
-                    marked = st
+                    marked = True
             except Exception:  # noqa: BLE001 - cannot tell: look again shortly
+                unreadable_since = unreadable_since or time.monotonic()
+                if time.monotonic() - unreadable_since > HOLD_WAIT_LIMIT:
+                    log.warning("workflows: the backup hold for %s could not be read for %d s; carrying on",
+                                run_id or "a run", HOLD_WAIT_LIMIT)
+                    return
                 log.warning("workflows: could not read the backup hold; waiting", exc_info=True)
             time.sleep(5.0)
-        log.warning("workflows: %s waited %d s for a backup hold; carrying on", run_id or "a run", HOLD_WAIT_LIMIT)
     finally:
-        if marked is not None:
+        if key:
             try:
-                marked.clear_metadata(key)
-            except Exception:  # noqa: BLE001 - a stale mark only spares this run a backup's wait
+                store_for(Path(hub_dir)).clear_metadata(key)
+            except Exception:  # noqa: BLE001 - the backup ignores an old mark
                 log.warning("workflows: could not clear %s", key, exc_info=True)
 
 

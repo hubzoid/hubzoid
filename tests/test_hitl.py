@@ -415,6 +415,10 @@ def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub, monkeypatch):
     monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme"), NS(id="acme__delete")])
     with identity_scope(Identity.make("ana@example.org", surface="web")):
         assert decision("mcp__my_acme__delete__order", {"id": 2}) == "deny"
+    # Equally strict, but only one may be allowed for good: the other decides.
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  order: {ask: always, allow_always: true}\n"
+                                   "  delete__order: {ask: always}\n")
+    assert gate.mcp_parts(hub, "mcp__my_acme__delete__order") == ("my_acme", "delete__order")
 
 
 def test_only_a_persons_session_decides_never_a_key():
