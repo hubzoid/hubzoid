@@ -273,7 +273,8 @@ function chartPng(width = 160, height = 100) {
       await send("try the failing tool");
       const failed = page.getByTestId("tool-entry").last();
       await failed.getByText("Failed").waitFor();
-      await failed.getByText("The CRM didn't respond in time.").first().waitFor();
+      await failed.getByRole("button").click();
+      await failed.getByText("The CRM didn't respond in time.", { exact: false }).first().waitFor();
       await waitIdle();
       await shot(page, "app-04-tools");
 

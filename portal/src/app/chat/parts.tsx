@@ -7,7 +7,7 @@ import type {
   ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
 import { AttachmentPrimitive, useAuiState } from "@assistant-ui/react";
-import { Check, ChevronDown, CircleSlash, FileText, Loader2, Sparkles, X, XCircle } from "lucide-react";
+import { Wrench, ChevronDown, CircleSlash, FileText, Sparkles, X, XCircle } from "lucide-react";
 import { t } from "../i18n/en";
 import { formatBytes, truncate } from "../lib/format";
 import { cx } from "../components/ui";
@@ -44,13 +44,6 @@ export function summarizeArgs(args: unknown): string {
   );
 }
 
-function resultError(result: unknown): string | null {
-  if (!result || typeof result !== "object") return typeof result === "string" && result ? result : null;
-  const r = result as { message?: unknown; error?: unknown; errorText?: unknown };
-  for (const v of [r.message, r.error, r.errorText]) if (typeof v === "string" && v.trim()) return v.trim();
-  return null;
-}
-
 function pretty(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? "";
@@ -79,8 +72,8 @@ export function humanTool(name: string): string {
 }
 
 const stateIcon: Record<ToolState, ReactNode> = {
-  running: <Loader2 size={13} className="hz-spin flex-none text-mute" aria-hidden />,
-  done: <Check size={13} className="flex-none text-mute" aria-hidden />,
+  running: <Wrench size={13} className="flex-none text-mute" aria-hidden />,
+  done: <Wrench size={13} className="flex-none text-mute" aria-hidden />,
   failed: <XCircle size={13} className="flex-none text-danger" aria-hidden />,
   stopped: <CircleSlash size={13} className="flex-none text-mute" aria-hidden />,
 };
@@ -123,9 +116,7 @@ const ToolActivity: ToolCallMessagePartComponent = ({ toolName, args, result, is
   else if (status?.type === "incomplete" && status.reason === "cancelled") state = "stopped";
   else if (status?.type === "incomplete") state = "failed";
   else state = "done";
-  const summary = summarizeArgs(args);
   const label = toolLabel(toolName);
-  const error = state === "failed" ? resultError(result) : null;
   const hasArgs = !!args && typeof args === "object" && Object.keys(args as object).length > 0;
   const stateText = { running: t.tools.running, done: t.tools.done, failed: t.tools.failed, stopped: t.tools.stopped }[state];
 
@@ -133,42 +124,52 @@ const ToolActivity: ToolCallMessagePartComponent = ({ toolName, args, result, is
     <div className="hz-act" data-tool-state={state} data-testid="tool-entry">
       <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
         {stateIcon[state]}
-        <span className="flex-none text-secondary">{humanTool(label.tool)}</span>
+        <span className={cx("hz-act-label", state === "running" && "is-running")}>{humanTool(label.tool)}</span>
         {label.server && (
           <span className="hz-tag is-quiet" data-testid="tool-server">
             {label.server}
           </span>
         )}
-        {summary && <span className="min-w-0 truncate text-mute">{summary}</span>}
-        <span className="sr-only">, {stateText}</span>
+        <span className={state === "failed" || state === "stopped" ? "text-mute" : "sr-only"}>, {stateText}</span>
         <ChevronDown size={13} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
       </button>
-      {error && !open && <p className="m-0 pb-1 pl-[21px] text-[12.5px] text-danger">{error}</p>}
       <div id={bodyId} hidden={!open} className="hz-act-detail">
         <div className="mb-1 text-[11.5px] text-mute">
-          {t.tools.details} · <span className="font-mono">{toolName}</span>
+          {t.tools.input} · <span className="font-mono">{toolName}</span>
         </div>
         {hasArgs ? (
           <pre className="hz-tech">{pretty(args)}</pre>
         ) : (
           <p className="m-0 text-[12.5px] text-mute">{t.tools.noInput}</p>
         )}
-        {error && <p className="m-0 mt-2 text-[12.5px] text-danger">{error}</p>}
+        {result !== undefined && (
+          <>
+            <div className="mb-1 mt-3 text-[11.5px] text-mute">{t.tools.result}</div>
+            <pre className="hz-tech">{typeof result === "string" ? result : pretty(result)}</pre>
+          </>
+        )}
       </div>
     </div>
   );
 };
 
-/** Consecutive tool calls fold into one quiet summary row ("Used 3 tools"). */
+/** Consecutive tool calls fold into one quiet summary row ("3 tool calls"). */
 export function ToolGroup({ startIndex, endIndex, children }: { startIndex: number; endIndex: number; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const bodyId = useId();
   const count = endIndex - startIndex + 1;
   const pending = useAuiState((s) =>
     s.message.content
       .slice(startIndex, endIndex + 1)
       .filter((p) => p.type === "tool-call" && (p as { result?: unknown }).result === undefined).length,
   );
-  const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
+  const messageStatus = useAuiState((s) => s.message.status);
+  const running = messageStatus?.type === "running";
+  const currentTool = useAuiState((s) => {
+    const calls = s.message.content.slice(startIndex, endIndex + 1);
+    const current = calls.findLast((p) => p.type === "tool-call" && p.result === undefined);
+    return current?.type === "tool-call" ? humanTool(toolLabel(current.toolName).tool) : "";
+  });
   // A card waiting for the person is never folded away.
   const asking = useAuiState((s) =>
     s.message.content
@@ -180,14 +181,18 @@ export function ToolGroup({ startIndex, endIndex, children }: { startIndex: numb
   );
   if (count < 2 || asking) return <>{children}</>;
   const busy = running && pending > 0;
+  const stopped = pending > 0 && messageStatus?.type === "incomplete" && messageStatus.reason === "cancelled";
+  const hasFailure = failed || (pending > 0 && messageStatus?.type === "incomplete" && !stopped);
+  const state = busy ? "running" : hasFailure ? "failed" : stopped ? "stopped" : "done";
   return (
-    <div className="hz-act" data-testid="tool-group">
-      <button type="button" className="hz-act-row" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {busy ? stateIcon.running : failed ? stateIcon.failed : stateIcon.done}
-        <span className="text-secondary">{busy ? t.tools.usingN(count) : t.tools.usedN(count)}</span>
+    <div className="hz-act" data-testid="tool-group" data-tool-state={state}>
+      <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        {stateIcon[state]}
+        <span className={cx("hz-act-label", busy && "is-running")}>{busy ? currentTool || t.tools.usingN(count) : t.tools.usedN(count)}</span>
+        {(hasFailure || stopped) && <span className="text-mute">· {hasFailure ? t.tools.failed : t.tools.stopped}</span>}
         <ChevronDown size={13} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
       </button>
-      {open && <div className="hz-act-steps">{children}</div>}
+      <div id={bodyId} hidden={!open} className="hz-act-steps">{open && children}</div>
     </div>
   );
 }
