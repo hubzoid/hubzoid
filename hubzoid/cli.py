@@ -48,6 +48,20 @@ app = typer.Typer(
 console = Console()
 
 
+def _print_version(value: bool) -> None:
+    if value:
+        console.print(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(False, "--version", callback=_print_version, is_eager=True,
+                                 help="Print the installed hubzoid version and exit."),
+) -> None:
+    """An open-source framework for production AI agents."""
+
+
 def _stop_processes(procs, *, timeout: float = 8.0) -> None:
     """Let child services close databases before the supervising process exits.
 
