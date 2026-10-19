@@ -3262,6 +3262,12 @@ app.add_typer(operations_app, name="operations",
               help="Recorded external writes: approve, deny and resolve.",
               rich_help_panel="Commands")
 
+from .channels.cli import channels_app  # noqa: E402
+
+app.add_typer(channels_app, name="channels",
+              help="Channels: Slack, GitHub, Linear, email and WhatsApp threads for this hub.",
+              rich_help_panel="Commands")
+
 from .stations.cli import handoffs_app, stations_app  # noqa: E402
 
 app.add_typer(stations_app, name="stations",

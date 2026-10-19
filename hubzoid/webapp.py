@@ -5,7 +5,8 @@
   1. sign-in routes          hubzoid.auth.routes.mount        (/api/auth, /oauth)
   2. chat routes             hubzoid.chat.routes.mount        (/api/chat, /api/conversations, /api/shares)
   3. connection routes       hubzoid.connectors.routes.mount  (/api/connections, /portal/api/connectors)
-  4. agents and branding    hubzoid.webapp_gateway.mount     (/api/agents, /api/branding)
+  4. channels                hubzoid.channels.routes.mount    (/api/hubs/{hub_id}/channels)
+  5. agents and branding    hubzoid.webapp_gateway.mount     (/api/agents, /api/branding)
   5. the page shell          GET /, /c/*, /s/*, /auth*, /account*
 
 It must run BEFORE ``portal.mount_portal``: the Console's static files are
@@ -42,6 +43,7 @@ _MOUNTS = (
     "hubzoid.connectors.routes",
     "hubzoid.secretstore.routes",
     "hubzoid.hubs.routes",
+    "hubzoid.channels.routes",
     "hubzoid.access.access_routes",
     "hubzoid.auth.directory.scim",
     "hubzoid.webapp_gateway",
