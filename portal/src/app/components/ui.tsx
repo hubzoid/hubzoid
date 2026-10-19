@@ -80,7 +80,7 @@ export function Tip({ label, children, side = "top" }: { label: string; children
         <RTooltip.Content
           side={side}
           sideOffset={6}
-          className="z-[70] rounded-md bg-ink px-2 py-1 text-[11.5px] font-medium text-bg"
+          className="z-[70] max-w-[min(20rem,calc(100vw-2rem))] rounded-md bg-ink px-2 py-1 text-[11.5px] font-medium text-bg"
         >
           {label}
         </RTooltip.Content>
