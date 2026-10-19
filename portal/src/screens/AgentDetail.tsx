@@ -10,8 +10,9 @@ import { AgentConnectors } from "./ConnectorsScreen";
 import { AgentSecrets } from "./SecretsScreen";
 import { AgentChannels } from "./ChannelsScreen";
 import { AgentIntake } from "./IntakeScreen";
+import { AgentSetup } from "./SetupScreen";
 
-export type AgentTab = "access" | "connectors" | "secrets" | "channels" | "intake" | "runs" | "evals" | "activity";
+export type AgentTab = "access" | "connectors" | "setup" | "secrets" | "channels" | "intake" | "runs" | "evals" | "activity";
 
 export function AgentDetail({
   hub,
@@ -42,7 +43,7 @@ export function AgentDetail({
             <span>{hub.name}</span>
           </span>
         }
-        description="Who can use it, what it connects to, its secrets, channels and intake, workflows, quality checks and activity."
+        description="Who can use it, what it connects to, its setup, secrets, channels and intake, workflows, quality checks and activity."
         extra={
           <Space>
             {embedded && me.org_admin && (
@@ -56,7 +57,7 @@ export function AgentDetail({
       />
       {embedded ? (
         <nav className="hz-agent-tabs" aria-label="Agent sections">
-          {([['access', 'Access'], ['connectors', 'Connectors'], ['secrets', 'Secrets'], ['channels', 'Channels'], ['intake', 'Intake'], ['runs', 'Runs & schedules'], ['evals', 'Evals'], ['activity', 'Activity']] as const).map(([key, label]) => (
+          {([['access', 'Access'], ['connectors', 'Connectors'], ['setup', 'Setup'], ['secrets', 'Secrets'], ['channels', 'Channels'], ['intake', 'Intake'], ['runs', 'Runs & schedules'], ['evals', 'Evals'], ['activity', 'Activity']] as const).map(([key, label]) => (
             <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? 'page' : undefined}>{label}</a>
           ))}
         </nav>
@@ -66,6 +67,7 @@ export function AgentDetail({
         items={[
           { key: "access", label: <a href={agentHref(hub.key, "access")}>Access</a> },
           { key: "connectors", label: <a href={agentHref(hub.key, "connectors")}>Connectors</a> },
+          { key: "setup", label: <a href={agentHref(hub.key, "setup")}>Setup</a> },
           { key: "secrets", label: <a href={agentHref(hub.key, "secrets")}>Secrets</a> },
           { key: "channels", label: <a href={agentHref(hub.key, "channels")}>Channels</a> },
           { key: "intake", label: <a href={agentHref(hub.key, "intake")}>Intake</a> },
@@ -77,6 +79,7 @@ export function AgentDetail({
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} embedded={embedded} />}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
+        {tab === "setup" && <AgentSetup hub={hub} />}
         {tab === "secrets" && <AgentSecrets hub={hub} />}
         {tab === "channels" && <AgentChannels hub={hub} rest={rest} />}
         {tab === "intake" && <AgentIntake hub={hub} rest={rest} />}

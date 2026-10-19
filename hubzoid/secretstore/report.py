@@ -57,8 +57,9 @@ def _example_names(path: Path) -> list[str]:
 
 def expected(hub_dir: Path, env: Mapping[str, str]) -> dict[str, tuple[str, str]]:
     """{name: (level, why)} for the secrets this hub needs before anything
-    sets them: its model's key, its webhooks' keys, and the names in its
-    ``.env.example`` files. Nothing is offered before something reads it."""
+    sets them: its model's key, its webhooks' keys, the secret settings in its
+    settings.yaml, and the names in its ``.env.example`` files. Nothing is
+    offered before something reads it."""
     out: dict[str, tuple[str, str]] = {}
     model = (env.get("MODEL") or "").strip()
     key = names.provider_key(model)
@@ -70,6 +71,14 @@ def expected(hub_dir: Path, env: Mapping[str, str]) -> dict[str, tuple[str, str]
         for webhook in route_declarations(hub_dir):
             out.setdefault("WEBHOOK_SECRET_" + webhook.upper().replace("-", "_"), ("hub", "webhook"))
     except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ..hubs.settings import declarations
+
+        for decl in declarations(hub_dir):
+            if decl.secret:
+                out.setdefault(decl.name, ("hub", "setting"))
+    except ValueError:  # an unreadable settings.yaml is doctor's to report
         pass
     for name in _example_names(hub_dir / ".env.example"):
         if names.secret_like(name):

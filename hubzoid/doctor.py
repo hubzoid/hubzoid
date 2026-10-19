@@ -612,6 +612,43 @@ def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[st
     return out
 
 
+def _hub_setup_checks(hub: Path) -> list[Check]:
+    """The hub's own declarations, only when it has them (hubzoid.hubs):
+
+    settings.files   settings.yaml, hub.settings.yaml and hub.manifest.yaml parse
+    settings.values  every declared setting has a valid value or reference
+    probe.<id>       each check the hub declares in hub.manifest.yaml
+    """
+    from .hubs import probes as probes_lib
+    from .hubs import settings as hub_settings
+    from .hubs.yamlfile import HubFileError
+
+    present = [n for n in (hub_settings.DECLARATIONS, hub_settings.VALUES, probes_lib.MANIFEST)
+               if (hub / n).is_file()]
+    if not present:
+        return []
+    out: list[Check] = []
+    try:
+        resolved, problems = hub_settings.validate(hub)
+        probes_lib.manifest(hub)
+    except HubFileError as exc:
+        return [Check("settings.files", "fail", str(exc))]
+    out.append(Check("settings.files", "ok", f"Read {', '.join(present)}"))
+    if resolved or problems:
+        if problems:
+            out.append(Check("settings.values", "fail",
+                             f"{len(problems)} setting problem(s): " + "; ".join(p.message for p in problems[:5]),
+                             [p.public() for p in problems]))
+        else:
+            out.append(Check("settings.values", "ok", f"{len(resolved)} declared setting(s) set",
+                             [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
+    for result in probes_lib.run(hub):
+        detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \
+            else None
+        out.append(Check(f"probe.{result.id}", result.status, result.summary, detail))
+    return out
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -649,6 +686,10 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
             checks += _store_checks(hub)
         except Exception as exc:  # noqa: BLE001
             checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
+        try:
+            checks += _hub_setup_checks(hub)
+        except Exception as exc:  # noqa: BLE001 - one broken check never hides the rest
+            checks.append(Check("settings.files", "fail", f"Hub settings could not be checked ({type(exc).__name__})"))
         try:
             checks += _secret_checks(hub, fetch_secrets=fetch_secrets and not unreadable,
                                      deployment_values=deployment_values, base_env=base_env)

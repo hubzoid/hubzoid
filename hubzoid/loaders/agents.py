@@ -93,7 +93,16 @@ def load_main(hub_dir: Path) -> LoadedAgent:
     reason = agent_read_refusal(hub_dir, path)
     if reason:
         raise ValueError(f"Agent definition refused: {reason}")
-    return _load_one(path, default_name=_safe_id(hub_dir.name))
+    return _with_settings(hub_dir, _load_one(path, default_name=_safe_id(hub_dir.name)))
+
+
+def _with_settings(hub_dir: Path, loaded: LoadedAgent) -> LoadedAgent:
+    """Fill ``{{settings.KEY}}`` from the hub's settings (hubzoid.hubs.settings).
+    Every runtime reads instructions through here, so all see the same text."""
+    from ..hubs.settings import render
+
+    loaded.instructions = render(hub_dir, loaded.instructions, loaded.source_path)
+    return loaded
 
 
 def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
@@ -134,11 +143,11 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                     match = mds[0]
             if match is None or agent_read_refusal(hub_dir, match):
                 continue
-            out.append(_load_one(match, default_name=_safe_id(child.name)))
+            out.append(_with_settings(hub_dir, _load_one(match, default_name=_safe_id(child.name))))
         elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
-            out.append(_load_one(child, default_name=_safe_id(child.stem)))
+            out.append(_with_settings(hub_dir, _load_one(child, default_name=_safe_id(child.stem))))
     return out
 
 

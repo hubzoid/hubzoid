@@ -2557,6 +2557,7 @@ from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
 from .chat import engine_cli as _chat_engine_cli  # noqa: E402
 from .secretstore.cli import secrets_app  # noqa: E402
+from .hubs.cli import hub_app  # noqa: E402
 
 _chat_engine_cli.register(chat_app)
 from .chat import feedback_cli as _chat_feedback_cli  # noqa: E402
@@ -2649,6 +2650,12 @@ app.add_typer(
     migrate_app,
     name="migrate",
     help="Move an Open WebUI install to the Hubzoid web app.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    hub_app,
+    name="hub",
+    help="A hub's settings (settings.yaml, hub.settings.yaml) and its own checks.",
     rich_help_panel="Commands",
 )
 app.add_typer(

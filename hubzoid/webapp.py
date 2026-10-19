@@ -42,6 +42,7 @@ _MOUNTS = (
     "hubzoid.parity.routes",
     "hubzoid.connectors.routes",
     "hubzoid.secretstore.routes",
+    "hubzoid.hubs.routes",
     "hubzoid.channels.routes",
     "hubzoid.intake.routes",
     "hubzoid.access.access_routes",
