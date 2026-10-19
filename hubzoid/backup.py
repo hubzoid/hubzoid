@@ -327,29 +327,40 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
         source.close()
 
 
+# A run that just asked still posts its card and emails the person: it counts
+# as running until this long after it asked.
+PARKED_SETTLE_SECONDS = 300
+
+
 def _waiting_for_people(hub_dir: Path) -> set[str]:
     """Runs parked until a person decides: a pending approval or question, or
-    work waiting for input or an approval. They write nothing until then and
-    may wait for days, so a backup does not wait for them. Read with plain
-    SQL; a store without those tables has none."""
+    work waiting for input or an approval, asked at least
+    ``PARKED_SETTLE_SECONDS`` ago. They write nothing until then (a decision
+    that arrives during the backup waits out its hold) and may wait for
+    days, so a backup does not wait for them. Read with plain SQL; a store
+    without those tables has none."""
     import sqlalchemy as sa
 
     from . import db
 
     out: set[str] = set()
-    engine = sa.create_engine(db.operational_url(hub_dir))
+    cutoff = time.time() - PARKED_SETTLE_SECONDS
+    engine = None
     try:
+        engine = sa.create_engine(db.sqlalchemy_url(db.operational_url(hub_dir)))
         with engine.connect() as conn:
-            for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending'",
-                        "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input')"):
+            for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending' AND created_at <= :c",
+                        "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input') "
+                        "AND updated <= :c"):
                 try:
-                    out |= {r[0] for r in conn.execute(sa.text(sql)) if r[0]}
+                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff}) if r[0]}
                 except Exception:  # noqa: BLE001 - an older store without the table
                     conn.rollback()
     except Exception:  # noqa: BLE001 - unknown: the backup waits for every run
         log.warning("backup: could not read what waits for people in %s", hub_dir, exc_info=True)
     finally:
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
     return out
 
 

@@ -628,6 +628,7 @@ class Hub:
 
                 time.sleep(1.0)
             req = read(str(ctx.hub_dir), ctx.hub, req["id"])
+        _wait_out_hold(ctx.hub_dir)
         return req
 
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
@@ -681,6 +682,23 @@ def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
     from ..hitl import service
 
     return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
+
+
+def _wait_out_hold(hub_dir) -> None:
+    """A backup copies the hub's state without waiting for runs parked on a
+    person (``backup.running_runs``): one woken by a decision meanwhile waits
+    until the backup's hold ends (a hold expires on its own)."""
+    import time
+
+    from ..access import store_for
+
+    while True:
+        try:
+            if not store_for(Path(hub_dir)).schedule_hold():
+                return
+        except Exception:  # noqa: BLE001 - cannot tell: carry on
+            return
+        time.sleep(5.0)
 
 
 def _hitl_receive(request_id: str) -> bool:

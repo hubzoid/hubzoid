@@ -532,18 +532,21 @@ def test_a_run_waiting_for_a_person_does_not_hold_a_backup(tmp_path, monkeypatch
 
     hub = _hub(tmp_path)
     migrations.upgrade(db.operational_engine(hub), "operational")
+    asked = {"wf-parked": time.time() - 2 * bk.PARKED_SETTLE_SECONDS,
+             "wf-just-asked": time.time()}  # still posting its card and email
     with db.operational_engine(hub).begin() as c:
-        c.execute(hitl_store.requests.insert().values(
-            id="r1", hub_id="hub", kind="approval", status="pending", revision=1, origin="workflow",
-            requester_id="u1", approvers_json="[]", title="Send it", digest="d", allow_chat=True,
-            allow_always=False, continued=False, created_at=time.time(), workflow_id="wf-parked"))
+        for wid, at in asked.items():
+            c.execute(hitl_store.requests.insert().values(
+                id=wid, hub_id="hub", kind="approval", status="pending", revision=1, origin="workflow",
+                requester_id="u1", approvers_json="[]", title="Send it", digest="d", allow_chat=True,
+                allow_always=False, continued=False, created_at=at, workflow_id=wid))
 
     class Client:
         def __init__(self, **kw):
             pass
 
         def list_workflows(self, **kw):
-            return [SimpleNamespace(workflow_id="wf-parked"), SimpleNamespace(workflow_id="wf-busy")]
+            return [SimpleNamespace(workflow_id=w) for w in ("wf-parked", "wf-just-asked", "wf-busy")]
 
         def destroy(self):
             pass
@@ -553,7 +556,26 @@ def test_a_run_waiting_for_a_person_does_not_hold_a_backup(tmp_path, monkeypatch
     for _name, url in p.dbos:
         bk._sqlite_path(url).parent.mkdir(parents=True, exist_ok=True)
         bk._sqlite_path(url).touch()
-    assert bk.running_runs(p) == ["hub: wf-busy"]
+    assert bk.running_runs(p) == ["hub: wf-busy", "hub: wf-just-asked"]
+
+
+def test_a_decision_during_a_backup_waits_out_its_hold(tmp_path, monkeypatch):
+    import time
+
+    from hubzoid.access import store_for
+    from hubzoid.workflows import context
+
+    hub = _hub(tmp_path)
+    store_for(hub).set_schedule_hold("backup", 600, actor="test")
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        store_for(hub).clear_schedule_hold()  # the backup finished
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    context._wait_out_hold(hub)
+    assert slept and store_for(hub).schedule_hold() is None
 
 
 def test_backing_up_an_older_release_changes_no_schema(tmp_path):
@@ -578,3 +600,12 @@ def test_backing_up_an_older_release_changes_no_schema(tmp_path):
     assert any("could not be read" in line for line in said)
     keys = [r[0] for r in sqlite3.connect(hub / ".hubzoid" / "hub.db").execute("SELECT k FROM hz_meta")]
     assert keys == ["backup:last"]  # the hold was lifted
+
+
+def test_an_unreachable_postgres_store_never_stops_the_wait_check(tmp_path, monkeypatch):
+    # A standard postgresql:// URL (psycopg 3, as Hubzoid installs it) that
+    # cannot be read keeps every run counted instead of failing the backup.
+    from hubzoid import db
+
+    monkeypatch.setattr(db, "operational_url", lambda hub_dir, env=None: "postgresql://hz@127.0.0.1:9/none")
+    assert bk._waiting_for_people(tmp_path) == set()
