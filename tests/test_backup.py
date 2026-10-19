@@ -115,6 +115,30 @@ def test_backup_then_restore_at_a_new_path(tmp_path):
     assert ("a@example.org", "hub", "use_hub") in store.list_grants("hub")
 
 
+def test_a_file_people_attached_is_saved_as_its_bytes(tmp_path):
+    # An upload that starts like SQLite (or is one) must neither stop the
+    # backup nor come back with different bytes than its recorded hash.
+    import hashlib
+
+    hub = _standalone(tmp_path)
+    stored = hub / ".hubzoid" / "files" / "hubzoid" / "ab"
+    stored.mkdir(parents=True)
+    fake = stored / "ab01"
+    fake.write_bytes(b"SQLite format 3\x00" + b"not a database" * 20)
+    real = stored / "cd02"
+    c = sqlite3.connect(real)
+    c.execute("CREATE TABLE t (x)")
+    c.commit()
+    c.close()
+    sums = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (fake, real)}
+    archive = tmp_path / "b.tar.gz"
+    index = bk.backup(hub, archive, wait=0)
+    with tarfile.open(archive) as t:
+        saved = {n.rsplit("/", 1)[1]: hashlib.sha256(t.extractfile(n).read()).hexdigest()
+                 for n in t.getnames() if n.endswith(("/ab01", "/cd02"))}
+    assert saved == sums and not any(n.endswith(("/ab01", "/cd02")) for n in index["sqlite"])
+
+
 def test_secrets_only_when_asked(tmp_path):
     hub = _standalone(tmp_path)
     archive = tmp_path / "b.tar.gz"

@@ -222,12 +222,15 @@ def _is_sqlite(path: Path) -> bool:
 
 def _people_files(rel: Path, root: Root) -> bool:
     """Under a folder of files that people attached or the agent made: a
-    conversation's folder (`.hubzoid/chats/<id>/`), the agent's `output`, and
-    Open WebUI's `uploads`. Their names are chosen by people and the agent."""
+    conversation's folder (`.hubzoid/chats/<id>/`), the chat's stored files
+    (`.hubzoid/files`, `.hubzoid/files-staging`), the agent's `output`, and
+    Open WebUI's `uploads`. Their names and bytes are chosen by people and the
+    agent."""
     first = rel.parts[:1]
     if root.kind == "ui":
         return first == ("uploads",)
-    return root.path.name == "output" or (root.path.name == ".hubzoid" and first == ("chats",))
+    return root.path.name == "output" or (root.path.name == ".hubzoid"
+                                          and first in (("chats",), ("files",), ("files-staging",)))
 
 
 def _credential(rel: Path, root: Root) -> bool:
@@ -523,12 +526,26 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
             for root in p.roots:
                 for path, rel in _files(root, include_secrets, exclude, p.exclude_dirs):
                     arc = f"{root.id}/{rel.as_posix()}"
-                    if path.resolve() in p.sqlite_paths and not _is_sqlite(path):
+                    known = path.resolve() in p.sqlite_paths
+                    if known and not _is_sqlite(path):
                         raise BackupError(f"{path} is a database this deployment uses, but it is not a "
                                           "readable SQLite file. Check it before backing up.")
-                    if _is_sqlite(path):
+                    # A file people attached is saved as its bytes, whatever it
+                    # starts with: only a database is copied through SQLite.
+                    copy = None
+                    if known or (_is_sqlite(path) and not _people_files(rel, root)):
                         copy = Path(tmp) / f"{len(index['sqlite'])}.db"
-                        _snapshot(path, copy, drop_hold=path.resolve() in p.operational_paths)
+                        try:
+                            _snapshot(path, copy, drop_hold=path.resolve() in p.operational_paths)
+                        except sqlite3.DatabaseError as exc:
+                            copy.unlink(missing_ok=True)
+                            if known:
+                                raise BackupError(f"{path} could not be copied as a database ({exc}). "
+                                                  "Check it before backing up.") from exc
+                            log.warning("backup: %s starts like a SQLite database but is not one; saved as "
+                                        "a file", path)
+                            copy = None
+                    if copy is not None:
                         index["files"][arc] = _sha256(copy)
                         tar.add(copy, arcname=arc)
                         copy.unlink()
