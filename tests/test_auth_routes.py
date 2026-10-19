@@ -532,3 +532,18 @@ def test_current_user_is_thread_safe(hub, monkeypatch):
     assert {e for m, e in seen if m == "accounts"} == {"ana@example.com"}
     assert {e for m, e in seen if m == "local"} == {"admin@localhost"}
     assert len(users.list_users(hub)) == 2  # one local owner, however many threads raced
+
+
+def test_the_parity_ledger_is_for_maintainers_only(monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hubzoid.auth import routes
+
+    monkeypatch.setattr(routes, "_console", lambda hub, user: True)
+    monkeypatch.setattr(routes.users, "get", lambda hub, uid: {})
+    user = SimpleNamespace(id="u1", method="password", public=lambda: {"id": "u1"})
+    monkeypatch.delenv("HUBZOID_PARITY_LEDGER", raising=False)
+    assert routes._user_view(Path("."), user)["parity"] is False
+    monkeypatch.setenv("HUBZOID_PARITY_LEDGER", "1")
+    assert routes._user_view(Path("."), user)["parity"] is True

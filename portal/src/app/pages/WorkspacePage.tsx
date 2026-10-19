@@ -218,6 +218,7 @@ function Editor({ path, draft: initial, readOnly = false, onChanged }: {
           {showDiff ? t.workspace.hideDiff : t.workspace.showDiff}
         </Button>
         <span className="flex-1" />
+        {editable && dirty && <span className="text-[12px] text-mute">{t.workspace.saveFirst}</span>}
         {editable && (
           <Button size="sm" variant="primary" disabled={dirty || busy || draft.problems.length > 0}
             onClick={() => act(() => post<Draft>(`${A}/drafts/${draft.id}/submit`, { expected_revision: draft.revision }), t.workspace.submitted)}>

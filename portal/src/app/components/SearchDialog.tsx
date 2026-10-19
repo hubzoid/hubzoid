@@ -1,6 +1,6 @@
 // Search every chat you can open: titles first, then matches inside messages,
 // each with its agent. Opens from the sidebar or with ⌘K / Ctrl K.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Dialog as RDialog } from "radix-ui";
 import { Search } from "lucide-react";
 import { t } from "../i18n/en";
@@ -12,8 +12,23 @@ import { sidebar, useSidebarState } from "../lib/sidebarState";
 import type { Conversation, ConversationPage } from "../lib/types";
 import { AgentAvatar, cx } from "./ui";
 
-type Hit = { kind: string; title: string; snippet: string; open_target: { conversation_id: string; message_id?: string | null } };
-type Row = { id: string; title: string; snippet?: string; agent?: string; when?: Conversation["updated_at"] };
+type Hit = { kind: string; title: string; snippet: string; highlights?: [number, number][]; open_target: { conversation_id: string; message_id?: string | null } };
+type Row = { id: string; title: string; snippet?: string; highlights?: [number, number][]; agent?: string; when?: Conversation["updated_at"] };
+
+/** A one-line snippet that starts near the first match, with the matches marked. */
+function Snippet({ text, marks }: { text: string; marks?: [number, number][] }) {
+  const sorted = [...(marks ?? [])].sort((a, b) => a[0] - b[0]);
+  const from = sorted.length && sorted[0][0] > 40 ? Math.max(0, text.lastIndexOf(" ", sorted[0][0] - 24) + 1) : 0;
+  const parts: ReactNode[] = from ? ["…"] : [];
+  let at = from;
+  for (const [a, b] of sorted) {
+    if (a < at) continue;
+    parts.push(text.slice(at, a), <mark key={a} className="hz-search-mark">{text.slice(a, b)}</mark>);
+    at = b;
+  }
+  parts.push(text.slice(at));
+  return <span className="block truncate text-[12px] text-mute">{parts}</span>;
+}
 
 export function SearchDialog() {
   const { searchOpen } = useSidebarState();
@@ -91,11 +106,11 @@ function SearchBody() {
       const id = h.open_target.conversation_id;
       if (seen.has(id)) {
         const row = out.find((r) => r.id === id);
-        if (row && !row.snippet) row.snippet = h.snippet;
+        if (row && !row.snippet) Object.assign(row, { snippet: h.snippet, highlights: h.highlights });
         continue;
       }
       seen.add(id);
-      out.push({ id, title: h.title || t.sidebar.untitled, snippet: h.snippet });
+      out.push({ id, title: h.title || t.sidebar.untitled, snippet: h.snippet, highlights: h.highlights });
     }
     return out.slice(0, 30);
   }, [titles, hits]);
@@ -161,7 +176,7 @@ function SearchBody() {
               {multi && agent ? <AgentAvatar name={agent.name} src={agent.avatar_url} size={18} /> : <Search size={14} aria-hidden className="text-mute" />}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-ink">{r.title}</span>
-                {r.snippet && <span className="block truncate text-[12px] text-mute">{r.snippet}</span>}
+                {r.snippet && <Snippet text={r.snippet} marks={r.highlights} />}
               </span>
               {r.when && <span className="flex-none text-[11.5px] tabular-nums text-mute">{formatDate(r.when, { month: "short", day: "numeric" })}</span>}
             </div>

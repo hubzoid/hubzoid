@@ -125,7 +125,8 @@ def prompt_block(hub_dir, account_id: str) -> str:
         return ""
     return ("[Notes this person asked you to keep, from earlier chats. They are about this person only. If they "
             "disagree with the hub's instructions or knowledge, the hub wins. Use them quietly; don't recite "
-            f"them.]\n{text}\n[End of notes]")
+            "them, and never copy them into anything others see (hub changes, team memory, messages).]\n"
+            f"{text}\n[End of notes]")
 
 
 def revision(hub_dir, account_id: str) -> int:
@@ -140,7 +141,9 @@ def _who(hub_dir) -> tuple[str | None, str | None]:
     from .hitl.gate import caller
 
     c = caller()
-    if c is None:
+    if c is None or not c.present:
+        # Only a person who is there may change their notes: never an
+        # unattended run, which nobody watches (a page it read could ask).
         return None, None
     account = c.account_id
     if not account or "@" in account:
@@ -158,7 +161,7 @@ def make(hub_dir) -> list:
     async def save_invoke(_ctx, input_str: str) -> str:
         account, email = _who(hub_dir)
         if not account:
-            return "[not available: nobody is signed in]"
+            return "[not available: only a person in a chat can change their notes]"
         note = (json.loads(input_str or "{}") or {}).get("note") or ""
         try:
             await asyncio.to_thread(add, hub_dir, account, email, note)

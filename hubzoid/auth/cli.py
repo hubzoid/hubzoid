@@ -69,10 +69,21 @@ def _prepare(hub: Path) -> Path:
     return hub
 
 
-def _link_base() -> str:
-    from .. import appmode
+def _link_base(hub: Path | None = None) -> str:
+    """Where the person opens the link: HUBZOID_PUBLIC_URL, else the public URL
+    the gateway recorded for this hub's deployment (``--public-url``), else the
+    local default port. Run from a shell, the gateway's own environment is not
+    here, so without the record the link pointed at a port nobody serves."""
+    from .. import appmode, deployment
 
-    return appmode.public_url() or f"http://127.0.0.1:{os.environ.get('PORT') or 3080}"
+    recorded = ""
+    if hub is not None:
+        try:
+            recorded = str((deployment.read(hub) or {}).get("public_url") or "")
+        except Exception:  # noqa: BLE001 — an unreadable record means no record
+            recorded = ""
+    return (appmode.public_url() or recorded.rstrip("/")
+            or f"http://127.0.0.1:{os.environ.get('PORT') or 3080}")
 
 
 def _when(ts: float | None) -> str:
@@ -103,11 +114,11 @@ def _ask_password() -> str:
     raise AssertionError  # unreachable
 
 
-def _print_link(token: str, expires: float) -> None:
+def _print_link(token: str, expires: float, hub: Path | None = None) -> None:
     from . import links
 
     console.print("One-time sign-in link (share it with them directly; it works once):")
-    console.print(f"  {links.url(token, _link_base())}", soft_wrap=True, highlight=False)
+    console.print(f"  {links.url(token, _link_base(hub))}", soft_wrap=True, highlight=False)
     console.print(f"Expires {_when(expires)}.")
 
 
@@ -197,7 +208,7 @@ def create(
     elif not password:
         token, expires = links.create(hub, user["id"], purpose="set_password",
                                       created_by=operator)
-        _print_link(token, expires)
+        _print_link(token, expires, hub)
     else:
         console.print("They sign in with the password you typed.")
 
@@ -233,7 +244,7 @@ def reset_password(
                                       created_by=operator)
         console.print(f"[green]Password reset[/green] for {email}. Their sessions were signed "
                       "out and the old password no longer works.")
-        _print_link(token, expires)
+        _print_link(token, expires, hub)
     store_for(hub).audit_event(operator, "account_password_reset", subject=email, hub=ORG)
 
 

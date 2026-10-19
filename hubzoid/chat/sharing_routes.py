@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, Response
 from ..control import authz
 from . import engine_routes as er
 from .common import db, error
+from . import sharing
 from .sharing import SharingService
 
 PUBLIC_HEADERS = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"}
@@ -93,7 +94,9 @@ def mount(app: FastAPI, ctx) -> SharingService:
                 raise authz.denied("chat.share.manage")
             return {"items": await call(svc.list_shares, owner_id=None)}
         return {"items": await call(svc.list_shares, owner_id=actor.id,
-                                    conversation_id=request.query_params.get("conversation_id"))}
+                                    conversation_id=request.query_params.get("conversation_id")),
+                # So the share dialog offers a public link only when it can work.
+                "public_enabled": bool(svc.settings().get("public_enabled"))}
 
     @app.patch("/api/shares/{share_id}")
     async def change(share_id: str, request: Request):
@@ -166,6 +169,13 @@ async def _legacy(ctx, share_id: str, actor):
     share = await db(ctx.store.get_share, share_id)
     if share is None or _disabled_import(share) or await db(users.get, ctx.hub_dir, share["owner_id"]) is None:
         return None
+    if not await db(sharing.owner_active, ctx.store.engine, ctx.hub_dir, share["owner_id"]):
+        return None
     snap = share.get("snapshot") or {}
+    # 1.x snapshots kept reasoning and the answer's signed download links.
+    msgs = [{**m, "content": [p for p in m.get("content") or []
+                              if not (isinstance(p, dict) and p.get("type") == "reasoning")]}
+            for m in snap.get("messages") or []]
+    msgs, _ = sharing.unlink_messages(msgs)
     return {"title": snap.get("title"), "agent": snap.get("agent"), "owner_name": snap.get("owner_name"),
-            "created_at": snap.get("created_at"), "messages": snap.get("messages") or [], "kind": "legacy"}
+            "created_at": snap.get("created_at"), "messages": msgs, "kind": "legacy"}

@@ -37,7 +37,9 @@ Not saved:
   `deployment.json`, which is saved with each password replaced by `***`.
   Keep those files, or the configured `HUBZOID_SECRET_KEY`, protected separately.
   Without the deployment key, restored connector credentials (people's
-  connections, Shared keys and OAuth client secrets) cannot be decrypted. Without the artifact signing key, old download links stop working.
+  connections, Shared keys and OAuth client secrets) and secrets saved in the
+  Console or with `hubzoid secrets set` cannot be decrypted. Those secrets then
+  show "Cannot be read: set again" until someone saves them again. Without the artifact signing key, old download links stop working.
 - **Earlier backups.** The scheduled backups folder is never inside the next
   archive.
 

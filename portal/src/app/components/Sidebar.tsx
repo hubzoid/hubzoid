@@ -250,7 +250,9 @@ function SidebarBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [list.items, list.archived, org.placements],
   );
-  const inFolder = (folderId: string) => list.items.filter((c) => placed(c)?.folder_id === folderId && !isPinned(c));
+  // A pinned chat also stays listed in its folder; otherwise moving it there
+  // made the folder look empty ("No chats here yet").
+  const inFolder = (folderId: string) => list.items.filter((c) => placed(c)?.folder_id === folderId);
   const loose = (c: Conversation) => !!list.archived || (!isPinned(c) && !placed(c)?.folder_id);
 
   const onOrganize = async (c: Conversation, change: Parameters<typeof organize>[1]) => {

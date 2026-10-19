@@ -51,6 +51,20 @@ app = typer.Typer(
 console = Console()
 
 
+def _print_version(value: bool) -> None:
+    if value:
+        console.print(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(False, "--version", callback=_print_version, is_eager=True,
+                                 help="Print the installed hubzoid version and exit."),
+) -> None:
+    """An open-source framework for production AI agents."""
+
+
 def _stop_processes(procs, *, timeout: float = 8.0) -> None:
     """Let child services close databases before the supervising process exits.
 
@@ -736,8 +750,8 @@ def _warn_retired(hub: Path) -> None:
 
     for r in appmode.retired_settings(hub):
         if not r.fatal:
-            console.print(f"[yellow]{escape(r.name)} is an Open WebUI setting Hubzoid 2.0 no longer "
-                          f"uses. {escape(r.advice)}[/yellow]")
+            console.print(f"[yellow]{escape(Path(hub).name)}: {escape(r.name)} is an Open WebUI setting "
+                          f"Hubzoid 2.0 no longer uses. {escape(r.advice)}[/yellow]")
 
 
 def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None:
@@ -806,6 +820,7 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
     console.print(
         f"[red]This hub has an Open WebUI database with {people} account(s) ({escape(where)}), "
         "but no Hubzoid accounts yet.[/red]\n"
+        "Starting with sign-in on would lock everyone out, so the start stops here.\n"
         "Hubzoid now has its own web app and sign-in. Choose one:\n"
         f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {quoted}\n"
         "     Do a dry run first (see `hubzoid migrate openwebui --help`), then back up\n"
@@ -962,6 +977,13 @@ def gateway(
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
+
+    dev_keys = [b.hub_dir.name for b in gp.backends if b.api_key == "dev"]
+    if dev_keys:
+        console.print(f"[yellow]→ bridge keys[/yellow]  {', '.join(dev_keys)} use the public bridge key 'dev'. "
+                      "Bridges listen on this machine only and never carry identity, so this matters only if "
+                      "other people or programs here are not trusted: then set a random BRIDGE_API_KEYS in "
+                      "each hub's .env.")
 
     # All bridges use deployment-wide storage. plan() loads
     # individual hub .env files; the last hub must not redirect the shared DB.
@@ -1327,9 +1349,15 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         ready = (_wait_for_bridge(procs[i], url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity)
                  if launch_bridges else _wait_for(url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity))
         if not ready:
-            console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
-                          f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
-                          "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
+            code = procs[i].poll() if launch_bridges else None
+            if code is not None:
+                # The bridge stopped on its own; its own message (printed above) says why.
+                console.print(f"[red]bridge {b.slug} stopped before it was ready (exit {code}). "
+                              "Its message above says why; fix that hub, then start the gateway again.[/red]")
+            else:
+                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
+                              f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
+                              "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
             raise typer.Exit(1)
     console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
 
@@ -2649,6 +2677,7 @@ app.add_typer(
 from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
 from .chat import engine_cli as _chat_engine_cli  # noqa: E402
+from .secretstore.cli import secrets_app  # noqa: E402
 
 _chat_engine_cli.register(chat_app)
 from .chat import feedback_cli as _chat_feedback_cli  # noqa: E402
@@ -2743,6 +2772,12 @@ app.add_typer(
     help="Move an Open WebUI install to the Hubzoid web app.",
     rich_help_panel="Commands",
 )
+app.add_typer(
+    secrets_app,
+    name="secrets",
+    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
+    rich_help_panel="Commands",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2762,6 +2797,8 @@ _STARTER_BRIDGE_KEY_LINE = "# BRIDGE_API_KEYS=dev           # comma-separated ke
 
 _STARTER_ENV = """\
 # Hub configuration. This file is git-ignored and can hold keys: keep it private.
+# Secrets saved in the Console or with `hubzoid secrets set` are stored in the
+# database, not here. `hubzoid secrets list` shows both. A value in this file wins.
 #
 # --- Model -----------------------------------------------------------------
 # The default uses your installed `claude` CLI and Pro/Max subscription for

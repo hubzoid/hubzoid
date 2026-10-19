@@ -4,16 +4,16 @@
 same engine as ``hubzoid migrate openwebui``: SQLite opened ``mode=ro``,
 PostgreSQL in a read-only repeatable-read transaction) and reports, per
 category, how many objects there are, where each belongs in Hubzoid 2.0, and
-whether this build can carry it:
+whether 2.0 carries it:
 
-* ``ready``: an importer exists today (``hubzoid migrate openwebui``),
-* ``prepared``: the native place exists in this build; its importer is not written yet,
+* ``ready``: ``hubzoid migrate openwebui`` imports it,
+* ``prepared``: 2.0 has a place for it, but the migration doesn't fill it,
 * ``decision``: someone must choose how it maps (it can't be guessed),
 * ``blocked``: there is no native place yet, or it must stay dormant.
 
 It reads counts and safe aggregates only: no message text, no names, no
 emails, no secrets. Nothing is written or migrated, and the report says so. The
-mapping matrix (M01 to M13) shows which checks this build can already run. A
+mapping matrix (M01 to M13) says where 2.0 stands on each area. A
 digest of the inventory lets a later plan prove it is about the same source.
 """
 from __future__ import annotations
@@ -28,75 +28,84 @@ from .control import canonical
 
 #: (key, label, table, target in 2.0, status, note)
 CATEGORIES = [
-    ("accounts", "Accounts", "user", "Native sign-in and accounts", "ready",
+    ("accounts", "Accounts", "user", "Hubzoid accounts", "ready",
      "Imported by `hubzoid migrate openwebui`; supported password hashes carry over."),
-    ("oauth_accounts", "Single sign-on accounts", "user", "Native sign-in (issuer and subject)", "ready",
+    ("oauth_accounts", "Single sign-on accounts", "user", "Hubzoid sign-in (issuer and subject)", "ready",
      "Bound by issuer and subject, never merged by email."),
-    ("pending_accounts", "Pending accounts", "user", "Native sign-in", "decision",
+    ("pending_accounts", "Pending accounts", "user", "Hubzoid accounts", "decision",
      "Approve or remove before moving; pending people get no access either way."),
-    ("groups", "Groups", "group", "Access groups (HUB-39, HUB-87)", "decision",
-     "2.0 grants access per person; each group needs a decision: its members' grants, or a directory group."),
-    ("chats", "Conversations", "chat", "One chat engine (HUB-72)", "ready",
-     "Branches, selected heads and per-message models are kept."),
-    ("archived_chats", "Archived conversations", "chat", "Organisation (HUB-73)", "ready", ""),
-    ("pinned_chats", "Pinned conversations", "chat", "Organisation: pins (HUB-73)", "prepared",
-     "Pins exist natively; today's importer records them as lost."),
-    ("folders", "Folders", "folder", "Organisation: folders (HUB-73)", "prepared",
-     "Nested folders and defaults exist natively; today's importer flattens them."),
-    ("tags", "Tags", "tag", "Organisation: tags (HUB-73)", "prepared", ""),
-    ("feedback", "Ratings", "feedback", "Feedback (HUB-76)", "prepared",
-     "Native ratings keep author and revision; original values must stay recoverable."),
-    ("files", "Files", "file", "Files with lasting identity (HUB-74)", "ready",
-     "Uploads are copied and hashed; sizes over today's limit stay readable."),
-    ("shares", "Shared links", "shared_chat", "Snapshot links (HUB-79)", "prepared",
-     "Native links keep their audience; links that can't keep it safely must be reissued with notice."),
-    ("models", "Custom models and agents", "model", "Agents and presets (HUB-78, HUB-81)", "decision",
-     "Each becomes an agent folder, a preset, or a read-only historical name. Never a different model."),
-    ("prompts", "Prompts", "prompt", "Prompts with variables (HUB-81)", "prepared",
-     "Shared prompts become hub files (reviewed); personal ones stay personal."),
-    ("skills", "Skills", "skill", "Skills (HUB-81)", "prepared", "Imported as reviewed drafts of hub skill files."),
-    ("tools", "Tools", "tool", "Tool extensions (HUB-81)", "blocked",
-     "Executable code. It may only be imported dormant, pending reviewed activation (not in this build)."),
-    ("functions", "Functions, filters and pipes", "function", "Tool extensions (HUB-81)", "blocked",
-     "Executable code, imported dormant only; activation needs the reviewed publication workflow."),
-    ("knowledge", "Knowledge bases", "knowledge", "Sources and collections (HUB-75)", "prepared",
-     "Collections, extraction and citations exist natively; vector indexes are not carried (rebuilt)."),
-    ("memories", "Memories", "memory", "Exported to a file with a disposition report", "decision",
-     "2.0 has no memory system; memories are exported, not activated."),
+    ("groups", "Groups", "group", "Access per person", "decision",
+     "Groups give no access in 2.0. Grant each group's members access in Settings → People & access."),
+    ("chats", "Conversations", "chat", "Chats", "ready",
+     "Branches, the selected branch and each message's model are kept."),
+    ("archived_chats", "Archived conversations", "chat", "Archived chats", "ready", ""),
+    ("pinned_chats", "Pinned conversations", "chat", "Chats", "prepared",
+     "Imported as normal chats; people pin them again."),
+    ("folders", "Folders", "folder", "Chats", "prepared",
+     "Imported without their folders; people file them again."),
+    ("tags", "Tags", "tag", "Not imported", "prepared", ""),
+    ("feedback", "Ratings", "feedback", "Not imported", "prepared", ""),
+    ("files", "Files", "file", "Chat attachments", "ready",
+     "Uploads are copied and hashed; files over the size limit stay readable."),
+    ("shares", "Shared links", "shared_chat", "Shared links", "prepared",
+     "Links for everyone signed in keep working; private and restricted links stay off until their "
+     "owner shares again."),
+    ("models", "Custom models and agents", "model", "Agents", "decision",
+     "Chats of a model that isn't an agent here need --model-alias OLD=AGENT, or they are left out."),
+    ("prompts", "Prompts", "prompt", "Not imported", "prepared",
+     "Copy shared prompts into the agent's files (Settings → Agent instructions)."),
+    ("skills", "Skills", "skill", "Not imported", "prepared",
+     "Copy them into the agent's skills/ folder."),
+    ("tools", "Tools", "tool", "Not imported", "blocked",
+     "Executable code is never imported. Rebuild a tool as an agent tool or a connector."),
+    ("functions", "Functions, filters and pipes", "function", "Not imported", "blocked",
+     "Executable code is never imported. Rebuild what you need as agent tools or workflows."),
+    ("knowledge", "Knowledge bases", "knowledge", "Not imported", "prepared",
+     "Add the files to a source collection (Settings → Sources) and sync it."),
+    ("memories", "Memories", "memory", "Not imported", "decision",
+     "2.0 keeps one note per person per agent, saved only when the person asks. People add what "
+     "they still need in Settings → Memory."),
     ("notes", "Notes", "note", "Not carried", "decision",
-     "2.0 has no notes; keep them in Open WebUI or copy them out before moving."),
+     "2.0 has no notes; copy them out before moving."),
     ("channels", "Channels", "channel", "Not carried", "decision",
-     "2.0 has no channels; keep them in Open WebUI or copy them out before moving."),
+     "2.0 has no channels; copy what matters out before moving."),
     ("channel_messages", "Channel messages", "message", "Not carried", "decision", ""),
     ("channel_webhooks", "Channel webhooks", "channel_webhook", "Not carried", "blocked",
      "Each webhook needs a replacement, such as a workflow."),
     ("calendars", "Calendars", "calendar", "Not carried", "decision",
-     "2.0 has no calendar; keep it in Open WebUI or copy it out before moving."),
+     "2.0 has no calendar; copy it out before moving."),
     ("calendar_events", "Calendar events", "calendar_event", "Not carried", "decision", ""),
     ("automations", "Automations", "automation", "Workflows and schedules", "blocked",
-     "Schedules import disabled; each needs reviewed activation."),
-    ("api_keys", "API keys", "api_key", "Reissued as scoped native credentials (HUB-86)", "blocked",
-     "Old keys never work natively. Owners reissue them."),
-    ("oauth_sessions", "Connected-account sessions", "oauth_session", "Native connections (reconnect)", "decision",
-     "Each person reconnects their accounts once; tokens are not copied."),
+     "Not imported. Recreate each as a schedule or workflow."),
+    ("api_keys", "API keys", "api_key", "Personal API keys", "blocked",
+     "Old keys stop working. People make personal keys in Settings → Security."),
+    ("oauth_sessions", "Connected-account sessions", "oauth_session", "Connections", "decision",
+     "Each person connects their accounts again once; tokens are not copied."),
 ]
 
-#: The required mapping matrix, and what this build can show for each.
+#: The required mapping matrix, and where 2.0 stands on each.
 MATRIX = [
-    ("M01", "Identity", "partial", "Accounts, issuer/subject and password hashes import today; MFA and SCIM wait."),
-    ("M02", "Permissions", "unrun", "Effective-permission comparison needs the HUB-39 access model."),
-    ("M03", "Organisation and feedback", "prepared", "Native folders, tags, pins and ratings exist; importers not written."),
-    ("M04", "Content and models", "partial", "Graph, heads and model provenance import today; unserved models need names."),
-    ("M05", "Files", "partial", "Bytes are copied and hashed today; knowledge assets wait for M07."),
-    ("M06", "Sharing", "prepared", "Native audiences exist; today's importer disables restricted links."),
-    ("M07", "Workspace", "prepared", "Prompts, skills and knowledge have native places; notes, channels and "
-                                     "calendar are not carried; code, schedules and webhooks stay dormant."),
-    ("M08", "Clients", "unrun", "Session expiry and credential reissue need HUB-86."),
-    ("M09", "Verification", "partial", "Dispositions and hashes per object in today's importer report."),
-    ("M10", "Rehearsal", "partial", "SQLite single-hub rehearsal on a copy works; gateway and PostgreSQL wait."),
-    ("M11", "Restore", "unrun", "Needs the HUB-109 backup package."),
-    ("M12", "Cutover", "unrun", "Needs every row above."),
-    ("M13", "Removed option", "unrun", "Hubzoid 2.0 has no Open WebUI mode; until the move is done, stay on 1.x or restore the pre-2.0 backup."),
+    ("M01", "Identity", "ready", "Accounts, sign-in links and password hashes import. Open WebUI has no "
+                                 "two-step sign-in to carry; administrators set it up at first sign-in."),
+    ("M02", "Permissions", "ready", "Access comes from grants only. The migration's dry run counts the "
+                                    "people who would have no agent access."),
+    ("M03", "Organisation and feedback", "partial", "Pins, folders, tags and ratings are not imported."),
+    ("M04", "Content and models", "ready", "Branches, the selected branch and each message's model "
+                                           "import; chats of other models need --model-alias."),
+    ("M05", "Files", "ready", "Attachments are copied and hashed. Knowledge bases are added again as sources."),
+    ("M06", "Sharing", "partial", "Links for everyone signed in keep working; private and restricted ones stay off."),
+    ("M07", "Workspace", "partial", "Prompts, skills and knowledge are copied by hand; notes, channels and "
+                                    "calendar are not carried; code, schedules and webhooks are rebuilt."),
+    ("M08", "Clients", "ready", "Open WebUI sessions end and people sign in again; old API keys are "
+                                "replaced by personal keys."),
+    ("M09", "Verification", "ready", "The migration reports what moved, what was left out and why, per object."),
+    ("M10", "Rehearsal", "ready", "`hubzoid migrate openwebui --rehearse <empty folder>` migrates a copy of "
+                                  "the hub, or of every hub of a gateway (SQLite). For PostgreSQL, restore "
+                                  "dumps into scratch databases."),
+    ("M11", "Restore", "ready", "Take `hubzoid backup` first. The migration only reads Open WebUI's "
+                                "database, so 1.x can start again from it."),
+    ("M12", "Cutover", "partial", "Stop the deployment, run --apply, then start 2.0. Decide the rows above first."),
+    ("M13", "Removed option", "ready", "Hubzoid 2.0 has no Open WebUI mode; until the move is done, stay on 1.x."),
 ]
 
 
@@ -209,18 +218,22 @@ def run(path: Path, *, owui_db: str | None = None) -> Readiness:
 
 def to_markdown(r: Readiness) -> str:
     d = r.to_dict()
+    verdict = {"blocked": "something here can't move as it is (see blocked rows)",
+               "not_ready": "decide the rows marked decision or prepared first",
+               "ready_to_rehearse": "ready to rehearse on a copy"}[d["verdict"]]
     lines = ["# Moving off Open WebUI: readiness", "",
-             f"Nothing was written. Source: {d['source']['engine']}, schema {d['source']['schema_revision'] or 'unknown'}.",
-             f"Verdict: **{d['verdict'].replace('_', ' ')}**. Inventory digest `{d['digest']}`.", "",
+             f"Nothing was written. Source: {d['source']['engine']}.",
+             f"Verdict: **{verdict}**.", "",
              "| Category | Count | Goes to | Status | Note |", "|---|---:|---|---|---|"]
     for c in d["categories"]:
         if c["status"] == "absent":
             continue
         lines.append(f"| {c['label']} | {c['count']} | {c['target']} | {c['status']} | {c['note']} |")
-    lines += ["", "| Check | Area | This build | Note |", "|---|---|---|---|"]
-    lines += [f"| {m['id']} | {m['area']} | {m['status']} | {m['note']} |" for m in d["matrix"]]
+    lines += ["", "| Area | Status | Note |", "|---|---|---|"]
+    lines += [f"| {m['area']} | {m['status']} | {m['note']} |" for m in d["matrix"]]
     if d["source"]["unknown_tables"]:
         lines += ["", "Tables this report doesn't know yet: " + ", ".join(d["source"]["unknown_tables"]) + "."]
+    lines += ["", f"Report id `{d['digest']}` (the same Open WebUI data gives the same id)."]
     return "\n".join(lines) + "\n"
 
 

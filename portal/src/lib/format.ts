@@ -98,7 +98,8 @@ export function initials(subject: string, display?: string | null) {
   if (subject === EVERYONE) return "All";
   if (isService(subject)) return "⚙";
   const name = personName(subject, display);
-  const words = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+  // Letters and digits only, so "Owner (test)" gives "OT", not "O(".
+  const words = name.replace(/@.*/, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   return words
     .slice(0, 2)
     .map((w) => w[0]!.toUpperCase())

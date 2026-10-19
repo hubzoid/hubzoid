@@ -40,6 +40,7 @@ _MOUNTS = (
     "hubzoid.admin.routes",
     "hubzoid.parity.routes",
     "hubzoid.connectors.routes",
+    "hubzoid.secretstore.routes",
     "hubzoid.access.access_routes",
     "hubzoid.auth.directory.scim",
     "hubzoid.webapp_gateway",

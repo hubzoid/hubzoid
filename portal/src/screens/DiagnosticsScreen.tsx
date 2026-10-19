@@ -12,6 +12,7 @@ const { Text, Paragraph, Title } = Typography;
 
 type Check = {
   check_id: string;
+  label?: string;
   status: string;
   summary: string;
   details: Record<string, unknown>;
@@ -256,7 +257,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
                 dataSource={selected.checks}
                 locale={{ emptyText: ["queued", "running"].includes(selected.status) ? "Running…" : "No checks recorded." }}
                 columns={[
-                  { title: "Check", dataIndex: "check_id", render: (v: string) => <Text code>{v}</Text> },
+                  { title: "Check", dataIndex: "check_id", render: (v: string, ch) => <span title={v}>{ch.label ?? v}</span> },
                   { title: "Status", dataIndex: "status", render: (s: string) => <Tag color={COLOURS[s]}>{s}</Tag> },
                   {
                     title: "Result",
