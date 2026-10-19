@@ -50,8 +50,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user.
-RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
+# Non-root user. /data, the durable folder a hosted hub writes to
+# (HUBZOID_DATA_DIR), is theirs: a volume mounted there starts with that owner.
+RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid \
+    && mkdir -p /data && chown hubzoid:hubzoid /data
 USER hubzoid
 
 ENV PATH=/home/hubzoid/.local/bin:$PATH \
