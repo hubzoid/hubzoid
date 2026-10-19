@@ -1,6 +1,0 @@
-<<<<<<<< HEAD:hubzoid/portal_dist/assets/infoDiagram-A4XQUW5V-DuMe5HVL.js
-import{t as e}from"./mermaid-parser.core-CEnLpb68.js";import{C as t,U as n,g as r}from"./src-FkSR5ufe.js";import{o as i,t as a}from"./mermaid.core-BKyfNgGi.js";var o={parse:r(async t=>{let r=await e(`info`,t);n.debug(r)},`parse`)},s={version:a},c={parser:o,db:{getVersion:r(()=>s.version,`getVersion`)},renderer:{draw:r((e,r,a)=>{n.debug(`rendering info diagram
-========
-import{t as e}from"./mermaid-parser.core-D_EOFKb7.js";import{C as t,U as n,g as r}from"./src-Dftj3XIa.js";import{o as i,t as a}from"./mermaid.core-B11aDcl8.js";var o={parse:r(async t=>{let r=await e(`info`,t);n.debug(r)},`parse`)},s={version:a},c={parser:o,db:{getVersion:r(()=>s.version,`getVersion`)},renderer:{draw:r((e,r,a)=>{n.debug(`rendering info diagram
->>>>>>>> d/sandbox:hubzoid/portal_dist/assets/infoDiagram-A4XQUW5V-DGlfDf_a.js
-`+e);let o=i(r);t(o,100,400,!0),o.append(`g`).append(`text`).attr(`x`,100).attr(`y`,40).attr(`class`,`version`).attr(`font-size`,32).style(`text-anchor`,`middle`).text(`v${a}`)},`draw`)}};export{c as diagram};
