@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..work_items.errors import Parked
 from . import config as config_lib
 from . import replies, store
 from .errors import ChannelError
@@ -66,26 +67,34 @@ class Thread:
             # action, whatever else the caller names, so its write mode applies.
             named = [actions] if isinstance(actions, str) else list(actions or [])
             actions = named + ([send] if send not in named else [])
-            self._refuse_unattended_approval(conn, actions, text)
         draft = getattr(conn.adapter, "draft", None)
-        return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
-                            draft=draft)
+        try:
+            return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
+                                draft=draft)
+        except Parked as parked:
+            if parked.kind == "approval" and conn.adapter.customer_facing and self._unattended():
+                self._stop_unapprovable(parked.operation_id, text)
+            raise
 
 
-    def _refuse_unattended_approval(self, conn, actions, text: str) -> None:
-        """Unattended work (an admitted sender, nobody released it) has no
-        person who could approve a reply. In approve mode the reply is not
-        left waiting for nobody: it is kept on the intake item, unsent, and the
-        work stops with the reason. A released message has a requester who
-        approves, and draft mode saves a real draft, so both go on as usual."""
-        from ..work_items import config as wconfig
+    def _unattended(self) -> bool:
+        requester = self._item.get("requester") or ""
+        return not requester or requester.startswith("workflow:")
+
+    def _stop_unapprovable(self, op_id: str, text: str) -> None:
+        """Unattended work (an admitted sender nobody released) has no person
+        who could approve a reply. The operation milestone D just parked for
+        approval is closed at once, the reply is kept on the intake item,
+        unsent, and the work stops with the reason, so nothing waits for
+        nobody (HUB-93). Released messages have a requester who approves, and
+        draft mode never parks, so both go on as usual. This is the one place
+        the decision is made, on the mode D itself chose."""
+        from ..work_items import store as wstore
         from ..work_items.operations import OperationFailed
 
-        requester = (self._item.get("requester") or "")
-        if requester and not requester.startswith("workflow:"):
-            return
-        if wconfig.mode_for(wconfig.load(self._hub_dir), actions, conn.id) != "approve":
-            return
+        wstore.update_op(self._hub_dir, op_id, expect_state=("awaiting_approval",), state="abandoned",
+                         resolution_json={"decision": "abandon", "by": "system", "reason": "approval_unavailable",
+                                          "at": wstore.now()})
         intake_id = (self._item.get("origin_json") or {}).get("intake_id")
         if intake_id:
             from ..intake import service as intake
@@ -94,7 +103,7 @@ class Thread:
         raise OperationFailed(
             "approval_unavailable", "Nobody attended this work, so nobody can approve a reply to the sender. The "
             "reply was kept on the intake item and not sent. Use draft mode for this channel, or have a person "
-            "release messages from this sender so they approve the replies.", "")
+            "release messages from this sender so they approve the replies.", op_id)
 
 
 def for_current_run() -> Thread:

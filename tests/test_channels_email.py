@@ -870,5 +870,7 @@ def test_unattended_work_in_approve_mode_stops_instead_of_waiting(hub_dir, box, 
     with wstore.engine(hub_dir).connect() as c:          # nothing waits in Operations for nobody
         waiting = c.execute(sql("SELECT COUNT(*) FROM hz_operations WHERE state='awaiting_approval'")).scalar()
     assert waiting == 0
+    closed = wstore.get_op(hub_dir, exc.value.operation_id)
+    assert closed["state"] == "abandoned" and closed["resolution_json"]["reason"] == "approval_unavailable"
     kept = service.view(service.require(hub_dir, item["id"]), full=True, hub_dir=hub_dir)["unsent_reply"]
     assert kept["text"] == "We can ship Friday." and kept["reason"] == "approval_unavailable"
