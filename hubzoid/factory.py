@@ -180,8 +180,10 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
-    from . import hitl
-    registry = hitl.equip(hub_dir, registry)
+    from . import hitl, tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
+    registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
 
     from .hitl import gate as hitl_gate
 
@@ -407,7 +409,9 @@ def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
                      knowledge=knowledge_loader.load_all(hub_dir))
     connlib.attach(ctx)
     registry: dict[str, FunctionTool] = {**make_builtin_tools(ctx), **tools_local_loader.load_all(hub_dir)}
-    from . import access, hitl
+    from . import access, hitl, tool_fakes
     # The same approval gate as every agent's tools; an unattended station call
-    # that needs a person is refused by it, and no question tool is added.
-    return hitl.equip(hub_dir, access.apply(hub_dir, registry), questions=False)
+    # that needs a person is refused by it, and no question tool is added. An
+    # eval case's fake results reach a station's tools as they do the agent's.
+    registry = tool_fakes.wrap_registry(access.apply(hub_dir, registry))
+    return tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry, questions=False))

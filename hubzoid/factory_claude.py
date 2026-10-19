@@ -372,8 +372,10 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
-    from . import hitl
-    registry = hitl.equip(hub_dir, registry)
+    from . import hitl, tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
+    registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
 
     # MCP: external servers from the hub's connectors/.mcp.json PLUS the
     # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
@@ -1203,7 +1205,11 @@ class ClaudeRuntime:
                             tool_name = tool_use_names.get(tid, "tool")
                             # For an eval's result preview; a no-op in chat.
                             _request_ctx.record_tool_result(tid, getattr(block, "content", None))
-                            if not bool(getattr(block, "is_error", False)):
+                            # A hub tool reports a failure in its text (a tool that raised,
+                            # an access refusal), not with the SDK's error flag: the same
+                            # rule as Codex (`tool_events.failed_output`).
+                            if not (bool(getattr(block, "is_error", False))
+                                    or tool_events.failed_output(getattr(block, "content", None))):
                                 yield run_events.ToolResult(
                                     id=tid, name=tool_name, ok=True,
                                     card=_request_ctx.take_card(getattr(block, "content", None), tool=tool_name))

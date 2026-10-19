@@ -554,6 +554,22 @@ def _legacy_management_flag() -> Check | None:
                  "the Console to the managers who use them, then remove the setting.")
 
 
+def _eval_checks(hub: Path) -> list[Check]:
+    """The evals the hub requires in quality/manifest.yaml: one row each, ok,
+    fail or pending (never run, or the case or the hub changed since).
+    Nothing for a hub without the manifest."""
+    from .evals import quality
+
+    try:
+        rows = quality.evidence(hub)
+    except quality.QualityError as exc:
+        return [Check("evals.quality", "fail", str(exc))]
+    except Exception as exc:  # noqa: BLE001 - one unreadable report never hides the rest of doctor
+        # The hub requires evals; results that cannot be read do not show them passing.
+        return [Check("evals.quality", "fail", f"Eval results could not be read ({type(exc).__name__})")]
+    return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
+
+
 def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[str, str],
                    base_env: dict[str, str]) -> list[Check]:
     """Stored secrets and the secrets the hub expects: names and status only.
@@ -669,6 +685,7 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if sqlite_check:
             checks.append(sqlite_check)
         checks += _schema(hub)
+        checks += _eval_checks(hub)
         checks += _auth(hub)
         checks += _app_checks(hub)
         google = _google_merge(deployment_values)
@@ -703,5 +720,6 @@ def report(hub: Path, checks: list[Check]) -> dict:
     from . import __version__
 
     return {"format": FORMAT, "hub": str(Path(hub).resolve()), "hubzoid": __version__,
-            "ok": not any(c.status == "fail" for c in checks),
+            # A pending required eval has not passed yet: the hub is not ready.
+            "ok": not any(c.status in ("fail", "pending") for c in checks),
             "checks": [asdict(c) for c in checks]}

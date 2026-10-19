@@ -119,6 +119,11 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
     usable = [c for c in by_id.values() if c.auth_type == "shared" or c.id in connections]
     if not usable or _blocked(hub_dir, identity.user):
         return []
+    from .. import tool_fakes
+
+    if tool_fakes.withheld(sorted(c.id for c in usable)):
+        # A faked eval case: a connector's calls would run for real.
+        return []
     permitted = _connector_gate(hub_dir, identity)
 
     reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)

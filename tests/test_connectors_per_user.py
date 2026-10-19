@@ -169,6 +169,17 @@ def test_workflows_act_as_their_person(hub):
     assert keys(per_user.per_user_servers(hub, who(Y, "workflow"))) == ["my_cal", "my_mail"]
 
 
+def test_a_faked_eval_case_gets_no_connectors_unless_it_allows_real_mcp(hub):
+    from hubzoid import tool_fakes
+
+    faked = tool_fakes.Session(fakes=[])
+    with tool_fakes.scope(faked):
+        assert per_user.per_user_servers(hub, who(Y, "workflow")) == []
+    assert faked.left_out == ["cal", "mail"]
+    with tool_fakes.scope(tool_fakes.Session(fakes=[], allow_mcp=True)):
+        assert keys(per_user.per_user_servers(hub, who(Y, "workflow"))) == ["my_cal", "my_mail"]
+
+
 def test_nobody_unknown_or_blocked_gets_nothing(hub):
     assert per_user.per_user_servers(hub, Identity.make(user=None, surface="web")) == []
     assert per_user.per_user_servers(hub, who("ghost@example.org")) == []

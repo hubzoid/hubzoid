@@ -182,8 +182,9 @@ def make(hub_dir) -> list[FunctionTool]:
 def gate(ft: FunctionTool, hub_dir, access, permission: str) -> FunctionTool:
     """``permission`` (Save shared knowledge) or managing the hub: the access
     guard for each, and the call goes through whichever allows it."""
-    import dataclasses
     from pathlib import Path
+
+    from ..tool_classes import copy_tool
 
     cur = access.guard_tool(ft, permission, hub_dir)
     mgr = access.guard_tool(ft, service.REVIEW_PERMISSION, hub_dir)
@@ -197,4 +198,5 @@ def gate(ft: FunctionTool, hub_dir, access, permission: str) -> FunctionTool:
     async def invoke(ctx, input_str):
         return await (mgr if mgr.is_enabled() else cur).on_invoke_tool(ctx, input_str)
 
-    return dataclasses.replace(cur, is_enabled=enabled, on_invoke_tool=invoke)
+    # copy_tool keeps the guards' marks, such as an eval's fakes sitting inside them.
+    return copy_tool(cur, is_enabled=enabled, on_invoke_tool=invoke)
