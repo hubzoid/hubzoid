@@ -16,7 +16,9 @@ its hash (for lookups) and an encrypted copy only the owner can read back.
 
 The projection keeps visible text, which tools ran and how they ended, and
 author labels. It never carries reasoning, tool arguments or results, hidden
-prompts or files (their names are listed as omissions). **Copying** a shared
+prompts or files (their names are listed as omissions); signed download links
+in answer text become the file's name. A link stops when its owner is deleted
+or no longer active. **Copying** a shared
 conversation gives the reader an independent conversation with new ids, no
 runs, no queue and no authority; it survives a later revoke.
 """
@@ -24,11 +26,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import time
 import uuid
 from pathlib import Path
 from typing import Literal
+from urllib.parse import unquote, urlsplit
 
 import sqlalchemy as sa
 from pydantic import BaseModel, ConfigDict, Field
@@ -117,12 +121,70 @@ copies = sa.Table(
 TABLES = (manifests, previews, copies)
 
 
+def _owner_active(conn, hub_dir: Path, owner_id: str) -> bool:
+    """The owner's account is active and not blocked."""
+    from ..access import store_for
+    from ..auth.schema import users
+
+    row = conn.execute(sa.select(users.c.status, users.c.email).where(users.c.id == owner_id)).first()
+    if row is None or row.status != "active":
+        return False
+    access = store_for(hub_dir)
+    return not (access.is_suspended(row.email) or access.is_suspended(owner_id))
+
+
+def owner_active(engine, hub_dir: Path, owner_id: str) -> bool:
+    with engine.connect() as conn:
+        return _owner_active(conn, hub_dir, owner_id)
+
+
 def _now() -> float:
     return time.time()
 
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# A download link the runtime signed for an agent-written file ("[Download
+# report.md](https://…/artifacts/web-<id>/report.md?t=…)"). It works without
+# signing in, so it never travels in a share.
+_SIGNED_LINK = re.compile(r"\[([^\]]*)\]\(\s*<?([^)\s>]*/artifacts/[^)\s>]*[?&]t=[^)\s>]*)>?\s*\)")
+_SIGNED_URL = re.compile(r"(?:https?://[^\s)\]]*)?/artifacts/[^\s)\]?]+\?(?:[^\s)\]]*&)?t=[^\s)\]]+")
+
+
+def _file_name(url: str) -> str:
+    return unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]) or "file"
+
+
+def unlink(text: str) -> tuple[str, list[str]]:
+    """``text`` without signed file links, and the names of the files left out.
+    A link becomes its file name in plain text."""
+    names: list[str] = []
+
+    def named(url: str) -> str:
+        names.append(_file_name(url))
+        return names[-1]
+
+    text = _SIGNED_LINK.sub(lambda m: named(m.group(2)), text)
+    text = _SIGNED_URL.sub(lambda m: named(m.group(0)), text)
+    return text, names
+
+
+def unlink_messages(msgs: list[dict]) -> tuple[list[dict], list[str]]:
+    """Projected (or pre-2.0 snapshot) messages with signed file links removed
+    from their text. Older snapshots stored them, so reads strip them too."""
+    out, omitted = [], []
+    for m in msgs:
+        parts = []
+        for p in m.get("content") or []:
+            if isinstance(p, dict) and p.get("type") == "text":
+                text, names = unlink(p.get("text") or "")
+                omitted += [f"file: {n}" for n in names]
+                p = {**p, "text": text}
+            parts.append(p)
+        out.append({**m, "content": parts})
+    return out, omitted
 
 
 def project(msgs: list[dict], names: dict[str, str], *, pseudonyms: bool) -> tuple[list[dict], list[str]]:
@@ -136,7 +198,9 @@ def project(msgs: list[dict], names: dict[str, str], *, pseudonyms: bool) -> tup
                 continue
             kind = p.get("type")
             if kind == "text":
-                parts.append({"type": "text", "text": p.get("text") or ""})
+                text, files = unlink(p.get("text") or "")
+                omitted.update(f"file: {n}" for n in files)
+                parts.append({"type": "text", "text": text})
             elif kind == "reasoning":
                 omitted.add("reasoning")
             elif kind == "tool-call":
@@ -449,6 +513,8 @@ class SharingService:
         gone = Err(404, "not_found", "This shared conversation is unavailable.")
         if r is None or r.status != "active" or conv is None or conv.deleted_at is not None:
             raise gone
+        if not _owner_active(conn, self.hub_dir, r.owner_id):
+            raise gone  # a deleted, blocked or deactivated owner's links stop
         if r.expires_at is not None and r.expires_at < _now():
             raise gone
         if r.audience_type == "public":
@@ -459,7 +525,11 @@ class SharingService:
         elif r.audience_type == "named" and reader_id != r.owner_id and \
                 reader_id not in json.loads(r.audience_json)["principals"]:
             raise gone
-        return {"row": r, "projection": json.loads(r.projection_json)}
+        projection = json.loads(r.projection_json)
+        projection["messages"], files = unlink_messages(projection.get("messages") or [])
+        if files:
+            projection["omissions"] = sorted(set(projection.get("omissions") or []) | set(files))
+        return {"row": r, "projection": projection}
 
     def view(self, token: str, reader_id: str | None) -> dict:
         got = self.readable(token, reader_id)

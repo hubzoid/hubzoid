@@ -390,7 +390,9 @@ class UserStore:
         ``deleted`` and a released email (``deleted-<id>@deleted.invalid``), so
         the person's conversations and run history keep their owner id and the
         email can be used for a new account. Sign-in data, MFA, API keys and
-        one-time links go, and the credential counter moves, in one transaction."""
+        one-time links go, their snapshot links are revoked, and the credential
+        counter moves, in one transaction."""
+        from ..chat.sharing import manifests
         from ..chat.store import shares
         from .schema import api_keys, mfa_factors, mfa_recovery
 
@@ -408,6 +410,9 @@ class UserStore:
             conn.execute(mfa_recovery.delete().where(mfa_recovery.c.user_id == user_id))
             # Their share links stop working; the conversations themselves stay.
             conn.execute(shares.delete().where(shares.c.owner_id == user_id))
+            conn.execute(manifests.update().where(manifests.c.owner_id == user_id,
+                                                  manifests.c.status == "active")
+                         .values(status="revoked", revoked_at=now))
             conn.execute(api_keys.update().where(api_keys.c.user_id == user_id,
                                                  api_keys.c.revoked_at.is_(None))
                          .values(revoked_at=now))
