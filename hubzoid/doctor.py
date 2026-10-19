@@ -599,7 +599,8 @@ def _eval_checks(hub: Path) -> list[Check]:
     except quality.QualityError as exc:
         return [Check("evals.quality", "fail", str(exc))]
     except Exception as exc:  # noqa: BLE001 - one unreadable report never hides the rest of doctor
-        return [Check("evals.quality", "warn", f"Eval results could not be read ({type(exc).__name__})")]
+        # The hub requires evals; results that cannot be read do not show them passing.
+        return [Check("evals.quality", "fail", f"Eval results could not be read ({type(exc).__name__})")]
     return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
 
 

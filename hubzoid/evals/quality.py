@@ -40,15 +40,25 @@ class QualityError(ValueError):
     """quality/manifest.yaml cannot be used. The message names the problem."""
 
 
-def _configuration(hub_dir: Path) -> bytes:
+def _configuration(hub_dir: Path, model: str | None) -> bytes:
     """The hub's .env files as they shape answers: every name, and the value of
-    each one that is not secret-looking (MODEL, say). Secret values never enter
-    the digest; rotating a key does not make results stale."""
+    each one that is not secret-looking. Secret values never enter the digest;
+    rotating a key does not make results stale. Also the model the hub runs
+    on: `model` (an eval run's --model), else MODEL from the environment, as
+    the runtime reads it, else from the hub's .env."""
+    import os
+
     from dotenv import dotenv_values
 
     from .calls import is_secret_key
 
-    lines = []
+    configured = ""
+    if (hub_dir / ".env").is_file():
+        try:
+            configured = dotenv_values(hub_dir / ".env", interpolate=False).get("MODEL") or ""
+        except (OSError, UnicodeDecodeError, ValueError):
+            pass
+    lines = [f"model={model or os.environ.get('MODEL') or configured}"]
     for name in _ENV_FILES:
         path = hub_dir / name
         if not path.is_file():
@@ -64,7 +74,7 @@ def _configuration(hub_dir: Path) -> bytes:
     return "\n".join(lines).encode()
 
 
-def hub_digest(hub_dir: Path) -> str:
+def hub_digest(hub_dir: Path, *, model: str | None = None) -> str:
     """One digest of what a hub's answers depend on: its instructions, skills,
     knowledge, tools, workflows, settings and non-secret configuration. File
     order, paths and every byte count. A hub with more than 100,000 such files
@@ -85,7 +95,7 @@ def hub_digest(hub_dir: Path) -> str:
                     files.append(f)
                     if len(files) > _MAX_FILES:
                         return INCOMPLETE
-    digest = hashlib.sha256(_configuration(hub_dir) + b"\0")
+    digest = hashlib.sha256(_configuration(hub_dir, model) + b"\0")
     for f in sorted(files, key=lambda p: p.relative_to(hub_dir).as_posix()):
         digest.update(f.relative_to(hub_dir).as_posix().encode() + b"\0")
         try:

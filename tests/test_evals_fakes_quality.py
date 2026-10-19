@@ -103,6 +103,7 @@ def test_two_ids_that_differ_only_in_case_are_refused(tmp_path):
     ("fake_tools:\n  - {tool: x, output: 1, colour: red}", "unknown key"),
     ("real_tools: [read_knowledge]", "only applies with fake_tools"),
     ('fake_tools:\n  - {tool: x, output: 1}\nallow_real_mcp: "false"', "true or false"),
+    ("timeout: .inf", "whole number"),
 ])
 def test_bad_fake_declarations_are_refused(tmp_path, front, why):
     hub = make_hub(tmp_path, {"c.md": f"---\n{front}\n---\nHi"})
@@ -250,6 +251,8 @@ def test_doctor_reports_missing_failed_and_out_of_date_required_evals(tmp_path, 
     from hubzoid import doctor
     from hubzoid.evals.assertions import Check
 
+    monkeypatch.delenv("MODEL", raising=False)
+
     hub = make_hub(tmp_path, {"refund.md": "Refund?", "safety/no-send.md": "---\ntags: [safety]\n---\nSend?",
                               "other.md": "Hi"})
     (hub / "quality").mkdir()
@@ -273,12 +276,15 @@ def test_doctor_reports_missing_failed_and_out_of_date_required_evals(tmp_path, 
     (hub / "evals" / "refund.md").write_text("Refund?")
     (hub / ".env").write_text("OPENAI_API_KEY=sk-a\n")
     suite.hub_digest = quality.hub_digest(hub)
-    report.save(hub, suite)
+    report.save(hub, suite, stamp="20991231_235959")                     # the latest run
     (hub / ".env").write_text("OPENAI_API_KEY=sk-b\n")                # a rotated key changes nothing
     assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "ok"
     (hub / ".env").write_text("OPENAI_API_KEY=sk-b\nMODEL=codex-local\n")  # another model: rerun
     assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "pending"
     (hub / ".env").write_text("OPENAI_API_KEY=sk-b\n")
+    monkeypatch.setenv("MODEL", "codex-local")                             # the same, from the shell
+    assert {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"].status == "pending"
+    monkeypatch.delenv("MODEL")
     (hub / "AGENTS.md").write_text("---\nname: desk\n---\nNew rule: refunds need a receipt.\n")  # the hub changed
     row = {c.id: c for c in doctor._eval_checks(hub)}["eval.refund"]
     assert row.status == "pending" and "instructions" in row.summary
@@ -321,7 +327,7 @@ def test_the_hub_digest_covers_every_byte_of_large_files(tmp_path, monkeypatch):
     assert quality.hub_digest(hub) == quality.INCOMPLETE
 
 
-def test_a_requirement_that_matches_nothing_fails(tmp_path):
+def test_a_requirement_that_matches_nothing_fails(tmp_path, monkeypatch):
     from hubzoid import doctor
 
     hub = make_hub(tmp_path, {"refund.md": "Refund?"})
@@ -330,3 +336,5 @@ def test_a_requirement_that_matches_nothing_fails(tmp_path):
     (row,) = doctor._eval_checks(hub)
     assert row.id == "evals.quality" and row.status == "fail" and "refnud" in row.summary
     assert doctor._eval_checks(make_hub(tmp_path / "b", {"x.md": "Hi"})) == []
+    monkeypatch.setattr(quality, "evidence", lambda hub_dir: 1 / 0)       # unreadable results never pass
+    assert [(c.id, c.status) for c in doctor._eval_checks(hub)] == [("evals.quality", "fail")]

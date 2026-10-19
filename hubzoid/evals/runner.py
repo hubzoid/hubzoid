@@ -436,7 +436,7 @@ async def arun_suite(
 
     from .quality import hub_digest
 
-    suite.hub_digest = hub_digest(hub_dir)
+    suite.hub_digest = hub_digest(hub_dir, model=model)
     rt = runtime_lib.build(hub_dir, model=model)
     suite.model = getattr(rt, "name", "") or ""
 

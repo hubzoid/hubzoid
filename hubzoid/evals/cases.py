@@ -170,7 +170,7 @@ def _as_int(value: Any, *, key: str, where: str, lo: int, hi: int, default: int)
         return default
     try:
         n = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:   # OverflowError: .inf
         raise EvalCaseError(f"{where}: {key} must be a whole number") from exc
     if not lo <= n <= hi:
         raise EvalCaseError(f"{where}: {key} must be between {lo} and {hi}, got {n}")

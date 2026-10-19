@@ -473,9 +473,10 @@ required_tags: [safety]                  # every case with one of these tags
 | `fail` | its latest result failed (`hubzoid eval explain` shows why), or the case file cannot be read |
 | `pending` | it never ran, it last ran with `--no-judge` although it has criteria, or the case file or the hub's instructions, skills, knowledge, tools, workflows, settings or configuration changed since it ran. Run it again |
 
-Configuration means the names in the hub's `.env` and `restricted/.env`, and
-the values of the ones that are not secret (`MODEL`, say): switching the
-model makes results pending, rotating an API key does not.
+Configuration means the names in the hub's `.env` and `restricted/.env`, the
+values of the ones that are not secret, and the model the hub runs on (`MODEL`
+from the environment or `.env`, or the run's `--model`): switching the model
+makes results pending, rotating an API key does not.
 
 A requirement that matches no case fails the `evals.quality` row, so a typo
 never reads as satisfied. A pending case never counts as passing: doctor
