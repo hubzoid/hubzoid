@@ -33,7 +33,7 @@ def test_init_writes_the_provider_files_and_never_replaces_without_force(tmp_pat
     dockerfile = (hub / "Dockerfile").read_text()
     assert "FROM ghcr.io/hubzoid/hubzoid:9.9.9\nCOPY . /hub\nENV HUBZOID_DATA_DIR=/data\n" in dockerfile
     ignored = (hub / ".dockerignore").read_text().splitlines()
-    assert {".env", ".hubzoid/", "restricted/.env", "output/", ".git/"} <= set(ignored)
+    assert {"**/.env", "**/.hubzoid", "**/.openwebui-data", "**/secret.key", "**/*.db", "output/", ".git/"} <= set(ignored)
     assert "HUBZOID_AUTH=true" in (hub / "deploy" / provider / "env.example").read_text()
     assert {w.action for w in scaffold.write(hub, provider, image="ghcr.io/hubzoid/hubzoid:9.9.9")} == {"unchanged"}
     (hub / "Dockerfile").write_text("FROM mine\n")
@@ -73,7 +73,7 @@ def _client(answers: dict) -> httpx.Client:
 
 GOOD = {"/healthz": (200, {"status": "ok"}),
         "/api/auth/session": (200, {"mode": "accounts", "authenticated": False,
-                                    "public_url": "https://hub.example.com"}),
+                                    "public_origin": "https://hub.example.com"}),
         "/api/conversations": (401, {"detail": "unauthenticated"})}
 
 
@@ -89,10 +89,11 @@ def test_verify_passes_a_ready_deployment():
 
 @pytest.mark.parametrize("change,check", [
     ({"/healthz": (200, {"status": "ok", "hub": "desk", "model": "claude-local"})}, "health"),
-    ({"/api/auth/session": (200, {"mode": "local", "public_url": "https://hub.example.com"})}, "sign_in"),
+    ({"/api/auth/session": (200, {"mode": "local", "public_origin": "https://hub.example.com"})}, "sign_in"),
     ({"/api/conversations": (200, {"items": []})}, "data"),
-    ({"/api/auth/session": (200, {"mode": "accounts", "public_url": "https://old.example.com"})}, "public_url"),
-    ({"/api/auth/session": (200, {"mode": "accounts", "public_url": None})}, "public_url"),
+    ({"/api/conversations": (404, {"detail": "not found"})}, "data"),           # never confirmed: not ready
+    ({"/api/auth/session": (200, {"mode": "accounts", "public_origin": "https://old.example.com"})}, "public_url"),
+    ({"/api/auth/session": (200, {"mode": "accounts", "public_origin": None})}, "public_url"),
 ])
 def test_verify_names_what_is_not_ready(change, check):
     results = _verify({**GOOD, **change})
@@ -127,9 +128,11 @@ def test_the_public_health_check_says_nothing_about_the_hub(monkeypatch):
 
     monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(bridge)))
-    with TestClient(edge.build_edge_app(default_base="http://bridge", routes=[])) as client:
-        r = client.get("/healthz")
-        assert r.status_code == 200 and r.json() == {"status": "ok"}
+    route = edge.EdgeRoute("/b/sales", "http://bridge", strip_prefix="/b/sales")
+    with TestClient(edge.build_edge_app(default_base="http://bridge", routes=[route])) as client:
+        for path in ("/healthz", "/b/sales/healthz"):                 # a gateway hub's too
+            r = client.get(path)
+            assert r.status_code == 200 and r.json() == {"status": "ok"}, path
         up["ok"] = False
         r = client.get("/healthz")
         assert r.status_code == 503 and r.json() == {"status": "unavailable"}
@@ -140,6 +143,6 @@ def test_the_session_names_the_public_address(tmp_path, monkeypatch):
 
     from tests.chat_helpers import build_app, make_hub
 
-    make_hub(tmp_path, monkeypatch, HUBZOID_PUBLIC_URL="https://hub.example.com")
+    make_hub(tmp_path, monkeypatch, HUBZOID_PUBLIC_URL="https://hub.example.com/b/sales")   # a gateway's bridge
     with TestClient(build_app()) as client:
-        assert client.get("/api/auth/session").json()["public_url"] == "https://hub.example.com"
+        assert client.get("/api/auth/session").json()["public_origin"] == "https://hub.example.com"

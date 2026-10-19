@@ -110,10 +110,16 @@ def _fields(body: Any, **limits: int) -> dict[str, str]:
     return {k: body[k] for k in limits}
 
 
-def _public_url() -> str | None:
+def _public_origin() -> str | None:
+    """The scheme and host of HUBZOID_PUBLIC_URL. A gateway's bridge carries a
+    /b/<slug> path; the origin is the deployment's."""
+    from urllib.parse import urlsplit
+
     from .. import appmode
 
-    return appmode.public_url() or None
+    url = appmode.public_url()
+    parts = urlsplit(url) if url else None
+    return f"{parts.scheme}://{parts.netloc}" if parts and parts.scheme and parts.netloc else None
 
 
 def _branding_name(hub_dir: Path) -> str:
@@ -328,7 +334,7 @@ def build_router(hub_dir: Path) -> APIRouter:
             owner = current_user(request, hub_dir)
             body = {"authenticated": owner is not None, "mode": "local", "providers": [],
                     "password": False, "signup": False, "branding_name": name,
-                    "unsafe_network": _unsafe_network(request), "public_url": _public_url()}
+                    "unsafe_network": _unsafe_network(request), "public_origin": _public_origin()}
             if owner is not None:
                 body["user"] = _user_view(hub_dir, owner)
             return JSONResponse(body, headers=_NO_STORE)
@@ -343,8 +349,8 @@ def build_router(hub_dir: Path) -> APIRouter:
                 "providers": oidc.public_list() + public_providers(hub_dir),
                 "password": password_login_enabled(),
                 "signup": signup_enabled(), "branding_name": name,
-                # The address callbacks use: `hubzoid deploy verify` compares it.
-                "public_url": _public_url()}
+                # Where callbacks go: `hubzoid deploy verify` compares it.
+                "public_origin": _public_origin()}
         if view is not None:
             body["user"] = view
         return JSONResponse(body, headers=_NO_STORE)

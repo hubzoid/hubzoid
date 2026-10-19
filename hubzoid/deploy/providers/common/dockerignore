@@ -1,14 +1,26 @@
-# Never in the image: state, secrets and local runs. Set secrets as the
-# provider's variables instead.
-.hubzoid/
-.env
-.env.*
-!.env.example
-restricted/.env
+# Never in the image: state, secrets and local runs, at any depth. Set
+# secrets as the provider's variables instead.
+**/.hubzoid
+**/.hubzoid-gateway
+**/.openwebui-data
+**/.env
+**/.env.*
+!**/.env.example
+**/.webui_secret_key
+**/.admin_token
+**/secret.key
+**/artifact_secret
+**/*.pem
+**/*.key
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-*
 output/
 logs/
 .inbound/
 .git/
 deploy/
-**/__pycache__/
-*.pyc
+**/__pycache__
+**/*.pyc

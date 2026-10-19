@@ -74,7 +74,7 @@ def test_session_lists_providers_and_options(hub, monkeypatch):
                     "providers": [{"id": "google", "name": "Google"},
                                   {"id": "oidc", "name": "Acme SSO"}],
                     "password": True, "signup": True, "branding_name": "Sales Helper",
-                    "public_url": None}                 # HUBZOID_PUBLIC_URL, for deploy verify
+                    "public_origin": None}              # HUBZOID_PUBLIC_URL's, for deploy verify
     monkeypatch.setenv("ENABLE_LOGIN_FORM", "false")
     assert client(hub).get("/api/auth/session").json()["password"] is False
 

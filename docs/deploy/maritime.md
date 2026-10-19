@@ -31,9 +31,9 @@ deploy again.
 1. Create the agent from the repository, with a public address:
    `maritime create your-hub --repo https://github.com/you/your-hub --public`.
 2. Set the variables from `deploy/maritime/env.example`, one by one
-   (`maritime env set HUBZOID_AUTH true`) or from a filled copy kept outside
-   the repository (`maritime env import /path/to/hub.env --reload`). Values
-   are stored as secrets by default.
+   (`maritime env set your-hub HUBZOID_AUTH=true`) or from a filled copy kept
+   outside the repository (`maritime env import your-hub /path/to/hub.env
+   --reload`). Values are stored as secrets by default.
 3. Deploy again after a change: push, then `maritime deploy your-hub`.
 
 Maritime sets `PORT`, and Hubzoid listens on it.

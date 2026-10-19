@@ -46,14 +46,14 @@ def _get(client, url: str, attempts: int):
 
 
 def _public_url(session: dict, base: str) -> Result:
-    configured = session.get("public_url")
-    if "public_url" not in session:
+    configured = session.get("public_origin")
+    if "public_origin" not in session:
         return Result("public_url", "warn", "This release does not report its public address.",
                       f"Check HUBZOID_PUBLIC_URL by hand: it must be exactly {base}.")
     if not configured:
         return Result("public_url", "fail", "HUBZOID_PUBLIC_URL is not set.",
                       f"Set HUBZOID_PUBLIC_URL={base}: sign-in, MCP and connector callbacks use it.")
-    if configured.rstrip("/") != base:
+    if configured != base:
         return Result("public_url", "fail", f"HUBZOID_PUBLIC_URL is {configured}, not this address.",
                       f"Set HUBZOID_PUBLIC_URL={base}.")
     return Result("public_url", "ok", "HUBZOID_PUBLIC_URL is this address.")
@@ -120,7 +120,9 @@ def run(url: str, *, allow_http: bool = False, timeout: float = 15.0, attempts: 
             out.append(Result("data", "fail", "/api/conversations answered a signed-out request.",
                               "Turn sign-in on (HUBZOID_AUTH=true)."))
         else:
-            out.append(Result("data", "warn", f"/api/conversations answered {code}; expected 401."))
+            out.append(Result("data", "fail", f"/api/conversations answered {code}, not 401: "
+                              "could not confirm app data needs sign-in.",
+                              "Check the address points at the hub, and read its logs."))
 
         if isinstance(session, dict):
             out.append(_public_url(session, base))
