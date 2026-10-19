@@ -301,8 +301,6 @@ class FeedbackService:
         self.hub = hub
         self.deployment_id = deploy.deployment_id(self.hub_dir)
         self._lock = threading.Lock()
-        #: ref prefix -> (ref, user_id) -> {"title", "link"} or None (spaces, calendar)
-        self.resolvers: dict = {}
 
     # -- feedback ---------------------------------------------------------------------------
     def _terminal_message(self, conn, conversation_id: str, message_id: str) -> dict:
@@ -627,30 +625,6 @@ class FeedbackService:
                     provider_receipt=None, error_code=None, created_at=t, updated_at=t))
         return eid
 
-    def notify(self, recipient_id: str, kind: str, source_event_id: str, ref: str) -> str | None:
-        """One inbox item for something other than a reply (a mention in a
-        space, a calendar reminder). ``ref`` names what it is about
-        (``space:<id>:<post>``, ``event:<id>:<occurrence>``); the item's title
-        and link come from ``resolvers`` when it is listed, so it shows only
-        while the person may still open it. Idempotent by source."""
-        doc = _settings(self.hub_dir)["notifications"]
-        if not doc["enabled"]:
-            return None
-        if _prefs(self.hub_dir, recipient_id).get("notifications.delivery", doc["delivery"]) == "never":
-            return None
-        t = _now()
-        with self.engine.begin() as conn:
-            if conn.execute(sa.select(notification_events.c.id).where(
-                    notification_events.c.source_event_id == source_event_id)).first():
-                return None
-            eid = str(uuid.uuid4())
-            conn.execute(notification_events.insert().values(
-                id=eid, source_event_id=source_event_id, event_kind=kind, hub_id=self.hub, conversation_id=ref,
-                branch_id=None, run_id=None, message_id=None, created_at=t))
-            conn.execute(inbox.insert().values(id=str(uuid.uuid4()), event_id=eid, recipient_id=recipient_id,
-                                               state="unread", read_at=None, dismissed_at=None, created_at=t))
-        return eid
-
     def notifications(self, actor_id: str, *, limit: int = 30, readable=None) -> dict:
         with self.engine.connect() as conn:
             rows = conn.execute(sa.select(inbox, notification_events).join(
@@ -661,14 +635,6 @@ class FeedbackService:
                 conversations.c.id.in_([r.conversation_id for r in rows]), conversations.c.deleted_at.is_(None)))}
         items = []
         for r in rows:
-            prefix = r.conversation_id.split(":", 1)[0] if ":" in r.conversation_id else None
-            if prefix in self.resolvers:
-                got = self.resolvers[prefix](r.conversation_id, actor_id)
-                if got is None:
-                    continue  # gone, or no longer theirs to open
-                items.append({"id": r[0], "state": r.state, "kind": r.event_kind, "conversation_id": None,
-                              "message_id": None, "branch_id": None, "created_at": r.created_at, **got})
-                continue
             if r.conversation_id not in titles or (readable is not None and not readable(r.conversation_id)):
                 continue  # gone or no longer readable: no preview, no link
             items.append({"id": r[0], "state": r.state, "kind": r.event_kind, "conversation_id": r.conversation_id,
