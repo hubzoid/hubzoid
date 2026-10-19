@@ -24,9 +24,10 @@ paths = ['''(^|/)\.env\.example$''']
 
 # The parity ledger's source map pairs file paths with their SHA-256 digests. Paths
 # such as auths.py make the generic rule read a digest as an API key; only bare
-# 64-hex digests in that one file are allowed.
+# 64-hex digests in that one file are allowed. The path is not anchored at the
+# start: the scan of the current files sees it as /tmp/tree/docs/parity/sources.json.
 [[allowlists]]
 description = "SHA-256 digests in the parity source map"
 condition = "AND"
-paths = ['''^docs/parity/sources\.json$''']
+paths = ['''(^|/)docs/parity/sources\.json$''']
 regexes = ['''^[0-9a-f]{64}$''']
