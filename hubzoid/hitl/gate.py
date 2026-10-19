@@ -26,9 +26,9 @@ log = logging.getLogger("hubzoid.hitl")
 #: tools that are part of asking itself, or never consequential
 EXEMPT = frozenset({"ask_question", "request_status"})
 
-WAITING = ("Waiting for {who}'s approval: \"{title}\" has not run. Tell them in one short sentence what you "
-           "want to do and why, say you are waiting for their approval, and end your turn now. Do not call "
-           "any more tools in this turn.")
+WAITING = ("Waiting for {who}'s approval: \"{title}\" has not run. The card under this message asks them. "
+           "Write at most one short sentence on why, with no greeting, sign-off or closing line (you finish "
+           "this answer after they decide), and end your turn now. Do not call any more tools in this turn.")
 
 
 def hub_id_of(hub_dir: Path) -> str:

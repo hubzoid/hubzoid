@@ -1,5 +1,6 @@
 // "What you can use": the agents and chat features open to the signed-in
 // person, from the one access check (GET /api/me/access). Read only.
+import { displayName } from "../lib/format";
 import { useEffect, useState } from "react";
 import { t } from "../i18n/en";
 import { get } from "../lib/api";
@@ -33,7 +34,7 @@ export function MyAccess() {
           <ul className="m-0 list-none space-y-1 p-0">
             {data.agents.map((a) => (
               <li key={a.hub} className="text-ink">
-                {a.name}
+                {displayName(a.name)}
                 {a.extra.length > 0 && <span className="text-mute"> · {M.also(a.extra.map((x) => x.label).join(", "))}</span>}
               </li>
             ))}

@@ -18,6 +18,7 @@ a larger one streams to the first.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -31,7 +32,7 @@ import httpx
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 log = logging.getLogger("hubzoid.edge")
@@ -54,6 +55,58 @@ _IDENTITY_PREFIXES = ("x-hubzoid-", "x-openwebui-")
 # edge's default upstream is a bridge, so these are refused.
 _BRIDGE_INTERNAL = ("/v1", "/uploads", "/otel")
 _FORWARDED_PREFIX = "x-forwarded-prefix"
+
+# Client-address headers. The edge decides the client's address itself and
+# sends the bridge only that (``X-Forwarded-For``), so a client can't pick the
+# address the sign-in limits count.
+_CLIENT_ADDRESS = frozenset({"x-forwarded-for", "x-real-ip", "forwarded"})
+
+
+def _trusted_proxies() -> list:
+    """Proxies whose ``X-Forwarded-For`` the edge believes:
+    ``HUBZOID_TRUSTED_PROXIES`` (addresses or networks, comma-separated, or
+    ``*`` when the public port is reachable only through your proxy), plus
+    loopback. Without the setting, private networks are trusted too (a proxy
+    on the same LAN); set it to narrow that. A CDN in front (Cloudflare) must
+    be listed, or every person counts as one of its few addresses."""
+    raw = (os.environ.get("HUBZOID_TRUSTED_PROXIES") or "").strip()
+    if raw == "*":
+        return ["*"]
+    nets = []
+    for item in [x.strip() for x in raw.split(",") if x.strip()]:
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            log.warning("edge: HUBZOID_TRUSTED_PROXIES entry %r is not an address or network; ignored", item)
+    return nets
+
+
+def _trusted(addr: str, nets: list) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if nets == ["*"] or ip.is_loopback:
+        return True
+    if nets:  # an explicit list is the whole list (besides loopback)
+        return any(ip in n for n in nets)
+    return ip.is_private or ip.is_link_local
+
+
+def client_address(request: Request) -> str | None:
+    """The client's address: the connecting peer, or, when the peer is a
+    trusted proxy, the nearest address in ``X-Forwarded-For`` that isn't one."""
+    peer = request.client.host if request.client else None
+    if not peer:
+        return None
+    nets = _trusted_proxies()
+    if not _trusted(peer, nets):
+        return peer
+    chain = [a.strip() for v in request.headers.getlist("x-forwarded-for") for a in v.split(",") if a.strip()]
+    for addr in reversed(chain):
+        if not _trusted(addr, nets):
+            return addr
+    return chain[0] if chain else peer
 
 # What a path may carry unescaped (RFC 3986 pchar and "/"). Everything else,
 # "%" included, is percent-encoded on the way to an upstream.
@@ -129,10 +182,16 @@ def _is_bridge_internal(path: str) -> bool:
 _PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
 
 
-def _personal_key_call(request, path: str) -> bool:
+def _personal_key(request) -> bool:
     auth = (request.headers.get("authorization") or "").strip()
-    return (_clean_path(path) in _PERSONAL_KEY_PATHS
-            and auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_"))
+    return auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_")
+
+
+def _personal_key_call(request, path: str | None = None) -> bool:
+    """A person's API key on the chat API: bare ``/v1/...`` (the first agent)
+    or, behind a gateway, ``/b/<agent>/v1/...`` after its prefix is removed."""
+    return (_clean_path(request.url.path if path is None else path) in _PERSONAL_KEY_PATHS
+            and _personal_key(request))
 
 
 def _has_dot_segment(path: str) -> bool:
@@ -208,6 +267,9 @@ def _request_headers(
     with no declared scheme nothing is added, so plain-http localhost is
     untouched.
 
+    Client-address headers are replaced by one `X-Forwarded-For`: the address
+    the edge believes (`client_address`).
+
     `forwarded_prefix` drops a client-sent `X-Forwarded-Prefix` and, when
     non-empty, sends the prefix the edge stripped (`/b/<slug>`), so a bridge
     knows the call is hub-scoped.
@@ -219,7 +281,11 @@ def _request_headers(
         and not k.decode("latin-1").lower().startswith(_IDENTITY_PREFIXES)
     ]
     headers = [(k, v) for k, v in headers
-               if k.decode("latin-1").lower() != _FORWARDED_PREFIX]
+               if k.decode("latin-1").lower() != _FORWARDED_PREFIX
+               and k.decode("latin-1").lower() not in _CLIENT_ADDRESS]
+    client = client_address(request)
+    if client:
+        headers.append((b"x-forwarded-for", client.encode("latin-1")))
     if forwarded_prefix:
         headers.append((_FORWARDED_PREFIX.encode("latin-1"),
                         forwarded_prefix.encode("latin-1")))
@@ -308,15 +374,21 @@ def build_edge_app(
     async def http_handler(request: Request) -> Response:
         path, query = _path_and_query(request)
         if path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
-            from starlette.responses import JSONResponse
             states = getattr(request.app.state, 'workflow_health', {})
             healthy = bool(states) and all(states.values())
             return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
         if _has_dot_segment(path):
             return Response("Bad request", status_code=400)
-        if _is_bridge_internal(path) and not _personal_key_call(request, path):
-            return Response("Not found", status_code=404)
         upstream, fwd_path = _forward_target(path, norm_routes, default_base)
+        # The bridge's internal routes stay internal however they're spelled:
+        # as sent, and after a /b/<agent> prefix is removed.
+        for checked in {path, fwd_path}:
+            if _is_bridge_internal(checked) and not _personal_key_call(request, checked):
+                if _clean_path(checked) in _PERSONAL_KEY_PATHS:
+                    return JSONResponse({"error": {"message": "Send your personal API key: "
+                                                   "Authorization: Bearer hzp_...", "type": "auth"}},
+                                        status_code=401)
+                return Response("Not found", status_code=404)
         matched = _match(path, norm_routes)
         bases = matched.upstreams() if matched is not None else default_bases
         # Tell a bridge which /b/<slug> prefix was stripped (and never pass a

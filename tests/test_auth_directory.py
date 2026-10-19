@@ -113,6 +113,12 @@ def test_deactivation_ends_every_credential_in_one_step(hub, directory):
     assert TestClient(browser.app).get("/api/chat/ping",
                                        headers={"authorization": f"Bearer {key}"}).status_code == 401
     assert users.get(hub, user["id"])["status"] == "disabled"
+    # People shows it as turned off by the directory (list and person view).
+    from hubzoid import portal
+    from hubzoid.access import service, store_for
+    for state in (portal._account_state(store_for(hub), "sam@example.com"),
+                  service._account_state(store_for(hub), "sam@example.com")):
+        assert state["status"] == "disabled", state
     # A role change in Hubzoid doesn't lift the directory's hold.
     from hubzoid.access.accounts import HubzoidAccounts
     HubzoidAccounts(hub).update(user["id"], role="admin")
@@ -221,3 +227,42 @@ def test_scim_conformance(hub, directory):
         thread.join(timeout=5)
     failed = [f"{r.title}: {r.reason}" for r in results if r.status == Status.ERROR]
     assert not failed, "\n".join(failed)
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8711/metadata", "http://127.0.0.1/metadata",
+                                 "https://127.0.0.1/metadata", "https://10.0.0.5/metadata"])
+def test_metadata_urls_must_be_public_https(url):
+    """An administrator's metadata URL can't reach this server's own network;
+    a provider on a private address pastes its XML."""
+    with pytest.raises(saml.SamlRefused):
+        saml.fetch_metadata(url)
+
+
+def test_a_metadata_redirect_to_a_private_address_is_refused(monkeypatch):
+    from hubzoid.chat import feedback
+
+    calls = []
+
+    def check(url):
+        calls.append(url)
+        if "10.0.0.5" in url:
+            raise feedback.Err(422, "unsafe_url", "private")
+        return "93.184.216.34"
+
+    class Redirect:
+        status_code, headers = 302, {"location": "https://10.0.0.5/metadata"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def stream(self, *a, **kw): return Redirect()
+
+    monkeypatch.setattr(feedback, "check_webhook_url", check)
+    import httpx
+    monkeypatch.setattr(httpx, "Client", Client)
+    with pytest.raises(saml.SamlRefused):
+        saml.fetch_metadata("https://idp.example.com/metadata")
+    assert calls == ["https://idp.example.com/metadata", "https://10.0.0.5/metadata"]

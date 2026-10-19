@@ -44,3 +44,20 @@ def test_personal_chat_ids_are_per_account():
     assert _personal_chat_id("u_ana", "c1") == _personal_chat_id("u_ana", "c1")
     assert _personal_chat_id("u_ana", "c1") != _personal_chat_id("u_ben", "c1")
     assert _personal_chat_id("u_ana", "c1").startswith("key-")
+
+
+def test_a_key_asking_for_another_agent_is_told_where_it_is(bridge):
+    """Behind a gateway the bare /v1 is the first agent: a model name for
+    another agent is refused with its API base, never answered by this one."""
+    client, key = bridge
+    r = client.post("/v1/chat/completions", headers={"authorization": f"Bearer {key}"},
+                    json={"model": "gpms-hub", "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 404 and "/b/<agent>/v1" in r.json()["detail"]["message"]
+
+
+def test_a_malformed_key_never_falls_back_to_another_sign_in(bridge):
+    """An overlong or broken hzp_ value is refused, not answered as the
+    cookie or the local owner (Codex review)."""
+    client, _ = bridge
+    bad = {"authorization": "Bearer hzp_" + "a" * 300}
+    assert client.get("/v1/models", headers=bad).status_code == 401

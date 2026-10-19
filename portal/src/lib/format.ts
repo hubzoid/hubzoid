@@ -98,7 +98,8 @@ export function initials(subject: string, display?: string | null) {
   if (subject === EVERYONE) return "All";
   if (isService(subject)) return "⚙";
   const name = personName(subject, display);
-  const words = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+  // Letters and digits only, so "Owner (test)" gives "OT", not "O(".
+  const words = name.replace(/@.*/, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   return words
     .slice(0, 2)
     .map((w) => w[0]!.toUpperCase())
@@ -256,6 +257,12 @@ export function accountStatus(status: string): Presentation {
       };
     case "blocked":
       return { label: "Blocked", color: "red", hint: "All agent access is suspended." };
+    case "disabled":
+      return {
+        label: "Turned off by directory",
+        color: "red",
+        hint: "Your company directory turned this account off. Turn them back on there.",
+      };
     case "service":
       return { label: "Legacy service identity", color: "default", hint: "Created before workflows ran as user accounts; its access is kept." };
     case "everyone":
@@ -327,6 +334,8 @@ export type Sentence = {
   parts: { text: string; kind?: "person" | "capability" | "agent" | "actor" | "tool" }[];
   detail?: string;
   tone: "neutral" | "positive" | "negative";
+  /** The row's label when "Allowed" / "Removed" doesn't fit (sign-in events). */
+  tag?: string;
 };
 
 const text = (t: string) => ({ text: t });
@@ -508,9 +517,63 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
     case "sign_in_failed":
       return {
         tone: "negative",
+        tag: "Failed",
         parts: [text("A sign-in to "), person(subjectName), text("’s account failed")],
         detail: "Wrong password. Ten failures in 15 minutes lock sign-in for 15 minutes.",
       };
+    // Two-step sign-in, devices and API keys. The subject is the account's
+    // email; `permission` holds a key's first characters or a count.
+    case "api_key_created":
+      return {
+        tone: "neutral", tag: "API key",
+        parts: [person(subjectName), text(" made an API key"), ...(row.permission ? [text(` (${row.permission}…)`)] : [])],
+      };
+    case "api_key_revoked":
+      return { tone: "negative", tag: "API key", parts: [person(subjectName), text(" revoked an API key")] };
+    case "mfa_enabled":
+      return { tone: "positive", tag: "Security", parts: [person(subjectName), text(" turned on two-step sign-in")] };
+    case "mfa_disabled":
+      return { tone: "negative", tag: "Security", parts: [person(subjectName), text(" turned off two-step sign-in")] };
+    case "mfa_reset":
+      return {
+        tone: "neutral", tag: "Security",
+        parts: [actor(who), text(" reset two-step sign-in for "), person(subjectName)],
+        detail: "They set it up again at their next sign-in.",
+      };
+    case "mfa_recovery_code_used":
+      return { tone: "neutral", tag: "Security", parts: [person(subjectName), text(" signed in with a recovery code")] };
+    case "mfa_recovery_codes_replaced":
+      return { tone: "neutral", tag: "Security", parts: [person(subjectName), text(" made new recovery codes")] };
+    case "mfa_policy_changed":
+      return {
+        tone: "neutral", tag: "Security",
+        parts: [actor(who), text(" set two-step sign-in to "),
+          text(row.permission === "all" ? "required for everyone" : row.permission === "none" ? "optional" : "required for administrators")],
+      };
+    case "session_ended":
+      return { tone: "neutral", tag: "Signed out", parts: [person(subjectName), text(" signed out a device")] };
+    case "sessions_ended":
+      return { tone: "neutral", tag: "Signed out", parts: [person(subjectName), text(" signed out their other devices")] };
+    case "credentials_revoked":
+      return {
+        tone: "negative", tag: "Signed out",
+        parts: row.actor === row.subject
+          ? [person(subjectName), text(" signed out everywhere")]
+          : [actor(who), text(" signed "), person(subjectName), text(" out everywhere")],
+        detail: "Every session, API key and assistant connection of the account ended.",
+      };
+    case "sign_in_linked":
+      return { tone: "neutral", tag: "Security", parts: [person(subjectName), text(" added a sign-in"), text(signInMethod(row.permission))] };
+    case "directory_saved":
+      return { tone: "neutral", tag: "Company sign-in", parts: [actor(who), text(" saved company sign-in "), text(row.permission || "")] };
+    case "directory_removed":
+      return { tone: "negative", tag: "Company sign-in", parts: [actor(who), text(" removed company sign-in "), text(row.permission || "")] };
+    case "scim_token_created":
+      return { tone: "neutral", tag: "Company sign-in", parts: [actor(who), text(" made a SCIM token")] };
+    case "scim_token_revoked":
+      return { tone: "negative", tag: "Company sign-in", parts: [actor(who), text(" revoked a SCIM token")] };
+    case "saml_tested":
+      return { tone: "neutral", tag: "Company sign-in", parts: [actor(who), text(" tested company sign-in")] };
     case "signed_out":
       return { tone: "neutral", parts: [person(subjectName), text(" signed out")] };
     case "signed_up":

@@ -107,7 +107,10 @@ def decide(hub: Path = HUB, change_id: int = CID, decision: str = typer.Option(N
         cc.fail(400, "invalid_request", "The code did not match. Nothing was decided.", as_json)
     out = _run(service.decide, as_json, hub, change_id, actor=_who(hub, user), decision=decision,
                expected_revision=ch["revision"], note=note)
-    cc.emit(service.public(out, with_diff=False), as_json, human=lambda o: typer.echo(_line(o)))
+    later = out["status"] == "applied" and service.needs_reload(out)
+    cc.emit(service.public(out, with_diff=False), as_json, human=lambda o: typer.echo(
+        _line(o) + ("\nA running agent uses changed instructions or skills after it restarts (or when a change "
+                    "is applied from Hubzoid)." if later else "")))
 
 
 @app.command("undo")

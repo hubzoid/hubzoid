@@ -19,13 +19,26 @@ describe those releases as they were.
 - **One interface.** `hubzoid run` and `hubzoid gateway` start the Hubzoid web
   app, or no UI with `--no-ui`. Open WebUI is never started or installed.
 - **The Console is in Settings.** The management screens (Agents, People &
-  access, Activity, Schedules, Workspace settings, Health, Advanced settings,
-  Compatibility) are sections of the web app's Settings page. The old address
+  access, Activity, Schedules, Workspace settings, Health, Advanced settings)
+  are sections of the web app's Settings page. The old address
   `/portal/` sends people to the same section there, so bookmarks keep working.
 - **Accounts are the web app's own.** Sign-in, Google sign-in and sign-up use
   the web app's settings ([accounts and sign-in](auth.md)). Open WebUI API keys
-  no longer work. MCP clients connect through OAuth ([MCP server](mcp-server.md));
-  personal API keys in the web app are planned, not in 2.0's first part.
+  no longer work: people make personal API keys (`hzp_…`) in Settings →
+  Security. MCP clients connect through OAuth ([MCP server](mcp-server.md)).
+- **Access comes from grants only.** Open WebUI groups and
+  `BYPASS_MODEL_ACCESS_CONTROL` give no access. Someone without a grant signs in
+  to "No agents yet". The migration's dry run counts these people; grant them
+  access in Settings → People & access before they move.
+- **Administrators set up two-step sign-in** at their first 2.0 sign-in (an
+  authenticator app), unless Settings → Security says otherwise.
+- **Behind a CDN, list it.** The public port believes `X-Forwarded-For` only
+  from loopback and, while `HUBZOID_TRUSTED_PROXIES` is unset, private
+  networks; setting it lists exactly which proxies to believe. With
+  Cloudflare (or another CDN) in front, set `HUBZOID_TRUSTED_PROXIES` to its
+  address ranges, or to `*` if the port is reachable only through it.
+  Otherwise everyone counts as one of the CDN's few addresses, and ten failed
+  sign-ins there lock sign-in for everyone behind it for 15 minutes.
 - **Open WebUI settings are named, never ignored.** At start, and in
   `hubzoid doctor`, Hubzoid lists every Open WebUI setting it finds in the
   environment or a hub's `.env`.
@@ -47,7 +60,10 @@ message naming each one, even when its value is blank or `false`:
 
 ### Settings that only warn
 - `WEBUI_NAME` is still read as the deployment's name until one is set in
-  Settings → Brand. Then remove it.
+  Settings → Brand. In 1.x it also named each hub's agent: put that name in the
+  hub's `AGENTS.md` frontmatter as `display_name:` (for example
+  `display_name: IRS Hub`). Then remove it.
+- `LICENSE_KEY` (Open WebUI's licence key) is not used. Remove it.
 - `HUBZOID_OWUI_DB` is read only by `hubzoid migrate openwebui`. Remove it once
   the move is done.
 - `DEFAULT_USER_ROLE`: new accounts follow `ENABLE_SIGNUP` and
@@ -69,17 +85,27 @@ These names keep their meaning in the web app: `ENABLE_SIGNUP`,
    each `.env`.
 2. **Install** 2.0: `pip install -U "hubzoid>=2"`.
 3. **Check readiness** (reads only): `hubzoid migrate readiness ./my-hub`.
-4. **Dry run, then apply** the move of accounts, conversations and share links,
+   For a gateway, pass its data folder (for example `./gateway-data`).
+4. **Rehearse on a copy**: `hubzoid migrate openwebui ./my-hub --rehearse
+   ../rehearsal --apply`. For a gateway, pass its data folder: every hub
+   folder, the gateway's Open WebUI database, uploads and operational store are
+   copied (SQLite), with a manifest naming the copies, and the copy is
+   migrated. Start the copy on spare ports and sign in as a few real people.
+5. **Dry run, then apply** the move of accounts, conversations and share links,
    with the deployment stopped: `hubzoid migrate openwebui ./my-hub`, then
    `hubzoid migrate openwebui ./my-hub --apply`. The command reads Open WebUI's
-   database and never changes it. [What moves and what does not](#what-moves-and-what-does-not)
+   database and never changes it. Read the warnings: people without agent
+   access, and a configured owner (`HUBZOID_ADMIN_EMAIL`) that has no account
+   (`--apply` creates it when `HUBZOID_ADMIN_PASSWORD` is set). Open WebUI's
+   account for running without sign-in (`admin@localhost`) is imported blocked
+   and not as an administrator. [What moves and what does not](#what-moves-and-what-does-not)
    still applies.
-5. **Rename** the settings in the first table, and remove the ones that warn.
-6. **Start** with `hubzoid run my-hub` (or `hubzoid gateway`), then run
+6. **Rename** the settings in the first table, and remove the ones that warn.
+7. **Start** with `hubzoid run my-hub` (or `hubzoid gateway`), then run
    `hubzoid doctor my-hub` and sign in as the owner and as an ordinary user.
 
-What 2.0 does not yet cover compared with Open WebUI is listed in
-Settings → Workspace settings → Compatibility and in the 2.0 release notes.
+What 2.0 does not yet cover compared with Open WebUI is listed in the
+[2.0 release notes](release-notes/2.0.md).
 
 ### Going back
 Reinstall 1.x (`pip install "hubzoid<2"`), restore the backup taken in step 1

@@ -593,6 +593,12 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
 
     env = env if env is not None else os.environ
     validate_env(env)
+    conflict = _channel_conflict(hub_dir)
+    if conflict:
+        log.error("hubzoid slack adapter not started: channel %s already serves Slack for this hub. Two "
+                  "listeners on one Slack app would answer twice. The bridge runs it; see docs/channels/slack.md.",
+                  conflict)
+        return 0
     settings = settingslib.load(hub_dir)
 
     try:
@@ -630,6 +636,19 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
     handler = SocketModeHandler(app, env["SLACK_APP_TOKEN"])
     handler.start()
     return 0
+
+
+def _channel_conflict(hub_dir: Path) -> str | None:
+    """An enabled Slack channel connection (channels/<id>.yaml) for this hub."""
+    try:
+        from ..channels import config as channel_config
+
+        for conn in channel_config.active_all(hub_dir):
+            if conn.provider == "slack" and conn.enabled:
+                return conn.id
+    except Exception:  # noqa: BLE001 - no channel store: the legacy adapter is the only one
+        return None
+    return None
 
 
 def _slugify(text: str) -> str:

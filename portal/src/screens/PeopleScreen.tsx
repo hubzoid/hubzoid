@@ -165,6 +165,7 @@ export function PeopleScreen({
               { value: "awaiting-signup", label: "Not signed up yet" },
               { value: "pending-approval", label: "Awaiting approval" },
               { value: "blocked", label: "Blocked" },
+              { value: "disabled", label: "Turned off by directory" },
               { value: "service", label: "Legacy service identity" },
             ]}
           />
@@ -352,9 +353,11 @@ function PersonDrawer({
   const catalogs = useCatalogs(hubs.map((h) => h.key));
   const manageAccount =
     !!me.account_admin && !!person?.owui_id && !isService(person.subject) && person.subject !== me.subject;
-  // There is no Block here, but a block (an Open WebUI account replaced, one
-  // carried over by migration, or an older one) can be lifted.
+  // Block stops someone at once (offboarding, a lost device): every session,
+  // API key and assistant connection ends, and their access is removed.
   const canReactivate = me.org_admin && !!person?.suspended;
+  const canBlock = me.org_admin && !!person && !person.suspended && !isService(person.subject)
+    && person.subject !== me.subject;
   const info = useData<AccountInfo>(
     manageAccount && person ? `/accounts/${encodeURIComponent(person.subject)}` : null,
   );
@@ -528,6 +531,35 @@ function PersonDrawer({
     }
   }
 
+  async function block() {
+    if (!person) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request<BlockResult>("/people/block", { subject: person.subject, suspended: true });
+      message.success(`${name} is blocked.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
+      info.reload();
+      data.reload();
+      onChanged();
+    }
+  }
+
+  const confirmBlock = () =>
+    modal.confirm({
+      title: `Block ${name}?`,
+      content:
+        "They are signed out everywhere, their API keys and assistant connections stop, and all their " +
+        "agent access is removed. They can't sign back in until an administrator reactivates them; " +
+        "reactivating doesn't give the access back.",
+      okText: "Block",
+      okButtonProps: { danger: true },
+      onOk: () => block(),
+    });
+
   const confirmReactivate = () =>
     modal.confirm({
       title: `Reactivate ${name}?`,
@@ -624,15 +656,17 @@ function PersonDrawer({
         )
       }
       extra={
-        (manageAccount || canReactivate) && (
+        (manageAccount || canReactivate || canBlock) && (
           <Dropdown
             trigger={["click"]}
             menu={{
               items: [
                 ...(canReactivate ? [{ key: "reactivate", label: "Reactivate", disabled: busy }] : []),
+                ...(canBlock ? [{ key: "block", danger: true, label: "Block", disabled: busy }] : []),
                 ...(manageAccount ? [{ key: "delete", danger: true, label: "Delete user" }] : []),
               ],
-              onClick: ({ key }) => (key === "reactivate" ? confirmReactivate() : setPanel("delete")),
+              onClick: ({ key }) =>
+                key === "reactivate" ? confirmReactivate() : key === "block" ? confirmBlock() : setPanel("delete"),
             }}
           >
             <Button type="text" aria-label="More actions" icon={<MoreHorizontal size={18} />} />

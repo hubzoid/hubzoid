@@ -146,17 +146,19 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
         return Decision(False, "store_error")
 
 
-def credential_live(hub_dir: Path, kind: str, credential_id: str) -> bool:
+def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
+                    expired_ok: bool = False) -> bool:
     """Whether the browser session or API key that started a run still works:
-    not signed out, revoked or expired. One indexed read, never cached, so a
-    revoke stops the next tool call."""
+    not signed out, revoked or expired (``expired_ok``: only not signed out or
+    revoked). One indexed read, never cached, so a revoke stops the next tool
+    call."""
     import time
 
     import sqlalchemy as sa
 
     from ..auth.schema import api_keys, engine_for, sessions
 
-    now = time.time()
+    now = 0 if expired_ok else time.time()
     if kind == "session":
         q = sa.select(sessions.c.token_hash).where(
             sessions.c.token_hash.like(credential_id + "%"), sessions.c.revoked_at.is_(None),
@@ -169,6 +171,24 @@ def credential_live(hub_dir: Path, kind: str, credential_id: str) -> bool:
         return True
     with engine_for(Path(hub_dir)).connect() as conn:
         return conn.execute(q.limit(1)).first() is not None
+
+
+def still_valid(hub_dir: Path, account_id: str, credential: dict | None, *,
+                expired_ok: bool = False) -> bool:
+    """For work started later on someone's behalf (a queued message, a reply
+    resumed after an approval): the account's credential counter is the one
+    recorded then, and the session or key it came with still works
+    (``expired_ok``: wasn't signed out or revoked; for a reply resumed after
+    an approval that may come days later)."""
+    if not credential:
+        return True
+    from ..auth import users
+
+    epoch = credential.get("epoch")
+    if epoch is not None and users.epoch(Path(hub_dir), account_id) != int(epoch):
+        return False
+    kind, cid = credential.get("kind"), credential.get("id")
+    return not (kind and cid) or credential_live(hub_dir, kind, cid, expired_ok=expired_ok)
 
 
 def check_run(hub_dir: Path, ident) -> Decision:

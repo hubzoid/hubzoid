@@ -57,7 +57,11 @@ def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str 
             out[name] = registry[name]
         else:
             raise WorkItemError("unknown_tool", f"Unknown tool {name!r} for this station.", status=422)
-    return out
+    # An eval case's fakes cover the sandbox and handoff tools too (the hub's
+    # are already covered); outside a case this changes nothing.
+    from .. import tool_fakes
+
+    return tool_fakes.wrap_registry(out)
 
 
 def sandbox_names(hub_dir: Path, names, *, sandbox: bool) -> list[str]:

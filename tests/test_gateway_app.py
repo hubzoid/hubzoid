@@ -57,6 +57,10 @@ def test_plan_routes_hub_scoped_web_app_calls(tmp_path):
     sales, support = _hub(tmp_path, "sales", 3611), _hub(tmp_path, "support", 3612)
     gp = gateway.plan([sales, support])
     routes = {r["prefix"]: r for r in gp.edge_routes()}
+    # The hub-scoped API goes by hub key, with its path unchanged.
+    for key, port in (("sales", 3611), ("support", 3612)):
+        assert routes[f"/api/hubs/{key}"] == {"prefix": f"/api/hubs/{key}",
+                                               "upstream": f"http://127.0.0.1:{port}"}
     for slug, port in (("sales", 3611), ("support", 3612)):
         for part in ("api", "artifacts", "branding", "portal/api"):
             r = routes[f"/b/{slug}/{part}"]
@@ -371,7 +375,9 @@ def _edge(monkeypatch, *, routes=(), default="http://bridge1", fallbacks=(), ans
 def test_web_app_edge_keeps_the_bridge_api_on_loopback(monkeypatch, path):
     app, seen = _edge(monkeypatch)
     with StarletteClient(app) as c:
-        assert c.post(path, content=b"{}").status_code == 404
+        # The chat API answers 401 (send a personal key); the rest 404.
+        expected = 401 if path in ("/v1/chat/completions", "/v1/models") else 404
+        assert c.post(path, content=b"{}").status_code == expected
     assert seen == []
     # Repeated slashes don't sneak past (a client can send them as they are).
     assert edge._is_bridge_internal("//v1//chat/completions")
@@ -431,3 +437,17 @@ def test_edge_redacts_oauth_callback_logs_when_connections_provide_it(monkeypatc
     monkeypatch.delattr(connector_routes, "redact_oauth_callback_logs")
     assert edge._factory() == "app"            # a build without connections
 
+
+
+def test_an_agents_display_name_is_shown_as_written(tmp_path):
+    from hubzoid.loaders import agents as agents_loader
+    from hubzoid.webapp_gateway import agent_card
+
+    hub = _hub(tmp_path, "irs", 3613, agent_name="irs-hub")
+    assert agent_card(hub)["name"] == "irs-hub"  # the app turns a slug into "Irs Hub"
+    (hub / "AGENTS.md").write_text("---\nname: irs-hub\ndisplay_name: IRS Hub\ndescription: d\n---\nbody")
+    card = agent_card(hub)
+    assert (card["name"], card["id"]) == ("IRS Hub", "irs-hub")  # the id stays the slug
+    assert agents_loader.display_name(hub) == "IRS Hub"
+    (hub / "AGENTS.md").write_text("---\nname: [broken\n---")
+    assert agents_loader.display_name(hub, "IRS") == "IRS"

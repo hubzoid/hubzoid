@@ -12,6 +12,9 @@ When frontmatter is missing, defaults are derived:
 
 Frontmatter schema when present:
   name:        agent identifier (optional)
+  display_name: the name people see in the web app, kept as written ("IRS Hub").
+               Optional; without it the app shows `name` (a slug like irs-hub
+               becomes "Irs Hub").
   description: one-line summary used as handoff trigger for sub-agents (optional)
   model:       optional LiteLLM model id; overrides .env MODEL
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents
@@ -43,6 +46,7 @@ from .._fs import agent_read_refusal
 class AgentSpec(BaseModel):
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    display_name: str | None = Field(default=None, max_length=80)
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
     # Quick-start prompts shown on the empty new-chat screen as click-to-send
@@ -64,6 +68,16 @@ class LoadedAgent:
     source_path: Path
 
 
+def display_name(hub_dir: Path, fallback: str | None = None) -> str:
+    """The main agent's name for people: ``display_name``, else ``name``, else
+    ``fallback`` or the folder name (a broken AGENTS.md still gets a name)."""
+    try:
+        spec = load_main(Path(hub_dir)).spec
+    except Exception:  # noqa: BLE001 — naming never fails a page
+        return fallback or Path(hub_dir).name
+    return (spec.display_name or "").strip() or spec.name
+
+
 def load_main(hub_dir: Path) -> LoadedAgent:
     """Load <hub>/AGENTS.md as the main agent.
 
@@ -79,7 +93,16 @@ def load_main(hub_dir: Path) -> LoadedAgent:
     reason = agent_read_refusal(hub_dir, path)
     if reason:
         raise ValueError(f"Agent definition refused: {reason}")
-    return _load_one(path, default_name=_safe_id(hub_dir.name))
+    return _with_settings(hub_dir, _load_one(path, default_name=_safe_id(hub_dir.name)))
+
+
+def _with_settings(hub_dir: Path, loaded: LoadedAgent) -> LoadedAgent:
+    """Fill ``{{settings.KEY}}`` from the hub's settings (hubzoid.hubs.settings).
+    Every runtime reads instructions through here, so all see the same text."""
+    from ..hubs.settings import render
+
+    loaded.instructions = render(hub_dir, loaded.instructions, loaded.source_path)
+    return loaded
 
 
 def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
@@ -120,11 +143,11 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                     match = mds[0]
             if match is None or agent_read_refusal(hub_dir, match):
                 continue
-            out.append(_load_one(match, default_name=_safe_id(child.name)))
+            out.append(_with_settings(hub_dir, _load_one(match, default_name=_safe_id(child.name))))
         elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
-            out.append(_load_one(child, default_name=_safe_id(child.stem)))
+            out.append(_with_settings(hub_dir, _load_one(child, default_name=_safe_id(child.stem))))
     return out
 
 

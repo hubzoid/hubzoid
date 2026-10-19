@@ -115,15 +115,21 @@ def resources(hub_dir: Path) -> list[dict]:
     from .. import scheduling
     from . import observe
 
-    out = [{"key": r["name"], "kind": "code", "source": r.get("source")} for r in observe.definitions(hub_dir)]
+    from .runtime import title_for
+
+    out = [{"key": r["name"], "kind": "code", "source": r.get("source"), "title": title_for(r["name"])}
+           for r in observe.definitions(hub_dir)]
     try:
         tasks, _problems = scheduling.load_tasks(Path(hub_dir))
     except Exception:  # noqa: BLE001 - a broken task file is reported elsewhere
         tasks = []
-    out += [{"key": f"md:{t.name}", "kind": "markdown", "source": f"schedule/{t.name}.md"} for t in tasks]
+    out += [{"key": f"md:{t.name}", "kind": "markdown", "source": f"schedule/{t.name}.md",
+             "title": title_for(t.name)} for t in tasks]
     from .builtin import files as builtin_files
 
-    out += [{"key": p.stem, "kind": "builtin", "source": "built in"} for p in builtin_files()]
+    out += [{"key": p.stem, "kind": "builtin", "source": "built in",
+             "title": "Repeated requests" if p.stem == "repeated_request" else title_for(p.stem)}
+            for p in builtin_files()]
     return sorted(out, key=lambda r: r["key"])
 
 
@@ -171,6 +177,16 @@ def _legacy(hub_dir: Path, email: str) -> list[tuple[str, str, str]]:
         for res in resources(hub_dir):  # "Run for me" grants on each report
             if res["kind"] == "code" and can(tool_permission(res["key"])):
                 out.append((res["key"], "run", tool_permission(res["key"])))
+        # Repeated requests ("repeat this every Monday") are each person's own,
+        # run as them with their own access: everyone who uses the agent may
+        # run and schedule them, unless the hub turns them off
+        # (HUBZOID_PROMPT_WORKFLOWS=false).
+        from .builtin import NAMES as BUILTIN, files as builtin_files
+
+        if can("use_hub") and builtin_files():
+            for name in BUILTIN:
+                out += [(name, "run", "everyone who uses this agent"),
+                        (name, "schedule", "everyone who uses this agent")]
         if can("workflows_manage"):
             out += [("*", "run", "workflows_manage"), ("*", "control", "workflows_manage")]
         if can("workflows_view"):
@@ -194,14 +210,16 @@ def authorize(hub_dir: Path, email: str | None, workflow: str, action: str) -> D
     email = _norm(email)
     if not email:
         return Decision(False, "not signed in")
-    from .. import access
+    from ..access import evaluator
 
     try:
-        gs = access.store_for(Path(hub_dir))
-        if gs.is_suspended(email):
-            return Decision(False, "account suspended")
-        if not gs.can(email, Path(hub_dir).name, "use_hub"):
-            return Decision(False, "no access to this hub")
+        # The one access check (account status, credential counter, use_hub)
+        # comes first; workflow grants only narrow it.
+        base = evaluator.authorize(Path(hub_dir), email, "use_hub", hub=Path(hub_dir).name)
+        if not base.allowed:
+            return Decision(False, "account suspended" if base.reason in ("account_inactive", "blocked",
+                                                                          "credentials_revoked")
+                            else "no access to this hub")
     except Exception:  # noqa: BLE001 - fail closed
         return Decision(False, "access check unavailable")
     sources = []
@@ -391,12 +409,14 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces, action: str = "run"
     access guard: no audit row, no run."""
     import asyncio
 
+    from .. import tool_fakes
     from ..access import audit
     from ..access.identity import current_identity
     from ..access.policy import is_allowed
 
     hub_dir = Path(hub_dir)
     surfaces = frozenset(surfaces)
+    ft = tool_fakes.wrap(ft)      # an eval's fake answers only after this check allows the call
     original = ft.on_invoke_tool
 
     def decide() -> tuple[bool, str]:

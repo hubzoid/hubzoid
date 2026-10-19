@@ -299,10 +299,13 @@ def _account_flags(gs, subject: str) -> dict:
     with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
         suspended = gs._meta_get(conn, "suspended:" + subject) == "1"
         unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"
+    from .access.service import directory_disabled
+
     return dict(
         suspended=suspended,
         account_unavailable=unavailable,
         blocked=suspended or unavailable,
+        directory_disabled=directory_disabled(gs._engine, subject),  # noqa: SLF001
     )
 
 
@@ -313,6 +316,8 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
     reported as `blocked` with `account_unavailable=true` alongside."""
     if flags["suspended"]:
         return "blocked"
+    if flags.get("directory_disabled"):
+        return "disabled"
     if subject == "*":
         return "everyone"
     if subject.startswith("workflow:"):
@@ -423,12 +428,14 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     @router.get("/hubs")
     def hubs(admin=Depends(require_admin)):
+        from .loaders import agents as agents_loader
+
         gs = store_for(hub_dir)
         return {
             "hubs": [
                 dict(
                     key=h["key"],
-                    name=h["name"],
+                    name=agents_loader.display_name(Path(h["path"]), h["name"]),
                     path=str(Path(h["path"]).resolve()),
                     model_id=h["model_id"],
                     can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),

@@ -8,8 +8,9 @@ Tests import ``TestIdP``. A browser rehearsal runs it as a server:
     python tests/fixtures/saml_idp.py --port 8711 \\
         --sp-metadata-url http://localhost:3600/api/auth/saml/okta/metadata
 
-then adds ``http://localhost:8711/metadata`` as the provider's metadata URL
-(Hubzoid's own metadata is fetched on the first sign-in).
+then pastes the XML from ``curl http://localhost:8711/metadata`` as the
+provider's metadata (Hubzoid fetches only public https metadata URLs; its own
+metadata is fetched by this IdP on the first sign-in).
 The IdP's sign-in page lets you pick the email to sign in as.
 """
 from __future__ import annotations

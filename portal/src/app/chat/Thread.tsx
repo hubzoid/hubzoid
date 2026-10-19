@@ -233,7 +233,7 @@ function EmptyThread(props: ThreadProps) {
         <section aria-label={t.agents.suggestions} className="hz-pills">
           {pills.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
-              <button type="button" className="hz-pill">
+              <button type="button" className="hz-suggestion" title={s.label}>
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -298,7 +298,17 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
     s.message.content.some((p) => p.type === "text" && (p as { text: string }).text.trim() !== ""),
   );
   const isLast = useAuiState((s) => s.message.isLast);
+  const decision = useAuiState((s) => !!(s.message.metadata?.custom as { decision?: boolean } | undefined)?.decision);
   const del = useDelete();
+  if (decision)
+    // The answer to a card: a quiet line under it, not a chat bubble.
+    return (
+      <MessagePrimitive.Root className="hz-message hz-decision" data-role="user" role="note" data-testid="decision-line">
+        <span className="hz-decision-line">
+          <MessagePrimitive.Parts components={{ Text: UserText }} />
+        </span>
+      </MessagePrimitive.Root>
+    );
   return (
     <MessagePrimitive.Root
       className="hz-message hz-user"
@@ -731,6 +741,41 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
     history.replaceState(null, "", location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The unsent text is kept for this person and this chat (or new-chat page
+  // and agent) in this tab, so a sign-out mid-message (session ended, signed
+  // out elsewhere) doesn't lose it: it's back after signing in again. Signing
+  // out clears it (clearDeviceCache).
+  const me = useApp().user?.id ?? "local";
+  const draftKey = `hz.draft:${me}:${location.pathname}${location.search}`;
+  const text = useAuiState((s) => s.composer.text);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(draftKey);
+      if (saved && aui.composer().getState().isEmpty) aui.composer().setText(saved);
+    } catch {
+      /* no storage: nothing to restore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  useEffect(() => {
+    try {
+      if (text) sessionStorage.setItem(draftKey, text);
+    } catch {
+      /* no storage: the draft just isn't kept */
+    }
+    if (text) return;
+    // Sending empties the composer before the server answers. The kept text
+    // goes only once the send has stood for a moment: a send refused because
+    // the sign-in ended leaves this page first, and the text is still there.
+    const timer = setTimeout(() => {
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {
+        /* no storage */
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [text, draftKey]);
   const running = useAuiState((s) => s.thread.isRunning);
   const hasDraft = useAuiState((s) => !s.composer.isEmpty);
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
@@ -1122,7 +1167,8 @@ function ContextNote() {
 
 // ---- feedback and follow-ups ----------------------------------------------------
 
-const REASONS = ["accurate", "useful", "missing_source", "incorrect", "other"] as const;
+// What can be wrong with an answer (the deployment also accepts "accurate" and "useful").
+const REASONS = ["incorrect", "missing_source", "other"] as const;
 
 /** Rate this answer. A rating belongs to you and to this exact answer. */
 function FeedbackActions() {

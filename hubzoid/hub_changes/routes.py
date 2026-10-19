@@ -44,6 +44,17 @@ def mount(app: FastAPI, ctx) -> None:
                                                   "proposed changes.")
         return email, review
 
+    async def applied(ch: dict) -> dict:
+        """The change as the API shows it. Once instructions or skills changed,
+        the chat's runtime is rebuilt so the next reply uses them (knowledge
+        is read live)."""
+        out = service.public(ch)
+        if ch["status"] == "applied" and service.needs_reload(ch):
+            from ..chat.authoring_routes import _reload_runtime
+
+            out["runtime_reloaded"] = await _reload_runtime(ctx)
+        return out
+
     @app.get("/api/hub-changes")
     async def list_changes(request: Request, status: str | None = None):
         email, review = await reader(request)
@@ -68,7 +79,7 @@ def mount(app: FastAPI, ctx) -> None:
                           present=not (request.headers.get("authorization") or "").lower().startswith("bearer "))
         except service.ChangeError as exc:
             raise _err(exc)
-        return service.public(ch)
+        return await applied(ch)
 
     @app.post("/api/hub-changes/{cid}/decision")
     async def decide(cid: int, request: Request):
@@ -81,7 +92,7 @@ def mount(app: FastAPI, ctx) -> None:
                           expected_revision=body.get("expected_revision"), note=body.get("note"))
         except service.ChangeError as exc:
             raise _err(exc)
-        return service.public(ch)
+        return await applied(ch)
 
     @app.post("/api/hub-changes/{cid}/undo")
     async def undo(cid: int, request: Request):

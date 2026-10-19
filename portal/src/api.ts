@@ -576,6 +576,123 @@ export async function connectorsRequest<T>(
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
+// ---- Secrets (hubzoid.secretstore): write-only, never a value ----------------
+
+export type SecretLevel = "deployment" | "hub" | "restricted";
+export type SecretStored = {
+  name: string;
+  scope: "deployment" | "hub";
+  revision: number;
+  restricted: boolean;
+  updated_by: string;
+  updated_at: string;
+  /** Bound to a destination (an Azure endpoint); a changed one asks for it again. */
+  bound: boolean;
+};
+export type SecretRow = {
+  name: string;
+  level: SecretLevel;
+  status: "set" | "missing" | "blank" | "unreadable" | "rebind";
+  /** Where the value comes from: "Stored", "Hub .env", "Deployment environment"... */
+  source: string | null;
+  /** An operator source sets it: the Console cannot change it. */
+  locked: boolean;
+  lock_reason: string | null;
+  stored: SecretStored | null;
+  stored_status: "in_use" | "overridden" | "unreadable" | "rebind" | null;
+  /** Why the agent expects it: model, webhook or declared (.env.example). */
+  expected: string | null;
+  /** Saved or removed since this agent started. */
+  restart_needed: boolean;
+};
+export type SecretList = {
+  hub: string;
+  secrets: SecretRow[];
+  /** Restricted secrets an agent administrator may not see by name. */
+  restricted_hidden: number;
+  can_manage: boolean;
+};
+
+/** The hub-scoped APIs (/api/hubs/{hub}/...: settings, secrets, channels) and /api/secrets. Errors are {"detail": {"code", "message", ...}}. */
+export async function secretsRequest<T>(
+  url: string,
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      credentials: "include",
+      signal,
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(e instanceof Error && e.message ? e.message : "Network error", 0);
+  }
+  noteSession(response.status);
+  if (!response.ok) {
+    let message = `${response.status}: Request failed`;
+    let code: string | undefined;
+    let data: Record<string, unknown> | undefined;
+    try {
+      const parsed = await response.json();
+      const detail = parsed?.detail;
+      if (detail && typeof detail === "object") {
+        data = detail;
+        if (typeof detail.message === "string") message = detail.message;
+        if (typeof detail.code === "string") code = detail.code;
+      } else if (typeof detail === "string") message = detail;
+    } catch {
+      /* use status */
+    }
+    throw new ApiError(message, response.status, code, data);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+export const hubRequest = secretsRequest;
+
+// ---- Hub settings and checks (hubzoid.hubs): settings.yaml, hub.settings.yaml ----
+
+export type SettingProblem = { key?: string; code: string; message: string; file?: string; line?: number };
+export type HubSetting = {
+  name: string;
+  type: "string" | "integer" | "number" | "boolean" | "string_list";
+  required: boolean;
+  secret: boolean;
+  description: string;
+  example: unknown;
+  enum: (string | number)[] | null;
+  /** environment | hub.settings.yaml | default | null */
+  source: string | null;
+  status: "set" | "missing" | "invalid";
+  problems: SettingProblem[];
+  /** Non-secret settings only: the effective value, and what hub.settings.yaml holds. */
+  value?: unknown;
+  stored?: unknown;
+  default?: unknown;
+  env?: string | null;
+  /** Secret settings only: the reference in use and whether it resolves. */
+  ref?: string;
+  available?: boolean;
+};
+export type HubSettings = {
+  revision: number;
+  settings: HubSetting[];
+  problems: SettingProblem[];
+  can_manage: boolean;
+  can_manage_secrets: boolean;
+};
+export type HubCheck = {
+  id: string;
+  status: "ok" | "info" | "warn" | "fail" | "pending";
+  summary: string;
+  detail: unknown;
+};
+
 // ---- One-time sign-in links (Hubzoid accounts, the default mode) -------------
 // Add user and Reset password return a link for the person to set their own
 // password instead of a password typed here.

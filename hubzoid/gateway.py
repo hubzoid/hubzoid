@@ -48,6 +48,7 @@ class GatewayPlan:
     def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
         """Per-hub routes for the edge: /b/<slug>/artifacts, /b/<slug>/api and
         /b/<slug>/branding (the hub-scoped web app calls) -> bridge, plus
+        /api/hubs/<key> (the hub-scoped API, by hub key, unstripped), plus
         /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
@@ -68,7 +69,15 @@ class GatewayPlan:
             routes.append({"prefix": base + "/portal/api",
                            "upstream": f"http://127.0.0.1:{b.bridge_port}",
                            "strip_prefix": base})
-            for part in ("/api", "/branding"):
+            # Hub-scoped API by hub key, not slug: /api/hubs/<key>/* reaches this
+            # hub's bridge unchanged, and the bridge refuses any other key.
+            from .assertions import hub_key
+
+            routes.append({"prefix": f"/api/hubs/{hub_key(b.hub_dir)}",
+                           "upstream": f"http://127.0.0.1:{b.bridge_port}"})
+            # The OpenAI-compatible chat API of this agent, for personal API
+            # keys (the edge refuses every other credential there).
+            for part in ("/api", "/branding", "/v1"):
                 routes.append({
                     "prefix": base + part,
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",

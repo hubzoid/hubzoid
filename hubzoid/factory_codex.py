@@ -556,8 +556,10 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
                                                           **(extra_tools or {})}))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
-    from . import hitl
-    registry = hitl.equip(hub_dir, registry)
+    from . import hitl, tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
+    registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
     from . import handover
     base_registry = dict(registry)
     for delegate in delegates:

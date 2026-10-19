@@ -32,7 +32,9 @@ Not saved:
   `deployment.json`, which is saved with each password replaced by `***`.
   Keep those files, or the configured `HUBZOID_SECRET_KEY`, protected separately.
   Without the deployment key, restored connector credentials (people's
-  connections, Shared keys and OAuth client secrets) cannot be decrypted. Without the artifact signing key, old download links stop working.
+  connections, Shared keys and OAuth client secrets) and secrets saved in the
+  Console or with `hubzoid secrets set` cannot be decrypted. Those secrets then
+  show "Cannot be read: set again" until someone saves them again. Without the artifact signing key, old download links stop working.
 - **PostgreSQL databases.** The backup names them. Use `pg_dump` (below).
 
 The archive is written with owner-only permissions. It still holds user

@@ -266,10 +266,31 @@ class Hub:
         return data_dir(_ctx().hub_dir)
 
     def setting(self, key: str, default=None):
-        return _ctx().settings.get(key, default)
+        """A workflow setting (workflows/settings.yaml), else a hub setting the
+        hub declares in settings.yaml (hubzoid.hubs.settings), else `default`.
+        A secret setting is never returned here: use `hub.secret`."""
+        ctx = _ctx()
+        if key in ctx.settings:
+            return ctx.settings[key]
+        from ..hubs import settings as hub_settings
+
+        return hub_settings.effective(ctx.hub_dir).get(key, default)
 
     def secret(self, key: str, default=None):
-        # From hub env at call time, resolved inside whatever step calls it.
+        """A secret, resolved at call time inside whatever step calls it. A
+        secret setting the hub declares follows its reference (secret:... or
+        env:...). Anything else comes from the hub's environment."""
+        ctx = _ctx()
+        from ..hubs import settings as hub_settings
+
+        ref = hub_settings.secret_ref(ctx.hub_dir, key.upper())
+        if ref is not None:
+            from ..secretstore import SecretError, resolve
+
+            try:
+                return resolve(ref, ctx.hub_dir)
+            except SecretError:
+                return default
         return os.environ.get(key.upper(), default)
 
     @property
@@ -297,6 +318,14 @@ class Hub:
         from ..work_items.facade import WorkItem
 
         return WorkItem()
+
+    @property
+    def thread(self):
+        """The channel thread this work came from (`hubzoid.channels`):
+        `post(text, key=...)` replies in that thread and nowhere else."""
+        from ..channels.thread import for_current_run
+
+        return for_current_run()
 
     @property
     def operation(self):
@@ -545,7 +574,10 @@ class Hub:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         # Publish a copy named by its digest, so the approved bytes are exactly
         # the published ones even if the source changes meanwhile.
-        snap = self.data_dir / "plans" / f"{digest[7:23]}{source.suffix}"
+        import re as _re
+
+        slug = _re.sub(r"[^a-z0-9]+", "-", (title or source.stem).lower()).strip("-")[:60] or "plan"
+        snap = self.data_dir / "plans" / digest[7:23] / f"{slug}{source.suffix}"  # named for people
         snap.parent.mkdir(parents=True, exist_ok=True)
         if not snap.exists():
             snap.write_bytes(data)
@@ -570,15 +602,20 @@ class Hub:
         create = _HITL_CREATE_STEP or _hitl_create
         read = _HITL_READ_STEP or _hitl_read
         req = create(payload)
+        if req["status"] == "pending":
+            from .chat_link import post_request
+
+            post_request(ctx.hub_dir, ctx.run or {}, ctx.workflow, req)  # the card, in the chat that started the run
         if req["status"] == "pending" and spec["approvers"] == ["requester"]:
             # Nobody watches a scheduled run: email the person a link to answer.
-            from ..appmode import public_url
+            from ..hitl.service import requests_url
+            from .runtime import title_for
 
-            base = (public_url() or "").rstrip("/")
             what = spec.get("question") or spec["title"]
+            who = f"{title_for(ctx.workflow)} on {ctx.hub}"
             self.send_email(f"Waiting for you: {spec['title'][:150]}",
-                            f"{ctx.workflow} is waiting for your answer:\n\n{what}\n\n"
-                            f"Answer it in Hubzoid: {base}/requests\n", raise_on_failure=False)
+                            f"{who} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {requests_url()}\n", raise_on_failure=False)
         while req["status"] == "pending":
             if not _hitl_receive(req["id"]):
                 import time

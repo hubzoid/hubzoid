@@ -3,6 +3,7 @@
 // `hubzoid workflow-access` (workflows/access.yaml), with the revision it read,
 // so two people editing at once never overwrite each other.
 import { Select } from "../components/Select";
+import { displayName } from "../lib/format";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, X } from "lucide-react";
 import { ApiError, get, hubUrl, post, put } from "../lib/api";
@@ -14,7 +15,7 @@ import { PageFrame } from "./PageFrame";
 
 type Grant = { subject: string; workflow: string; action: string; source?: string };
 type Policy = { revision: number; yaml: string; grants: Grant[]; effective: Grant[]; actions: string[] };
-type Resource = { key: string; kind: string; source?: string; allowed_actions: string[] };
+type Resource = { key: string; kind: string; source?: string; title?: string; allowed_actions: string[] };
 
 const W = t.workflowAccess;
 
@@ -101,7 +102,7 @@ export default function WorkflowAccessPage() {
         {agents.length > 1 && (
           <label className="flex items-center gap-2 text-[13px] text-secondary">
             {W.agent}
-            <Select className="!w-auto" aria-label={W.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: a.name}))} />
+            <Select className="!w-auto" aria-label={W.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: displayName(a.name)}))} />
           </label>
         )}
         {error && <Notice tone="error">{error}</Notice>}
@@ -170,7 +171,9 @@ function WorkflowBlock({
   return (
     <section className="hz-wa-block" data-testid={`wa-${resource.key}`}>
       <div className="flex items-baseline gap-2">
-        <h3 className="m-0 text-[14px] font-medium text-ink">{all ? W.allWorkflows : resource.key}</h3>
+        <h3 className="m-0 text-[14px] font-medium text-ink" title={all ? undefined : resource.key}>
+          {all ? W.allWorkflows : resource.title || resource.key}
+        </h3>
         <span className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : resource.kind === "builtin" ? W.builtin : W.code}</span>
       </div>
       {bySubject.size === 0 && earlier.length === 0 && <p className="m-0 text-[13px] text-mute">{W.nobody}</p>}
@@ -290,7 +293,7 @@ function Explain({ base, people, resources, actions }: { base: string; people: s
           ))}
         </datalist>
         <Select className="!w-auto" value={action} onValueChange={setAction} aria-label={W.actionsLabel} data-testid="wa-explain-action" options={actions.map(a => ({value: a, label: actionLabel(a)}))} />
-        <Select className="!w-auto" value={workflow} onValueChange={setWorkflow} aria-label={W.workflow} data-testid="wa-explain-workflow" options={resources.map(r => ({value: r.key, label: r.key}))} />
+        <Select className="!w-auto" value={workflow} onValueChange={setWorkflow} aria-label={W.workflow} data-testid="wa-explain-workflow" options={resources.map(r => ({value: r.key, label: r.title || r.key}))} />
         <Button size="sm" onClick={ask} disabled={!subject.trim() || !workflow} data-testid="wa-explain-ask">
           {W.checkButton}
         </Button>

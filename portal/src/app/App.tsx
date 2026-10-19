@@ -97,7 +97,7 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setSession((s) => (s ? { ...s, authenticated: false, user: null } : s));
-      if (!location.path.startsWith("/auth")) navigate(signInHref(), { replace: true });
+      if (!location.path.startsWith("/auth")) navigate(signInHref(undefined, "ended"), { replace: true });
     });
     return () => setUnauthorizedHandler(null);
   }, [location.path]);
@@ -346,7 +346,10 @@ export default function App() {
       </a>
       <DeviceChrome onNewChat={() => value.newChat()} onToggleSidebar={() => (window.innerWidth >= 1024 ? sidebarState.toggleCollapsed() : setDrawerOpen((o) => !o))} />
       <div className="flex h-dvh w-full overflow-hidden bg-bg text-ink">
-        <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
+        {/* Settings is its own two-column page (sections, content); the chat list stays with chat. */}
+        {route.name !== "settings" && (
+          <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
+        )}
         <SearchDialog />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
           <OfflineBanner />

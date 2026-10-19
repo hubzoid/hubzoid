@@ -103,7 +103,11 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     tool family with its own rule, e.g. the management tools'
     `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
     """
+    from .. import tool_fakes as fakes
+
     surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
+    # An eval's fake answers only after this check allows the call.
+    ft = fakes.wrap(ft)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 
@@ -140,7 +144,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     # Tools sharing a permission and surface rule share one decision per turn
     # (`visible_map`).
     _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
-    return copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
+    return fakes.covered(copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled))
 
 
 def visible(ft) -> bool:
@@ -199,6 +203,25 @@ def refusal(decision, name: str, *, guarded: bool = False) -> str | None:
     return None if guarded else DENIED_MESSAGE.format(name=name)
 
 
+STOPPED = "This reply was stopped, so the tool did not run."
+
+
+async def _stopped() -> bool:
+    """The chat run this call belongs to was stopped or lost its branch lease
+    (``SessionSlot.guard``). Checked here, in the wrapper every runtime's hub
+    and MCP tools pass through, so Stop holds on Claude, Codex and the Agents
+    SDK alike. Fails closed: no step without a known owner."""
+    from .. import _request_ctx
+
+    guard = getattr(_request_ctx.native_session(), "guard", None)
+    if guard is None:
+        return False
+    try:
+        return not await asyncio.to_thread(guard)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def checked_server(server, hub_dir: Path):
     """``server`` (an Agents SDK MCP server) with the same per-call check as
     ``run_checked``. Every runtime's MCP tools end in ``server.call_tool``,
@@ -214,6 +237,8 @@ def checked_server(server, hub_dir: Path):
 
         from .evaluator import check_run
 
+        if await _stopped():
+            return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
         decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
         refused = refusal(decision, tool_name)
         if refused is not None:
@@ -239,6 +264,8 @@ def run_checked(ft: FunctionTool, hub_dir: Path) -> FunctionTool:
     async def _checked_invoke(ctx, input_str):
         from .evaluator import check_run
 
+        if await _stopped():
+            return STOPPED
         decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
         refused = refusal(decision, ft.name, guarded=guarded)
         if refused is not None:

@@ -1,6 +1,7 @@
 // Settings > Memory: the notes an agent keeps about you (hubzoid.personal_memory).
 // Plain text you can read, edit or delete; only you see it.
 import { Select } from "../components/Select";
+import { displayName } from "../lib/format";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, del, get, hubUrl, put } from "../lib/api";
 import { useApp } from "../lib/app-context";
@@ -61,7 +62,7 @@ export default function MemoryPage() {
       {agents.length > 1 && (
         <label className="flex items-center gap-2 text-[13px] text-secondary">
           {M.agent}
-          <Select className="!w-auto" aria-label={M.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: a.name}))} />
+          <Select className="!w-auto" aria-label={M.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: displayName(a.name)}))} />
         </label>
       )}
       {error && <Notice tone="error">{error}</Notice>}

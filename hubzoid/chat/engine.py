@@ -110,6 +110,8 @@ class Actor:
     #: a reply checks it on every tool call, so revoking it stops the run
     credential: str = "session"
     credential_id: str = ""
+    #: a personal API key limited to some agents (None: no such limit)
+    key_hubs: "tuple[str, ...] | None" = None
 
 
 @dataclass
@@ -132,6 +134,7 @@ class RunPlan:
     options: dict = field(default_factory=dict)
     credential: str = "session"
     credential_id: str = ""
+    key_hubs: "tuple[str, ...] | None" = None
 
 
 Err = g.GraphError
@@ -223,10 +226,12 @@ class ChatEngine:
     # -- access -------------------------------------------------------------------------
     def actor(self, user) -> Actor:
         email = (getattr(user, "email", "") or "").lower()
+        hubs = getattr(user, "hubs", None)
         return Actor(id=user.id, email=email, groups=frozenset(self.groups_for(email)),
                      name=getattr(user, "name", "") or "",
                      credential=getattr(user, "credential", "session") or "session",
-                     credential_id=getattr(user, "credential_id", "") or "")
+                     credential_id=getattr(user, "credential_id", "") or "",
+                     key_hubs=tuple(hubs) if hubs is not None else None)
 
     def _conv(self, conn, conversation_id: str) -> dict | None:
         row = conn.execute(sa.select(conversations).where(conversations.c.id == conversation_id)).first()
@@ -608,7 +613,8 @@ class ChatEngine:
                        actor_id=actor.id, actor_email=actor.email, kind=kind, prompt_message_id=prompt_mid,
                        extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence,
                        options=options or {}, credential=getattr(actor, "credential", "session") or "session",
-                       credential_id=getattr(actor, "credential_id", "") or "")
+                       credential_id=getattr(actor, "credential_id", "") or "",
+                       key_hubs=getattr(actor, "key_hubs", None))
 
     @staticmethod
     def _options(op: dict) -> dict:
@@ -1158,7 +1164,9 @@ class ChatEngine:
                                          "web_search": body.get("web_search") is True,
                                          "branch_revision": b.revision, "parent_id": b.head_id,
                                          # the credential that queued it is checked when it runs
-                                         "credential": actor.credential, "credential_id": actor.credential_id}),
+                                         "credential": actor.credential, "credential_id": actor.credential_id,
+                                         # and the account's credential counter then
+                                         "sign_in": self._credential_of(actor)}),
                 predecessor_id=pred, reason="queue paused" if b.queue_paused else None, dispatched_run_id=None,
                 created_at=t, updated_at=t))
             g.emit(conn, conversation_id, "queue.updated", b.id, {"item": iid, "action": "added"})
@@ -1317,10 +1325,14 @@ class ChatEngine:
                                                                       frozen["parent_id"]):
                         raise Err(409, "context_changed", "The conversation changed while this message waited. "
                                                           "Review it, then send it again.")
-                actor = self._author(conv, it.author_id)
-                if frozen.get("credential"):
-                    actor = replace(actor, credential=frozen["credential"],
-                                    credential_id=frozen.get("credential_id") or "")
+                # The sign-in that queued it (older items: just its credential).
+                sign_in = frozen.get("sign_in") or (
+                    {"kind": frozen["credential"], "id": frozen.get("credential_id") or ""}
+                    if frozen.get("credential") else None)
+                actor = self._with_credential(self._author(conv, it.author_id), sign_in)
+                if not self._credential_valid(actor.id, sign_in):
+                    raise Err(409, "signed_out", "You were signed out after this message was queued. "
+                                                 "Send it again.")
                 if self.admission is not None:
                     self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,
@@ -1355,6 +1367,40 @@ class ChatEngine:
             seen.add(node)
             node = rows.get(node)
         return False
+
+    def _credential_of(self, actor: Actor) -> dict | None:
+        """What a queued message keeps of the request that queued it: its
+        session or key and the account's credential counter then."""
+        if not actor.credential:
+            return None
+        try:
+            from ..auth import users
+
+            epoch = users.epoch(self.hub_dir, actor.id)
+        except Exception:  # noqa: BLE001 - no account store (local tests): the key alone
+            epoch = None
+        return {"kind": actor.credential, "id": actor.credential_id,
+                "hubs": list(actor.key_hubs) if actor.key_hubs is not None else None, "epoch": epoch}
+
+    @staticmethod
+    def _with_credential(actor: Actor, credential: dict | None) -> Actor:
+        if not credential:
+            return actor
+        hubs = credential.get("hubs")
+        return replace(actor, credential=credential.get("kind") or "session",
+                                   credential_id=credential.get("id") or "",
+                                   key_hubs=tuple(hubs) if hubs is not None else None)
+
+    def _credential_valid(self, account_id: str, credential: dict | None) -> bool:
+        if not credential:
+            return True
+        try:
+            from ..access.evaluator import still_valid
+
+            return still_valid(self.hub_dir, account_id, credential)
+        except Exception:  # noqa: BLE001 - can't decide: don't start work for them
+            log.warning("chat: credential check unavailable; queued work waits", exc_info=True)
+            return False
 
     def _author(self, conv: dict, author_id: str) -> Actor:
         if conv["owner_id"] == author_id:
@@ -1396,15 +1442,71 @@ class ChatEngine:
             conn.execute(conversations.update().where(conversations.c.id == cid)
                          .values(title=title[:200], title_source="manual"))
             del c
+            branch_id = b.id
         self.notify(cid)
+        self._ready_notice(cid, branch_id, aid, actor.id)
         return cid
 
     # -- approvals and questions (hubzoid.hitl) ---------------------------------------------
     class Busy(Exception):
         """The reply that asked is still being written: continue when it ends."""
 
+    def _ready_notice(self, conversation_id: str, branch_id: str, message_id: str, actor_id: str) -> None:
+        """A message a workflow put in someone's chat counts as a reply that
+        finished: one "Reply ready" item in their notifications."""
+        try:
+            if self.on_terminal is not None:
+                self.on_terminal(run_id=message_id, conversation_id=conversation_id, branch_id=branch_id,
+                                 message_id=message_id, actor_id=actor_id, status="complete",
+                                 stopped_by_self=False)
+                return
+            from .feedback import service_for
+
+            service_for(self.hub_dir, self.engine, self.hub).on_run_terminal(
+                run_id=message_id, conversation_id=conversation_id, branch_id=branch_id, message_id=message_id,
+                actor_id=actor_id, status="complete", stopped_by_self=False)
+        except Exception:  # noqa: BLE001 - a notice never blocks the message
+            log.warning("chat: no notice for %s", message_id, exc_info=True)
+
+    def post_from_run(self, conversation_id: str, *, branch_id: str, actor_id: str, message_id: str,
+                      parts: list, unless_mentioned: str | None = None) -> str:
+        """A workflow the person started from this chat reports back (it asks
+        them something, or it finished after the chat stopped waiting): one
+        assistant message after the branch head. Returns "posted", "exists"
+        (already posted: replays are no-ops), "busy" (a reply is being
+        written; try again) or "gone" (the chat or branch is no longer there)."""
+        with self.engine.begin() as conn:
+            conv = self._conv(conn, conversation_id)
+            if conv is None or conv.get("deleted_at"):
+                return "gone"
+            if conn.execute(sa.select(messages.c.id).where(messages.c.id == message_id)).first() is not None:
+                return "exists"
+            if unless_mentioned and conn.execute(sa.select(messages.c.id).where(
+                    messages.c.conversation_id == conversation_id,
+                    messages.c.content.contains(unless_mentioned)).limit(1)).first() is not None:
+                return "exists"  # the chat already shows it (the reply that started the run did)
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == branch_id).with_for_update()).first()
+            if b is None or b.conversation_id != conversation_id:
+                return "gone"
+            if b.head_id is not None and self._message_in(conn, conversation_id, b.head_id)["status"] == "running":
+                return "busy"
+            actor = self._author(conv, actor_id)
+            old_head = b.head_id
+            mid = self._insert(conn, conv_id=conversation_id, mid=message_id, parent_id=b.head_id,
+                               role="assistant", content=parts, branch_id=b.id, actor=actor)
+            g.move_head(conn, b.id, b.revision, mid)
+            self._touch(conn, conversation_id, mid)
+            view = g.get_view(conn, conversation_id, actor.id)
+            if view is None or (view["branch_id"] == b.id and view["view_head_id"] in (old_head, None)):
+                # They were following this branch: they see the new message, and their next message follows it.
+                g.set_view(conn, conversation_id, actor.id, b.id, mid)
+        self.notify(conversation_id)
+        self._ready_notice(conversation_id, branch_id, mid, actor_id)
+        return "posted"
+
     def continue_after_request(self, conversation_id: str, *, actor_id: str, branch_id: str,
-                               after_message_id: str, parts: list) -> RunPlan | None:
+                               after_message_id: str, parts: list,
+                               credential: dict | None = None) -> RunPlan | None:
         """The person answered a request the agent made in this branch: add
         their answer as their next message and start the agent's reply to it,
         on the same branch, after the message that asked. None when the branch
@@ -1420,7 +1522,7 @@ class ChatEngine:
             head = self._message_in(conn, conversation_id, after_message_id)
             if head["status"] == "running":
                 raise self.Busy()
-            actor = self._author(conv, actor_id)
+            actor = self._with_credential(self._author(conv, actor_id), credential)
             uid = self._insert(conn, conv_id=conversation_id, mid=None, parent_id=after_message_id, role="user",
                                content=parts, branch_id=b.id, actor=actor)
             run_id, aid, fence = self._admit(conn, conv=conv, actor=actor, branch_id=b.id, parent_id=uid,

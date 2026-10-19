@@ -87,11 +87,15 @@ export function ShareDialog({
   const [role, setRole] = useState<"viewer" | "editor">("viewer");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [publicOn, setPublicOn] = useState(false);
 
   const reload = () => {
     if (!id) return;
-    get<{ items: Share[] }>(`/api/shares?conversation_id=${enc(id)}`)
-      .then((r) => setShares(r.items.filter((s) => s.status === "active")))
+    get<{ items: Share[]; public_enabled?: boolean }>(`/api/shares?conversation_id=${enc(id)}`)
+      .then((r) => {
+        setShares(r.items.filter((s) => s.status === "active"));
+        setPublicOn(!!r.public_enabled);
+      })
       .catch((e) => setError(describeError(e, t.share.loadError)));
     get<{ revision: number; members: Member[] }>(`/api/conversations/${enc(id)}/collaborators`)
       .then(setMembers)
@@ -198,9 +202,12 @@ export function ShareDialog({
               <fieldset className="m-0 flex flex-wrap gap-3 border-0 p-0 text-[13px]">
                 <legend className="mb-1 text-[12px] font-medium text-mute">{t.share.who}</legend>
                 {(["deployment", "named", "public"] as Audience[]).map((a) => (
-                  <label key={a} className="flex items-center gap-1.5">
-                    <input type="radio" name="audience" checked={audience === a} onChange={() => setAudience(a)} />
+                  <label key={a} className={cx("flex items-center gap-1.5", a === "public" && !publicOn && "text-mute")}
+                    title={a === "public" && !publicOn ? t.share.publicOff : undefined}>
+                    <input type="radio" name="audience" checked={audience === a} disabled={a === "public" && !publicOn}
+                      onChange={() => setAudience(a)} />
                     {t.share.audience[a]}
+                    {a === "public" && !publicOn && <span className="text-[12px]">{` · ${t.share.publicOffShort}`}</span>}
                   </label>
                 ))}
               </fieldset>

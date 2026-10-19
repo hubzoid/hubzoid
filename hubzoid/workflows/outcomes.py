@@ -47,7 +47,7 @@ def cause_of(error: BaseException | None) -> str:
 
 def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bool,
              error: BaseException | None = None, published: list | None = None,
-             tool_wait: float = 60.0) -> None:
+             tool_wait: float = 60.0, result=None) -> None:
     hub_dir = Path(hub_dir)
     trigger = env.get("trigger")
     try:
@@ -72,6 +72,14 @@ def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bo
                 _ready_email(hub_dir, hub, workflow, run_id, env, list(published or []))
     except Exception:  # noqa: BLE001
         log.exception("workflows: could not finish bookkeeping for run %s", run_id)
+    if env.get("chat"):  # started from a chat: the outcome goes back there
+        try:
+            from .chat_link import post_result
+
+            post_result(hub_dir, env, workflow, run_id, ok=ok, result=result, cause=cause,
+                        published=list(published or []), tool_wait=tool_wait)
+        except Exception:  # noqa: BLE001 - never changes the run's own outcome
+            log.exception("workflows: could not post run %s back to its chat", run_id)
 
 
 def links_text(published: list) -> str:

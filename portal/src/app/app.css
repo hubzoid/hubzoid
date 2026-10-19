@@ -750,6 +750,10 @@
     padding: 7px 12px;
     border-bottom: 1px solid var(--hz-line-soft);
     vertical-align: top;
+    /* `anywhere` (inherited from .hz-md) lets a column shrink to one character,
+       so "R-1001" broke into "R-/100/1". `break-word` still wraps a long URL
+       without narrowing the column; a wide table scrolls in .hz-table-wrap. */
+    overflow-wrap: break-word;
   }
   .hz-md tr:last-child td {
     border-bottom: 0;
@@ -1119,6 +1123,14 @@
     border-radius: 6px; font-size: 12.5px; color: var(--hz-body); }
   .hz-file-row:hover { background: var(--hz-hover); color: var(--hz-ink); }
   .hz-file-row-on { background: var(--hz-active); color: var(--hz-ink); }
+  .hz-decision {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .hz-decision-line {
+    font-size: 0.8571rem;
+    color: var(--hz-mute);
+  }
   .hz-diff { margin: 0; max-height: 360px; overflow: auto; padding: 10px 12px; border: 1px solid var(--hz-line);
     border-radius: 8px; background: var(--hz-code-bg); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; }
   .hz-diff-add { color: var(--hz-success); }
@@ -2295,8 +2307,21 @@
     max-width: 768px;
     margin-top: 14px;
   }
-  .hz-pill {
+  /* Text the agent wrote just before a tool step is narration ("I'll check the
+     stock first"), not the answer: quieter, so the answer stands out. */
+  .hz-assistant .hz-md:has(+ .hz-act) {
+    color: var(--hz-secondary);
+    font-size: 0.95em;
+  }
+  .hz-search-mark {
+    background: transparent;
+    color: var(--hz-ink);
+    font-weight: 600;
+  }
+  .hz-suggestion {
+    display: inline-block;
     height: 30px;
+    line-height: 28px;
     max-width: 320px;
     padding: 0 12px;
     border-radius: 999px;
@@ -2308,7 +2333,7 @@
     text-overflow: ellipsis;
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
-  .hz-pill:hover {
+  .hz-suggestion:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
   }
@@ -2549,7 +2574,7 @@
     }
   }
   .hz-set-backlink {
-    display: none;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
     height: 28px;
@@ -2563,11 +2588,6 @@
   .hz-set-backlink:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
-  }
-  @media (min-width: 1024px) {
-    .hz-set-backlink {
-      display: inline-flex;
-    }
   }
   .hz-set-nav .hz-nav {
     display: flex;
