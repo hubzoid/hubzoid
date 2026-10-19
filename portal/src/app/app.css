@@ -724,6 +724,10 @@
     padding: 7px 12px;
     border-bottom: 1px solid var(--hz-line-soft);
     vertical-align: top;
+    /* `anywhere` (inherited from .hz-md) lets a column shrink to one character,
+       so "R-1001" broke into "R-/100/1". `break-word` still wraps a long URL
+       without narrowing the column; a wide table scrolls in .hz-table-wrap. */
+    overflow-wrap: break-word;
   }
   .hz-md tr:last-child td {
     border-bottom: 0;

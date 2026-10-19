@@ -803,6 +803,7 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
     console.print(
         f"[red]This hub has an Open WebUI database with {people} account(s) ({escape(where)}), "
         "but no Hubzoid accounts yet.[/red]\n"
+        "Starting with sign-in on would lock everyone out, so the start stops here.\n"
         "Hubzoid now has its own web app and sign-in. Choose one:\n"
         f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {quoted}\n"
         "     Do a dry run first (see `hubzoid migrate openwebui --help`), then back up\n"
@@ -1324,9 +1325,15 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         ready = (_wait_for_bridge(procs[i], url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity)
                  if launch_bridges else _wait_for(url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity))
         if not ready:
-            console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
-                          f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
-                          "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
+            code = procs[i].poll() if launch_bridges else None
+            if code is not None:
+                # The bridge stopped on its own; its own message (printed above) says why.
+                console.print(f"[red]bridge {b.slug} stopped before it was ready (exit {code}). "
+                              "Its message above says why; fix that hub, then start the gateway again.[/red]")
+            else:
+                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
+                              f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
+                              "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
             raise typer.Exit(1)
     console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
 

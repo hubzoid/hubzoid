@@ -864,7 +864,7 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
             report.listed("users", "no longer in Open WebUI", uid)
     if report.counts["users"].get("imported_earlier_not_in_open_webui_now"):
         report.warn("Some people imported earlier no longer exist in Open WebUI. They keep their "
-                    "Hubzoid account; remove them in the Console if they should not have access.")
+                    "Hubzoid account; remove them in Settings → People & access if they should not have access.")
     # hz_identities: owui_id is the account id; pending mirrors the resulting status.
     for uid, row in people.rows.items():
         email = people.email_of[uid]
@@ -2031,7 +2031,7 @@ def render(report: Report, verbose: bool = False) -> str:
     elif report.applied and data.get("rehearsal_copy"):
         lines.append(f"Migrated the rehearsal copy in {data['rehearsal_copy']}. The original was not changed.")
     elif report.applied:
-        lines.append("Migrated. Start the deployment in the default mode (HUBZOID_UI=hubzoid).")
+        lines.append("Migrated. Start the deployment (hubzoid run or hubzoid gateway), then sign in as the owner.")
     else:
         lines.append("Dry run: nothing was changed. Stop the deployment, take a backup "
                      "(hubzoid backup), then run again with --apply.")
@@ -2064,7 +2064,7 @@ def openwebui(
     model_alias: list[str] = typer.Option(None, "--model-alias", help="OLD=AGENT: import conversations of an old model id into this agent (model id or hub key). Repeatable."),
 ) -> None:
     """Move accounts, conversations and share links from Open WebUI to the
-    Hubzoid web app. Access is already in the Console and stays as it is. Open
+    Hubzoid web app. Access grants (Settings → People & access) stay as they are. Open
     WebUI is read, never changed. The default is a dry run; stop the deployment
     and take a backup before --apply."""
     from rich.console import Console

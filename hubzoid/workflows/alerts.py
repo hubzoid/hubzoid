@@ -65,6 +65,15 @@ def record(hub_dir, hub, kind, source, payload):
             conn.execute(text("INSERT INTO hz_workflow_alerts (id,hub,kind,payload,destination,state,attempt,due,created) VALUES (:i,:h,:k,:p,:d,'pending',0,:n,:n) ON CONFLICT (id) DO NOTHING"), {'i':aid,'h':hub,'k':kind,'p':json.dumps(data),'d':json.dumps(target),'n':now})
 
 
+def _where(row):
+    """'hub/workflow' for a log line, from the alert's payload."""
+    try:
+        payload = json.loads(row.get('payload') or '{}')
+    except ValueError:
+        return '?'
+    return f"{payload.get('hub', '?')}/{payload.get('workflow', payload.get('kind', '?'))}"
+
+
 def _row(hub_dir, aid):
     with events._engine(hub_dir).connect() as conn:
         row = conn.execute(text('SELECT * FROM hz_workflow_alerts WHERE id=:i'), {'i':aid}).mappings().first()
@@ -153,8 +162,12 @@ async def deliver(hub_dir, aid, *, sender=None):
         await (sender or send)(hub_dir, row)
     except Exception as exc:
         state = 'failed' if attempt >= 5 else 'pending'
-        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__
-        log.warning('Alert %s delivery failed (%s)', aid, error)
+        # A ValueError here is our own configuration problem with a plain reason
+        # ("No alert destination configured"). Other errors can carry a webhook
+        # URL, so only their type is kept.
+        reason = f': {exc}' if isinstance(exc, ValueError) else ''
+        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__+reason
+        log.warning('Alert %s for %s delivery failed (%s)', aid, _where(row), error)
     else:
         state, due, error = 'sent', time.time(), None
     await asyncio.to_thread(_finish, hub_dir, aid, attempt, state, due, error)
