@@ -176,7 +176,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
     # has no restricted/ folder, so existing hubs are unchanged.
     from . import access  # deferred to avoid circular import via __init__.py
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl, tool_fakes
@@ -255,13 +256,16 @@ def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
         if ft.name in registry:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
-        registry[ft.name] = gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION)
+        # Added after access.apply, so the per-call run check is applied here.
+        registry[ft.name] = access.guard.run_checked(
+            gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION), ctx.hub_dir)
     # Personal memory: each person's own notes. No grant needed; a call with
-    # nobody signed in is refused by the tool itself.
+    # nobody signed in is refused by the tool itself. Like every tool, it stops
+    # when the run's account loses the hub or its credential ends.
     from . import personal_memory
 
     for ft in personal_memory.make(ctx.hub_dir):
-        registry.setdefault(ft.name, ft)
+        registry.setdefault(ft.name, access.guard.run_checked(ft, ctx.hub_dir))
 
 
 def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
@@ -277,7 +281,8 @@ def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
         if ft.name in registry:
             log.info("hub tool %r overrides the core call_jev tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir)
+        registry[ft.name] = access.guard.run_checked(
+            access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir), ctx.hub_dir)
 
 
 def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
@@ -390,3 +395,23 @@ def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
     if not system_addendum.is_enabled(ctx.hub_dir):
         return body
     return body.rstrip() + "\n\n" + system_addendum.build(ctx, backend=backend)
+
+
+def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
+    """The hub's pre-shipped and local tools, gated as for the main agent
+    (access and approvals), for a station to pick from. A station gets only the names it lists; nothing
+    else here (skills, delegates, MCP servers) reaches it."""
+    hub_dir = Path(hub_dir).resolve()
+    settings = settingslib.load(hub_dir)
+    session_id = memlib.make_session_id()
+    ctx = HubContext(hub_dir=hub_dir, output_dir=memlib.session_output_dir(hub_dir, session_id),
+                     session_id=session_id, settings=settings,
+                     knowledge=knowledge_loader.load_all(hub_dir))
+    connlib.attach(ctx)
+    registry: dict[str, FunctionTool] = {**make_builtin_tools(ctx), **tools_local_loader.load_all(hub_dir)}
+    from . import access, hitl, tool_fakes
+    # The same approval gate as every agent's tools; an unattended station call
+    # that needs a person is refused by it, and no question tool is added. An
+    # eval case's fake results reach a station's tools as they do the agent's.
+    registry = tool_fakes.wrap_registry(access.apply(hub_dir, registry))
+    return tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry, questions=False))

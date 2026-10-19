@@ -192,6 +192,14 @@ def test_a_restricted_tools_access_check_runs_before_its_fake(tmp_path, monkeypa
     assert out.startswith("[access denied") and session.used == [] and real == []
 
 
+def test_the_fakes_wrapper_keeps_a_tools_declared_class():
+    from hubzoid import tool_classes
+
+    reader = tool("lookup_order", [])
+    tool_classes.declare(reader, "read")                  # not the default for an unclassified tool
+    assert tool_classes.classify(tool_fakes.wrap(reader)) == "read"
+
+
 def test_an_approval_layer_keeps_fakes_inside_it_and_its_added_tools_are_faked():
     real: list = []
     seen: list = []

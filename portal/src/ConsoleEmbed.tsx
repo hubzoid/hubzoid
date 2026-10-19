@@ -3,17 +3,17 @@
 // the Console's own navigation (Settings has its own).
 import { Suspense, useCallback, useEffect } from "react";
 import { Alert, App, Button, ConfigProvider, Spin, theme } from "antd";
-import type { Hub, Me } from "./api";
+import type { Hub, Me, MyData } from "./api";
 import { useData } from "./hooks/useData";
 import { hasPendingChanges, useRoute } from "./hooks/useRoute";
 import { setLeaveGuard } from "./app/lib/router";
 import { useThemeMode } from "./lib/theme";
 import { usePresentation } from "./lib/presentation";
 import { displayName } from "./app/lib/format";
-import { consoleScreen, SchedulesScreen } from "./consoleScreens";
+import { consoleScreen, SchedulesScreen, WorkItemsScreen } from "./consoleScreens";
 import "./portal.css";
 
-export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
+export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "work" }) {
   const { config: base, isDark } = useThemeMode();
   const view = usePresentation();
   // Inside Settings the screens use the chat app's quieter scale: 13px text,
@@ -31,6 +31,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
     token: { ...base.token, fontSize: 13 * scale, fontSizeSM: 12 * scale, fontSizeHeading2: 19 * scale, fontSizeHeading3: 15 * scale, borderRadius: 8, controlHeight: view.density === "compact" ? 30 : 34 },
     components: {
       ...base.components,
+      Button: { ...(base.components?.Button ?? {}), colorPrimary: ink, colorPrimaryHover: v("--hz-secondary", "#b5b5b5"), colorPrimaryActive: ink, primaryColor: v("--hz-bg", "#151515"), primaryShadow: "none" },
       Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
       Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale },
@@ -45,7 +46,9 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
     <ConfigProvider theme={config} drawer={{ classNames: { root: "hz-native-overlay" } }} modal={{ classNames: { root: "hz-native-overlay" } }}>
       <App>
         <div className="console-embed">
-          {personal ? (
+          {personal === "work" ? (
+            <MyWork />
+          ) : personal ? (
             <Suspense fallback={<Spin />}>
               <SchedulesScreen admin={false} embedded />
             </Suspense>
@@ -56,6 +59,17 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
       </App>
     </ConfigProvider>
   );
+}
+
+/** The work this person asked for, in the agents they use. */
+function MyWork() {
+  const my = useData<MyData>("/my");
+  if (my.error) return <Alert type="error" showIcon title="Couldn’t load your work" description={my.error} />;
+  if (!my.data) return <Spin />;
+  // A card's "Review in Hub" opens #/me/work/<hub>/<item>.
+  const [, , hub, item] = location.hash.replace(/^#\/?/, "").split(/[/?]/);
+  const selected = hub && item ? { hub: decodeURIComponent(hub), item: decodeURIComponent(item) } : undefined;
+  return <Suspense fallback={<Spin />}><WorkItemsScreen hubs={my.data.agents} mine selected={selected} /></Suspense>;
 }
 
 function Embedded() {

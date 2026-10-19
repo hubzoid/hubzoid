@@ -276,30 +276,72 @@ async def _ask_claude_local(model_id: str, prompt: str, *, hub_dir: Path | None 
     """Single-turn Claude call with no tools, via the bundled `claude` login.
     A judge has no business calling anything: no tools, no MCP servers (not
     even the host account's connectors), no settings."""
+    return (await _claude_with_usage(model_id, prompt, hub_dir=hub_dir))[0]
+
+
+async def _claude_with_usage(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> tuple[str, dict]:
     from ..factory_claude import claude_complete
 
-    text, _usage = await claude_complete(prompt, system=_SYSTEM, model_setting=model_id, hub_dir=hub_dir)
-    return text
+    return await claude_complete(prompt, system=_SYSTEM, model_setting=model_id, hub_dir=hub_dir)
 
 
-async def _ask_litellm(model_id: str, prompt: str) -> str:
+async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
     """Single-turn call for any OpenAI/LiteLLM-routed model."""
     import litellm
 
+    from .. import budgets
+
+    kwargs = {}
+    bound = budgets.output_bound(model_id, _SYSTEM + prompt)
+    if bound is not None:
+        kwargs["max_tokens"] = bound
     resp = await litellm.acompletion(
         model=model_id,
         messages=[{"role": "system", "content": _SYSTEM},
                   {"role": "user", "content": prompt}],
         temperature=0,          # a ruler should not wobble between runs
+        **kwargs,
     )
-    return (resp.choices[0].message.content or "").strip()
+    u = getattr(resp, "usage", None)
+    try:
+        cost = litellm.completion_cost(completion_response=resp)
+    except Exception:  # noqa: BLE001 - unknown price: estimated later or left empty
+        cost = None
+    return (resp.choices[0].message.content or "").strip(), {
+        "input_tokens": getattr(u, "prompt_tokens", None), "output_tokens": getattr(u, "completion_tokens", None),
+        "cost_usd": cost, "model": model_id}
 
 
 async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
-    """Route to the right backend for a bare, tool-less model call."""
-    if model_id.lower().startswith("claude-local"):
-        return await _ask_claude_local(model_id, prompt, hub_dir=hub_dir)
-    return await _ask_litellm(model_id, prompt)
+    """Route to the right backend for a bare, tool-less model call. With a
+    hub, the call is checked against its usage limits first and recorded."""
+    import asyncio
+    import time
+
+    from .. import budgets, usage as usage_lib
+
+    if hub_dir is None:
+        call = _claude_with_usage(model_id, prompt) if model_id.lower().startswith("claude-local") \
+            else _ask_litellm(model_id, prompt)
+        return (await call)[0]
+    ticket = await asyncio.to_thread(budgets.admit, hub_dir, model=model_id, run_id=f"eval-judge-{time.time()}")
+    token = budgets._CURRENT.set(ticket)
+    started, usage, status = time.monotonic(), {}, "error"
+    try:
+        if model_id.lower().startswith("claude-local"):
+            text, usage = await _claude_with_usage(model_id, prompt, hub_dir=hub_dir)
+        else:
+            text, usage = await _ask_litellm(model_id, prompt)
+        status = "ok"
+        return text
+    finally:
+        budgets._CURRENT.reset(token)
+        await asyncio.to_thread(
+            usage_lib.record, hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="eval_judge", subject=None,
+            model=(usage or {}).get("model") or model_id, input_tokens=(usage or {}).get("input_tokens"),
+            output_tokens=(usage or {}).get("output_tokens"), cost_usd=(usage or {}).get("cost_usd"),
+            status=status, duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=ticket.id if ticket else None)
 
 
 def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):

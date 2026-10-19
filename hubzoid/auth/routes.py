@@ -166,6 +166,19 @@ def _console(hub_dir: Path, user: AuthUser) -> bool:
         return False
 
 
+def _hub_changes(hub_dir: Path, user: AuthUser) -> bool:
+    """Whether this person may read this hub's proposed changes (they may
+    propose or review them), so Settings shows Hub changes to curators too.
+    Only shows a section: the routes check again."""
+    try:
+        from ..hub_changes import service as hub_changes
+
+        return hub_changes.can_propose(hub_dir, (user.email or "").lower())
+    except Exception:  # noqa: BLE001 — only hides a menu item
+        log.warning("auth: could not check hub change access")
+        return False
+
+
 def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     """The signed-in person for the web app: the public fields, how this
     session signed in, whether there is a password to change, and whether the
@@ -178,7 +191,8 @@ def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     return {**user.public(), "method": user.method,
             "password_enabled": bool(row.get("password_enabled")),
             "has_password": bool(row.get("has_password")),
-            "console": console, **({"version": __version__} if console else {})}
+            "console": console, "hub_changes": console or _hub_changes(hub_dir, user),
+            **({"version": __version__} if console else {})}
 
 
 def _unsafe_network(request: Request) -> bool:

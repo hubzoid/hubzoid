@@ -1382,6 +1382,21 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     from . import portal_evals
     portal_evals.register(router, hub_dir, require_admin=require_admin, require_hub=require_hub)
+    # Durable work items and their operations: any signed-in person, with the
+    # requester-only and manager rules applied by the work-items service.
+    from .work_items import routes as work_item_routes
+    work_item_routes.register(router, require_person,
+                              lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    work_item_routes.register_stations(router, require_person,
+                                       lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    work_item_routes.register_budgets(router, require_person,
+                                      lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Sandboxes: metadata for viewers, controls for managers.
+    from .sandbox import routes as sandbox_routes
+    sandbox_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Cards (MCP Apps): settings for administrators, instances for their requester.
+    from .apps import routes as app_routes
+    app_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
     return router
 
 

@@ -112,8 +112,8 @@ export function PeopleScreen({
             <Title level={1} style={{ fontSize: 28 }}>People</Title>
             <Paragraph type="secondary">
               {me.can_create_accounts
-                ? "Everyone with access to an agent you manage. Add user creates their sign-in and access in one step."
-                : "Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here."}
+                ? "Manage people and their agent access."
+                : "Manage access to your agents."}
             </Paragraph>
           </div>
           {(me.org_admin || me.can_create_accounts) && (

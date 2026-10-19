@@ -390,7 +390,6 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces, action: str = "run"
     people who may ``run`` it, on the surfaces it allows. Same audit as the
     access guard: no audit row, no run."""
     import asyncio
-    import dataclasses
 
     from ..access import audit
     from ..access.identity import current_identity
@@ -424,4 +423,6 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces, action: str = "run"
 
     enabled.hubzoid_permission = f"workflow:{workflow}:{action}"
     enabled.hubzoid_key = ("workflow-" + action, str(hub_dir), workflow, surfaces)
-    return dataclasses.replace(ft, on_invoke_tool=invoke, is_enabled=enabled)
+    from ..tool_classes import copy_tool
+
+    return copy_tool(ft, on_invoke_tool=invoke, is_enabled=enabled)

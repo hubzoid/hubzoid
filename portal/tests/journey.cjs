@@ -479,7 +479,7 @@ function step(name) {
     await drawer().getByRole("list", { name: "Adding" }).getByText("Read ledger").waitFor();
     assert.equal(state.mutations.length, 0, "review writes nothing");
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("Nia Patel can now sign in as nia.patel@addusers.local").waitFor();
+    await drawer().getByText("Nia Patel · nia.patel@addusers.local").waitFor();
     assert.equal(await page.locator("#one-time-password").inputValue(), niaPassword);
     await drawer().getByRole("button", { name: "Copy sign-in details" }).waitFor();
     assert.deepEqual(state.mutations, [{
@@ -537,7 +537,7 @@ function step(name) {
     assert.equal(await drawer().getByText(/rolled back|was removed|nothing changed/i).count(), 0, "no rollback is claimed");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-partial.png"), fullPage: true });
     await drawer().getByRole("button", { name: "Try again" }).click();
-    await drawer().getByText("Leo Varga can now sign in as leo.varga@addusers.local").waitFor();
+    await drawer().getByText("Leo Varga · leo.varga@addusers.local").waitFor();
     assert.equal(await page.locator("#one-time-password").inputValue(), leoPassword);
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/accounts/grant"], "the retry grants, it doesn't create");
     assert.equal(state.accountsCreated.filter((e) => e === "leo.varga@addusers.local").length, 1);
@@ -581,7 +581,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("New account, signs in with Google").waitFor();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("Kai Moreno can now sign in as kai.moreno@addusers.local").waitFor();
+    await drawer().getByText("Kai Moreno · kai.moreno@addusers.local").waitFor();
     await drawer().getByText("There is no password to share", { exact: false }).waitFor();
     assert.equal(await page.locator("#one-time-password").count(), 0);
     assert.deepEqual(state.mutations, [{
@@ -589,7 +589,7 @@ function step(name) {
       grants: [{ hub: "finance", permission: "use_hub" }],
     }], "no password is sent");
     // As in People, the result leads to the new person; following it closes this drawer.
-    await drawer().getByRole("link", { name: "Open their details" }).click();
+    await drawer().getByRole("link", { name: "View user" }).click();
     assert.equal(await hash(), "#/people/kai.moreno%40addusers.local");
     await drawer().getByRole("heading", { name: "Access by agent" }).waitFor();
     assert.equal(await drawer().count(), 1, "only their details are open");
@@ -747,7 +747,7 @@ function step(name) {
     assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0);
     // Their details are where an Administrator reactivates them.
-    await drawer().getByRole("link", { name: "Open their details" }).click();
+    await drawer().getByRole("link", { name: "View user" }).click();
     assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
     await drawer().getByText("Blocked. Reactivate to give access.").waitFor();
     // The server refuses it too, for any caller.
@@ -1310,7 +1310,7 @@ function step(name) {
     await drawer().getByText("Gone User").first().waitFor();
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Delete user" }).click();
-    await drawer().getByText("Activity history, usage records and artifacts they published are kept", { exact: false }).waitFor();
+    await drawer().getByText("Their chats, activity history, usage records and published artifacts are kept", { exact: false }).waitFor();
     const deleteButton = drawer().getByRole("button", { name: "Delete user" });
     assert.equal(await deleteButton.isDisabled(), true, "Delete waits for the typed email");
     await drawer().getByRole("textbox", { name: "Type gone.user@example.org to confirm" }).fill("gone.user@example.org");
@@ -1426,7 +1426,7 @@ function step(name) {
     step("Unknown routes and agents recover to a useful place");
     // An unknown Settings address opens the first section.
     await go("/nowhere/at/all");
-    await page.getByRole("heading", { name: "Profile & security" }).waitFor();
+    await page.getByRole("heading", { name: "Profile", exact: true }).waitFor();
     assert.equal(await hash(), "#/me/profile");
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
@@ -1495,7 +1495,7 @@ function step(name) {
     assert.equal(await drawer().getByRole("button", { name: "More actions" }).count(), 0);
     await go(`/agents/finance/access?edit=${encodeURIComponent(TOMAS)}`);
     await drawer().getByText("This person is blocked", { exact: true }).waitFor();
-    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    assert.equal(await drawer().getByRole("link", { name: "View user" }).count(), 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
     state.grants = state.grants.filter(([s]) => s !== TOMAS);
@@ -1559,7 +1559,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByText("Finance Assistant: Use this agent").waitFor();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("New Person can now sign in as new.person@addusers.local").waitFor();
+    await drawer().getByText("New Person · new.person@addusers.local").waitFor();
     assert.equal(await page.locator("#one-time-password").inputValue(), generated);
     assert.deepEqual(state.mutations, [{
       endpoint: "/accounts", email: "new.person@addusers.local", name: "New Person", sign_in: "password",
@@ -1585,7 +1585,7 @@ function step(name) {
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
     assert.ok(!state.accountsCreated.includes("ravi.menon@example.org"));
     // People lists only people in their agents, so nothing points there.
-    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    assert.equal(await drawer().getByRole("link", { name: "View user" }).count(), 0);
     assert.equal(await drawer().getByRole("link", { name: "Edit this user" }).count(), 0);
     await drawer().getByRole("link", { name: "Give access in Finance Assistant" }).click();
     assert.equal(await hash(), "#/agents/finance/access?edit=ravi.menon%40example.org");
@@ -1620,7 +1620,7 @@ function step(name) {
       "#/agents/support/access?edit=meilin.chen%40example.org",
     );
     await drawer().getByRole("link", { name: "Edit this user" }).waitFor();
-    await drawer().getByRole("link", { name: "Open their details" }).click();
+    await drawer().getByRole("link", { name: "View user" }).click();
     assert.equal(await hash(), "#/people/meilin.chen%40example.org");
     await drawer().getByText("Mei Lin Chen").first().waitFor();
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");

@@ -224,11 +224,11 @@
     opacity: 0.55;
   }
   .hz-btn-primary {
-    background: var(--hz-accent);
-    color: var(--hz-accent-ink);
+    background: var(--hz-ink);
+    color: var(--hz-bg);
   }
   .hz-btn-primary:hover:not(:disabled) {
-    background: var(--hz-accent-hover);
+    background: var(--hz-secondary);
   }
   .hz-btn-secondary {
     background: transparent;
@@ -1679,6 +1679,29 @@
   button.hz-act-row:hover {
     background: var(--hz-hover);
   }
+  .hz-act-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--hz-secondary);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .hz-act-label.is-running {
+      background: linear-gradient(100deg, var(--hz-mute) 30%, var(--hz-ink) 50%, var(--hz-mute) 70%);
+      background-size: 250% 100%;
+      background-clip: text;
+      color: transparent;
+      animation: hz-activity-shimmer 2.4s linear infinite;
+    }
+  }
+  @keyframes hz-activity-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+  }
+  @media (max-width: 767px), (pointer: coarse) {
+    button.hz-act-row { min-height: 44px; }
+  }
   .hz-act-chev {
     flex: none;
     color: var(--hz-mute);
@@ -1691,6 +1714,36 @@
   }
   .hz-act-steps .hz-act {
     margin: 0;
+  }
+  /* Cards (MCP Apps): host chrome around a sandboxed frame. */
+  .hz-card {
+    margin: 2px 0 10px;
+  }
+  .hz-card-chrome {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0 6px;
+  }
+  .hz-card-review {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--hz-accent, var(--hz-secondary));
+    text-decoration: underline;
+  }
+  .hz-card-frame {
+    border: 1px solid var(--hz-line);
+    border-radius: 10px;
+    overflow: hidden;
+    min-height: 48px;
+  }
+  .hz-card-text {
+    border: 1px dashed var(--hz-line);
+    border-radius: 10px;
+    padding: 10px 12px;
   }
   .hz-act-detail {
     margin: 2px 0 6px 6px;
@@ -2369,8 +2422,9 @@
 .hz-search-input input:focus-visible,
 .hz-set-find input:focus-visible { outline: none; box-shadow: none; }
 .hz-composer:has(textarea:focus-visible) {
-  outline: 2px solid var(--hz-mute);
-  outline-offset: 2px;
+  outline: 1px solid var(--hz-mute);
+  outline-offset: 0;
+  border-color: var(--hz-mute);
 }
 .hz-search-input:has(input:focus-visible),
 .hz-set-find:has(input:focus-visible) {
@@ -2833,7 +2887,8 @@
     outline-offset: -2px;
   }
   .hz-composer:has(textarea:focus-visible) {
-    outline: 3px solid color-mix(in srgb, var(--hz-ink) 9%, transparent);
+    outline: 1px solid var(--hz-mute);
+    border-color: var(--hz-mute);
     outline-offset: 0;
   }
   @media (max-width: 640px) {

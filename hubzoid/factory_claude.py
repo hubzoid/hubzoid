@@ -284,6 +284,25 @@ def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]
 # ---------------------------------------------------------------------------
 # Public entry: build a ClaudeRuntime for the hub.
 # ---------------------------------------------------------------------------
+def _budget_caps(options):
+    """The hub's usage limits as the Claude Agent SDK's own caps for this run
+    (`max_turns`, `max_budget_usd`), when budgets.yaml sets them."""
+    import dataclasses
+
+    from . import budgets
+
+    ticket = budgets.current()
+    if ticket is None or (ticket.max_turns is None and ticket.max_budget_usd is None):
+        return options
+    changes = {}
+    if ticket.max_turns is not None:
+        changes["max_turns"] = min(options.max_turns or ticket.max_turns, ticket.max_turns)
+    if ticket.max_budget_usd is not None:
+        current = getattr(options, "max_budget_usd", None)
+        changes["max_budget_usd"] = min(current, ticket.max_budget_usd) if current else ticket.max_budget_usd
+    return dataclasses.replace(options, **changes)
+
+
 def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                          max_turns: int | None = None,
                          model_override: str | None = None) -> "ClaudeRuntime":
@@ -348,7 +367,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # as the OpenAI path). The deny check runs at on_invoke, which the Claude
     # adapter calls, so it holds here too. No-op when there is no restricted/.
     from . import access
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
@@ -1018,6 +1038,17 @@ class ClaudeRuntime:
         return run_events.as_text(self.stream_events(prompt), tool_mode=self._tool_mode)
 
     async def stream_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
+        """One turn, after the hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        def refuse(exc):
+            self.last_error = exc
+
+        async for item in budgets.guarded(self._hub_dir, "claude-local", lambda: self._turn_events(prompt),
+                                          refuse):
+            yield item
+
+    async def _turn_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
         """Yield answer text and typed run events as they arrive.
 
         Four event streams are interleaved:
@@ -1109,7 +1140,7 @@ class ClaudeRuntime:
                 if slot.model:
                     changes["model"] = slot.model
                 turn_options = _dc.replace(turn_options, **changes)
-            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
+            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(_budget_caps(turn_options)),
                                             hub_dir=self._hub_dir)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
@@ -1175,7 +1206,9 @@ class ClaudeRuntime:
                             # For an eval's result preview; a no-op in chat.
                             _request_ctx.record_tool_result(tid, getattr(block, "content", None))
                             if not bool(getattr(block, "is_error", False)):
-                                yield run_events.ToolResult(id=tid, name=tool_name, ok=True)
+                                yield run_events.ToolResult(
+                                    id=tid, name=tool_name, ok=True,
+                                    card=_request_ctx.take_card(getattr(block, "content", None), tool=tool_name))
                                 continue
                             closing = tw.close()
                             if closing:
@@ -1293,6 +1326,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     final: str | None = None
     usage: dict = {}
     answered_by: str | None = None
+    options = _budget_caps(options)
     messages = _query_with_failover(prompt=prompt, options=options, hub_dir=hub_dir)
     from contextlib import aclosing
     async with aclosing(messages):
@@ -1323,3 +1357,62 @@ async def claude_complete(prompt: str, *, system: str | None = None,
         usage["structured"] = "native"
         return _json.dumps(structured_out), usage
     return ("".join(parts) or final or ""), usage
+
+
+async def claude_station(message: str, *, instructions: str, registry: dict, schema: dict | None,
+                         model_setting: str | None = None, hub_dir: Path | None = None,
+                         max_turns: int = 40) -> tuple[str, Any, dict]:
+    """One run of an isolated agent (a station) on claude-local.
+
+    Only the station's own instructions and exactly the tools in `registry`:
+    no Claude Code built-ins, no settings or skills discovery, no host MCP
+    servers (strict isolation), no parent conversation. With `schema`, the
+    Claude Agent SDK's structured output (`output_format`) constrains the final
+    result, returned as the second value. Returns (text, structured, usage)
+    and raises when the SDK reports the run failed."""
+    from claude_agent_sdk import AssistantMessage, ResultMessage
+    from claude_agent_sdk.types import TextBlock
+
+    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="station")
+    opts: dict[str, Any] = dict(
+        system_prompt=instructions, tools=[], setting_sources=[], max_turns=max_turns,
+        allowed_tools=[f"mcp__{_MCP_NAMESPACE}__{n}" for n in registry],
+        mcp_servers={_MCP_NAMESPACE: _build_mcp_server(registry)} if registry else {},
+    )
+    if schema is not None:
+        opts["output_format"] = {"type": "json_schema", "schema": schema}
+    if pin is not None:
+        opts["model"] = pin
+    child_env = _child_env()
+    if child_env:
+        opts["env"] = child_env
+    options = _budget_caps(claude_options(**opts))
+    parts: list[str] = []
+    structured: Any = None
+    final: str | None = None
+    usage: dict = {}
+    answered_by: str | None = None
+    messages = _query_with_failover(prompt=message, options=options, hub_dir=hub_dir)
+    from contextlib import aclosing
+    async with aclosing(messages):
+        async for item in messages:
+            if isinstance(item, AssistantMessage):
+                answered_by = getattr(item, "model", None) or answered_by
+                parts += [b.text for b in item.content if isinstance(b, TextBlock)]
+            elif isinstance(item, ResultMessage):
+                final = getattr(item, "result", None)
+                structured = getattr(item, "structured_output", None)
+                raw = getattr(item, "usage", None) or {}
+                get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
+                usage = {
+                    "input_tokens": int(get("input_tokens", 0) or 0)
+                    + int(get("cache_read_input_tokens", 0) or 0)
+                    + int(get("cache_creation_input_tokens", 0) or 0),
+                    "output_tokens": int(get("output_tokens", 0) or 0),
+                    "cost_usd": getattr(item, "total_cost_usd", None),
+                    "model": _answering_model(item, answered_by),
+                    "turns": getattr(item, "num_turns", None),
+                }
+                if getattr(item, "is_error", False):
+                    raise RuntimeError(f"claude station run ended with {getattr(item, 'subtype', 'error')}")
+    return (final or "".join(parts) or ""), structured, usage

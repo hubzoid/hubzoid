@@ -41,6 +41,10 @@ def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
                         name, path,
                     )
                     continue
+                try:   # lets a station pin the code it ran (stations/tools.py: digest)
+                    obj._hz_source = str(path)
+                except AttributeError:
+                    pass
                 out[name] = obj
     return out
 

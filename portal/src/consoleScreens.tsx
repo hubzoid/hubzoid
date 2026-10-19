@@ -16,13 +16,16 @@ const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => (
 export const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
 export const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
 const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
+export const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
+const SandboxesScreen = lazy(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
+const BudgetsScreen = lazy(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
 const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
-export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
+export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "budgets" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
 
 export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: () => void, embedded = false): { screen: ReactNode; active: Area } {
   const [area, ...rest] = parts;
@@ -56,6 +59,15 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
   } else if (area === "runs") {
     active = "runs";
     screen = <AllRunsScreen hubs={list} />;
+  } else if (area === "work") {
+    active = "work";
+    screen = <WorkItemsScreen hubs={list} selected={rest[0] && rest[1] ? { hub: rest[0], item: rest[1] } : undefined} />;
+  } else if (area === "sandboxes") {
+    active = "sandboxes";
+    screen = <SandboxesScreen hubs={list} />;
+  } else if (area === "budgets") {
+    active = "budgets";
+    screen = <BudgetsScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
     screen = <PeopleScreen me={me} hubs={list} selected={rest[0]} embedded={embedded} />;

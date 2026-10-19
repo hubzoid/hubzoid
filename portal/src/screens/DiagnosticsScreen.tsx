@@ -135,7 +135,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
         Health &amp; support
       </Title>
       <Paragraph type="secondary">
-        Checks that everything is running. They change nothing and never show secrets.
+        Run read-only checks and review reports.
       </Paragraph>
       {error && (
         <Alert

@@ -25,7 +25,6 @@ case says ``allow_real_mcp: true``.
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -119,7 +118,9 @@ def wrap(ft):
         return BLOCKED.format(name=name)
 
     setattr(_invoke, _MARK, True)
-    return dataclasses.replace(ft, on_invoke_tool=_invoke)
+    from .tool_classes import copy_tool  # keeps the tool's class (read, external write) and markers
+
+    return copy_tool(ft, on_invoke_tool=_invoke)
 
 
 def covered(ft):

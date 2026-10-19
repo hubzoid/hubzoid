@@ -17,6 +17,8 @@ import {
   Database,
   FilePen,
   HeartPulse,
+  Box,
+  Gauge,
   LogOut,
   Menu as MenuIcon,
   MessageSquare,
@@ -63,6 +65,10 @@ type Key =
   | "sources"
   | "data"
   | "my-schedules"
+  | "my-work"
+  | "work"
+  | "sandboxes"
+  | "budgets"
   | "agents"
   | "people"
   | "activity"
@@ -93,10 +99,14 @@ const ITEMS: Item[] = [
   { key: "data", label: S.data, icon: <Database size={16} aria-hidden />, hash: "/me/data", keywords: "import export archive delete" },
   { key: "memory", label: t.memory.title, icon: <Brain size={16} aria-hidden />, hash: "/me/memory", keywords: "remember notes personal forget" },
   { key: "my-schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/me/schedules", keywords: "reports timetable" },
+  { key: "my-work", label: S.myWork, icon: <ListChecks size={16} aria-hidden />, hash: "/me/work", keywords: "approvals work items requests" },
   { key: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, hash: "/agents", team: true, keywords: "usage cost tokens connectors evals runs" },
   { key: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, hash: "/people", team: true, keywords: "invite access roles members" },
   { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
+  { key: "work", label: S.workItems, icon: <ListChecks size={16} aria-hidden />, hash: "/work", team: true, keywords: "approvals operations stations" },
+  { key: "sandboxes", label: S.sandboxes, icon: <Box size={16} aria-hidden />, hash: "/sandboxes", team: true, keywords: "docker workspace cleanup" },
+  { key: "budgets", label: S.usageLimits, icon: <Gauge size={16} aria-hidden />, hash: "/budgets", team: true, keywords: "budget tokens cost limits" },
   { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
   { key: "hub-changes", label: t.hubChanges.title, icon: <FilePen size={16} aria-hidden />, hash: "/hub-changes", team: true, keywords: "proposals review knowledge instructions agents.md remember diff commit undo" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
@@ -117,6 +127,9 @@ function keyFor(hash: string): Key | null {
   if (a === "people" || a === "confirm") return "people";
   if (a === "activity" || a === "runs") return "activity";
   if (a === "schedules") return "schedules";
+  if (a === "work") return "work";
+  if (a === "sandboxes") return "sandboxes";
+  if (a === "budgets") return "budgets";
   if (a === "workflow-access") return "workflow-access";
   if (a === "hub-changes") return "hub-changes";
   if (a === "diagnostics") return "health";
@@ -145,7 +158,9 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const app = useApp();
   const hash = useHash();
   const team = app.isAdmin || !!app.user?.console;
-  const items = ITEMS.filter((i) => (i.admin ? app.isAdmin : i.team ? team : true)).filter((i) => !(team && i.key === "my-schedules"));
+  // Hub changes also opens for curators who may propose or review changes.
+  const visible = (i: Item) => (i.admin ? app.isAdmin : i.key === "hub-changes" ? team || !!app.user?.hub_changes : i.team ? team : true);
+  const items = ITEMS.filter(visible).filter((i) => !(team && i.key === "my-schedules"));
   const [query, setQuery] = useState("");
   // ?section= (from links elsewhere in the app) becomes the hash.
   useEffect(() => {
@@ -386,6 +401,15 @@ function SectionBody({ item }: { item: Item }) {
           <Heading title={t.memory.title} lede={t.memory.lede} />
           <Suspense fallback={<PageSpinner />}>
             <MemoryPage />
+          </Suspense>
+        </>
+      );
+    case "my-work":
+      return (
+        <>
+          <Heading title={S.myWork} lede={S.myWorkLede} />
+          <Suspense fallback={<PageSpinner />}>
+            <ConsoleEmbed personal="work" />
           </Suspense>
         </>
       );
