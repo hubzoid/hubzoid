@@ -481,7 +481,7 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
   const agentId = agents.agents[0].id;
 
   step("The new chat page greets with the agent's name and offers its suggestions");
-  await page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await page.getByRole("button", { name: "What is in this hub?" }).waitFor();
   await c.settled();
   // One hub: the agent's name is also the brand, and a title never repeats it.
@@ -491,17 +491,19 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
 
   step("?agent= (and the Console's ?models=) preselect the agent; an unknown one says so");
   await page.goto(`${ctx.BASE}/?agent=${encodeURIComponent(agentId)}`);
-  await page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await page.goto(`${ctx.BASE}/?models=${encodeURIComponent(agentId)}`);
-  await page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await page.goto(`${ctx.BASE}/?agent=no-such-agent`);
-  await page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await ctx.shot(page, "04-new-chat-unknown-agent");
 
-  step("A suggestion sends at once; the reply streams in and the chat gets its own URL");
+  step("A suggestion fills the draft; sending streams the reply and gives the chat its own URL");
   await page.goto(`${ctx.BASE}/`);
   await c.settled();
   await page.getByRole("button", { name: "What is in this hub?" }).click();
+  assert.equal(await c.composer().inputValue(), "What is in this hub?");
+  await page.getByTestId("send").click();
   await page.waitForURL(/\/c\/[^/]+$/);
   await c.idle();
   const id = c.conversationId();
@@ -1018,7 +1020,7 @@ journey("account", "Account: display name, password change ends other sessions, 
 
   step("Change the display name: the sidebar shows it at once");
   await first.page.goto(`${ctx.BASE}/account`);
-  await first.page.getByRole("heading", { name: "Account", level: 1 }).waitFor();
+  await first.page.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
   await ctx.axe(first.page, "account");
   await first.page.getByLabel("Display name").fill("Lee P. Park");
   await first.page.getByRole("button", { name: "Save", exact: true }).click();
@@ -1137,7 +1139,7 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
 
   step("Try again opens the agent for them, without a page reload");
   await invited.page.getByRole("button", { name: "Try again" }).click();
-  await invited.page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await invited.page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   const chatAsNoor = ctx.chat(invited.page);
   await chatAsNoor.settled();
   await chatAsNoor.send("Hello from Noor");
@@ -1164,7 +1166,7 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await invited.page.getByLabel("Confirm password").fill("noor-second-pass-2");
   await invited.page.getByRole("button", { name: "Save password and sign in" }).click();
   await invited.page.waitForURL(`${ctx.BASE}/`);
-  await invited.page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await invited.page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await invited.page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /hello from noor/i }).waitFor();
   await invited.context.close();
   await admin.context.close();
@@ -1200,7 +1202,7 @@ journey("console", "Console: reachable from the account menu for administrators 
   step("Open chat goes back to the chat app, still signed in");
   await page.getByRole("link", { name: /Open chat/ }).click();
   await page.waitForURL(`${ctx.BASE}/`);
-  await page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
 
   step("The Console's Sign out signs out of Hubzoid");
   await page.goto(`${ctx.BASE}/portal/`);
@@ -1314,7 +1316,7 @@ journey("devices", "Phone (360 px) chat and drawer, dark mode, keyboard-only sen
   await m.goto(`${ctx.BASE}/`);
   await m.waitForURL(/\/auth/);
   await ctx.signIn(m, SAM);
-  await m.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
+  await m.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await ctx.noHorizontalScroll(m, "phone new chat");
   await ctx.shot(m, "39-phone-new-chat");
   await m.getByRole("textbox", { name: /^Message / }).fill("Please answer in markdown");
@@ -1394,7 +1396,7 @@ journey("local", "Local mode: no sign-in page and no Sign out", async (ctx) => {
   ctx.setDiagnostic(page);
   step("The local owner lands in chat; /auth goes back to chat");
   await page.goto(`${ctx.local.base}/`);
-  await page.getByRole("heading", { name: "What can Local Helper help with?" }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   await page.goto(`${ctx.local.base}/auth`);
   await page.waitForURL(`${ctx.local.base}/`);
   const c = ctx.chat(page);

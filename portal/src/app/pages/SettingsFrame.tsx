@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { Menu as MenuIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
@@ -10,12 +10,17 @@ const tabs = [
   { href: "/account/connections", label: t.account.connections },
 ];
 
+/** Inside the Settings page a section brings only its content. */
+export const InSettings = createContext(false);
+
 /** Account and Connections share one frame with tabs between them. */
 export function SettingsFrame({ title, current, children }: { title: string; current: string; children: ReactNode }) {
   const app = useApp();
+  const embedded = useContext(InSettings);
   useEffect(() => {
-    document.title = `${title} · ${app.brandName}`;
-  }, [title, app.brandName]);
+    if (!embedded) document.title = `${title} · ${app.brandName}`;
+  }, [title, app.brandName, embedded]);
+  if (embedded) return <>{children}</>;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-2 sm:px-4 lg:hidden">

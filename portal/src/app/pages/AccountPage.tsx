@@ -15,7 +15,7 @@ import { accountPreference, setAccountPreference, setDensity, setTextScale, useP
 import { Section, SettingsFrame } from "./SettingsFrame";
 import { authErrorText } from "./SignInPage";
 
-function ProfileForm() {
+export function ProfileForm() {
   const app = useApp();
   const [name, setName] = useState(app.user?.name ?? "");
   const [busy, setBusy] = useState(false);
@@ -59,14 +59,14 @@ function ProfileForm() {
         <div className="hz-label">{t.account.role}</div>
         <p className="m-0 text-[14px] text-body">{app.isAdmin ? t.account.admin : t.account.member}</p>
       </div>
-      <Button type="submit" variant="primary" loading={busy} disabled={!dirty}>
+      <Button type="submit" loading={busy} disabled={!dirty}>
         {busy ? t.saving : t.save}
       </Button>
     </form>
   );
 }
 
-function PasswordForm() {
+export function PasswordForm() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -132,7 +132,7 @@ function PasswordForm() {
         onChange={(e) => setConfirm(e.target.value)}
         error={errors.confirm}
       />
-      <Button type="submit" variant="primary" loading={busy}>
+      <Button type="submit" loading={busy}>
         {t.account.changePassword}
       </Button>
     </form>
@@ -141,7 +141,7 @@ function PasswordForm() {
 
 /** Appearance, text size and spacing: the person's account preferences,
  *  within what the deployment allows. Locked choices say who manages them. */
-function AppearanceForm() {
+export function AppearanceForm() {
   const view = usePresentation();
   const choice = <T extends string | number>(
     label: string,
@@ -203,7 +203,7 @@ function AppearanceForm() {
   );
 }
 
-function NotificationsForm() {
+export function NotificationsForm() {
   const view = usePresentation();
   const [blocked, setBlocked] = useState(false);
   const toggle = async (key: "notifications.desktop" | "notifications.sound", on: boolean) => {
@@ -231,7 +231,7 @@ function NotificationsForm() {
 
 type ImportPreview = { id: string; digest: string; format: string; objects: { type: string; disposition: string; reason?: string | null }[] };
 
-function DataForm() {
+export function DataForm() {
   const [busy, setBusy] = useState<"export" | "preview" | "apply" | null>(null);
   const [download, setDownload] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);

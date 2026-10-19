@@ -45,7 +45,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
     async def files(request: Request):
         user, _ = await actor_of(request)
         await need(user, "authoring.draft")
-        return {"items": await call(svc.files)}
+        return {"items": await call(svc.files), "hub": ctx.hub}
 
     @app.get(f"{A}/files/versions")
     async def versions(request: Request):

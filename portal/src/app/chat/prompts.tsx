@@ -1,24 +1,22 @@
 // Saved prompts in the composer: pick a shared or personal prompt, fill its
 // variables, and its text (rendered and checked by the server) is placed in
 // the message box. Nothing is sent until you send it.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Popover } from "radix-ui";
-import { Braces } from "lucide-react";
 import { useAui } from "@assistant-ui/react";
 import { get, hubUrl, post } from "../lib/api";
 import { describeError } from "../lib/errors";
 import { t } from "../i18n/en";
-import { IconButton } from "../components/ui";
 import { toast } from "../components/toast";
 import { useFeed } from "./feed-context";
 
 type Variable = { name: string; label?: string | null; required: boolean; options?: string[] | null; default?: string | null };
 type PromptItem = { id: string; scope: "hub" | "personal"; name: string; description?: string; variables: Variable[]; invalid?: string };
 
-export function PromptPicker() {
+/** Opened from the composer's + menu; `children` is the element it anchors to. */
+export function PromptPicker({ open, onOpenChange: setOpen, children }: { open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   const aui = useAui();
   const value = useFeed();
-  const [open, setOpen] = useState(false);
   const [items, setItems] = useState<PromptItem[] | null>(null);
   const [chosen, setChosen] = useState<PromptItem | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -41,13 +39,9 @@ export function PromptPicker() {
   };
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <IconButton label={t.prompts.open} size="lg" className="!h-9 !w-9">
-          <Braces size={17} aria-hidden />
-        </IconButton>
-      </Popover.Trigger>
+      <Popover.Anchor asChild>{children}</Popover.Anchor>
       <Popover.Portal>
-        <Popover.Content className="hz-menu w-80 p-2" side="top" align="start" sideOffset={6}>
+        <Popover.Content className="hz-menu w-80 p-2" side="top" align="start" sideOffset={8} aria-label={t.prompts.title}>
           {!chosen ? (
             <>
               <div className="px-1 pb-1 text-[12px] font-semibold text-mute">{t.prompts.title}</div>

@@ -57,11 +57,18 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$)/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$)/.test(path);
+}
+
+let leaveGuard: (() => boolean) | null = null;
+/** A page with unsaved changes can ask before the app moves elsewhere. */
+export function setLeaveGuard(fn: (() => boolean) | null) {
+  leaveGuard = fn;
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
-  if (!isAppPath(to.split("?")[0])) {
+  if (leaveGuard && !leaveGuard()) return;
+  if (!isAppPath(to.split(/[?#]/)[0])) {
     if (options.replace) location.replace(to);
     else location.assign(to);
     return;
@@ -99,7 +106,7 @@ export type Route =
   | { name: "account" }
   | { name: "sources" }
   | { name: "workspace" }
-  | { name: "spaces"; id: string | null; tab: string | null }
+  | { name: "settings"; section: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
 
@@ -124,8 +131,7 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   }
   if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
   if (parts[0] === "workspace" && parts.length === 1) return { name: "workspace" };
-  if (parts[0] === "spaces" && parts.length <= 2)
-    return { name: "spaces", id: parts[1] ?? null, tab: search.get("tab") };
+  if (parts[0] === "settings" && parts.length === 1) return { name: "settings", section: search.get("section") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
     if (parts[1] === "connections" && parts.length === 2)

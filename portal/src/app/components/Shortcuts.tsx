@@ -31,6 +31,11 @@ export function display(chord: string | null) {
 export function useShortcuts(handlers: Record<string, () => void>) {
   const [effective, setEffective] = useState<Effective | null>(null);
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener("hz:shortcuts", show);
+    return () => window.removeEventListener("hz:shortcuts", show);
+  }, []);
   const reload = () => get<Effective>("/api/chat/shortcuts", { quiet401: true }).then(setEffective).catch(() => setEffective(null));
   useEffect(() => {
     void reload();

@@ -15,6 +15,8 @@ import { clearAccount, loadAccount, loadPublic, refreshTheme } from "../lib/pres
 import { AnnouncementBanner, applyBrandHead, TermsGate, useBrandMe } from "./components/BrandChrome";
 import type { AgentsResponse, Branding, Conversation, Session, SessionUser } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
+import { SearchDialog } from "./components/SearchDialog";
+import { sidebar as sidebarState } from "./lib/sidebarState";
 import { announce, LiveRegion, Toaster } from "./components/toast";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { Button, Notice, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
@@ -27,13 +29,10 @@ const ChatPage = lazy(() => import("./chat/ChatPage"));
 const SharePage = lazy(() => import("./pages/SharePage"));
 const SignInPage = lazy(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
-const AccountPage = lazy(() => import("./pages/AccountPage"));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
-const SourcesPage = lazy(() => import("./pages/SourcesPage"));
-const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
-const SpacesPage = lazy(() => import("./pages/SpacesPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const BrandPreviewPage = lazy(() => import("./pages/BrandPreviewPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const PUBLIC_ROUTES: Route["name"][] = ["signin", "set-password", "share"];
 
@@ -319,10 +318,10 @@ export default function App() {
         onConversationCreated={onConversationCreated}
       />
     );
-  else if (route.name === "account") page = <AccountPage />;
-  else if (route.name === "sources") page = <SourcesPage />;
-  else if (route.name === "workspace") page = <WorkspacePage />;
-  else if (route.name === "spaces") page = <SpacesPage spaceId={route.id} tab={route.tab} />;
+  else if (route.name === "settings") page = <SettingsPage section={route.section} />;
+  else if (route.name === "account") page = <RedirectTo to="/settings#/me/profile" />;
+  else if (route.name === "sources") page = <RedirectTo to="/settings#/me/sources" />;
+  else if (route.name === "workspace") page = <RedirectTo to="/settings#/workspace" />;
   else if (route.name === "connections")
     page = <ConnectionsPage connected={route.connected} connector={route.connector} error={route.error} />;
   else page = <NotFoundPage />;
@@ -337,9 +336,10 @@ export default function App() {
       >
         {t.skipToContent}
       </a>
-      <DeviceChrome onNewChat={() => value.newChat()} onToggleSidebar={() => setDrawerOpen((o) => !o)} />
+      <DeviceChrome onNewChat={() => value.newChat()} onToggleSidebar={() => (window.innerWidth >= 1024 ? sidebarState.toggleCollapsed() : setDrawerOpen((o) => !o))} />
       <div className="flex h-dvh w-full overflow-hidden bg-bg text-ink">
         <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
+        <SearchDialog />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
           <OfflineBanner />
           <AnnouncementBanner
@@ -356,6 +356,15 @@ export default function App() {
   );
 }
 
+/** Old addresses that moved into Settings. */
+function RedirectTo({ to }: { to: string }) {
+  useEffect(() => {
+    history.replaceState(null, "", to);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, [to]);
+  return <PageSpinner />;
+}
+
 /** Shortcuts, contrast: device-level behaviour that needs no layout of its own. */
 function DeviceChrome({ onNewChat, onToggleSidebar }: { onNewChat: () => void; onToggleSidebar: () => void }) {
   useContrast();
@@ -363,7 +372,7 @@ function DeviceChrome({ onNewChat, onToggleSidebar }: { onNewChat: () => void; o
     () => ({
       "chat.new": onNewChat,
       "chat.toggle_sidebar": onToggleSidebar,
-      "chat.search": () => document.querySelector<HTMLInputElement>('input[type="search"]')?.focus(),
+      "chat.search": sidebarState.openSearch,
       "chat.focus_composer": () => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus(),
       "chat.stop": () => document.querySelector<HTMLButtonElement>('[data-testid="stop"]')?.click(),
       "chat.copy_last": () => {

@@ -60,8 +60,8 @@ export default function SourcesPage() {
 
   return (
     <PageFrame
-      title={t.sources.title}
-      description={t.sources.description}
+      title={t.settingsPage.sources}
+      description={t.settingsPage.sourcesLede}
       actions={<Button variant="primary" size="sm" icon={<Plus size={14} aria-hidden />} onClick={() => setCreating(true)}>
         {t.sources.newCollection}</Button>}
     >
@@ -195,7 +195,7 @@ function CollectionCard({ c, onChanged }: { c: Collection; onChanged: () => Prom
     : !c.ready ? "never" : job?.state === "failed" ? "failed" : "ready";
   const everyone = c.manifest.readers.includes("*");
   return (
-    <section className="hz-card" aria-labelledby={`col-${c.id}`}>
+    <section className="hz-card p-4" aria-labelledby={`col-${c.id}`}>
       <div className="flex flex-wrap items-center gap-2">
         <h2 id={`col-${c.id}`} className="m-0 min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{c.title}</h2>
         <span className={`hz-pill hz-pill-${state}`}>{t.sources.state[state]}</span>
@@ -342,7 +342,7 @@ function TryQuestion({ hasReady }: { hasReady: boolean }) {
   const [busy, setBusy] = useState(false);
   if (!hasReady) return null;
   return (
-    <section className="hz-card mt-6" aria-labelledby="try-q">
+    <section className="hz-card mt-6 p-4" aria-labelledby="try-q">
       <h2 id="try-q" className="m-0 text-[14px] font-semibold text-ink">{t.sources.tryTitle}</h2>
       <p className="m-0 mt-1 text-[12px] text-mute">{t.sources.tryBody}</p>
       <form className="mt-3 flex gap-2" onSubmit={async (e) => {

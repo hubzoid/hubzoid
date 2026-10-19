@@ -3,7 +3,7 @@
 // PUT /api/chat/config: the diff is shown before applying, apply sends the
 // revision it was based on, and a conflict asks for a reload.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { control, ControlError, newKey } from "../../lib/controlApi";
 
 const { Text, Paragraph } = Typography;
@@ -124,28 +124,17 @@ export function ChatSettings() {
   const prefs = draft.presentation.preferences;
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Descriptions size="small" column={{ xs: 1, md: 3 }} bordered>
-        <Descriptions.Item label="Active revision">
-          {active.revision === 0 ? <Text type="secondary">Product defaults (never applied)</Text> : <>#{active.revision}</>}
-        </Descriptions.Item>
-        <Descriptions.Item label="Applied by">{active.applied_by ?? "—"}</Descriptions.Item>
-        <Descriptions.Item label="Digest">
-          <Text code copyable={{ text: active.digest }}>{active.digest.slice(0, 19)}…</Text>
-        </Descriptions.Item>
-        <Descriptions.Item label="File" span={3}>
-          <Text code>chat/config.yaml</Text>{" "}
-          {!active.file.exists ? (
-            <Tag>not present: defaults and Console changes apply</Tag>
-          ) : active.file.valid === false ? (
-            <Tag color="error">invalid: {active.file.error?.message}</Tag>
-          ) : active.file.matches_active ? (
-            <Tag color="success">matches the active revision</Tag>
-          ) : (
-            <Tag color="warning">{active.file.pending_changes} change(s) not applied. Run hubzoid chat config apply.</Tag>
-          )}
-        </Descriptions.Item>
-      </Descriptions>
-
+      <Text type="secondary">
+        {active.revision === 0
+          ? "Everyone uses the product defaults. Change anything below, review it, then apply it for everyone."
+          : `Last applied${active.applied_by ? ` by ${active.applied_by}` : ""}. People can change what you allow.`}
+        {active.file.exists && active.file.valid === false && (
+          <Tag color="error" style={{ marginLeft: 8 }}>The settings file has a problem: see details</Tag>
+        )}
+        {active.file.exists && active.file.valid !== false && !active.file.matches_active && (
+          <Tag color="warning" style={{ marginLeft: 8 }}>The settings file has changes that aren’t applied yet</Tag>
+        )}
+      </Text>
       {error && (
         <Alert
           type="error"
@@ -242,7 +231,9 @@ export function ChatSettings() {
         </Space>
       </Card>
 
-      <Space>
+      {dirty && (
+      <Space className="save-bar">
+        <Text>Unsaved changes</Text>
         <Button onClick={() => void review()} disabled={!dirty} loading={busy && !changes}>
           Review changes
         </Button>
@@ -253,6 +244,7 @@ export function ChatSettings() {
           Discard
         </Button>
       </Space>
+      )}
       {changes && (
         <Table<Change>
           size="small"
@@ -261,30 +253,99 @@ export function ChatSettings() {
           dataSource={changes}
           locale={{ emptyText: "No changes." }}
           columns={[
-            { title: "Setting", dataIndex: "pointer", render: (p: string) => <Text code>{p}</Text> },
-            { title: "Now", dataIndex: "old", render: (v) => <Text type="secondary">{JSON.stringify(v)}</Text> },
-            { title: "After apply", dataIndex: "new", render: (v) => <Text strong>{JSON.stringify(v)}</Text> },
+            { title: "Setting", dataIndex: "pointer", render: (p: string) => settingLabel(p) },
+            { title: "Now", dataIndex: "old", render: (v) => <Text type="secondary">{plainValue(v)}</Text> },
+            { title: "After apply", dataIndex: "new", render: (v) => <Text strong>{plainValue(v)}</Text> },
           ]}
         />
       )}
 
-      <Card title="Effective values and where they come from" size="small">
-        <Table
-          size="small"
-          rowKey="pointer"
-          pagination={false}
-          dataSource={Object.entries(active.sources).map(([pointer, v]) => ({ pointer, ...v }))}
-          columns={[
-            { title: "Setting", dataIndex: "pointer", render: (p: string) => <Text code>{p}</Text> },
-            { title: "Value", dataIndex: "value", render: (v) => JSON.stringify(v) },
-            {
-              title: "Source",
-              dataIndex: "source",
-              render: (s: string) => <Tag color={s === "deployment" ? "orange" : undefined}>{s}</Tag>,
-            },
-          ]}
-        />
-      </Card>
+      <Collapse
+        ghost
+        size="small"
+        items={[
+          {
+            key: "details",
+            label: "Technical details",
+            children: (
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Descriptions size="small" column={1}>
+                  <Descriptions.Item label="Revision">{active.revision === 0 ? "Product defaults" : `#${active.revision}`}</Descriptions.Item>
+                  <Descriptions.Item label="Digest">
+                    <Text code copyable={{ text: active.digest }}>{active.digest.slice(0, 19)}…</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="File">
+                    <Text code>chat/config.yaml</Text>{" "}
+                    {!active.file.exists
+                      ? "not present"
+                      : active.file.valid === false
+                        ? `invalid: ${active.file.error?.message ?? ""}`
+                        : active.file.matches_active
+                          ? "matches what is applied"
+                          : `${active.file.pending_changes} change(s) not applied (hubzoid chat config apply)`}
+                  </Descriptions.Item>
+                </Descriptions>
+                <Table
+                  size="small"
+                  rowKey="pointer"
+                  pagination={false}
+                  tableLayout="fixed"
+                  dataSource={Object.entries(active.sources).map(([pointer, v]) => ({ pointer, ...v }))}
+                  columns={[
+                    {
+                      title: "Setting",
+                      dataIndex: "pointer",
+                      width: "45%",
+                      render: (p: string) => (
+                        <span>
+                          {settingLabel(p)}
+                          <br />
+                          <Text type="secondary" style={{ fontSize: 11.5, fontFamily: "var(--font-mono, monospace)" }}>{p}</Text>
+                        </span>
+                      ),
+                    },
+                    { title: "Value", dataIndex: "value", render: (v) => plainValue(v) },
+                    { title: "From", dataIndex: "source", width: 120, render: (src: string) => (src === "deployment" ? "Your settings" : "Default") },
+                  ]}
+                />
+              </Space>
+            ),
+          },
+        ]}
+      />
     </Space>
   );
+}
+
+const LABELS: Record<string, string> = {
+  "/presentation/locale/default": "Language",
+  "/presentation/locale/allowed": "Languages people may choose",
+  "/presentation/appearance/default_mode": "Default theme",
+  "/presentation/appearance/allowed_modes": "Themes people may choose",
+  "/presentation/appearance/default_density": "Default spacing",
+  "/presentation/appearance/allowed_densities": "Spacing people may choose",
+  "/presentation/appearance/default_text_scale": "Default text size",
+  "/presentation/appearance/allowed_text_scales": "Text sizes people may choose",
+  "/presentation/timezone": "Time zone",
+  "/presentation/preferences/mode": "People may change the theme",
+  "/presentation/preferences/text_scale": "People may change the text size",
+  "/presentation/preferences/density": "People may change the spacing",
+  "/presentation/preferences/timezone": "People may change the time zone",
+};
+
+/** A plain name for a settings key: known ones by name, others from their last part. */
+function settingLabel(pointer: string): string {
+  if (LABELS[pointer]) return LABELS[pointer];
+  const last = pointer.split("/").filter(Boolean).slice(-2).join(" ").replace(/_/g, " ");
+  return last ? last[0].toUpperCase() + last.slice(1) : pointer;
+}
+
+function plainValue(v: unknown): string {
+  if (v === true) return "On";
+  if (v === false) return "Off";
+  if (v === null || v === undefined) return "—";
+  if (Array.isArray(v)) return v.map((x) => plainValue(x)).join(", ");
+  if (typeof v === "number") return v > 0 && v <= 3 ? `${Math.round(v * 100)}%` : String(v);
+  if (typeof v === "string") return v === "oled" ? "Black" : v.length <= 20 ? v[0]?.toUpperCase() + v.slice(1) : v;
+  return JSON.stringify(v);
 }

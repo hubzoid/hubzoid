@@ -102,7 +102,7 @@ export default function ConnectionsPage({
 
   return (
     <SettingsFrame title={t.connections.title} current="/account/connections">
-      <p className="m-0 mb-6 max-w-prose text-[14.5px] leading-relaxed text-mute">{t.connections.intro}</p>
+      <p className="hz-connections-intro m-0 mb-6 max-w-prose text-[14.5px] leading-relaxed text-mute">{t.connections.intro}</p>
       {connectedName && (
         <Notice tone="success" className="mb-6" onDismiss={() => setJustConnected(null)}>
           {t.connections.connectedToast(connectedName)}
@@ -132,7 +132,7 @@ export default function ConnectionsPage({
           <p className="m-0 mt-3 max-w-sm text-[14.5px] leading-relaxed text-mute">{t.connections.empty}</p>
         </div>
       ) : (
-        <ul className="hz-card m-0 list-none divide-y divide-line-soft p-0" aria-label={t.connections.title}>
+        <ul className="hz-connection-list m-0 list-none divide-y divide-line-soft p-0" aria-label={t.connections.title}>
           {items.map((c) => {
             const kind = kindOf(c);
             const since = c.connected && c.connected_at ? formatDate(c.connected_at) : "";
@@ -145,7 +145,7 @@ export default function ConnectionsPage({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[14px] font-semibold text-ink">{c.name}</span>
-                    <span className={cx("hz-badge", badge[kind].className)}>
+                    <span className={cx("hz-connection-status", badge[kind].className)}>
                       {kind === "connected" && <CheckCircle2 size={12} aria-hidden />}
                       {badge[kind].text}
                     </span>
@@ -192,7 +192,7 @@ export default function ConnectionsPage({
                     </>
                   )}
                   {kind === "off" && (
-                    <Button size="sm" variant="primary" loading={busy === c.connector_id} onClick={() => void connect(c)} aria-label={`${t.connections.connect} ${c.name}`}>
+                    <Button size="sm" loading={busy === c.connector_id} onClick={() => void connect(c)} aria-label={`${t.connections.connect} ${c.name}`}>
                       {busy === c.connector_id ? t.connections.connecting : t.connections.connect}
                     </Button>
                   )}

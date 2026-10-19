@@ -1,6 +1,7 @@
-// Hubzoid's own conversation sidebar: new chat, search, chats grouped by date,
-// inline rename, share, archive and delete, the archived view and the account
-// menu. On narrow screens it is a drawer.
+// Hubzoid's sidebar: quiet rows for New chat, Search, Sources, Spaces and
+// Workspace; folders; chats grouped by agent (or listed by date) with pin and
+// options on hover and an unread dot; the account menu and the bell at the
+// foot. On wide screens it can be hidden; on narrow screens it is a drawer.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Dialog as RDialog, DropdownMenu as Menu } from "radix-ui";
 import {
@@ -10,34 +11,31 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   Folder as FolderIcon,
   FolderInput,
   FolderPlus,
-  LayoutGrid,
+  Keyboard,
   LogOut,
   Monitor,
-  MoonStar,
   Moon,
+  MoonStar,
   MoreHorizontal,
+  PanelLeft,
   Pencil,
   Pin,
   PinOff,
-  Plug,
+  Plus,
   Search,
+  Settings,
   Share2,
   SquarePen,
   Sun,
   Trash2,
-  UserRound,
   X,
-  BookOpen,
-  PencilRuler,
-  UsersRound,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { clearDeviceCache } from "../lib/devices";
-import { get, post } from "../lib/api";
+import { post } from "../lib/api";
 import { createFolder, loadOrganization, organize, useOrganization } from "../lib/organization";
 import { NotificationsButton } from "./Notifications";
 import { agentById, useApp } from "../lib/app-context";
@@ -51,14 +49,14 @@ import {
 } from "../lib/conversations";
 import { dateGroup, displayName, type DateGroup } from "../lib/format";
 import { linkClick, navigate, type Route } from "../lib/router";
+import { unreadChats, useNotices } from "../lib/notices";
+import { sidebar as sidebarState, useSidebarState } from "../lib/sidebarState";
 import { useTheme, type ThemeMode } from "../lib/theme";
-import type { Conversation } from "../lib/types";
+import type { Agent, Conversation } from "../lib/types";
 import { describeError } from "../lib/errors";
 import { ShareDialog } from "./ShareDialog";
 import { toast } from "./toast";
-import { AgentAvatar, BrandMark, Button, ConfirmDialog, Field, IconButton, Modal, Notice, Spinner, UserAvatar, cx } from "./ui";
-
-type Hit = { kind: string; title: string; snippet: string; open_target: { conversation_id: string; message_id?: string | null } };
+import { AgentAvatar, BrandMark, Button, ConfirmDialog, Field, IconButton, Modal, Notice, UserAvatar } from "./ui";
 
 const GROUPS: { key: DateGroup; label: string }[] = [
   { key: "today", label: t.sidebar.today },
@@ -66,6 +64,8 @@ const GROUPS: { key: DateGroup; label: string }[] = [
   { key: "week", label: t.sidebar.week },
   { key: "older", label: t.sidebar.older },
 ];
+/** Chats shown per agent before "Show all". */
+const VISIBLE = 5;
 
 export function Sidebar({
   activeId,
@@ -78,6 +78,7 @@ export function Sidebar({
   drawerOpen: boolean;
   onDrawerChange: (open: boolean) => void;
 }) {
+  const { collapsed } = useSidebarState();
   // Close the drawer when the page changes.
   const lastRoute = useRef(`${route}:${activeId}`);
   useEffect(() => {
@@ -90,27 +91,53 @@ export function Sidebar({
 
   return (
     <>
-      <aside className="hidden w-[272px] flex-none border-r border-line bg-canvas lg:flex">
-        <SidebarBody activeId={activeId} route={route} />
-      </aside>
+      {collapsed ? (
+        <Rail route={route} />
+      ) : (
+        <aside className="hz-sidebar hidden lg:flex" data-testid="sidebar">
+          <SidebarBody activeId={activeId} route={route} />
+        </aside>
+      )}
       <RDialog.Root open={drawerOpen} onOpenChange={onDrawerChange}>
         <RDialog.Portal>
           <RDialog.Overlay className="hz-overlay lg:hidden" />
           <RDialog.Content className="hz-drawer lg:hidden" aria-describedby={undefined}>
             <RDialog.Title className="sr-only">{t.sidebar.label}</RDialog.Title>
-            <div className="absolute right-2 top-3 z-10">
-              <RDialog.Close asChild>
-                <IconButton label={t.sidebar.closeMenu} tooltip={false}>
-                  <X size={18} aria-hidden />
-                </IconButton>
-              </RDialog.Close>
-            </div>
-            <SidebarBody activeId={activeId} route={route} inDrawer />
+            <SidebarBody activeId={activeId} route={route} inDrawer onClose={() => onDrawerChange(false)} />
           </RDialog.Content>
         </RDialog.Portal>
       </RDialog.Root>
     </>
   );
+}
+
+/** The hidden sidebar's narrow rail: the main destinations stay one click away. */
+function Rail({ route }: { route: Route["name"] }) {
+  const app = useApp();
+  const go = (href: string) => () => navigate(href);
+  return (
+    <aside className="hz-rail hidden lg:flex" aria-label={t.sidebar.label}>
+      <IconButton label={t.sidebar.expand} onClick={sidebarState.toggleCollapsed} data-testid="sidebar-expand">
+        <PanelLeft size={17} aria-hidden />
+      </IconButton>
+      <IconButton label={t.sidebar.newChat} onClick={() => app.newChat()} aria-current={route === "new" ? "page" : undefined}>
+        <SquarePen size={17} aria-hidden />
+      </IconButton>
+      <IconButton label={t.sidebar.search} onClick={sidebarState.openSearch}>
+        <Search size={17} aria-hidden />
+      </IconButton>
+      <span className="flex-1" />
+      <NotificationsButton />
+      <IconButton label={t.account.settings} onClick={go("/settings")} aria-current={route === "settings" ? "page" : undefined}>
+        <Settings size={17} aria-hidden />
+      </IconButton>
+    </aside>
+  );
+}
+
+/** Kept for headers that used to show it; the rail does this now. */
+export function SidebarToggle() {
+  return null;
 }
 
 function Brand() {
@@ -120,17 +147,68 @@ function Brand() {
       href="/"
       onClick={(e) => linkClick(e, "/")}
       data-brand-slot="brand.logoFrame"
-      className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 text-ink no-underline"
+      className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 text-ink no-underline"
     >
       <BrandMark logoUrl={branding.logo_url} darkLogoUrl={branding.logo_dark_url} name={brandName} />
     </a>
   );
 }
 
-function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; route: Route["name"]; inDrawer?: boolean }) {
+function NavRow({
+  icon,
+  label,
+  href,
+  onClick,
+  current,
+  hint,
+  testId,
+}: {
+  icon: ReactNode;
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  current?: boolean;
+  hint?: string;
+  testId?: string;
+}) {
+  const body = (
+    <>
+      {icon}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {hint && <span className="hz-nav-hint">{hint}</span>}
+    </>
+  );
+  if (href)
+    return (
+      <a href={href} onClick={(e) => linkClick(e, href)} aria-current={current ? "page" : undefined} className="hz-nav" data-testid={testId}>
+        {body}
+      </a>
+    );
+  return (
+    <button type="button" onClick={onClick} aria-current={current ? "page" : undefined} className="hz-nav" data-testid={testId}>
+      {body}
+    </button>
+  );
+}
+
+const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+function SidebarBody({
+  activeId,
+  route,
+  inDrawer,
+  onClose,
+}: {
+  activeId: string | null;
+  route: Route["name"];
+  inDrawer?: boolean;
+  onClose?: () => void;
+}) {
   const app = useApp();
   const list = useConversations();
-  const [query, setQuery] = useState(list.q);
+  const view = useSidebarState();
+  const notices = useNotices();
+  const unread = useMemo(() => unreadChats(notices), [notices]);
   const [shareTarget, setShareTarget] = useState<Conversation | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -140,56 +218,31 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [newFolderFor, setNewFolderFor] = useState<Conversation | "none" | null>(null);
   const [folderName, setFolderName] = useState("");
-  const [hits, setHits] = useState<Hit[]>([]);
 
-  // First load, and a debounced search.
   useEffect(() => {
-    if (!list.loaded && !list.loading) void loadConversations(list.q, list.archived);
+    if (!list.loaded && !list.loading) void loadConversations("", list.archived);
+    // The sidebar always lists every chat; search lives in its own dialog.
+    else if (list.q) void loadConversations("", list.archived);
     if (!org.loaded) void loadOrganization();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Full-text matches inside messages, next to the title matches.
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      setHits([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      get<{ items: Hit[] }>(`/api/chat/search?q=${encodeURIComponent(q)}&types=message&limit=20`, { quiet401: true })
-        .then((r) => {
-          // One row per chat: its best match.
-          const seen = new Set<string>();
-          setHits(r.items.filter((h) => !seen.has(h.open_target.conversation_id) && !!seen.add(h.open_target.conversation_id)));
-        })
-        .catch(() => setHits([]));
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query]);
-  useEffect(() => {
-    const q = query.trim();
-    if (q === list.q) return;
-    const timer = setTimeout(() => void loadConversations(q, list.archived), 250);
-    return () => clearTimeout(timer);
-  }, [query, list.q, list.archived]);
 
-  const multiAgent = app.agents.list.length > 1;
+  const agents = app.agents.list;
+  const multiAgent = agents.length > 1;
+  const byAgent = multiAgent && view.view === "agents" && !list.archived;
 
   const placed = (c: Conversation) => org.placements.get(c.id);
+  const isPinned = (c: Conversation) => placed(c)?.pinned_position != null;
   const pinned = useMemo(
     () =>
-      list.archived || list.q
+      list.archived
         ? []
-        : list.items
-            .filter((c) => placed(c)?.pinned_position != null)
-            .sort((a, b) => (placed(a)!.pinned_position ?? 0) - (placed(b)!.pinned_position ?? 0)),
+        : list.items.filter(isPinned).sort((a, b) => (placed(a)!.pinned_position ?? 0) - (placed(b)!.pinned_position ?? 0)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [list.items, list.archived, list.q, org.placements],
+    [list.items, list.archived, org.placements],
   );
-  const inFolder = (folderId: string) =>
-    list.items.filter((c) => placed(c)?.folder_id === folderId && placed(c)?.pinned_position == null);
-  const loose = (c: Conversation) =>
-    !!list.archived || !!list.q || (placed(c)?.pinned_position == null && !placed(c)?.folder_id);
+  const inFolder = (folderId: string) => list.items.filter((c) => placed(c)?.folder_id === folderId && !isPinned(c));
+  const loose = (c: Conversation) => !!list.archived || (!isPinned(c) && !placed(c)?.folder_id);
 
   const onOrganize = async (c: Conversation, change: Parameters<typeof organize>[1]) => {
     try {
@@ -199,13 +252,14 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     }
   };
 
-  const rowProps = (c: Conversation) => ({
+  const rowProps = (c: Conversation, showAgent: boolean) => ({
     conversation: c,
     active: c.id === activeId,
     archivedView: list.archived,
-    agentAvatar: multiAgent ? agentById(app.agents.list, c.agent) : undefined,
+    agentAvatar: showAgent ? agentById(agents, c.agent) : undefined,
+    unread: unread.has(c.id) && c.id !== activeId,
     renaming: renaming === c.id,
-    pinned: placed(c)?.pinned_position != null,
+    pinned: isPinned(c),
     folders: org.folders,
     folderId: placed(c)?.folder_id ?? null,
     onRenameStart: () => setRenaming(c.id),
@@ -224,21 +278,37 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     },
   });
 
-  const groups = useMemo(() => {
+  const dated = (items: Conversation[]) => {
     const now = new Date();
     const map = new Map<DateGroup, Conversation[]>();
-    for (const c of list.items.filter(loose)) {
+    for (const c of items) {
       const g = dateGroup(c.updated_at ?? c.created_at, now);
       map.set(g, [...(map.get(g) ?? []), c]);
     }
     return GROUPS.map((g) => ({ ...g, items: map.get(g.key) ?? [] })).filter((g) => g.items.length > 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list.items, org.placements, list.archived, list.q]);
-
-  const showArchived = (archived: boolean) => {
-    setQuery("");
-    void loadConversations("", archived);
   };
+
+  // By agent: each agent's pinned chats, then its other unfiled chats by date.
+  const agentGroups = useMemo(() => {
+    if (!byAgent) return [];
+    const known = new Map<string, Agent>();
+    for (const a of agents) known.set(a.id, a);
+    const ids = new Set<string>();
+    for (const c of list.items) ids.add(agentById(agents, c.agent)?.id ?? c.agent);
+    const activeAgent = list.items.find((c) => c.id === activeId)?.agent;
+    return [...ids]
+      .map((id) => {
+        const agent = known.get(id) ?? { id, name: id };
+        const chats = list.items.filter((c) => (agentById(agents, c.agent)?.id ?? c.agent) === id && (isPinned(c) || !placed(c)?.folder_id));
+        const isActive = !!activeAgent && (agentById(agents, activeAgent)?.id ?? activeAgent) === id;
+        return { agent, chats, isActive };
+      })
+      .filter((g) => g.chats.length > 0)
+      .sort((a, b) => displayName(a.agent.name).localeCompare(displayName(b.agent.name)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byAgent, agents, list.items, org.placements, activeId]);
+
+  const showArchived = (archived: boolean) => void loadConversations("", archived);
 
   const onDelete = async () => {
     if (!deleteTarget) return;
@@ -247,7 +317,7 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     try {
       await deleteConversation({
         id: deleteTarget.id,
-        api_base: deleteTarget.api_base ?? agentById(app.agents.list, deleteTarget.agent)?.api_base,
+        api_base: deleteTarget.api_base ?? agentById(agents, deleteTarget.agent)?.api_base,
       });
       toast(t.sidebar.deletedToast);
       if (deleteTarget.id === activeId) app.newChat(deleteTarget.agent);
@@ -272,19 +342,19 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
   let body: ReactNode;
   if (list.loading && list.items.length === 0) {
     body = (
-      <div className="space-y-2 px-2 py-2" aria-hidden>
-        {[70, 90, 60, 80, 50].map((w, i) => (
-          <div key={i} className="hz-skeleton h-5" style={{ width: `${w}%` }} />
+      <div className="space-y-2.5 px-2.5 py-2" aria-hidden>
+        {[70, 88, 60, 80, 52].map((w, i) => (
+          <div key={i} className="hz-skeleton h-3.5" style={{ width: `${w}%` }} />
         ))}
       </div>
     );
   } else if (list.error && list.items.length === 0) {
     body = (
-      <div className="px-2">
+      <div className="px-1">
         <Notice
           tone="error"
           action={
-            <Button size="sm" onClick={() => void loadConversations(list.q, list.archived)}>
+            <Button size="sm" onClick={() => void loadConversations("", list.archived)}>
               {t.retry}
             </Button>
           }
@@ -294,226 +364,193 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
       </div>
     );
   } else if (list.items.length === 0) {
-    body = (
-      <p className="px-3 py-2 text-[13px] leading-relaxed text-mute">
-        {list.q ? t.sidebar.emptySearch(list.q) : list.archived ? t.sidebar.emptyArchived : t.sidebar.empty}
-      </p>
-    );
+    body = <p className="m-0 px-2.5 py-2 text-[12.5px] leading-relaxed text-mute">{list.archived ? t.sidebar.emptyArchived : t.sidebar.empty}</p>;
+  } else if (byAgent) {
+    body = agentGroups.map(({ agent, chats, isActive }) => (
+      <AgentGroup
+        key={agent.id}
+        agent={agent}
+        chats={chats}
+        open={sidebarState.isOpen(agent.id, isActive || agentGroups.length === 1)}
+        showAll={!!view.showAll[agent.id]}
+        unread={chats.some((c) => unread.has(c.id) && c.id !== activeId)}
+        renderRow={(c) => <ConversationRow key={c.id} {...rowProps(c, false)} />}
+        isPinned={isPinned}
+        dated={dated}
+        onNew={() => app.newChat(agent.id)}
+      />
+    ));
   } else {
     body = (
       <>
         {pinned.length > 0 && (
-          <section aria-label={t.sidebar.pinned} className="mb-2">
-            <h2 className="hz-side-heading">{t.sidebar.pinned}</h2>
-            <ul className="m-0 list-none space-y-px p-0">
-              {pinned.map((c) => (
-                <ConversationRow key={c.id} {...rowProps(c)} />
-              ))}
-            </ul>
+          <section aria-label={t.sidebar.pinned}>
+            <h3 className="hz-side-group">{t.sidebar.pinned}</h3>
+            <ul className="hz-rows">{pinned.map((c) => <ConversationRow key={c.id} {...rowProps(c, multiAgent)} />)}</ul>
           </section>
         )}
-        {!list.archived && !list.q && org.folders.length > 0 && (
-          <section aria-label={t.sidebar.folders} className="mb-2">
-            <h2 className="hz-side-heading">{t.sidebar.folders}</h2>
-            <ul className="m-0 list-none space-y-px p-0">
-              {org.folders.map((f) => {
-                const open = openFolders[f.id] ?? false;
-                const items = inFolder(f.id);
-                return (
-                  <li key={f.id}>
-                    <button
-                      type="button"
-                      className="hz-folder"
-                      aria-expanded={open}
-                      onClick={() => setOpenFolders((o) => ({ ...o, [f.id]: !open }))}
-                    >
-                      {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-                      <FolderIcon size={14} aria-hidden className="text-mute" />
-                      <span className="truncate">{f.name}</span>
-                      <span className="ml-auto text-[11px] text-mute">{items.length || ""}</span>
-                    </button>
-                    {open && (
-                      <ul className="m-0 list-none space-y-px p-0 pl-4">
-                        {items.map((c) => (
-                          <ConversationRow key={c.id} {...rowProps(c)} />
-                        ))}
-                        {items.length === 0 && <li className="px-2.5 py-1 text-[12px] text-mute">{t.sidebar.folderEmpty}</li>}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-        {hits.length > 0 && (
-          <section aria-label={t.sidebar.inMessages} className="mb-2">
-            <h2 className="hz-side-heading">{t.sidebar.inMessages}</h2>
-            <ul className="m-0 list-none space-y-px p-0">
-              {hits.map((hit) => {
-                const href = `/c/${encodeURIComponent(hit.open_target.conversation_id)}`;
-                return (
-                  <li key={`${hit.open_target.conversation_id}:${hit.open_target.message_id}`}>
-                    <a href={href} onClick={(e) => linkClick(e, href)} className="hz-hit">
-                      <span className="block truncate text-[12.5px] text-ink">{hit.title || t.sidebar.untitled}</span>
-                      <span className="block truncate text-[12px] text-mute">{hit.snippet}</span>
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-        {groups.map((group) => (
-          <section key={group.key} aria-labelledby={`grp-${group.key}${inDrawer ? "-d" : ""}`} className="mb-3">
-            <h2
-              id={`grp-${group.key}${inDrawer ? "-d" : ""}`}
-              className="m-0 px-2.5 pb-1 pt-2 text-xs font-medium text-mute"
-            >
-              {group.label}
-            </h2>
-            <ul className="m-0 list-none space-y-px p-0">
-              {group.items.map((c) => (
-                <ConversationRow key={c.id} {...rowProps(c)} />
-              ))}
-            </ul>
+        {dated(list.items.filter(loose)).map((group) => (
+          <section key={group.key} aria-label={group.label}>
+            <h3 className="hz-side-group">{group.label}</h3>
+            <ul className="hz-rows">{group.items.map((c) => <ConversationRow key={c.id} {...rowProps(c, multiAgent)} />)}</ul>
           </section>
         ))}
-        {list.nextCursor && (
-          <div className="px-2 pb-2">
-            <Button size="sm" variant="ghost" className="w-full" loading={list.loadingMore} onClick={() => void loadMore()}>
-              {t.sidebar.loadMore}
-            </Button>
-          </div>
-        )}
       </>
     );
   }
 
   return (
     <nav aria-label={t.sidebar.label} className="flex h-full min-h-0 w-full flex-col">
-      <div className={cx("flex items-center gap-2 px-3 pb-2 pt-3.5", inDrawer && "pr-12")}>
+      <div className="flex items-center gap-1 px-2.5 pb-4 pt-3.5">
         <Brand />
-      </div>
-      <div className="space-y-2 px-3 pb-2">
-        <button
-          type="button"
-          onClick={() => app.newChat()}
-          aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
-          className={cx(
-            "hz-btn hz-btn-secondary w-full justify-start",
-            route === "new" && "border-accent/40",
-          )}
-        >
-          <SquarePen size={16} aria-hidden className="text-mute" />
-          {t.sidebar.newChat}
-        </button>
-        <div className="relative">
-          <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mute" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && query) {
-                e.preventDefault();
-                setQuery("");
-              }
-            }}
-            placeholder={t.sidebar.searchPlaceholder}
-            aria-label={t.sidebar.search}
-            className="hz-input !min-h-9 !rounded-lg !py-1.5 !pl-9 !text-sm [&::-webkit-search-cancel-button]:hidden"
-          />
-          {query && (
-            <button
-              type="button"
-              aria-label={t.sidebar.clearSearch}
-              onClick={() => setQuery("")}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-mute hover:bg-hover hover:text-ink"
-            >
-              <X size={14} aria-hidden />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {list.archived && (
-        <div className="flex items-center gap-1 px-2 pb-1">
-          <IconButton label={t.sidebar.backToChats} onClick={() => showArchived(false)}>
-            <ArrowLeft size={16} aria-hidden />
+        {inDrawer ? (
+          <IconButton label={t.sidebar.closeMenu} onClick={onClose} tooltip={false}>
+            <X size={17} aria-hidden />
           </IconButton>
-          <h2 className="m-0 text-sm font-semibold">{t.sidebar.archivedTitle}</h2>
-        </div>
-      )}
+        ) : (
+          <IconButton label={t.sidebar.collapse} onClick={sidebarState.toggleCollapsed}>
+            <PanelLeft size={17} aria-hidden />
+          </IconButton>
+        )}
+      </div>
+      <div className="flex flex-col gap-px px-2.5 pb-1">
+        <NavRow
+          icon={<SquarePen size={16} aria-hidden />}
+          label={t.sidebar.newChat}
+          onClick={() => app.newChat()}
+          current={route === "new"}
+          hint={mac ? "⇧⌘O" : "Ctrl⇧O"}
+          testId="new-chat"
+        />
+        <NavRow icon={<Search size={16} aria-hidden />} label={t.sidebar.searchPlaceholder} onClick={sidebarState.openSearch} hint={mac ? "⌘K" : "Ctrl K"} testId="open-search" />
+      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" aria-busy={list.loading || undefined}>
-        {list.loading && list.items.length > 0 && (
-          <div className="flex justify-center py-1">
-            <Spinner size={14} />
+      <div className="hz-side-scroll" aria-busy={list.loading || undefined}>
+        {list.archived ? (
+          <div className="flex items-center gap-1 pb-1 pt-2">
+            <IconButton label={t.sidebar.backToChats} onClick={() => showArchived(false)}>
+              <ArrowLeft size={15} aria-hidden />
+            </IconButton>
+            <h2 className="m-0 text-[13px] font-medium text-ink">{t.sidebar.archivedTitle}</h2>
           </div>
+        ) : (
+          <>
+            {org.folders.length > 0 && (
+              <section aria-label={t.sidebar.folders}>
+                <div className="hz-side-head">
+                  <h2>{t.sidebar.folders}</h2>
+                  <IconButton
+                    label={t.sidebar.newFolder}
+                    className="hz-side-head-act"
+                    onClick={() => {
+                      setFolderName("");
+                      setNewFolderFor("none");
+                    }}
+                  >
+                    <Plus size={14} aria-hidden />
+                  </IconButton>
+                </div>
+                <ul className="hz-rows">
+                  {org.folders.map((f) => {
+                    const open = openFolders[f.id] ?? false;
+                    const items = inFolder(f.id);
+                    return (
+                      <li key={f.id}>
+                        <button
+                          type="button"
+                          className="hz-folder"
+                          aria-expanded={open}
+                          onClick={() => setOpenFolders((o) => ({ ...o, [f.id]: !open }))}
+                        >
+                          <FolderIcon size={15} aria-hidden className="text-mute" />
+                          <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                          <span className="text-[11px] tabular-nums text-mute">{items.length || ""}</span>
+                          {open ? <ChevronDown size={13} aria-hidden className="text-mute" /> : <ChevronRight size={13} aria-hidden className="text-mute" />}
+                        </button>
+                        {open && (
+                          <ul className="hz-rows pl-4">
+                            {items.map((c) => (
+                              <ConversationRow key={c.id} {...rowProps(c, multiAgent)} />
+                            ))}
+                            {items.length === 0 && <li className="px-2.5 py-1 text-[12px] text-mute">{t.sidebar.folderEmpty}</li>}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
+            <div className="hz-side-head">
+              <h2>{t.sidebar.chats}</h2>
+              {multiAgent ? (
+                <Menu.Root modal={false}>
+                  <Menu.Trigger asChild>
+                    <button type="button" className="hz-side-view" aria-label={t.sidebar.viewOptions}>
+                      {view.view === "agents" ? t.sidebar.byAgent : t.sidebar.recent}
+                      <ChevronDown size={12} aria-hidden />
+                    </button>
+                  </Menu.Trigger>
+                  <Menu.Portal>
+                    <Menu.Content className="hz-menu w-[210px]" align="end" sideOffset={4}>
+                      <Menu.RadioGroup value={view.view} onValueChange={(v) => sidebarState.setView(v as "agents" | "recent")}>
+                        <Menu.RadioItem value="agents" className="hz-menu-item">
+                          <span className="flex-1">{t.sidebar.byAgent}</span>
+                          <Menu.ItemIndicator>
+                            <Check size={14} aria-hidden />
+                          </Menu.ItemIndicator>
+                        </Menu.RadioItem>
+                        <Menu.RadioItem value="recent" className="hz-menu-item">
+                          <span className="flex-1">{t.sidebar.recent}</span>
+                          <Menu.ItemIndicator>
+                            <Check size={14} aria-hidden />
+                          </Menu.ItemIndicator>
+                        </Menu.RadioItem>
+                      </Menu.RadioGroup>
+                      <Menu.Separator className="hz-menu-sep" />
+                      <Menu.Item
+                        className="hz-menu-item"
+                        onSelect={() => {
+                          setFolderName("");
+                          setNewFolderFor("none");
+                        }}
+                      >
+                        <FolderPlus size={15} aria-hidden />
+                        {t.sidebar.newFolder}
+                      </Menu.Item>
+                      <Menu.Item className="hz-menu-item" onSelect={() => showArchived(true)}>
+                        <Archive size={15} aria-hidden />
+                        {t.sidebar.archived}
+                      </Menu.Item>
+                    </Menu.Content>
+                  </Menu.Portal>
+                </Menu.Root>
+              ) : (
+                <IconButton
+                  label={t.sidebar.newFolder}
+                  className="hz-side-head-act"
+                  onClick={() => {
+                    setFolderName("");
+                    setNewFolderFor("none");
+                  }}
+                >
+                  <FolderPlus size={14} aria-hidden />
+                </IconButton>
+              )}
+            </div>
+          </>
         )}
         {body}
+        {list.nextCursor && (
+          <button type="button" className="hz-side-more" disabled={list.loadingMore} onClick={() => void loadMore()}>
+            {t.sidebar.loadMore}
+          </button>
+        )}
       </div>
 
-      <div className="border-t border-line px-2 py-2">
-        {!list.archived && (
-          <a
-            href="/sources"
-            onClick={(e) => linkClick(e, "/sources")}
-            aria-current={route === "sources" ? "page" : undefined}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute no-underline hover:bg-hover hover:text-ink aria-[current=page]:bg-active aria-[current=page]:text-ink"
-          >
-            <BookOpen size={15} aria-hidden />
-            {t.sources.nav}
-          </a>
-        )}
-        {!list.archived && (
-          <a
-            href="/spaces"
-            onClick={(e) => linkClick(e, "/spaces")}
-            aria-current={route === "spaces" ? "page" : undefined}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute no-underline hover:bg-hover hover:text-ink aria-[current=page]:bg-active aria-[current=page]:text-ink"
-          >
-            <UsersRound size={15} aria-hidden />
-            {t.spaces.nav}
-          </a>
-        )}
-        {!list.archived && app.isAdmin && (
-          <a
-            href="/workspace"
-            onClick={(e) => linkClick(e, "/workspace")}
-            aria-current={route === "workspace" ? "page" : undefined}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute no-underline hover:bg-hover hover:text-ink aria-[current=page]:bg-active aria-[current=page]:text-ink"
-          >
-            <PencilRuler size={15} aria-hidden />
-            {t.workspace.nav}
-          </a>
-        )}
-        {!list.archived && (
-          <button
-            type="button"
-            onClick={() => showArchived(true)}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute hover:bg-hover hover:text-ink"
-          >
-            <Archive size={15} aria-hidden />
-            {t.sidebar.archived}
-          </button>
-        )}
-        {!list.archived && (
-          <button
-            type="button"
-            onClick={() => {
-              setFolderName("");
-              setNewFolderFor("none");
-            }}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute hover:bg-hover hover:text-ink"
-          >
-            <FolderPlus size={15} aria-hidden />
-            {t.sidebar.newFolder}
-          </button>
-        )}
+      <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1.5">
+        <AccountMenu onArchived={() => showArchived(true)} />
         <NotificationsButton />
-        <AccountMenu />
       </div>
 
       <ShareDialog conversation={shareTarget} onClose={() => setShareTarget(null)} />
@@ -554,11 +591,77 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
   );
 }
 
+function AgentGroup({
+  agent,
+  chats,
+  open,
+  showAll,
+  unread,
+  renderRow,
+  isPinned,
+  dated,
+  onNew,
+}: {
+  agent: Agent;
+  chats: Conversation[];
+  open: boolean;
+  showAll: boolean;
+  unread: boolean;
+  renderRow: (c: Conversation) => ReactNode;
+  isPinned: (c: Conversation) => boolean;
+  dated: (items: Conversation[]) => { key: DateGroup; label: string; items: Conversation[] }[];
+  onNew: () => void;
+}) {
+  const name = displayName(agent.name);
+  const pinned = chats.filter(isPinned);
+  const rest = chats.filter((c) => !isPinned(c));
+  const ordered = [...pinned, ...rest];
+  const shown = new Set((showAll ? ordered : ordered.slice(0, VISIBLE)).map((c) => c.id));
+  const groups = dated(rest.filter((c) => shown.has(c.id)));
+  return (
+    <section className="hz-agent-group" data-open={open} aria-label={name}>
+      <div className="hz-agent-head">
+        <button type="button" className="hz-agent-toggle" aria-expanded={open} onClick={() => sidebarState.setOpen(agent.id, !open)}>
+          <ChevronRight size={13} aria-hidden className="hz-agent-chev" />
+          <AgentAvatar name={agent.name} src={agent.avatar_url} size={18} />
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          {unread && !open && <span className="hz-dot" aria-label={t.sidebar.unreadReply} />}
+        </button>
+        <IconButton label={t.sidebar.newChatWith(name)} className="hz-side-head-act" onClick={onNew}>
+          <Plus size={14} aria-hidden />
+        </IconButton>
+      </div>
+      {open && (
+        <div className="hz-agent-body">
+          {pinned.filter((c) => shown.has(c.id)).length > 0 && (
+            <>
+              <h3 className="hz-side-group is-nested">{t.sidebar.pinned}</h3>
+              <ul className="hz-rows is-nested">{pinned.filter((c) => shown.has(c.id)).map(renderRow)}</ul>
+            </>
+          )}
+          {groups.map((g) => (
+            <div key={g.key}>
+              <h3 className="hz-side-group is-nested">{g.label}</h3>
+              <ul className="hz-rows is-nested">{g.items.map(renderRow)}</ul>
+            </div>
+          ))}
+          {ordered.length > VISIBLE && (
+            <button type="button" className="hz-side-more is-nested" onClick={() => sidebarState.toggleShowAll(agent.id)}>
+              {showAll ? t.sidebar.showFewer : t.sidebar.showAll(ordered.length)}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ConversationRow({
   conversation: c,
   active,
   archivedView,
   agentAvatar,
+  unread,
   renaming,
   pinned,
   folders,
@@ -576,6 +679,7 @@ function ConversationRow({
   active: boolean;
   archivedView: boolean;
   agentAvatar?: { name: string; avatar_url?: string | null };
+  unread: boolean;
   renaming: boolean;
   pinned: boolean;
   folders: { id: string; name: string }[];
@@ -619,25 +723,42 @@ function ConversationRow({
     );
 
   return (
-    <li className="hz-conv" data-active={active}>
+    <li className="hz-conv" data-active={active} data-unread={unread || undefined}>
       <a
         href={href}
         onClick={(e) => linkClick(e, href)}
         aria-current={active ? "page" : undefined}
+        aria-label={unread ? `${title}, ${t.sidebar.unreadReply}` : undefined}
         className="flex items-center gap-2"
         title={title}
       >
-        {agentAvatar && <AgentAvatar name={agentAvatar.name} src={agentAvatar.avatar_url} size={18} />}
+        {agentAvatar && <AgentAvatar name={agentAvatar.name} src={agentAvatar.avatar_url} size={16} />}
         <span className="truncate">{title}</span>
       </a>
+      {unread && (
+        <span className="hz-conv-state" aria-hidden>
+          <span className="hz-dot" />
+        </span>
+      )}
+      {!archivedView && (
+        <button
+          type="button"
+          className="hz-icon-btn hz-conv-pin"
+          aria-label={pinned ? t.sidebar.unpin : t.sidebar.pin}
+          aria-pressed={pinned}
+          onClick={() => onPin(!pinned)}
+        >
+          <Pin size={13} aria-hidden />
+        </button>
+      )}
       <Menu.Root modal={false}>
         <Menu.Trigger asChild>
           <button ref={moreRef} type="button" className="hz-icon-btn hz-conv-more" aria-label={t.sidebar.options(title)}>
-            <MoreHorizontal size={16} aria-hidden />
+            <MoreHorizontal size={15} aria-hidden />
           </button>
         </Menu.Trigger>
         <Menu.Portal>
-          <Menu.Content className="hz-menu" align="start" sideOffset={4}>
+          <Menu.Content className="hz-menu w-[210px]" align="start" sideOffset={4}>
             <Menu.Item className="hz-menu-item" onSelect={onRenameStart}>
               <Pencil size={15} aria-hidden />
               {t.sidebar.rename}
@@ -738,7 +859,7 @@ function RenameField({
     }
   };
   return (
-    <div className="flex items-center gap-1 rounded-lg bg-hover p-1">
+    <div className="flex items-center gap-1 rounded-lg bg-hover p-0.5">
       <input
         ref={ref}
         value={value}
@@ -747,16 +868,16 @@ function RenameField({
         onBlur={() => finish(true)}
         aria-label={t.sidebar.renameLabel}
         maxLength={200}
-        className="hz-input !min-h-8 flex-1 !px-2 !py-1 !text-sm"
+        className="hz-input !min-h-7 flex-1 !px-2 !py-0.5 !text-[13px]"
       />
       <button
         type="button"
         aria-label={t.save}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => finish(true)}
-        className="hz-icon-btn !h-8 !w-8"
+        className="hz-icon-btn !h-7 !w-7"
       >
-        <Check size={15} aria-hidden />
+        <Check size={14} aria-hidden />
       </button>
     </div>
   );
@@ -769,14 +890,12 @@ const themeOptions: { value: ThemeMode; label: string; icon: ReactNode }[] = [
   { value: "system", label: t.theme.system, icon: <Monitor size={15} aria-hidden /> },
 ];
 
-function AccountMenu() {
+function AccountMenu({ onArchived }: { onArchived: () => void }) {
   const app = useApp();
   const { mode, setMode, allowed, locked } = useTheme();
-  // Concealment only: the server still decides what each person may do.
-  const hidden = app.branding.manifest?.presentation.hidden_features ?? [];
   const [signingOut, setSigningOut] = useState(false);
   const name = app.isLocal ? t.account.local : app.user?.name || app.user?.email || "";
-  const email = app.user?.email && app.user.email !== name ? app.user.email : "";
+  const role = app.isAdmin ? t.account.admin : app.isLocal ? "" : t.account.member;
 
   const signOut = async () => {
     setSigningOut(true);
@@ -794,60 +913,48 @@ function AccountMenu() {
   return (
     <Menu.Root>
       <Menu.Trigger asChild>
-        <button
-          type="button"
-          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-hover data-[state=open]:bg-hover"
-          aria-label={`${t.account.menu}: ${displayName(name)}`}
-        >
-          <UserAvatar name={name || "?"} size={28} />
+        <button type="button" className="hz-me" aria-label={`${t.account.menu}: ${displayName(name)}`}>
+          <UserAvatar name={name || "?"} size={26} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-ink">{displayName(name)}</span>
-            {email && <span className="block truncate text-xs text-mute">{email}</span>}
+            <span className="block truncate text-[13px] font-medium text-ink">{displayName(name)}</span>
+            {role && <span className="block truncate text-[11.5px] leading-tight text-mute">{role}</span>}
           </span>
-          <MoreHorizontal size={16} aria-hidden className="text-mute" />
         </button>
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Content className="hz-menu w-[240px]" side="top" align="start" sideOffset={6}>
-          <Menu.Label className="hz-menu-label">
-            <span className="block truncate font-medium text-ink">{displayName(name)}</span>
-            {app.user?.email && <span className="block truncate">{app.user.email}</span>}
-          </Menu.Label>
-          <Menu.Separator className="hz-menu-sep" />
-          <Menu.Item className="hz-menu-item" onSelect={() => navigate("/account")}>
-            <UserRound size={15} aria-hidden />
-            {t.account.account}
+          {app.user?.email && <Menu.Label className="hz-menu-label truncate">{app.user.email}</Menu.Label>}
+          <Menu.Item className="hz-menu-item" onSelect={() => navigate("/settings")}>
+            <Settings size={15} aria-hidden />
+            <span className="flex-1">{t.account.settings}</span>
+            <span className="text-[11.5px] text-mute">{mac ? "⌘," : ""}</span>
           </Menu.Item>
-          {!hidden.includes("connections") && <Menu.Item className="hz-menu-item" onSelect={() => navigate("/account/connections")}>
-            <Plug size={15} aria-hidden />
-            {t.account.connections}
-          </Menu.Item>}
-          {!hidden.includes("schedules") && <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/#/schedules")}>
-            <LayoutGrid size={15} aria-hidden />
-            {t.account.schedules}
-          </Menu.Item>}
-          {(app.isAdmin || app.user?.console) && !hidden.includes("console_link") && (
-            <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/")}>
-              <ExternalLink size={15} aria-hidden />
-              {t.account.console}
-            </Menu.Item>
+          <Menu.Item className="hz-menu-item" onSelect={onArchived}>
+            <Archive size={15} aria-hidden />
+            {t.sidebar.archived}
+          </Menu.Item>
+          <Menu.Item className="hz-menu-item" onSelect={() => window.dispatchEvent(new Event("hz:shortcuts"))}>
+            <Keyboard size={15} aria-hidden />
+            <span className="flex-1">{t.account.shortcuts}</span>
+            <span className="text-[11.5px] text-mute">?</span>
+          </Menu.Item>
+          {!locked && allowed.length > 1 && (
+            <>
+              <Menu.Separator className="hz-menu-sep" />
+              <Menu.Label className="hz-menu-label">{t.theme.label}</Menu.Label>
+              <Menu.RadioGroup value={mode} onValueChange={(v) => setMode(v as ThemeMode)}>
+                {themeOptions.filter((o) => allowed.includes(o.value)).map((o) => (
+                  <Menu.RadioItem key={o.value} value={o.value} className="hz-menu-item" onSelect={(e) => e.preventDefault()}>
+                    {o.icon}
+                    <span className="flex-1">{o.label}</span>
+                    <Menu.ItemIndicator>
+                      <Check size={14} aria-hidden />
+                    </Menu.ItemIndicator>
+                  </Menu.RadioItem>
+                ))}
+              </Menu.RadioGroup>
+            </>
           )}
-          <Menu.Separator className="hz-menu-sep" />
-          <Menu.Label className="hz-menu-label !pb-1 !pt-1">
-            {t.theme.label}
-            {locked && <span className="block text-xs font-normal">{t.theme.managed}</span>}
-          </Menu.Label>
-          <Menu.RadioGroup value={mode} onValueChange={(v) => setMode(v as ThemeMode)}>
-            {themeOptions.filter((o) => !locked && allowed.includes(o.value)).map((o) => (
-              <Menu.RadioItem key={o.value} value={o.value} className="hz-menu-item" onSelect={(e) => e.preventDefault()}>
-                {o.icon}
-                <span className="flex-1">{o.label}</span>
-                <Menu.ItemIndicator>
-                  <Check size={15} aria-hidden className="!text-accent-text" />
-                </Menu.ItemIndicator>
-              </Menu.RadioItem>
-            ))}
-          </Menu.RadioGroup>
           {!app.isLocal && (
             <>
               <Menu.Separator className="hz-menu-sep" />

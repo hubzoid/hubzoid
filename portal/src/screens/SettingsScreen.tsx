@@ -17,8 +17,26 @@ const TABS = [
   { key: "parity", label: "Parity ledger", node: <Parity /> },
 ];
 
-export function SettingsScreen({ tab }: { tab?: string }) {
+const EMBEDDED_TITLES: Record<string, string> = {
+  chat: "Chat defaults",
+  appearance: "Brand",
+  admin: "Advanced health settings",
+  parity: "Compatibility requirements",
+};
+
+export function SettingsScreen({ tab, embedded }: { tab?: string; embedded?: boolean }) {
   const active = TABS.some((t) => t.key === tab) ? tab! : "chat";
+  // In the chat app's Settings page each tab is its own section there.
+  if (embedded)
+    return (
+      <div className="screen">
+        <Typography.Title level={2} style={{ marginTop: 0 }}>
+          {EMBEDDED_TITLES[active]}
+        </Typography.Title>
+        {active === "appearance" && <p className="hz-settings-help">The published revision is what teammates see. Import your Hub’s branding files or edit a draft here, then review and activate it. File edits alone do not replace a published revision. Export active files to keep your Hub in sync.</p>}
+        <Suspense fallback={<Spin />}>{TABS.find((t) => t.key === active)!.node}</Suspense>
+      </div>
+    );
   return (
     <div className="screen">
       <Typography.Title level={2} style={{ marginTop: 0 }}>

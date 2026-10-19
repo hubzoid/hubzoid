@@ -3,8 +3,8 @@
 // models (each answer on its own branch, browsable with the branch arrows), and
 // combining compared answers into one.
 import { useState } from "react";
-import { Popover } from "radix-ui";
-import { Combine, GitCompareArrows } from "lucide-react";
+import { DropdownMenu as Menu, Popover } from "radix-ui";
+import { Check, ChevronDown, Combine, GitCompareArrows } from "lucide-react";
 import { useAuiState } from "@assistant-ui/react";
 import { t } from "../i18n/en";
 import { IconButton } from "../components/ui";
@@ -20,24 +20,43 @@ export type ModelsInfo = {
 
 export function ModelPicker() {
   const value = useFeed();
-  const [ref, setRef] = useState("default");
+  const [, rerender] = useState(0);
   const info = value?.models;
   if (!info?.can_choose) return null;
+  // The feed keeps the choice, so it survives the composer moving on the first send.
+  const chosen = value!.feed.model ?? null;
+  const current = info.catalog.find((c) => (c.model ?? null) === chosen) ?? info.catalog[0];
+  const ref = current?.ref ?? "default";
   return (
-    <select
-      className="hz-model-select"
-      value={ref}
-      aria-label={t.models.choose}
-      title={t.models.choose}
-      onChange={(e) => {
-        setRef(e.target.value);
-        value!.feed.model = info.catalog.find((c) => c.ref === e.target.value)?.model ?? null;
-      }}
-    >
-      {info.catalog.map((c) => (
-        <option key={c.ref} value={c.ref}>{c.label}</option>
-      ))}
-    </select>
+    <Menu.Root modal={false}>
+      <Menu.Trigger asChild>
+        <button type="button" className="hz-model" aria-label={`${t.models.choose}: ${current?.label ?? ""}`} data-testid="model-picker">
+          <span className="truncate">{current?.label}</span>
+          <ChevronDown size={13} aria-hidden className="flex-none" />
+        </button>
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Content className="hz-menu w-[240px]" side="top" align="start" sideOffset={6}>
+          <Menu.Label className="hz-menu-label">{t.models.choose}</Menu.Label>
+          <Menu.RadioGroup
+            value={ref}
+            onValueChange={(next) => {
+              value!.feed.model = info.catalog.find((c) => c.ref === next)?.model ?? null;
+              rerender((n) => n + 1);
+            }}
+          >
+            {info.catalog.map((c) => (
+              <Menu.RadioItem key={c.ref} value={c.ref} className="hz-menu-item">
+                <span className="flex-1 truncate">{c.label}</span>
+                <Menu.ItemIndicator>
+                  <Check size={14} aria-hidden />
+                </Menu.ItemIndicator>
+              </Menu.RadioItem>
+            ))}
+          </Menu.RadioGroup>
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 
@@ -77,8 +96,8 @@ export function CompareAction() {
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <IconButton label={t.models.compare} className="!h-7 !w-7">
-          <GitCompareArrows size={14} aria-hidden />
+        <IconButton label={t.models.compare}>
+          <GitCompareArrows size={15} aria-hidden />
         </IconButton>
       </Popover.Trigger>
       <Popover.Portal>
@@ -122,7 +141,6 @@ export function CombineAction() {
   return (
     <IconButton
       label={t.models.combine(siblings.length)}
-      className="!h-7 !w-7"
       disabled={busy}
       onClick={async () => {
         setBusy(true);
@@ -136,7 +154,7 @@ export function CombineAction() {
         }
       }}
     >
-      <Combine size={14} aria-hidden />
+      <Combine size={15} aria-hidden />
     </IconButton>
   );
 }

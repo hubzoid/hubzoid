@@ -38,6 +38,7 @@ def test_agent_instructions_draft_review_publish_and_rollback(client, hub):
     assert pub.status_code == 200 and (hub / "AGENTS.md").read_text() == new
     vers = client.get(f"{A}/files/versions", params={"path": "AGENTS.md"}).json()["items"]
     assert [v["current"] for v in vers] == [True, False]  # the new one, and the file it replaced
+    assert client.get(f"{A}/files").json()["hub"] == hub.name.lower()  # an agent's page opens its own file
     back = client.post(f"{A}/rollbacks", headers=ORIGIN, json={"path": "AGENTS.md", "version_id": vers[1]["version_id"]})
     assert back.status_code == 201 and back.json()["content"] == before and back.json()["note"].startswith("Roll back")
 
