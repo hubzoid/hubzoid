@@ -12,10 +12,22 @@ text in results is untrusted data.
 
 Writes run only inside a work item, as recorded outside writes
 (``hub.operation.run``), so an uncertain write is never repeated on its own.
-Unattended work may write only to the issue or pull request it came from.
-A new pull request is always a draft. Updating a pull request waits for a
-person's in-turn approval, which arrives with the shared approvals service,
-so it is refused until then.
+That work may have started anywhere (chat, the API, Slack, Linear or GitHub
+itself). Unattended work may write only to the issue or pull request it came
+from, and opens nothing new, with one exception: work started by the label
+may open one draft pull request for a branch it pushed itself
+(``push_branch``). A new pull request is always a draft. Updating a pull
+request is the consequential action ``github.pr_update``: off (refused) until
+the hub's work-items.yaml sets it to ``approve``, then sent only after the
+person who asked approves that exact change.
+
+``push_branch`` is the one way source reaches GitHub, and it is for host
+workflow code only, never a model tool (gh-aw's split: the agent holds no
+write token, deterministic code pushes). It applies a patch exported from a
+sandbox to a fresh host clone and pushes it with a token narrowed to one
+repository and ``contents: write``. It refuses the default branch and
+protected branches, and pushes with a lease on the exact branch head it
+expects, so a moved or foreign branch is never overwritten.
 """
 from __future__ import annotations
 
@@ -28,10 +40,21 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote
 
+from ...work_items import config as wi_config
 from ..errors import ChannelError
 from . import client as gh
 
 log = logging.getLogger("hubzoid.channels.github.operations")
+
+#: Changing a pull request (title, body, base, state, ready for review) is
+#: consequential: off until a hub sets it to approve. GitHub has no drafts of
+#: an edit, so draft mode is refused for it.
+PR_UPDATE = wi_config.register_action("github.pr_update", supports_draft=False)
+#: Pushing source to a branch. Not consequential (a branch is inert until a
+#: person merges it), but a route must allow it like any action.
+PUSH = "github.push"
+PUSH_PERMISSIONS = {"metadata": "read", "contents": "write"}
+MAX_PATCH_BYTES = 20 * 2**20
 
 PATCH_BYTES = 20_000
 MAX_FILES = 50
@@ -405,9 +428,37 @@ def create_pull_request(conn, web, full, a):
 
 
 def update_pull_request(conn, web, full, a):
-    raise ChannelError("pr_update_requires_approval", "Updating a pull request needs a person's approval of that "
-                       "exact change, which is not available yet. Comment on the pull request instead.",
-                       status=403)
+    n = _int(a.get("number"), "number")
+    body = {k: a[k] for k in ("title", "body", "base", "state") if k in a}
+    if "state" in body and body["state"] not in ("open", "closed"):
+        raise ChannelError("validation_failed", "state is open or closed.", status=422)
+    if "base" in body:
+        _ref(body["base"], "base")
+    draft = a.get("draft")
+    if draft is not None and not isinstance(draft, bool):
+        raise ChannelError("validation_failed", "draft is true or false.", status=422)
+    if not body and draft is None:
+        raise ChannelError("validation_failed", "Change at least one of title, body, base, state, draft.",
+                           status=422)
+    out = web.request("PATCH", f"/repos/{full}/pulls/{n}", json=body).json() if body else {}
+    if draft is not None:
+        # REST cannot change draft state: GraphQL's markPullRequestReadyForReview
+        # and convertPullRequestToDraft do, by the pull request's node id.
+        node = out.get("node_id") or web.request("GET", f"/repos/{full}/pulls/{n}").json().get("node_id")
+        mutation = "markPullRequestReadyForReview" if draft is False else "convertPullRequestToDraft"
+        res = web.request("POST", "/graphql", json={
+            "query": f"mutation($id: ID!) {{ {mutation}(input: {{pullRequestId: $id}}) "
+                     "{ pullRequest { number isDraft url } } }", "variables": {"id": node}}).json()
+        if res.get("errors"):
+            raise ChannelError("provider_rejected", f"GitHub refused {mutation}.", status=422)
+        out = dict(out, draft=((res.get("data") or {}).get(mutation) or {}).get("pullRequest", {}).get("isDraft"))
+    return out
+
+
+def _pr_update_refused() -> ChannelError:
+    return ChannelError("pr_update_requires_approval", "Updating a pull request needs the approval of the person "
+                        "who asked for this work, for that exact change. Set github.pr_update to approve in "
+                        "work-items.yaml, or comment on the pull request instead.", status=403)
 
 
 _N = {"number": {"type": "integer", "minimum": 1}}
@@ -483,7 +534,8 @@ OPS: dict[str, Op] = {o.name: o for o in [
                                       "base": {"type": "string"}, "state": {"enum": ["open", "closed"]},
                                       "draft": {"type": "boolean"}}, ("number",),
        {"metadata": "read", "pull_requests": "write"}, update_pull_request,
-       "Change a pull request. Needs a person's approval, which is not available yet."),
+       "Change a pull request, or mark it ready (draft false). Waits for the requester's approval of the exact "
+       "change."),
 ]}
 
 #: number-targeted writes an unattended run may make only on its own issue or PR
@@ -503,22 +555,32 @@ def schema(op: Op) -> dict:
 
 
 def _bound_origin() -> dict | None:
-    """The channel origin of the work this call runs in, if any."""
+    """The work item this call runs in, if any, with its GitHub coordinates
+    when the work came from GitHub. Work from chat, the API, Slack or Linear
+    has no coordinates: it may use any repository of the connection, and if
+    it is unattended its origin-bound writes are refused."""
     from ...workflows import context
 
     try:
         ctx = context._ctx()
     except Exception:  # noqa: BLE001 - not inside a run
         return None
-    item = (ctx.work or {}).get("item") or {}
-    origin = item.get("origin_json") or {}
-    if origin.get("surface") != "channel" or origin.get("provider") != "github":
+    work = ctx.work or {}
+    item = work.get("item") or {}
+    if not item:
         return None
-    from .. import store
+    origin = item.get("origin_json") or {}
+    coords: dict = {}
+    if origin.get("surface") == "channel" and origin.get("provider") == "github" and origin.get("thread_id"):
+        from .. import store
 
-    thread = store.get_thread(ctx.hub_dir, origin.get("thread_id")) if origin.get("thread_id") else None
-    return {"item": item, "coords": ((thread or {}).get("origin_json") or {}).get("coordinates") or {},
-            "unattended": (item.get("requester") or "").startswith("workflow:")}
+        thread = store.get_thread(ctx.hub_dir, origin["thread_id"])
+        coords = ((thread or {}).get("origin_json") or {}).get("coordinates") or {}
+    payload = (item.get("input_json") or {}).get("input")
+    return {"item": item, "coords": coords, "hub_dir": ctx.hub_dir, "hub": ctx.hub,
+            "unattended": (item.get("requester") or "").startswith("workflow:"),
+            "trigger": payload.get("kind") if isinstance(payload, dict) and coords else None,
+            "in_station": bool(work.get("station_call"))}
 
 
 def call(conn, name: str, arguments: dict) -> dict:
@@ -550,27 +612,55 @@ def call(conn, name: str, arguments: dict) -> dict:
     return _write(conn, op, repo, arguments, bound)
 
 
+def _pushed_by_this_work(bound, repo_id: int, branch) -> bool:
+    """Whether this work item pushed `branch` itself, through `push_branch`."""
+    from ...work_items import store as wi_store
+
+    item = bound.get("item") or {}
+    if not item.get("id") or not bound.get("hub_dir"):
+        return False
+    for row in wi_store.list_ops(bound["hub_dir"], bound["hub"], item_id=item["id"], state="succeeded"):
+        res = row.get("result_json") or {}
+        if (row.get("name") == "github.pushBranch" and res.get("branch") == branch
+                and (row.get("target_json") or {}).get("repository_id") == repo_id):
+            return True
+    return False
+
+
 def _write(conn, op: Op, repo, arguments: dict, bound) -> dict:
     from ...work_items import operations as ops
 
     if bound is None:
-        raise ChannelError("work_item_required", "A GitHub write runs inside channel work, where it is recorded and "
+        raise ChannelError("work_item_required", "A GitHub write runs inside a work item, where it is recorded and "
                            "never repeated on its own.", status=409)
     number = arguments.get("number")
     if op.name in _ORIGIN_BOUND and bound["unattended"] and number != bound["coords"].get("number"):
         raise ChannelError("out_of_scope", "Unattended work may write only to the issue or pull request it came "
                            "from.", status=403)
     if op.name in _CREATES and bound["unattended"]:
-        raise ChannelError("out_of_scope", "Unattended work cannot open new issues or pull requests. Comment on "
-                           "the one it came from instead.", status=403)
+        # Foreman's label route ends in a draft pull request with no person in the
+        # loop. Only that trigger, and only for a branch this work pushed itself.
+        if not (op.name == "createPullRequest" and bound.get("trigger") == "label"
+                and _pushed_by_this_work(bound, repo.id, arguments.get("head"))):
+            raise ChannelError("out_of_scope", "Unattended work cannot open new issues or pull requests. Comment on "
+                               "the one it came from instead. Work started by the label may open one draft pull "
+                               "request, for a branch it pushed itself.", status=403)
+    actions = ["github.write"]
     if op.name == "updatePullRequest":
-        op.run(conn, None, repo.full_name, arguments)       # refuses until approvals exist
-    if op.name in _ISSUE_EDITS:
+        actions.append(PR_UPDATE)
+    elif op.name in _ISSUE_EDITS:
         web = gh.for_repo(conn, repo.id, gh.READ)
         issue = web.request("GET", f"/repos/{gh.current_name(conn, web, repo.id)}/issues/"
                                    f"{_int(number, 'number')}").json() or {}
         if issue.get("pull_request"):
-            update_pull_request(conn, None, repo.full_name, arguments)   # the same refusal as updatePullRequest
+            actions.append(PR_UPDATE)        # the Issues API edits pull requests too
+    if PR_UPDATE in actions:
+        if bound["unattended"] or bound.get("in_station"):
+            # Nobody can approve for unattended work, and a station turn cannot wait.
+            raise _pr_update_refused()
+        cfg = wi_config.load(bound["hub_dir"]) if bound.get("hub_dir") else wi_config.Config()
+        if wi_config.mode_for(cfg, actions, conn.id) != "approve":
+            raise _pr_update_refused()
 
     def dispatch(args: dict) -> dict:
         from ...work_items.errors import Rejected
@@ -587,7 +677,7 @@ def _write(conn, op: Op, repo, arguments: dict, bound) -> dict:
             raise
 
     result = ops.run(name=f"github.{op.name}", target={"repository_id": repo.id, "number": number},
-                     arguments=dict(arguments), recovery="escalate", dispatch=dispatch, actions="github.write",
+                     arguments=dict(arguments), recovery="escalate", dispatch=dispatch, actions=actions,
                      channel=conn.id)
     return {"data": result}
 
@@ -620,3 +710,244 @@ def tools(conn) -> list:
             return tool_classes.declare(tool, "read" if op.kind == "read" else "external_write")
         out.append(make())
     return out
+
+
+# -- push: host workflow code only, never a model tool --------------------------------------
+
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+
+
+def _branch(v) -> str:
+    """A branch name that stays one ref under refs/heads/."""
+    import subprocess
+
+    if (not isinstance(v, str) or not _BRANCH_RE.match(v) or ".." in v or "//" in v or v.endswith(("/", ".lock", "."))
+            or v.startswith(("refs/", "-")) or v in ("HEAD", "main", "master") or "@{" in v):
+        raise ChannelError("validation_failed", "branch is a plain branch name, such as factory/12-fix-total.",
+                           status=422)
+    res = subprocess.run(["git", "check-ref-format", "--branch", v], capture_output=True, text=True, timeout=10)
+    if res.returncode != 0:
+        raise ChannelError("validation_failed", f"{v!r} is not a valid branch name.", status=422)
+    return v
+
+
+def _token(conn, repository_id: int) -> str:
+    """A token for one repository with contents: write, minted for this push.
+    It stays in this process: never returned, logged, written or put in argv."""
+    if conn.settings.mode == "pat":
+        return conn.secret("token_ref")
+    app = gh.app_client(conn)
+    resp = app.request("POST", f"/app/installations/{int(conn.settings.installation_id)}/access_tokens",
+                       json={"repository_ids": [int(repository_id)], "permissions": dict(PUSH_PERMISSIONS)})
+    return resp.json()["token"]
+
+
+def _git_env(token: str | None, conn) -> dict:
+    """Git's environment for one command: the credential as an extra header in
+    git's own config-from-environment, no system or global config, no hooks
+    and no prompts."""
+    import base64
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "TMPDIR")}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                "HOME": os.environ.get("HOME", "/"), "GIT_ASKPASS": "", "SSH_ASKPASS": ""})
+    pairs = [("core.hooksPath", os.devnull), ("core.fsmonitor", "false"), ("commit.gpgSign", "false"),
+             ("protocol.file.allow", "always" if gh.web_url().startswith("file:") else "never"),
+             ("credential.helper", "")]
+    if token:
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        pairs.append((f"http.{gh.web_url()}/.extraheader", f"AUTHORIZATION: basic {basic}"))
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
+    for i, (k, v) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = k, v
+    name = conn.settings.bot_name if getattr(conn.settings, "bot_name", None) else "hubzoid"
+    env.update({"GIT_COMMITTER_NAME": f"{name}[bot]", "GIT_COMMITTER_EMAIL": f"{name}[bot]@users.noreply.github.com"})
+    return env
+
+
+def _git(cwd, env, *args, timeout=300):
+    import subprocess
+
+    res = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+    if res.returncode != 0:
+        from ... import redaction
+
+        # `push --porcelain` reports a refused ref on stdout, the summary on stderr
+        raise _GitFailed(args[0], res.returncode, redaction.scrub_text(res.stdout[-400:] + res.stderr)[-800:])
+    return res.stdout
+
+
+class _GitFailed(Exception):
+    def __init__(self, command: str, code: int, stderr: str):
+        super().__init__(f"git {command} failed ({code}): {stderr}")
+        self.command, self.code, self.stderr = command, code, stderr
+
+
+def _apply(conn, full: str, args: dict, data: bytes, token: str, tmp) -> str:
+    """A host clone at the start commit with the patch applied, with a
+    deterministic commit id (the committer date is the author date). Returns
+    the new head."""
+    from pathlib import Path
+
+    env = _git_env(token, conn)
+    repo = Path(tmp) / "repo"
+    repo.mkdir()
+    start = args.get("expected_head") or args["base_sha"]
+    _git(repo, env, "init", "--quiet")
+    _git(repo, env, "remote", "add", "origin", f"{gh.web_url()}/{full}.git")
+    _git(repo, env, "fetch", "--quiet", "--no-tags", "--filter=blob:none", "origin", start)
+    _git(repo, env, "checkout", "--quiet", "--detach", start)
+    patch = Path(tmp) / "change.patch"
+    patch.write_bytes(data)
+    try:
+        _git(repo, env, "am", "--quiet", "--committer-date-is-author-date", "--keep-cr", str(patch))
+    except _GitFailed as exc:
+        from ...work_items.errors import Rejected
+
+        raise Rejected("The patch does not apply to the start commit: " + exc.stderr[-400:]) from None
+    head = _git(repo, env, "rev-parse", "HEAD").strip()
+    if head == start:
+        from ...work_items.errors import Rejected
+
+        raise Rejected("The patch has no commits.")
+    return head
+
+
+def _prior(name: str, target: dict, key: str | None) -> dict | None:
+    """The record of this exact write in this work item, if one exists (a
+    replay after a restart). Its outcome is settled by the record, never by
+    checking the branch again as if it were new."""
+    from ...work_items import operations as ops
+    from ...work_items import store as wi_store
+    from ...workflows import context
+
+    ctx = context._ctx()
+    work = ctx.work or {}
+    item = work["item"]
+    lkey = ops.logical_key([ctx.hub, "item", item["id"], item["generation"], work.get("stage"), name, target, key])
+    return wi_store.op_by_key(ctx.hub_dir, lkey)
+
+
+def push_branch(conn, *, repository_id: int, branch: str, patch: bytes, patch_sha256: str, base_sha: str,
+                expected_head: str | None = None, base_branch: str | None = None, key: str | None = None) -> dict:
+    """Push the commits in `patch` (``git format-patch`` output, as a sandbox
+    station's export) to `branch`, as one recorded work-item write.
+
+    The patch applies on `expected_head` when the branch exists (a revision on
+    the hub's own branch), else on `base_sha` (a new branch). `patch_sha256`
+    binds the push to the exact bytes the hub checked. Refused: the default
+    branch, a protected branch, a branch whose head is not `expected_head`
+    (`stale_head`), an existing branch when `expected_head` is None
+    (`branch_exists`). The push uses a lease on that exact head, so a branch
+    that moves meanwhile is never overwritten. `key` tells deliberate later
+    pushes to the same branch apart (a review revision, a CI repair).
+    Returns ``{branch, head_sha, previous_head, base_sha, commits,
+    html_url}``. Ownership of branches, CI attempts and pull request policy
+    stay the hub's own rules."""
+    import hashlib
+    import tempfile
+
+    from ...work_items import operations as ops
+    from ...work_items.errors import NotSent, Rejected
+
+    bound = _bound_origin()
+    if bound is None:
+        raise ChannelError("work_item_required", "A push runs inside a work item, where it is recorded and never "
+                           "repeated on its own.", status=409)
+    rid = _int(repository_id, "repository_id")
+    repo = conn.settings.repo(rid)
+    if repo is None:
+        raise ChannelError("out_of_scope", "That repository is not part of this connection.", status=403)
+    if bound["coords"].get("repository_id") not in (None, rid):
+        raise ChannelError("out_of_scope", "This work may use only the repository it came from.", status=403)
+    if bound.get("in_station"):
+        raise ChannelError("out_of_scope", "A push is made by workflow code, never inside an agent's turn.",
+                           status=403)
+    branch = _branch(branch)
+    base_sha = _sha(base_sha, "base_sha")
+    if expected_head is not None:
+        expected_head = _sha(expected_head, "expected_head")
+    if not isinstance(patch, (bytes, bytearray)) or not patch:
+        raise ChannelError("validation_failed", "patch is the bytes of a git format-patch export.", status=422)
+    if len(patch) > MAX_PATCH_BYTES:
+        raise ChannelError("patch_too_large", f"The patch is over {MAX_PATCH_BYTES // 2**20} MiB.", status=422)
+    actual = "sha256:" + hashlib.sha256(bytes(patch)).hexdigest()
+    if patch_sha256 != actual:
+        raise ChannelError("patch_changed", "The patch is not the one that was checked.", status=409)
+    web = gh.for_repo(conn, rid, gh.READ)
+    full = gh.current_name(conn, web, rid)
+    info = web.request("GET", f"/repos/{full}").json() or {}
+    if branch == info.get("default_branch") or (base_branch is not None and branch == base_branch):
+        raise ChannelError("default_branch_refused", "Source is never pushed to the default branch. Use a branch of "
+                           "its own and a draft pull request.", status=403)
+    data = bytes(patch)
+    commits = data.count(b"\nSubject: ") + (1 if data.startswith(b"Subject: ") else 0)
+    target = {"repository_id": rid, "branch": branch}
+    url = f"{gh.web_url()}/{full}/tree/{quote(branch, safe='/')}"
+
+    def head_of() -> str | None:
+        try:
+            got = web.request("GET", f"/repos/{full}/branches/{quote(branch, safe='')}").json() or {}
+        except Exception as exc:  # noqa: BLE001
+            if gh.status_of(exc) == 404:
+                return None
+            raise
+        if got.get("protected"):
+            raise ChannelError("branch_protected", f"{branch} is protected. The hub pushes only to its own "
+                               "unprotected branches.", status=403)
+        return (got.get("commit") or {}).get("sha")
+
+    if _prior("github.pushBranch", target, key) is None:
+        current = head_of()
+        if expected_head is None and current is not None:
+            raise ChannelError("branch_exists", f"{branch} already exists on GitHub and this work did not create "
+                               "it.", status=409, current_head=current)
+        if expected_head is not None and current != expected_head:
+            raise ChannelError("stale_head", f"{branch} moved since the hub last pushed it. Nothing was "
+                               "overwritten.", status=409, current_head=current)
+
+    def result(args: dict, head: str) -> dict:
+        return {"branch": branch, "head_sha": head, "previous_head": args.get("expected_head"),
+                "base_sha": args["base_sha"], "commits": commits, "html_url": url}
+
+    def check(args: dict, head: str | None = None):
+        """Where the branch is now: the new commit (applied), the start
+        (never happened) or something else (unknown)."""
+        now = head_of()
+        if now == args.get("expected_head"):
+            return ops.Reconciled("safe_to_retry", evidence={"branch_head": now})
+        if head is None:
+            with tempfile.TemporaryDirectory(prefix="hubzoid-push-check-") as tmp:
+                head = _apply(conn, full, args, data, _token(conn, rid), tmp)
+        if now == head:
+            return ops.Reconciled("applied", result(args, head), evidence={"branch_head": now})
+        return ops.Reconciled("unknown", evidence={"branch_head": now, "expected": head})
+
+    def dispatch(args: dict) -> dict:
+        token = _token(conn, rid)
+        with tempfile.TemporaryDirectory(prefix="hubzoid-push-") as tmp:
+            try:
+                head = _apply(conn, full, args, data, token, tmp)
+            except _GitFailed as exc:
+                raise NotSent(f"Could not prepare the push: {exc.stderr[-300:]}") from None
+            lease = f"refs/heads/{branch}:{args.get('expected_head') or ''}"
+            try:
+                _git(f"{tmp}/repo", _git_env(token, conn), "push", "--porcelain", "--no-verify",
+                     f"--force-with-lease={lease}", "origin", f"HEAD:refs/heads/{branch}")
+            except _GitFailed as exc:
+                if any(s in exc.stderr for s in ("stale info", "[rejected]", "[remote rejected]", "protected")):
+                    raise Rejected(f"GitHub refused the push to {branch}: {exc.stderr[-300:]}") from None
+                found = check(args, head)        # the connection dropped: look before deciding
+                if found.status == "applied":
+                    return found.result
+                if found.status == "safe_to_retry":
+                    raise NotSent(f"The push did not reach GitHub: {exc.stderr[-300:]}") from None
+                raise
+        return result(args, head)
+
+    return ops.run(name="github.pushBranch", target=target,
+                   arguments={"branch": branch, "base_sha": base_sha, "expected_head": expected_head,
+                              "patch_sha256": actual, "commits": commits},
+                   recovery="reconcile", reconcile=check, dispatch=dispatch, actions=PUSH, channel=conn.id,
+                   key=key)
