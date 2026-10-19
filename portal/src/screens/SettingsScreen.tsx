@@ -1,14 +1,15 @@
 // Console → Settings: deployment settings, each owned by its domain and
 // changed through that domain's own validate, diff and apply. Chat
 // (chat/config.yaml), Appearance (branding.yaml) and Admin (admin.yaml).
-import { lazy, Suspense } from "react";
+import { lazyChunk } from "../lib/lazyChunk";
+import { Suspense } from "react";
 import { Spin, Tabs, Typography } from "antd";
 import { href } from "../hooks/useRoute";
 
-const ChatSettings = lazy(() => import("./settings/ChatSettings").then((m) => ({ default: m.ChatSettings })));
-const Appearance = lazy(() => import("./settings/Appearance").then((m) => ({ default: m.Appearance })));
-const Parity = lazy(() => import("./settings/Parity").then((m) => ({ default: m.Parity })));
-const AdminSettings = lazy(() => import("./settings/AdminSettings").then((m) => ({ default: m.AdminSettings })));
+const ChatSettings = lazyChunk(() => import("./settings/ChatSettings").then((m) => ({ default: m.ChatSettings })));
+const Appearance = lazyChunk(() => import("./settings/Appearance").then((m) => ({ default: m.Appearance })));
+const Parity = lazyChunk(() => import("./settings/Parity").then((m) => ({ default: m.Parity })));
+const AdminSettings = lazyChunk(() => import("./settings/AdminSettings").then((m) => ({ default: m.AdminSettings })));
 
 const TABS = [
   { key: "chat", label: "Chat", node: <ChatSettings /> },

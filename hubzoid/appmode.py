@@ -124,6 +124,10 @@ def retired_settings(hub_dir: Path | None = None, env: Mapping[str, str] | None 
     deployment. Fatal ones first."""
     env_map = os.environ if env is None else env
     found = [r for name, r in RETIRED.items() if name in env_map]
+    if hub_dir is not None and any(r.name == "WEBUI_NAME" for r in found) and _has_display_name(hub_dir):
+        found = [Retired(r.name, r.fatal, "Still read as the deployment's name until you set one in Settings → "
+                         "Brand; this hub's agent name already comes from AGENTS.md (display_name). Then "
+                         "remove it.") if r.name == "WEBUI_NAME" else r for r in found]
     ui = _env("HUBZOID_UI", env)
     if ui and ui.lower() != UI_HUBZOID:
         found.append(Retired("HUBZOID_UI", True,
@@ -138,6 +142,15 @@ def retired_settings(hub_dir: Path | None = None, env: Mapping[str, str] | None 
                              "with `hubzoid migrate openwebui --apply`, then run `hubzoid gateway` with "
                              "Hubzoid 2.0 to rewrite it, or stay on Hubzoid 1.x."))
     return sorted(found, key=lambda r: (not r.fatal, r.name))
+
+
+def _has_display_name(hub_dir: Path) -> bool:
+    try:
+        from .loaders.agents import load_main
+
+        return bool((load_main(Path(hub_dir)).spec.display_name or "").strip())
+    except Exception:  # noqa: BLE001 - only changes a warning's wording
+        return False
 
 
 def retired_problems(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> list[str]:

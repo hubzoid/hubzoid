@@ -414,25 +414,44 @@ def build_edge_app(
         client: httpx.AsyncClient = request.app.state.client
         # With fallbacks, hold a small body so a refused connection can be
         # retried on the next bridge. A larger body goes to the first only.
+        # A read that breaks before the answer starts (a busy bridge dropping
+        # the connection) is retried once for GET and HEAD, which change
+        # nothing; anything else answers 502 instead of an unhandled error.
+        # Either way the body is read once, here, and kept for a resend.
+        idempotent = request.method in ("GET", "HEAD")
         if len(bases) > 1:
             content, retryable = await _retry_body(request)
             if not retryable:
                 bases = bases[:1]
+                idempotent = False  # a large body streams once, never twice
+        elif idempotent:
+            content = await request.body()
         else:
             content = request.stream()
+        resp = None
         for i, base in enumerate(bases):
-            upstream_req = client.build_request(
-                request.method,
-                base + _upstream_path(fwd_path) + query,
-                headers=_request_headers(request, public_scheme, forwarded_prefix=prefix),
-                content=content,
-            )
-            try:
-                resp = await client.send(upstream_req, stream=True)
+            for attempt in (0, 1):
+                upstream_req = client.build_request(
+                    request.method,
+                    base + _upstream_path(fwd_path) + query,
+                    headers=_request_headers(request, public_scheme, forwarded_prefix=prefix),
+                    content=content,
+                )
+                try:
+                    resp = await client.send(upstream_req, stream=True)
+                    break
+                except httpx.ConnectError:
+                    break  # try the next bridge, if any
+                except httpx.TransportError as exc:
+                    if idempotent and attempt == 0:
+                        log.info("edge: retrying %s %s after %s", request.method, path, type(exc).__name__)
+                        continue
+                    log.warning("edge: upstream failed for %s %s (%s)", request.method, path, type(exc).__name__)
+                    return Response("upstream error", status_code=502)
+            if resp is not None:
                 break
-            except httpx.ConnectError:
-                if i == len(bases) - 1:
-                    return Response("upstream unavailable", status_code=502)
+        if resp is None:
+            return Response("upstream unavailable", status_code=502)
 
         sr = StreamingResponse(
             resp.aiter_raw(),

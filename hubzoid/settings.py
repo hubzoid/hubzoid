@@ -111,6 +111,9 @@ Environment variables explicitly supported:
                          sign-in help). Default: "your administrator".
   HUBZOID_SERVER / HUBZOID_API_KEY  The remote CLI's deployment URL and a personal
                          API key (hzp_...) for `hubzoid auth` and `hubzoid api`.
+  HUBZOID_GATEWAY_BRIDGE_TIMEOUT  Seconds the gateway waits for each bridge's
+                         first answer (default 180). Raise it when many hubs
+                         start at once on a busy machine.
   HUBZOID_PARITY_LEDGER  Show the Open WebUI parity ledger (Settings →
                          Compatibility) to administrators. For Hubzoid
                          maintainers; off by default.

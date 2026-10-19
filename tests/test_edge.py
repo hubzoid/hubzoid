@@ -270,8 +270,10 @@ def test_other_paths_go_to_the_default_upstream_but_never_the_bridge_api(edge_ur
         r = httpx.get(base + path, timeout=10)
         assert r.status_code == 200
         assert r.text == f"OWUI:{path}", path
-    for path in ("/v1/models", "/uploads/x"):
-        assert httpx.get(base + path, timeout=10).status_code == 404, path
+    # The chat API needs a personal key (401 without one); the rest of the
+    # bridge's own API is never reachable from the public port.
+    assert httpx.get(base + "/v1/models", timeout=10).status_code == 401
+    assert httpx.get(base + "/uploads/x", timeout=10).status_code == 404
 
 
 def test_sse_streams_through(edge_url):
@@ -436,3 +438,49 @@ def test_the_edge_decides_the_client_address(monkeypatch, peer, sent, trusted, s
     out = edge._request_headers(req)
     assert [v for k, v in out if k == b"x-forwarded-for"] == [seen.encode()]
     assert not any(k in (b"x-real-ip", b"forwarded") for k, _ in out)
+
+
+def test_a_dropped_read_is_retried_for_get_and_502_otherwise(monkeypatch):
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        if len(calls) == 1 or request.method == "POST":
+            raise httpx.ReadError("connection reset")
+        return httpx.Response(200, stream=httpx.ByteStream(b"chunk"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.get("/portal/assets/SchedulesScreen.js")
+        assert (got.status_code, got.content, calls) == (200, b"chunk", ["GET", "GET"])
+        sent = client.post("/api/chat", content=b"{}")
+        assert sent.status_code == 502 and calls[-1] == "POST" and calls.count("POST") == 1  # never sent twice
+
+
+def test_a_get_behind_a_gateway_with_fallbacks_is_served_and_retried(monkeypatch):
+    """A gateway's default route has fallback bridges: the body is read once
+    (for a resend) and a dropped GET is retried, not a 'Stream consumed' 500."""
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    calls = []
+
+    def upstream(request):
+        calls.append((request.url.host, request.method))
+        if len(calls) == 1:
+            raise httpx.ReadError("connection reset")
+        return httpx.Response(200, stream=httpx.ByteStream(b"page"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1", default_fallbacks=("http://bridge2",))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        r = client.get("/")
+        assert (r.status_code, r.content) == (200, b"page")
+        assert calls == [("bridge1", "GET"), ("bridge1", "GET")]
+        assert client.post("/api/x", content=b"{}").status_code == 200  # a small body still goes through

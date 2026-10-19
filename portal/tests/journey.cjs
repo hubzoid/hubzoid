@@ -1266,7 +1266,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Delete user" }).waitFor();
     assert.equal(await page.getByRole("menuitem", { name: "Reactivate" }).count(), 0, "offered only while blocked");
-    assert.equal(await page.getByRole("menuitem", { name: /Block/ }).count(), 0, "Block isn't offered");
+    await page.getByRole("menuitem", { name: /Block/ }).waitFor(); // an active person can be blocked again (B7)
     await drawer().getByRole("button", { name: "More actions" }).click();
     await drawer().getByRole("combobox", { name: "Add an agent" }).click();
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Finance Assistant" }).click();
@@ -1431,7 +1431,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Connectors, Runs & schedules, Evals and Activity").waitFor();
+    await page.getByText("has Access, Connectors, Setup, Secrets, Channels, Intake, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity section, not the Settings Activity link.
     await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();
