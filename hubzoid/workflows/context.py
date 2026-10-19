@@ -351,7 +351,9 @@ class Hub:
         ctx = _ctx()
         source = Path(path)
         if not source.is_absolute():
-            source = Path(ctx.hub_dir) / source
+            from ..datadir import resolve
+
+            source = resolve(ctx.hub_dir, source)
         from . import inputs as inputs_lib
 
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
@@ -542,7 +544,9 @@ class Hub:
         "note": str | None, "by": email}``; a request for changes is not approved."""
         import hashlib
 
-        source = Path(path) if Path(path).is_absolute() else Path(_ctx().hub_dir) / path
+        from ..datadir import resolve
+
+        source = Path(path) if Path(path).is_absolute() else resolve(_ctx().hub_dir, path)
         data = source.read_bytes()
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         # Publish a copy named by its digest, so the approved bytes are exactly

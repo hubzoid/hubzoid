@@ -164,11 +164,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     """
     from . import datadir
 
-    if datadir.configured() is not None and len(hub_dirs) > 1:
-        raise ValueError(f"gateway: {datadir.ENV} holds one hub's state, and this gateway has "
-                         f"{len(hub_dirs)} hubs. Run one hub per service with its own data folder, "
-                         f"or unset {datadir.ENV}.")
     backends: list[GatewayBackend] = []
+    seen_data: dict[Path, Path] = {}  # data folder -> the hub using it
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
     seen_inbound_ports: dict[int, Path] = {}
@@ -180,9 +177,16 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         inherited_env = os.environ.copy()
         try:
             s = load(hub_dir)
+            data = datadir.configured()  # as this hub sees it, its .env included
         finally:
             os.environ.clear()
             os.environ.update(inherited_env)
+        if data is not None and data in seen_data:
+            raise ValueError(f"gateway: hubs {seen_data[data].name} and {hub_dir.name} both keep their "
+                             f"state in {datadir.ENV}={data}. One hub per data folder: give each its own, "
+                             f"or unset {datadir.ENV}.")
+        if data is not None:
+            seen_data[data] = hub_dir
         if s.bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[s.bridge_port].name} and "

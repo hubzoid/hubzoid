@@ -80,6 +80,36 @@ def test_a_hosted_hubs_files_are_read_only_in_settings(tmp_path, monkeypatch):
         assert listed.status_code == 200 and listed.json()["read_only"] is True
         r = client.post("/api/chat/authoring/drafts", headers=ORIGIN, json={"path": "AGENTS.md"})
         assert r.status_code == 409 and r.json()["detail"]["code"] == "hub_read_only"
+        r = client.put("/api/hitl/config", headers=ORIGIN, json={"text": "version: 1\n", "expected_revision": "absent"})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "hub_read_only"
+
+
+def test_hub_changes_are_refused_for_a_hosted_hub(tmp_path, monkeypatch):
+    from hubzoid.hub_changes import service
+
+    monkeypatch.setenv(datadir.ENV, str(tmp_path / "data"))
+    with pytest.raises(service.ChangeError) as caught:
+        service.propose(tmp_path / "hub", title="t", edits=[], actor="a@example.org", via="api")
+    assert caught.value.code == "hub_read_only"
+
+
+def test_session_output_and_deleted_chats_live_in_the_data_folder(tmp_path, monkeypatch):
+    from hubzoid import memory
+    from hubzoid.chat import store
+
+    hub, data = tmp_path / "hub", tmp_path / "data"
+    hub.mkdir()
+    (hub / "AGENTS.md").write_text("A test agent.")
+    monkeypatch.setenv(datadir.ENV, str(data))
+    spill = memory.session_output_dir(hub, "s1") / "read-overflow.txt"
+    spill.write_text("the full text")
+    assert spill.is_relative_to(data.resolve())
+    assert invoke(registry(hub)["read_file"], path="output/s1/read-overflow.txt") == "the full text"
+    chat = memory.chat_root(hub, "c_gone")
+    (chat / "uploads").mkdir(parents=True)
+    (chat / "uploads" / "a.txt").write_text("x")
+    store.remove_chat_files(hub, "c_gone")
+    assert not chat.exists()
 
 
 def test_doctor_says_where_state_lives(tmp_path, monkeypatch):
@@ -102,9 +132,19 @@ def test_doctor_says_where_state_lives(tmp_path, monkeypatch):
 def test_a_gateway_refuses_one_data_folder_for_several_hubs(tmp_path, monkeypatch):
     from hubzoid import gateway
 
-    monkeypatch.setenv(datadir.ENV, str(tmp_path / "data"))
-    with pytest.raises(ValueError, match="one hub's state"):
-        gateway.plan([tmp_path / "a", tmp_path / "b"])
+    def hub(name, port, data):
+        h = tmp_path / name
+        h.mkdir()
+        (h / "AGENTS.md").write_text(f"---\nname: {name}\ndescription: d\n---\nbody")
+        (h / ".env").write_text(f"BRIDGE_PORT={port}\nMODEL=claude-local\n{datadir.ENV}={data}\n")
+        return h
+
+    monkeypatch.delenv(datadir.ENV, raising=False)
+    shared = tmp_path / "data"
+    with pytest.raises(ValueError, match="One hub per data folder"):           # set in each hub's .env
+        gateway.plan([hub("a", 8001, shared), hub("b", 8002, shared)])
+    assert datadir.ENV not in os.environ                                       # each hub's env is put back
+    assert len(gateway.plan([tmp_path / "a", hub("c", 8003, tmp_path / "own")]).backends) == 2
 
 
 def test_a_backup_copies_the_data_folder(tmp_path, monkeypatch):

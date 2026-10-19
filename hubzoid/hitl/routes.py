@@ -133,6 +133,10 @@ def mount(app: FastAPI, ctx) -> None:
     @app.put("/api/hitl/config")
     async def put_config(request: Request):
         await manager(request, mutation=True)
+        from .. import datadir
+
+        if datadir.hub_read_only(hub_dir):
+            raise error(409, "hub_read_only", datadir.READ_ONLY)
         body = await read_json(request)
         try:
             cfg = await db(cfglib.apply, hub_dir, str(body.get("text") or ""),

@@ -225,7 +225,7 @@ def remove_chat_files(hub_dir: Path, key: str) -> None:
     if not target.exists():
         return
     resolved = target.resolve()
-    if (not base.is_relative_to(Path(hub_dir).resolve())
+    if (not base.is_relative_to(root(Path(hub_dir)).resolve())
             or resolved.parent != base or target.is_symlink()):
         log.warning("chat: refused to delete %s (outside %s)", target, base)
         return

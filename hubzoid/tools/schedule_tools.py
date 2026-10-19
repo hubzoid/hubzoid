@@ -99,6 +99,10 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
         if ".git" in Path(rel).parts:
             raise PermissionError(f"{rel!r} is under a .git/ directory, which is never writable.")
         target = datadir.resolve(hub, rel).resolve()
+        if datadir.hub_read_only(hub) and not target.is_relative_to(datadir.root(hub)):
+            raise PermissionError(f"{rel!r} is one of this hub's own files, which come from its Git "
+                                  "repository: a scheduled task here writes only its own state "
+                                  "(.hubzoid/, output/). Change hub files in Git.")
         for root in _forbidden_roots:
             if target == root or root in target.parents:
                 raise PermissionError(

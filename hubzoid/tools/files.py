@@ -339,6 +339,11 @@ def _read_refusal(hub_dir: Path, target: Path) -> str | None:
         scheduled = _request_ctx.get_schedule_read_scope()
         if scheduled and scheduled[0] == hub_dir.resolve():
             scopes.append(scheduled[1])
+    from ..datadir import root as data_root
+
+    if data_root(hub_dir).resolve() != hub_dir.resolve():
+        # output/ is the agent's own, readable like the hub's: in the data folder here.
+        scopes.append(data_root(hub_dir) / "output")
     # Only explicit execution scopes may cross the private state wall. Keep
     # the content guard inside the scope, so dotenv files, databases and
     # restricted folders are still refused even in the run's own scratch.

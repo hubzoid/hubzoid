@@ -53,6 +53,9 @@ def roots(hub_dir: Path, env=None) -> list[Path]:
     return [hub] if data is None or data == hub else [hub, data]
 
 
+READ_ONLY = "This agent's files come from its Git repository. Change them there and redeploy."
+
+
 def hub_read_only(hub_dir: Path, env=None) -> bool:
     """True when the hub's own files come from its image: state lives in a
     separate data folder, so an edit to the hub folder would not survive a
