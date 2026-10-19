@@ -422,3 +422,14 @@ def test_operator_retry_shares_the_one_retry(hub_dir, fake, monkeypatch):
     assert again.value.code == "retry_exhausted" and len(rt.calls) == 2
     assert "Only summary." in rt.calls[1]["message"]
     assert [a["kind"] for a in stations.get_call(hub_dir, call_id)["attempts_json"]] == ["initial", "retry"]
+
+
+def test_station_tools_pass_the_approval_gate(hub_dir):
+    """A station picks from the same gated tools as the main agent: access and
+    C's approval gate (an unattended call that needs a person is refused)."""
+    from hubzoid.factory import hub_tool_registry
+    from hubzoid.hitl.gate import EXEMPT
+
+    registry = hub_tool_registry(hub_dir)
+    assert registry and all(getattr(t, "hitl_wrapped", False) for n, t in registry.items() if n not in EXEMPT)
+    assert "ask_question" not in registry

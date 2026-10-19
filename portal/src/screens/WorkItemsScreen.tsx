@@ -62,11 +62,12 @@ function StateTag({ state, reason }: { state: string; reason?: string | null }) 
   );
 }
 
-export function WorkItemsScreen({ hubs }: { hubs: HubOption[] }) {
+/** `mine`: only the work this person asked for (their own page), even when they manage the hub. */
+export function WorkItemsScreen({ hubs, mine = false }: { hubs: HubOption[]; mine?: boolean }) {
   const [hub, setHub] = useState<string | undefined>(hubs[0]?.key);
   const [state, setState] = useState<string>("");
   const [open, setOpen] = useState<string | null>(null);
-  const path = hub ? `/hubs/${encodeURIComponent(hub)}/work-items${query({ state })}` : null;
+  const path = hub ? `/hubs/${encodeURIComponent(hub)}/work-items${query({ state, mine: mine || undefined })}` : null;
   const items = useData<{ items: WorkItem[] }>(path, { keepStale: true });
   useVisibleRefresh(items.reload, items.refreshing, !open);
 

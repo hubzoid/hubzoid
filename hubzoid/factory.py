@@ -391,8 +391,8 @@ def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
 
 
 def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
-    """The hub's pre-shipped and local tools, gated as for the main agent, for
-    a station to pick from. A station gets only the names it lists; nothing
+    """The hub's pre-shipped and local tools, gated as for the main agent
+    (access and approvals), for a station to pick from. A station gets only the names it lists; nothing
     else here (skills, delegates, MCP servers) reaches it."""
     hub_dir = Path(hub_dir).resolve()
     settings = settingslib.load(hub_dir)
@@ -402,5 +402,7 @@ def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
                      knowledge=knowledge_loader.load_all(hub_dir))
     connlib.attach(ctx)
     registry: dict[str, FunctionTool] = {**make_builtin_tools(ctx), **tools_local_loader.load_all(hub_dir)}
-    from . import access
-    return access.apply(hub_dir, registry)
+    from . import access, hitl
+    # The same approval gate as every agent's tools; an unattended station call
+    # that needs a person is refused by it, and no question tool is added.
+    return hitl.equip(hub_dir, access.apply(hub_dir, registry), questions=False)
