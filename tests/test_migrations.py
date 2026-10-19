@@ -26,11 +26,11 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts",
                # workflows from chat (op_0019): report series, personal schedules, proposals
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
-               # work items and safe external writes (op_0030)
+               # work items and safe external writes (op_0050)
                "hz_work_items", "hz_operations", "hz_idempotency",
-               # isolated agents and handoffs (op_0031)
+               # isolated agents and handoffs (op_0051)
                "hz_station_calls", "hz_handoffs",
-               # sandboxes (op_0032)
+               # sandboxes (op_0052)
                "hz_sandboxes", "hz_sandbox_read_stamps"}
 
 
@@ -313,7 +313,7 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019 and op_0030 to op_0032.
+        # And op_0019 and op_0050 to op_0052.
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
                       "hz_work_items", "hz_operations", "hz_idempotency",
                       "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps"):
