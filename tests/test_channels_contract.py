@@ -10,7 +10,7 @@ import pytest
 from hubzoid.channels import admission, config, registry, replies, router, store
 from hubzoid.channels.errors import ChannelError
 
-from channel_fake import FakeAdapter, delivery, headers
+from tests.channel_fake import FakeAdapter, delivery, headers
 
 SECRET = "fake-signing-value"   # gitleaks:allow (a test value)
 
