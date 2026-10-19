@@ -367,9 +367,10 @@ def test_starter_env_describes_the_web_app():
     from hubzoid.cli import _STARTER_ENV
 
     for needle in ("HUBZOID_AUTH=true", "HUBZOID_PUBLIC_URL", "HUBZOID_ADMIN_EMAIL",
-                   "/oauth/google/callback", "MCP_SERVER", 'pip install "hubzoid[openwebui]"',
-                   "HUBZOID_UI=openwebui"):
+                   "/oauth/google/callback", "MCP_SERVER"):
         assert needle in _STARTER_ENV, needle
+    for gone in ("openwebui", "WEBUI_", "OWUI"):
+        assert gone not in _STARTER_ENV, gone
     assert "first one is what Open WebUI sees" not in _STARTER_ENV
 
 

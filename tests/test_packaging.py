@@ -93,10 +93,13 @@ def _requirement_names(reqs: list[str]) -> dict[str, str]:
     return out
 
 
-def test_open_webui_is_an_optional_extra():
+def test_open_webui_is_not_a_dependency_or_an_extra():
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
     assert "open-webui" not in core
-    assert PYPROJECT["project"]["optional-dependencies"]["openwebui"] == ["open-webui==0.11.4"]
+    extras = PYPROJECT["project"]["optional-dependencies"]
+    assert "openwebui" not in extras
+    assert not any("open-webui" in dep for deps in extras.values() for dep in deps)
+    assert not (ROOT / "requirements-openwebui.lock").exists()
 
 
 def test_web_app_dependencies_are_declared_with_bounds():
@@ -149,19 +152,15 @@ def _pins(name: str) -> dict[str, str]:
     return pins
 
 
-def test_core_lock_is_slim_and_legacy_lock_keeps_open_webui():
-    core, legacy = _pins("requirements.lock"), _pins("requirements-openwebui.lock")
+def test_the_lock_is_slim():
+    core = _pins("requirements.lock")
     for heavy in ("open-webui", "torch", "av", "transformers", "sentence-transformers", "chromadb"):
         assert heavy not in core, heavy
     for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg"):
         assert name in core, name
-    assert legacy["open-webui"] == "0.11.4"
-    # One reviewed set: every package both locks pin has the same version.
-    assert {k: v for k, v in core.items() if k in legacy and legacy[k] != v} == {}
-    assert len(core) < len(legacy) / 1.5
 
 
-@pytest.mark.parametrize("lock", ["requirements.lock", "requirements-openwebui.lock"])
+@pytest.mark.parametrize("lock", ["requirements.lock"])
 def test_locks_pin_this_release_line(lock):
     """Each lock satisfies the declared bounds of the web app dependencies."""
     pins = _pins(lock)

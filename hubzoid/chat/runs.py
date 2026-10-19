@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from .. import _request_ctx, access, run_events
+from ..access import run_identity
 from ..run_events import Notice, ToolCall, ToolResult
 from .stream import DONE, KEEPALIVE, MessageBuilder, encode
 
@@ -67,6 +68,10 @@ class Run:
     session_slot: Any = None  # _request_ctx.SessionSlot: the runtime's own session
     guard: Any = None         # () -> "ok" | "cancel" | "lost" (engine.run_state), checked at checkpoints
     fenced_out: bool = False  # the branch lease is gone: nothing more is written for this run
+    # What signed the request in: "session", "api_key" or "local", and a key's agent limit.
+    credential: str = "session"
+    credential_id: str = ""
+    key_hubs: tuple | None = None
 
     @property
     def finished(self) -> bool:
@@ -81,6 +86,18 @@ def web_identity(hub_dir, email: str):
         log.warning("chat: group lookup failed for a web turn", exc_info=True)
         groups = set()
     return access.Identity.make(user=email, groups=groups, surface="web")
+
+
+def _admit(hub_dir, run) -> dict | None:
+    """The reply's run identity (``access.run_identity``): the signed-in person
+    in the chat window, or the owner of the API key that sent it."""
+    via_key = run.credential == "api_key"
+    return run_identity.admit_or_refuse(
+        hub_dir, run_kind="api" if via_key else "chat", run_id=run.message_id,
+        acts_as_id=run.owner_id, acts_as_email=run.email, started_from="api" if via_key else "chat",
+        origin_id=run.conversation_id, person_present=not via_key,
+        credential_kind=run.credential, credential_id=run.credential_id,
+        scope={"hubs": list(run.key_hubs)} if run.key_hubs is not None else None)
 
 
 class RunManager:
@@ -128,6 +145,9 @@ class RunManager:
             builder.seed(prefix)
         run = Run(message_id=message_id, conversation_id=conversation_id, chat_key=chat_key,
                   owner_id=user.id, email=user.email, builder=builder,
+                  credential=getattr(user, "credential", "session") or "session",
+                  credential_id=getattr(user, "credential_id", "") or "",
+                  key_hubs=getattr(user, "hubs", None),
                   loop=asyncio.get_running_loop(), started=time.monotonic(), run_id=run_id,
                   branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish,
                   session_slot=session_slot, guard=guard)
@@ -232,6 +252,8 @@ class RunManager:
             ctx.inflight.enter()
         try:
             identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
+            record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
+            identity = run_identity.identity(record, "web", identity.groups)
             with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity), \
                     _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from hubzoid import cli, deployment, webui
+from hubzoid import cli, deployment
 
 
 @pytest.mark.slow
@@ -28,8 +28,7 @@ def test_gateway_child_configuration_is_isolated_and_discoverable(
         "HUBZOID_DISABLE_EDGE",
         "OWUI_NATIVE_MCP",
     ):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI gateway's lifecycle
+        monkeypatch.delenv(key, raising=False)   # the Open WebUI gateway's lifecycle
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "synthetic-admin@example.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "synthetic-test-password")
     monkeypatch.setenv(
@@ -83,9 +82,6 @@ print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=depl
     # The gateway runs until stopped; here it stops at once, as on a clean shutdown.
     monkeypatch.setattr(cli, "_wait_any", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *args: None)
-    fake_webui = MagicMock()
-    fake_webui.wait.return_value = 0
-    monkeypatch.setattr(webui, "start_gateway", lambda **kwargs: fake_webui)
     result = CliRunner().invoke(
         cli.app,
         [

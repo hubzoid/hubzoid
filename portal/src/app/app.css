@@ -1150,6 +1150,17 @@
     opacity: 0;
     transition: opacity 120ms var(--hz-ease);
   }
+  .hz-nav-hint.is-count {
+    opacity: 1;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--hz-accent);
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    line-height: 18px;
+  }
   .hz-nav:hover .hz-nav-hint,
   .hz-nav:focus-visible .hz-nav-hint {
     opacity: 1;
@@ -1685,6 +1696,168 @@
     margin: 2px 0 6px 6px;
     padding: 4px 0 4px 12px;
     border-left: 1px solid var(--hz-line);
+  }
+  /* Workflow access (Settings) */
+  .hz-wa-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0 14px;
+    border-bottom: 1px solid var(--hz-line-soft);
+  }
+  .hz-wa-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .hz-wa-row > :first-child {
+    width: 220px;
+    flex: none;
+  }
+  .hz-wa-x {
+    padding: 4px;
+    border-radius: 6px;
+    color: var(--hz-mute);
+  }
+  .hz-wa-x:hover:not(:disabled) {
+    background: var(--hz-hover);
+    color: var(--hz-ink);
+  }
+  .hz-wa-add {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 640px;
+  }
+  .hz-wa-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border: 1px solid var(--hz-line);
+    border-radius: 999px;
+    font-size: 0.8571rem;
+    color: var(--hz-secondary);
+  }
+  .hz-wa-chip.is-on {
+    border-color: var(--hz-accent);
+    color: var(--hz-ink);
+  }
+  .hz-wa-addlink {
+    align-self: flex-start;
+    font-size: 0.8929rem;
+    color: var(--hz-secondary);
+  }
+  .hz-wa-addlink:hover {
+    color: var(--hz-ink);
+  }
+  @media (max-width: 640px) {
+    .hz-wa-row {
+      flex-wrap: wrap;
+      gap: 2px 8px;
+    }
+    .hz-wa-row > :first-child {
+      width: auto;
+    }
+  }
+  /* Approval and question cards (hubzoid.hitl) */
+  .hz-request {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 6px 0 10px;
+    padding: 10px 12px;
+    max-width: 560px;
+    border: 1px solid var(--hz-line);
+    border-radius: 10px;
+    background: var(--hz-raised);
+    font-size: 0.9286rem;
+  }
+  .hz-request.is-done {
+    padding: 6px 10px;
+    border-color: var(--hz-line-soft);
+    background: transparent;
+  }
+  .hz-request.is-loading {
+    flex-direction: row;
+    align-items: center;
+  }
+  .hz-request-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+  .hz-request-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    font-size: 0.8571rem;
+    color: var(--hz-mute);
+  }
+  .hz-request-more:hover {
+    color: var(--hz-ink);
+  }
+  .hz-request-actions,
+  .hz-request-answer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .hz-request-answer .hz-input {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+  .hz-request-options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .hz-request-option {
+    padding: 7px 10px;
+    border: 1px solid var(--hz-line);
+    border-radius: 8px;
+    text-align: left;
+    transition: background-color 120ms var(--hz-ease);
+  }
+  .hz-request-option:hover:not(:disabled) {
+    background: var(--hz-hover);
+  }
+  .hz-diff {
+    margin: 0;
+    max-height: 360px;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid var(--hz-line);
+    border-radius: 8px;
+    font: 12px/1.5 var(--hz-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--hz-secondary);
+  }
+  .hz-diff .is-add {
+    color: var(--hz-ink);
+    background: color-mix(in srgb, #2f9e5b 16%, transparent);
+  }
+  .hz-diff .is-del {
+    color: var(--hz-mute);
+    background: color-mix(in srgb, #d14343 14%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .hz-diff .is-hunk {
+    color: var(--hz-mute);
+  }
+  .hz-request-outcome {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    font-size: 0.8929rem;
+    color: var(--hz-secondary);
   }
   .hz-act-reason {
     margin: 2px 0 6px 6px;

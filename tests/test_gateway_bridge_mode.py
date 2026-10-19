@@ -68,9 +68,8 @@ def _hub(root: Path, name: str, port: int, env: str = "") -> Path:
     return hub
 
 
-def _gateway(tmp_path: Path, started, *, sales_env: str = "WEBUI_AUTH=false\n"):
-    """`hubzoid gateway sales support --no-bridges` with sign-in on, as in the
-    review: the first hub's .env still says WEBUI_AUTH=false (a 1.0.x leftover)."""
+def _gateway(tmp_path: Path, started, *, sales_env: str = ""):
+    """`hubzoid gateway sales support --no-bridges` with sign-in on."""
     sales = _hub(tmp_path, "sales", 4161, sales_env)
     support = _hub(tmp_path, "support", 4162)
     gw = tmp_path / "gw"
@@ -92,36 +91,37 @@ def _request(host: str) -> Request:
 
 def test_a_separately_started_bridge_keeps_the_deployments_sign_in(tmp_path, started):
     sales, _support, _gw = _gateway(tmp_path, started)
-    # The bridge's own unit: none of the gateway's environment. It loads every
-    # configuration layer itself, so the hub .env's WEBUI_AUTH=false arrives.
+    # Later, someone turns sign-in off in the hub's own .env. The bridge's own
+    # unit (none of the gateway's environment) keeps the recorded sign-in and
+    # refuses to start rather than serve everyone as the local owner.
+    (sales / ".env").write_text((sales / ".env").read_text() + "HUBZOID_AUTH=false\n")
     with clean_process_env():
         settingslib.load(sales)
-        assert os.environ["WEBUI_AUTH"] == "false"
         assert appmode.auth_enabled(sales) is True
         assert appmode.mode_summary(sales)["auth"] is True
-        # No session: nobody, never the local owner (an administrator).
         assert current_user(_request("203.0.113.7"), sales) is None
-
-
-def test_a_bridge_that_contradicts_its_deployment_refuses_to_start(tmp_path, started):
-    sales, _support, _gw = _gateway(tmp_path, started)
-    with clean_process_env():
         result = CliRunner().invoke(cli.app, ["run", str(sales), "--no-ui", "--bridge-port", "4161"])
     assert result.exit_code == 2, result.output
-    assert "WEBUI_AUTH=false" in result.output and "sign-in on" in result.output
+    assert "HUBZOID_AUTH=false" in result.output and "sign-in on" in result.output
     assert started == []
-    # A bridge started without the CLI stops before serving anything as well.
     from hubzoid import server
 
     with clean_process_env(HUBZOID_HUB_DIR=str(sales)):
-        with pytest.raises(RuntimeError, match="WEBUI_AUTH=false"):
+        with pytest.raises(RuntimeError, match="HUBZOID_AUTH=false"):
             server.build_app()
+
+
+def test_an_open_webui_sign_in_name_stops_a_separately_started_bridge(tmp_path, started):
+    sales, _support, _gw = _gateway(tmp_path, started)
+    (sales / ".env").write_text((sales / ".env").read_text() + "WEBUI_AUTH=true\n")
+    with clean_process_env():
+        result = CliRunner().invoke(cli.app, ["run", str(sales), "--no-ui", "--bridge-port", "4161"])
+    assert result.exit_code == 2 and "WEBUI_AUTH" in result.output and "HUBZOID_AUTH" in result.output
+    assert started == []
 
 
 def test_a_bridge_that_agrees_with_its_deployment_starts(tmp_path, started):
     sales, _support, _gw = _gateway(tmp_path, started)
-    # HUBZOID_AUTH wins over WEBUI_AUTH, as it does for the bridges the gateway
-    # launches (it pins HUBZOID_AUTH for them).
     with clean_process_env(HUBZOID_AUTH="true"):
         result = CliRunner().invoke(cli.app, ["run", str(sales), "--no-ui", "--bridge-port", "4161"])
         assert appmode.deployment_conflicts(sales) == []
@@ -133,31 +133,29 @@ def _manifest(tmp_path: Path, hub: Path, **recorded) -> Path:
     path = tmp_path / "gw" / "deployment.json"
     deployment.save(path, hubs=[dict(key=hub.name, name=hub.name, path=str(hub), model_id=hub.name,
                                      slug=hub.name)],
-                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="", owui_db="", **recorded)
+                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_db="", **recorded)
     return path
 
 
-@pytest.mark.parametrize("recorded,asked,legacy", [
-    ("hubzoid", "openwebui", False),
-    ("openwebui", "hubzoid", True),
-])
-def test_the_deployments_mode_wins_too(tmp_path, recorded, asked, legacy):
+def test_an_open_webui_deployment_or_mode_stops_the_bridge(tmp_path):
     hub = _hub(tmp_path, "sales", 4163)
-    _manifest(tmp_path, hub, ui_mode=recorded, auth=True)
-    with clean_process_env(HUBZOID_UI=asked):
-        assert appmode.is_openwebui(hub) is legacy
+    _manifest(tmp_path, hub, ui_mode="openwebui", auth=True)
+    with clean_process_env():
+        assert " ".join(appmode.deployment_conflicts(hub)).count("Open WebUI mode") == 1
+    _manifest(tmp_path, hub, ui_mode="hubzoid", auth=True)
+    with clean_process_env(HUBZOID_UI="openwebui"):
         problems = appmode.deployment_conflicts(hub)
-    assert len(problems) == 1 and f"HUBZOID_UI={asked}" in problems[0]
+    assert len(problems) == 1 and "HUBZOID_UI=openwebui" in problems[0]
 
 
 def test_a_running_bridge_follows_the_manifest(tmp_path):
     hub = _hub(tmp_path, "sales", 4164)
     path = _manifest(tmp_path, hub, ui_mode="hubzoid", auth=False)
-    with clean_process_env(WEBUI_AUTH="false"):
+    with clean_process_env(HUBZOID_AUTH="false"):
         assert appmode.auth_enabled(hub) is False and appmode.deployment_conflicts(hub) == []
         _manifest(tmp_path, hub, ui_mode="hubzoid", auth=True)   # the gateway turned sign-in on
         assert appmode.auth_enabled(hub) is True
-        assert "WEBUI_AUTH=false" in " ".join(appmode.deployment_conflicts(hub))
+        assert "HUBZOID_AUTH=false" in " ".join(appmode.deployment_conflicts(hub))
     assert path.is_file()
 
 
@@ -193,20 +191,38 @@ def test_a_separately_started_bridge_trusts_every_address_of_its_deployment(tmp_
         assert appmode.allowed_origins({"HUBZOID_PUBLIC_URL": "https://one.example.org"}) == both[:1]
 
 
-def test_standalone_and_legacy_sign_in_are_unchanged(tmp_path):
+def test_standalone_sign_in(tmp_path):
     hub = _hub(tmp_path, "solo", 4165)
-    with clean_process_env(WEBUI_AUTH="false"):
+    with clean_process_env(HUBZOID_AUTH="false"):
         assert appmode.auth_enabled(hub) is False and appmode.deployment_conflicts(hub) == []
-    with clean_process_env(HUBZOID_AUTH="true", WEBUI_AUTH="false"):
+    with clean_process_env(HUBZOID_AUTH="true"):
         assert appmode.auth_enabled(hub) is True and appmode.deployment_conflicts(hub) == []
-    with clean_process_env(HUBZOID_UI="openwebui"):
-        assert appmode.is_openwebui(hub) and appmode.deployment_conflicts(hub) == []
-    # A legacy deployment: Open WebUI owns sign-in; the environment decides first, as in 1.1.
-    _manifest(tmp_path, hub, ui_mode="openwebui", auth=True)
-    with clean_process_env(WEBUI_AUTH="false"):
-        assert appmode.auth_enabled(hub) is False and appmode.deployment_conflicts(hub) == []
-    # A 1.0.x manifest records neither: the environment decides, as before.
+    # Open WebUI's name never decides sign-in, and never passes unnoticed.
+    with clean_process_env(WEBUI_AUTH="true"):
+        assert appmode.auth_enabled(hub) is False
+        assert "WEBUI_AUTH" in " ".join(appmode.deployment_conflicts(hub))
+    # A 1.0.x manifest records no sign-in: the environment decides.
     _manifest(tmp_path, hub)
-    with clean_process_env(WEBUI_AUTH="false", HUBZOID_UI="openwebui"):
-        assert appmode.auth_enabled(hub) is False and appmode.is_openwebui(hub)
-        assert appmode.deployment_conflicts(hub) == []
+    with clean_process_env(HUBZOID_AUTH="false"):
+        assert appmode.auth_enabled(hub) is False and appmode.deployment_conflicts(hub) == []
+
+
+def test_a_separately_started_bridge_names_retired_settings_that_only_warn(tmp_path, started,
+                                                                            monkeypatch, caplog):
+    from hubzoid import migrations, server
+
+    sales, _support, _gw = _gateway(tmp_path, started)
+    (sales / ".env").write_text((sales / ".env").read_text() + "HUBZOID_OWUI_PORT=3001\n")
+
+    class Stop(Exception):
+        pass
+
+    def stop(*a, **k):  # the warnings come before the schema step; stop there
+        raise Stop
+
+    monkeypatch.setattr(migrations, "upgrade", stop)
+    with clean_process_env(HUBZOID_HUB_DIR=str(sales), HUBZOID_AUTH="true"), \
+            caplog.at_level("WARNING", logger="hubzoid.server"):
+        with pytest.raises(Stop):
+            server.build_app()
+    assert "HUBZOID_OWUI_PORT is an Open WebUI setting" in caplog.text

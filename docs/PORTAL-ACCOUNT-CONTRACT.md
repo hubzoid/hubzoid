@@ -7,15 +7,10 @@ caller authenticates.
 
 ## Callers and authority
 
-Every endpoint accepts either:
-
-- the Open WebUI session cookie, verified server-side with Open WebUI. Writes
-  must come from the same origin (`Origin` or `Referer` host equals `Host`).
-- `Authorization: Bearer sk-...`, an Open WebUI API key, in the Open
-  WebUI mode (`HUBZOID_UI=openwebui`) only, verified against Open WebUI's key
-  table. The Hubzoid web app mode ignores it and uses the `hz_session` cookie. The caller acts as the key's owner. No `Origin` is needed.
-  An unknown key gets 401. Any other `Authorization` value (for example HTTP
-  Basic added by a reverse proxy) is ignored and the cookie decides.
+Every endpoint takes the web app's session cookie (`hz_session`), verified
+server-side. Writes must come from the same origin (`Origin` or `Referer` host
+equals `Host`). An `Authorization` header is ignored; the Open WebUI API keys
+that 1.x accepted are no longer read.
 
 Authority is decided by `hubzoid/access/service.py` from the access store on
 every write. A refusal from it has this body:
@@ -40,15 +35,15 @@ subject as blocked when **either** is set.
 
 | Marker | Set by | Cleared by |
 |---|---|---|
-| `suspended` | `POST /people/block` (API only; the Console no longer offers Block), a block made in an earlier release, or the store's `account_replaced` safeguard when a known email re-appears under a new OWUI id. Blocking also **deletes every grant** for the subject. | `POST /people/block` with `suspended:false` (unblock; API only). Grants are **not** restored. |
-| `account_unavailable` | Open WebUI: the account is `role=pending` (signed up, not yet approved), or a complete directory read no longer lists an account that was previously bound. | Only by OWUI reporting the account as approved / present again (login, `POST /people/refresh`, or the 30 s visibility loop). An admin cannot clear it from the portal. |
+| `suspended` | `POST /people/block` (API only; Settings no longer offers Block), a block made in an earlier release, or the store's `account_replaced` safeguard when a known email re-appears under a new account id. Blocking also **deletes every grant** for the subject. | `POST /people/block` with `suspended:false` (unblock; API only). Grants are **not** restored. |
+| `account_unavailable` | The account is `pending` (signed up, not yet approved), or a complete directory read no longer lists an account that was previously bound. | Approving the account, or the account being present again (sign-in, or `POST /people/refresh`). Unblocking does not clear it. |
 
 The API exposes both, plus their OR:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `suspended` | bool | Admin block marker. Unblocking can clear this. |
-| `account_unavailable` | bool | Chat-app-side block. Approve/restore the account in Open WebUI, then refresh. |
+| `account_unavailable` | bool | Account-side block. Approve the account, or restore it, then refresh accounts. |
 | `blocked` | bool | `suspended || account_unavailable`. Always equals what enforcement uses. **Gate "can I add access" on this, not on `status`.** |
 | `status` | string | One display label, see precedence below. |
 
@@ -64,8 +59,8 @@ Evaluated top to bottom; the first match wins.
 | 1 | `suspended` | `blocked` |
 | 2 | subject is `*` | `everyone` |
 | 3 | subject starts with `workflow:` | `service` |
-| 4 | no `owui_id` (pre-granted email, never signed in) | `awaiting-signup` |
-| 5 | identity `pending` (OWUI signup awaiting approval) | `pending-approval` |
+| 4 | no account id (`owui_id`, the stored name kept from 1.x; a pre-granted email, never signed in) | `awaiting-signup` |
+| 5 | identity `pending` (a sign-up awaiting approval) | `pending-approval` |
 | 6 | `account_unavailable` (bound account missing from the directory) | `blocked` |
 | 7 | otherwise | `active` |
 
@@ -75,9 +70,9 @@ Reading the combinations the UI will actually meet:
 |---|---|---|---|---|
 | `active` | false | false | false | Normal user. |
 | `awaiting-signup` | false | false | false | Granted by email; hasn't signed in yet. Not blocked. |
-| `pending-approval` | false | **true** | **true** | Signed up, awaiting OWUI approval. Blocked until approved; unblocking does nothing. |
+| `pending-approval` | false | **true** | **true** | Signed up, awaiting approval. Blocked until approved; unblocking does nothing. |
 | `blocked` | **true** | false | true | Admin block. Unblocking clears it. |
-| `blocked` | false | **true** | true | Account deleted / missing in OWUI. Unblocking does nothing; restore in OWUI. |
+| `blocked` | false | **true** | true | Account deleted or missing. Unblocking does nothing. |
 | `blocked` | **true** | **true** | true | Admin block on a pending or missing account. Unblocking clears the admin part only; `status` then becomes `pending-approval` or stays `blocked` with `account_unavailable=true`. |
 
 Before this change `status` tested `is_suspended` first, so a pending user always
@@ -94,8 +89,9 @@ rendered as `blocked` and `pending-approval` was unreachable.
 | `grantable` | `{hub: [permission]}` this caller may grant or remove in each hub they manage. A delegate's list is their current access there minus `manage_access`. A legacy hub has `[]`. |
 | `account_admin` | Whether the caller may approve, reset, change the role of or delete accounts (organization administrators). |
 | `can_create_accounts` | Organization administrators, and delegates managing at least one managed hub. |
-| `accounts_configured` | Whether the internal Open WebUI URL and service account are set. No network call. |
-| `via` | `session` or `api-key`. |
+| `accounts_configured` | Always `true` since 2.0 (accounts are the web app's own); kept for clients that read it. |
+| `web_app` | Always `true` since 2.0; kept for clients that read it. |
+| `via` | `session`. |
 
 `GET /me?brief=1` omits these (the chat sidebar link polls it).
 
@@ -126,13 +122,13 @@ Unchanged behaviour, clearer 409s:
 | Cause | 409 `detail` |
 |---|---|
 | `suspended` | `This person is blocked, so they can't be given access.` |
-| `account_unavailable` only | `This account is unavailable in the chat app (awaiting approval or removed). Approve or restore it in Open WebUI, then refresh accounts.` |
+| `account_unavailable` only | `This account is unavailable in the chat app (awaiting approval or removed). Approve or restore it in People, then refresh accounts.` |
 
 Revokes to blocked subjects still succeed.
 
 ### `POST /portal/api/people/block` `{subject, suspended?: true}`
 
-Org admin only. The Console no longer calls it: it stays for API callers, and
+Org admin only. Settings no longer calls it: it stays for API callers, and
 for unblocking someone blocked in an earlier release. Returns the post-action
 account state instead of a bare `{ok:true}`:
 
@@ -153,7 +149,7 @@ account state instead of a bare `{ok:true}`:
 |---|---|
 | `ok` | Request handled (kept for compatibility; always `true` on 2xx). |
 | `changed` | Whether the store was written. Block: always `true`. Unblock: `true` only if the admin marker was set. |
-| `message` | `null`, or a sentence to show the admin when the person is **still blocked** after an unblock. Prefixed `Admin block cleared.` when the admin marker was removed but OWUI still disallows the account, or `Not blocked by an admin.` when there was nothing to clear. |
+| `message` | `null`, or a sentence to show the admin when the person is **still blocked** after an unblock. Prefixed `Admin block cleared.` when the admin marker was removed but the account is still unavailable, or `Not blocked by an admin.` when there was nothing to clear. |
 | `suspended`, `account_unavailable`, `blocked`, `status` | State after the action, same semantics as above. |
 
 Rules:
@@ -168,19 +164,20 @@ Rules:
 ### `POST /portal/api/accounts`
 
 ```json
-{"email": "ann@example.org", "name": "Ann", "password": "...",
- "sign_in": "password",
+{"email": "ann@example.org", "name": "Ann", "sign_in": "password",
  "grants": [{"hub": "finance", "permission": "ledger"}]}
 ```
 
-`sign_in` is `password` (the default) or `google`. `google` is accepted only when
-`/me` reports Google sign-in as available (Google configured and
-`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`). The server then sets a random password that
-is never returned, stored or logged, and `password` is not sent.
+`sign_in` is `password` (the default) or `google`. A `password` account is
+created without a password and the result carries a one-time sign-in link
+(`link`, `expires_at`) for the person to set one; an API caller may send
+`password` instead. `google` is accepted only when `/me` reports Google sign-in
+as available (Google configured and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`); the
+account then has no password.
 
-Creates an Open WebUI account with role `user` and applies the grants in one
-store transaction. Returns `{ok, subject, owui_id, name, role, grants, revision}`
-and never the password. A delegate must include at least one grant, and every
+Creates an account with role `user` and applies the grants in one store
+transaction. Returns `{ok, subject, owui_id, name, role, grants, revision}`
+(plus `link` and `expires_at`) and never a password. A delegate must include at least one grant, and every
 grant must be within their ceiling. Validation errors name the fields and never
 echo a value.
 
@@ -190,9 +187,8 @@ echo a value.
 | 409 `account_replaced` | The email belonged to a deleted account. Only an organization administrator can re-create it. |
 | 409 `blocked` | The email is blocked. Nothing was created. |
 | 403 `outside_ceiling`, `forbidden` | A grant the caller may not give. Nothing was created. |
-| 422 `rejected`, `invalid_password` | Open WebUI or the minimum rule (8 characters, at most 72 bytes) refused the password. |
-| 503 `accounts_unavailable` | No internal URL or service account. |
-| 503 `uncertain` | Open WebUI did not answer. The account may exist. Refresh accounts first. |
+| 422 `rejected`, `invalid_password` | The account store refused the email (for example a `localhost` address), or a sent password broke the minimum rule (8 characters, at most 72 bytes). |
+| 503 `uncertain` | The account store did not confirm the result. The account may exist; a retry is safe. |
 | 502 `partial` | The account was created but granting failed. The account is kept without access; the body names it. Retry with `POST /accounts/grant`. |
 
 A retry never creates a second account: after `uncertain` or `partial`, the
@@ -210,17 +206,14 @@ existing users' access is changed with `POST /access/apply`.
 
 | Method and path | Body | Notes |
 |---|---|---|
-| `GET /accounts/{subject}` | | `{subject, name, role, sign_in, console_admin, chat_admin, administrator}`, read live from Open WebUI. `role` is the chat app's role. `sign_in` is `password`, `google` or null. `administrator` is `admin`, `user`, `console_only`, `chat_only` or `pending`. Reading never changes either side |
-| `POST /accounts/{subject}/password` | `{password}` | Open WebUI revokes the account's sessions. 409 `google_managed` for a Google-only account |
+| `GET /accounts/{subject}` | | `{subject, name, role, sign_in, console_admin, chat_admin, administrator}`. `role` is the account's role; `chat_admin` keeps its 1.x name. `sign_in` is `password`, `google` or null. `administrator` is `admin`, `user`, `console_only`, `chat_only` or `pending`. Reading never changes either side |
+| `POST /accounts/{subject}/password` | `{}` or `{password}` | Without a password, returns a one-time link (`link`, `expires_at`) to share. Either way the account's other sessions end. 409 `google_managed` for a Google-only account |
 | `POST /accounts/{subject}/approve` | | `pending` to `user`, then the identity is marked available |
-| `POST /accounts/{subject}/role` | `{role: "user"\|"admin"}` | The Administrator role: the chat app's role first, then organization-wide `manage_access`. Returns `{ok, subject, role, changed, console_admin, chat_admin, administrator}`. 502 `role_partial` when only one side changed (the body carries `retry: true` and both sides); repeating the request finishes it. 409 `pending` before approval, 409 `last_admin` for the last administrator on either side |
+| `POST /accounts/{subject}/role` | `{role: "user"\|"admin"}` | The Administrator role: the account's role first, then organization-wide `manage_access`. Returns `{ok, subject, role, changed, console_admin, chat_admin, administrator}`. 502 `role_partial` when only one side changed (the body carries `retry: true` and both sides); repeating the request finishes it. 409 `pending` before approval, 409 `last_admin` for the last administrator on either side |
 | `DELETE /accounts/{subject}` | `{confirm_email}` | Removes every grant, then the account and its chats; marks the email removed. 422 `confirm_email` if the email doesn't match. 409 `last_admin` if it would remove the last administrator on either side. 502 `partial` if grants were removed but the account was not |
 
-Each refuses your own account (`self_change`) and the service account
-(`service_account`), and checks that the account linked to the subject still has
-that email (`account_changed`). For the last-administrator check, the service
-account counts as a chat-app administrator only when it also holds
-organization-wide `manage_access`.
+Each refuses your own account (`self_change`), and checks that the account
+linked to the subject still has that email (`account_changed`).
 
 ### Change requests
 
@@ -230,13 +223,13 @@ read, confirm or reject one. Anyone else gets 404.
 | Method and path | Body | Notes |
 |---|---|---|
 | `GET /change-requests/{id}` | | The plan, `plan_hash`, status, expiry, current access and `problem` (why it could not apply now, or null) |
-| `POST /change-requests/{id}/confirm` | `{plan_hash, password?}` | Session cookie only (403 `session_required` for a key). `password` is required for a new account |
-| `POST /change-requests/{id}/reject` | | Session or key |
+| `POST /change-requests/{id}/confirm` | `{plan_hash, password?}` | Session cookie. `password` sets a new account's password |
+| `POST /change-requests/{id}/reject` | | Session cookie |
 
 Statuses: `pending`, `applying`, `confirmed`, `rejected`, `expired`, `failed`.
 A confirmation claims the request atomically, so it applies at most once, and
-re-checks the proposer's current access. A request whose password Open WebUI
-refused stays `pending`. Any other failure marks it `failed`.
+re-checks the proposer's current access. A request whose password was refused
+stays `pending`. Any other failure marks it `failed`.
 
 ## UI guidance
 
