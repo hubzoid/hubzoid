@@ -284,6 +284,25 @@ def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]
 # ---------------------------------------------------------------------------
 # Public entry: build a ClaudeRuntime for the hub.
 # ---------------------------------------------------------------------------
+def _budget_caps(options):
+    """The hub's usage limits as the Claude Agent SDK's own caps for this run
+    (`max_turns`, `max_budget_usd`), when budgets.yaml sets them."""
+    import dataclasses
+
+    from . import budgets
+
+    ticket = budgets.current()
+    if ticket is None or (ticket.max_turns is None and ticket.max_budget_usd is None):
+        return options
+    changes = {}
+    if ticket.max_turns is not None:
+        changes["max_turns"] = min(options.max_turns or ticket.max_turns, ticket.max_turns)
+    if ticket.max_budget_usd is not None:
+        current = getattr(options, "max_budget_usd", None)
+        changes["max_budget_usd"] = min(current, ticket.max_budget_usd) if current else ticket.max_budget_usd
+    return dataclasses.replace(options, **changes)
+
+
 def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                          max_turns: int | None = None,
                          model_override: str | None = None) -> "ClaudeRuntime":
@@ -1016,6 +1035,17 @@ class ClaudeRuntime:
         return run_events.as_text(self.stream_events(prompt), tool_mode=self._tool_mode)
 
     async def stream_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
+        """One turn, after the hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        def refuse(exc):
+            self.last_error = exc
+
+        async for item in budgets.guarded(self._hub_dir, "claude-local", lambda: self._turn_events(prompt),
+                                          refuse):
+            yield item
+
+    async def _turn_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
         """Yield answer text and typed run events as they arrive.
 
         Four event streams are interleaved:
@@ -1107,7 +1137,7 @@ class ClaudeRuntime:
                 if slot.model:
                     changes["model"] = slot.model
                 turn_options = _dc.replace(turn_options, **changes)
-            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
+            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(_budget_caps(turn_options)),
                                             hub_dir=self._hub_dir)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
@@ -1291,6 +1321,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     final: str | None = None
     usage: dict = {}
     answered_by: str | None = None
+    options = _budget_caps(options)
     messages = _query_with_failover(prompt=prompt, options=options, hub_dir=hub_dir)
     from contextlib import aclosing
     async with aclosing(messages):
@@ -1350,7 +1381,7 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
     child_env = _child_env()
     if child_env:
         opts["env"] = child_env
-    options = claude_options(**opts)
+    options = _budget_caps(claude_options(**opts))
     parts: list[str] = []
     structured: Any = None
     final: str | None = None

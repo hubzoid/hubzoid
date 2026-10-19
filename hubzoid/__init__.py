@@ -5,6 +5,12 @@ with a polished web UI. See README.md.
 """
 from __future__ import annotations
 
+import os as _os
+
+# Model prices come from the table pinned with the installed LiteLLM, not one
+# fetched at start-up, so the same version always prices (and limits) the same.
+_os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 try:  # one source of truth: pyproject.toml, via the installed package metadata
     from importlib.metadata import version as _version
 

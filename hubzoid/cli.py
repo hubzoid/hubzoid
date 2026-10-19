@@ -3227,7 +3227,12 @@ app.add_typer(handoffs_app, name="handoffs",
               help="Handoff documents between stations of a work item.",
               rich_help_panel="Commands")
 
+from .budgets_cli import budgets_app  # noqa: E402
 from .sandbox.cli import sandbox_app  # noqa: E402
+
+app.add_typer(budgets_app, name="budgets",
+              help="Usage limits: budgets.yaml, this month's usage and open reservations.",
+              rich_help_panel="Commands")
 
 app.add_typer(sandbox_app, name="sandbox",
               help="Sandboxes for agents: doctor, profiles, probes and cleanup.",

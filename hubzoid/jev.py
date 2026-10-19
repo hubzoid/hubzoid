@@ -239,6 +239,9 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
             f"Jev needs {KEY_ENV}: a dedicated OpenRouter key in the hub's .env. "
             "OPENROUTER_API_KEY and the chat model are never used for Jev.")
     body = {"model": model, "state": spec["state"], "questions": questions}
+    from . import budgets
+    admission = budgets.call(hub_dir, model=model)
+    admission.__enter__()          # refused here: nothing sent, nothing recorded
     started = time.monotonic()
     from .workflows.deadlines import remaining
     budget = min(float(spec.get("timeout", 90)), remaining(90))
@@ -297,5 +300,6 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
             subject=subject, chat_id=chat_id, model=data.get("model") or model,
             input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
             cost_usd=u.get("cost"), status=status,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id(),
         )
+        admission.__exit__(None, None, None)

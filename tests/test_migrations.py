@@ -31,7 +31,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                # isolated agents and handoffs (op_0051)
                "hz_station_calls", "hz_handoffs",
                # sandboxes (op_0052)
-               "hz_sandboxes", "hz_sandbox_read_stamps"}
+               "hz_sandboxes", "hz_sandbox_read_stamps",
+               # budget reservations (op_0053)
+               "hz_budget_reservations"}
 
 
 # Tables added after op_0019, dropped when a test rewinds to op_0016 and when
@@ -338,10 +340,11 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019 and op_0050 to op_0052.
+        # And op_0019 and op_0050 to op_0053.
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
                       "hz_work_items", "hz_operations", "hz_idempotency",
-                      "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps"):
+                      "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps",
+                      "hz_budget_reservations"):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
         conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))

@@ -18,6 +18,7 @@ import {
   FilePen,
   HeartPulse,
   Box,
+  Gauge,
   LogOut,
   Menu as MenuIcon,
   MessageSquare,
@@ -67,6 +68,7 @@ type Key =
   | "my-work"
   | "work"
   | "sandboxes"
+  | "budgets"
   | "agents"
   | "people"
   | "activity"
@@ -104,6 +106,7 @@ const ITEMS: Item[] = [
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
   { key: "work", label: S.workItems, icon: <ListChecks size={16} aria-hidden />, hash: "/work", team: true, keywords: "approvals operations stations" },
   { key: "sandboxes", label: S.sandboxes, icon: <Box size={16} aria-hidden />, hash: "/sandboxes", team: true, keywords: "docker workspace cleanup" },
+  { key: "budgets", label: S.usageLimits, icon: <Gauge size={16} aria-hidden />, hash: "/budgets", team: true, keywords: "budget tokens cost limits" },
   { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
   { key: "hub-changes", label: t.hubChanges.title, icon: <FilePen size={16} aria-hidden />, hash: "/hub-changes", team: true, keywords: "proposals review knowledge instructions agents.md remember diff commit undo" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
@@ -126,6 +129,7 @@ function keyFor(hash: string): Key | null {
   if (a === "schedules") return "schedules";
   if (a === "work") return "work";
   if (a === "sandboxes") return "sandboxes";
+  if (a === "budgets") return "budgets";
   if (a === "workflow-access") return "workflow-access";
   if (a === "hub-changes") return "hub-changes";
   if (a === "diagnostics") return "health";

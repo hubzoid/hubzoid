@@ -233,11 +233,25 @@ class OpenAIAgentsRuntime:
         self._opened = False
 
     async def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]:
-        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers (see `personal_mcp`),
-        the turn runs on a per-turn clone of the agent that also carries those
-        servers, each with the caller's own token. The shared agent is never
-        modified."""
+        """Run one turn as a typed stream (see `hubzoid.run_events`), after the
+        hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        model = getattr(self._agent, "model", None)
+        model = getattr(model, "model", model)
+
+        def refuse(exc):
+            self.last_error = exc
+
+        async for item in budgets.guarded(self._hub_dir, str(model) if model else None,
+                                          lambda: self._turn_events(prompt), refuse):
+            yield item
+
+    async def _turn_events(self, prompt: str) -> AsyncIterator[StreamItem]:
+        """When the caller connected personal MCP servers (see
+        `personal_mcp`), the turn runs on a per-turn clone of the agent that also
+        carries those servers, each with the caller's own token. The shared
+        agent is never modified."""
         personal = self._personal_servers()
         if not personal:
             async for item in self._stream(self._agent, prompt):
@@ -312,7 +326,10 @@ class OpenAIAgentsRuntime:
             )
         result = None
         try:
-            result = Runner.run_streamed(agent, run_input, max_turns=self._max_turns)
+            from . import budgets
+            hooks = budgets.cost_hooks(getattr(agent, "model", None))
+            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
+                                         **({"hooks": hooks} if hooks is not None else {}))
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
@@ -682,6 +699,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
             cost_usd=raw.get("cost_usd"), status=status,
             duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=raw.get("budget_reservation"),
         )
 
 
@@ -726,6 +744,9 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     started = time.monotonic()
     usage: dict = {}
     status = "error"
+    from . import budgets
+    admission = budgets.call(hub_dir, model=model_id)
+    admission.__enter__()          # refused here: nothing ran, nothing recorded
     try:
         from . import testing_runtime
         if testing_runtime.is_test_model(model_id):
@@ -756,6 +777,9 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}]
             kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget}
+            bound = budgets.output_bound(model_id, prompt + (system or ""))
+            if bound is not None:
+                kwargs["max_tokens"] = bound      # what the dollar limit still allows
             if schema is not None:
                 kwargs["response_format"] = {"type": "json_schema",
                                              "json_schema": {"name": "result", "schema": schema}}
@@ -786,7 +810,9 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=budgets.current_id(),
         )
+        admission.__exit__(None, None, None)
 
 
 def jev_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
@@ -865,6 +891,9 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             async with asyncio.timeout(remaining(timeout)):
                 return await go()
 
+    from . import budgets
+    admission = budgets.call(hub_dir, model=model_setting)
+    admission.__enter__()          # refused here: nothing ran, nothing recorded
     try:
         ident = Identity.make(subject, surface="workflow") if subject else None
         if ident is not None:
@@ -893,4 +922,5 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             model=(usage or {}).get("model") or model_setting,
             input_tokens=(usage or {}).get("input_tokens"), output_tokens=(usage or {}).get("output_tokens"),
             cost_usd=(usage or {}).get("cost_usd"), status=status,
-            duration_ms=int((time.monotonic() - started) * 1000))
+            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id())
+        admission.__exit__(None, None, None)

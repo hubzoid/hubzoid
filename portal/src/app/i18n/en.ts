@@ -422,6 +422,7 @@ export const en = {
     myWorkLede: "Work you asked the agents for: its progress, what waits for your approval, and what you decided.",
     workItems: "Work items",
     sandboxes: "Sandboxes",
+    usageLimits: "Usage limits",
     agents: "Agents",
     people: "People & access",
     activity: "Activity",
