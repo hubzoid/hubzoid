@@ -48,6 +48,9 @@ def user_text(hub_dir: Path, key: str, content: list) -> str:
         if kind == "text":
             if part.get("text"):
                 texts.append(str(part["text"]))
+        elif kind == "request_outcome" and part.get("for_model"):
+            # The person's answer to the agent's approval or question, as data.
+            texts = [str(part["for_model"])]
         elif kind in ("file", "image") and part.get("file_id"):
             name = str(part["file_id"])
             notes.append(attachment_note(

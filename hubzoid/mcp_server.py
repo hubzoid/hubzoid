@@ -112,6 +112,8 @@ def build_registry(
     builtin = make_builtin_tools(ctx)
     local = tools_local_loader.load_all(hub_dir)
     registry = access.apply(hub_dir, {**builtin, **local})
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry, questions=False)
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).

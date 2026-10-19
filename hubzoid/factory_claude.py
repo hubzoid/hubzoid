@@ -352,6 +352,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
 
     # MCP: external servers from the hub's connectors/.mcp.json PLUS the
     # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
@@ -456,6 +458,17 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                 if t != SUBAGENT_SPAWN_TOOL
             ]
         options = claude_options(**opts_kwargs)
+
+    # Approvals for MCP tools Claude calls itself (hub tools are wrapped above).
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    from .hitl import gate as hitl_gate
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [*hooks.get("PreToolUse", []),
+                           HookMatcher(hooks=[hitl_gate.claude_hook(hub_dir, _MCP_NAMESPACE)])]
+    options = dataclasses.replace(options, hooks=hooks)
 
     # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
     # own loopback intercept (it renames token attrs -> gen_ai.usage.* so

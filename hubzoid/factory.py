@@ -179,6 +179,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     registry = access.apply(hub_dir, registry)
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
 
     mcp_servers = [access.guard.checked_server(s, hub_dir)
                    for s in load_mcp_servers(mcp_loader.load_all_raw(hub_dir))]
