@@ -174,17 +174,30 @@ def apply(hub_dir: Path, registry: dict, *, connector: str | None = None) -> dic
     return {name: wrap(ft, hub_dir, connector=connector) for name, ft in registry.items()}
 
 
+# How strict a rule is, to judge a name two servers could own by the stricter.
+_STRICTNESS = {"never": 0, "auto": 1, "writes": 2, "once": 2, "always": 3}
+
+
 def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
     """``mcp__<server>__<tool>`` as ``(server, tool)``, the bare tool name the
     other runtimes evaluate, so one hitl.yaml rule applies on all three. A
     server key with ``__`` in it is matched against the hub's own servers and
-    its personal connectors'. A rule written with the full name still applies
-    to that name."""
+    its personal connectors'; when more than one split fits (servers ``acme``
+    and ``acme__delete``), the split whose rule is strictest is used. A rule
+    written with the full name still applies to that name."""
     from . import config as cfglib
 
     rest = name[len("mcp__"):] if name.startswith("mcp__") else name
-    servers: set[str] = set()
+    try:
+        cfg = cfglib.load(hub_dir)
+    except Exception:  # noqa: BLE001 - an unreadable file asks for every tool anyway
+        cfg = None
+    first, _, after = rest.partition("__")
+    if cfg is not None and name in cfg.tools:
+        return first or None, name
+    candidates = [(first, after)]
     if rest.count("__") > 1:  # which separator ends the server's key
+        servers: set[str] = set()
         try:
             from ..personal_mcp import _hub_server_keys
 
@@ -197,16 +210,13 @@ def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
             servers |= {per_user.server_key(c.id) for c in registry.list_all(hub_dir)}
         except Exception:  # noqa: BLE001
             pass
-    server = max((s for s in servers if rest.startswith(f"{s}__")), key=len, default=None)
-    if server is not None:
-        tool = rest[len(server) + 2:]
+        known = sorted((s for s in servers if rest.startswith(f"{s}__") and len(rest) > len(s) + 2),
+                       key=len, reverse=True)
+        candidates = [(s, rest[len(s) + 2:]) for s in known] + candidates
+    if cfg is not None and len(candidates) > 1:
+        server, tool = max(candidates, key=lambda c: _STRICTNESS.get(cfg.rule_for(c[1] or name, c[0]).ask, 3))
     else:
-        server, _, tool = rest.partition("__")
-    try:
-        if name in cfglib.load(hub_dir).tools:
-            return server or None, name
-    except Exception:  # noqa: BLE001 - an unreadable file asks for every tool anyway
-        pass
+        server, tool = candidates[0]
     return server or None, tool or name
 
 

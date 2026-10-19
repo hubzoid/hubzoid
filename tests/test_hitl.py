@@ -410,6 +410,11 @@ def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub, monkeypatch):
     # A personal connector whose id has __ in it.
     monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme__github")])
     assert gate.mcp_parts(hub, "mcp__my_acme__github__create_issue") == ("my_acme__github", "create_issue")
+    # Two connectors that could both own the name: the stricter rule decides.
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  delete__order: {ask: always}\n")
+    monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme"), NS(id="acme__delete")])
+    with identity_scope(Identity.make("ana@example.org", surface="web")):
+        assert decision("mcp__my_acme__delete__order", {"id": 2}) == "deny"
 
 
 def test_only_a_persons_session_decides_never_a_key():
