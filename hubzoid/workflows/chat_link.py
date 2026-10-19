@@ -69,12 +69,24 @@ def post_request(hub_dir, env: dict, workflow: str, req: dict) -> None:
             "args": {}, "argsText": "{}",
             "result": {"status": "waiting", "request_id": req["id"], "kind": req.get("kind") or "approval"}}
     text = {"type": "text", "text": f"{title_for(workflow)} is waiting for you:"}
+    def still_pending() -> bool:
+        from ..hitl import service
+
+        cur = service.get(Path(hub_dir), Path(hub_dir).name.lower(), req["id"])
+        return bool(cur) and cur.get("status") == "pending"
+
     def run():
         try:
             # A reply may be being written (the one that started the run shows
-            # the card itself): wait for it, up to two minutes.
-            _post(Path(hub_dir), chat, _mid("request", req["id"]), [text, part], tries=40,
-                  unless_mentioned=req["id"])
+            # the card itself): wait for it, up to two minutes, and only while
+            # the request is still open.
+            for _ in range(40):
+                if not still_pending():
+                    return
+                if _post(Path(hub_dir), chat, _mid("request", req["id"]), [text, part],
+                         unless_mentioned=req["id"]) != "busy":
+                    return
+                time.sleep(3)
         except Exception:  # noqa: BLE001 - it is still under "Waiting for you"
             log.warning("workflows: could not show request %s in its chat", req.get("id"), exc_info=True)
 
@@ -92,10 +104,11 @@ def _readable(result) -> str:
     if isinstance(result, dict):
         lines = []
         for key, value in result.items():
+            key = str(key)
             if value is None or key.startswith("_"):
                 continue
             shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-            lines.append(f"- {str(key).replace('_', ' ').capitalize()}: {shown}")
+            lines.append(f"- {key.replace('_', ' ').capitalize()}: {shown}")
         return "\n".join(lines)
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -118,16 +131,27 @@ def post_result(hub_dir, env: dict, workflow: str, run_id: str, *, ok: bool, res
         pass
     if not asked and started and time.time() - started <= tool_wait:
         return  # the chat waited and showed the outcome itself
-    from .outcomes import CAUSES, links_text
-    from .runtime import title_for
-
-    title = title_for(workflow)
-    if ok:
-        body = "\n\n".join(p for p in (_readable(result), links_text(list(published or []))) if p)
-        text = f"{title} finished." + (f"\n\n{body}" if body else "")
-    else:
-        text = f"{title} stopped: {CAUSES.get(cause or 'error', CAUSES['error'])}."
     try:
+        from .outcomes import CAUSES, links_text
+        from .runtime import title_for
+
+        title = title_for(workflow)
+        if ok:
+            links = _run_links(Path(hub_dir), run_id) or links_text(list(published or []))
+            body = "\n\n".join(p for p in (_readable(result), links) if p)
+            text = f"{title} finished." + (f"\n\n{body}" if body else "")
+        else:
+            text = f"{title} stopped: {CAUSES.get(cause or 'error', CAUSES['error'])}."
         _post(Path(hub_dir), chat, _mid("result", run_id), [{"type": "text", "text": text}], tries=5)
-    except Exception:  # noqa: BLE001 - it is still in the person's runs and reports
+    except Exception:  # noqa: BLE001 - never the run's outcome; it is still in the person's runs and reports
         log.warning("workflows: could not post the result of %s to its chat", run_id, exc_info=True)
+
+
+def _run_links(hub_dir: Path, run_id: str) -> str:
+    """Every report the run published (keyed or not), as the chat shows them."""
+    try:
+        from ..tools.report_tools import _links_for_run
+
+        return "\n".join(f"- {u}" for u in _links_for_run(hub_dir, run_id, "web"))
+    except Exception:  # noqa: BLE001
+        return ""

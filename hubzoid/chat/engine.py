@@ -1445,10 +1445,15 @@ class ChatEngine:
             if b.head_id is not None and self._message_in(conn, conversation_id, b.head_id)["status"] == "running":
                 return "busy"
             actor = self._author(conv, actor_id)
+            old_head = b.head_id
             mid = self._insert(conn, conv_id=conversation_id, mid=message_id, parent_id=b.head_id,
                                role="assistant", content=parts, branch_id=b.id, actor=actor)
             g.move_head(conn, b.id, b.revision, mid)
             self._touch(conn, conversation_id, mid)
+            view = g.get_view(conn, conversation_id, actor.id)
+            if view is None or (view["branch_id"] == b.id and view["view_head_id"] in (old_head, None)):
+                # They were following this branch: they see the new message, and their next message follows it.
+                g.set_view(conn, conversation_id, actor.id, b.id, mid)
         self.notify(conversation_id)
         self._ready_notice(conversation_id, branch_id, mid, actor_id)
         return "posted"

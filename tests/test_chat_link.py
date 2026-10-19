@@ -80,3 +80,33 @@ def test_an_answer_posted_by_a_run_notifies_like_a_reply(chat):
     with engine.engine.connect() as c:
         rows = c.execute(feedback.inbox.select().where(feedback.inbox.c.recipient_id == "u_ana")).fetchall()
     assert len(rows) == 1
+
+
+def test_a_late_post_is_what_the_person_sees_next(chat):
+    from hubzoid.chat import graph as g
+
+    hub, engine, _actor, link = chat
+    cid, branch = link["conversation_id"], link["branch_id"]
+    engine.post_from_run(cid, branch_id=branch, actor_id="u_ana", message_id="m_res_dddddddd",
+                         parts=[{"type": "text", "text": "done"}])
+    with engine.engine.connect() as c:
+        assert g.get_view(c, cid, "u_ana")["view_head_id"] == "m_res_dddddddd"
+
+
+def test_odd_results_never_break_the_run(chat):
+    from hubzoid.workflows import chat_link
+
+    assert chat_link._readable({1: "one", "_x": 2, "ok": True}) == "- 1: one\n- Ok: true"
+    hub, engine, _actor, link = chat
+    chat_link.post_result(hub, {"chat": link, "started_at": 1}, "w", "run-odd", ok=True, result=object())
+
+
+def test_a_request_answered_meanwhile_is_not_announced(chat, monkeypatch):
+    from hubzoid.workflows import chat_link
+
+    hub, engine, _actor, link = chat
+    started = []
+    monkeypatch.setattr("threading.Thread.start", lambda self: started.append(self))
+    chat_link.post_request(hub, {"chat": link}, "w", {"id": "req-gone", "status": "pending", "kind": "question"})
+    started[0].run()  # the request no longer exists or is settled: nothing is posted
+    assert _texts(engine, link["conversation_id"]) == []
