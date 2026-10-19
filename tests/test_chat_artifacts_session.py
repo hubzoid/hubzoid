@@ -94,20 +94,3 @@ def test_another_hubs_conversation_does_not_open_this_hubs_files(hub, monkeypatc
     assert client.get("/artifacts/web-c_art000002/left.txt",
                       headers={"X-Test-User": "ana"}).status_code == 401
 
-
-def test_legacy_mode_does_not_accept_sessions(hub, monkeypatch):
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    as_people(monkeypatch)
-    app = build_app()
-    assert not hasattr(app.state, "chat")          # no web app routes in Open WebUI mode
-    client = TestClient(app)
-    from hubzoid.chat import store as chat_store
-
-    chat_store.for_hub(hub).create_conversation(conv_id="c_legacy001", owner_id="u_ana",
-                                                owner_email="ana@example.org", hub="chat-hub",
-                                                agent="x")
-    (memory.chat_artifact_dir(hub, "c_legacy001") / "a.txt").write_text("legacy")
-    assert client.get("/artifacts/c_legacy001/a.txt", headers={"X-Test-User": "ana"}).status_code == 401
-    query = _signing.artifact_query("c_legacy001", "a.txt", hub_dir=hub)
-    assert "&e=" not in query                      # legacy links never expire by default
-    assert client.get(f"/artifacts/c_legacy001/a.txt?{query}").status_code == 200

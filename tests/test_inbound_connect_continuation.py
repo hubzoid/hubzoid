@@ -51,7 +51,7 @@ def hub(tmp_path, monkeypatch):
     from hubzoid.connectors import oauth_flow
 
     monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: "https://accounts.example.org/authorize")
-    monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     h.grant(hub, ALICE, BOB)
     hub.db = db
@@ -310,8 +310,7 @@ def test_a_service_that_cannot_write_the_shared_store_says_so_once(tmp_path, mon
     hub.mkdir(parents=True)
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key="nurturing", name="nurturing", path=str(hub), model_id="nurturing")],
-                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
-                    owui_url="http://127.0.0.1:9", owui_db=str(gw / "webui.db"))
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}", owui_db=str(gw / "webui.db"))
     monkeypatch.setattr(run.os, "access", lambda *a, **k: False)
     with caplog.at_level("ERROR", logger="hubzoid.inbound"):
         assert run._connect_journeys(hub, {}, whatsapp=True) is False

@@ -377,7 +377,7 @@ def gateway(tmp_path, owui_fixture, clean_env) -> Deployment:
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key="finance", name="Finance", path=str(finance), model_id="finance"),
                           dict(key="ops", name="Ops", path=str(ops), model_id="ops")],
-                    operational_url=f"sqlite:///{gw / 'operational.db'}", owui_url="http://127.0.0.1:9",
+                    operational_url=f"sqlite:///{gw / 'operational.db'}",
                     owui_db=str(gw / "webui.db"), owui_database_url=f"sqlite:///{gw / 'webui.db'}")
     # The 1.0.x bridge copied this attachment into the chat's uploads folder at chat time.
     uploads = finance / ".hubzoid" / "chats" / manifest["chats"]["files"] / "uploads"
@@ -886,7 +886,7 @@ def _save_gateway(dep: Deployment, keys: list[str]) -> Path:
     gw = dep.owui.parent
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key=k, name=k.title(), path=str(dep.hubs[k]), model_id=k) for k in keys],
-                    operational_url=f"sqlite:///{dep.op}", owui_url="http://127.0.0.1:9",
+                    operational_url=f"sqlite:///{dep.op}",
                     owui_db=str(dep.owui), owui_database_url=f"sqlite:///{dep.owui}")
     return gw
 

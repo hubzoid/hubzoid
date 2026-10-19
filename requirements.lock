@@ -1,7 +1,6 @@
 # Reviewed runtime dependency set for the Docker image and deployments: the
-# core install (Hubzoid web app, no Open WebUI) plus PostgreSQL support.
+# core install (the Hubzoid web app) plus PostgreSQL support.
 #   pip install -r requirements.lock
-# The legacy Open WebUI set is requirements-openwebui.lock.
 # Regenerate after changing pyproject.toml (uv keeps the pins already here):
 #   uv pip compile pyproject.toml --extra postgres --python-version 3.12 --universal --no-header -o requirements.lock
 aiofile==3.12.3
@@ -82,6 +81,7 @@ click==8.5.0
     #   uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
+    #   qrcode
     #   tqdm
     #   typer
 composio==0.15.0
@@ -353,6 +353,8 @@ pyyaml==6.0.3
     #   huggingface-hub
     #   jsonschema-path
     #   uvicorn
+qrcode==8.2
+    # via hubzoid (pyproject.toml)
 referencing==0.36.2
     # via
     #   jsonschema

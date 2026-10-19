@@ -205,7 +205,7 @@ def test_invalid_workflow_settings_leave_gateway_and_chat_routes_available(tmp_p
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(settings)
     plan = gateway.plan([tmp_path])
-    paths = {route["prefix"] for route in plan.edge_routes(web_app=True)}
+    paths = {route["prefix"] for route in plan.edge_routes()}
     assert f"/b/{plan.backends[0].slug}/api" in paths
     assert not any(path.startswith("/webhooks/") for path in paths)
     assert asyncio.run(boot.start(tmp_path)) is None

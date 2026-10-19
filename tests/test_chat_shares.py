@@ -149,16 +149,15 @@ def test_deleted_account_share_is_not_readable(setup):
     from hubzoid.access import store_for
     store_for(hub).revoke_all('ana@example.org', actor='admin@localhost')
     store_for(hub).mark_account_removed('ana@example.org', actor='admin@localhost')
-    assert users.store(hub).get('u_ana') is None
+    # Deleting keeps a tombstone (chats stay attributable), never a live account.
+    assert users.store(hub).get('u_ana')['status'] == 'deleted'
     response = client.get('/api/shares/' + share, headers=who('ben'))
     assert response.status_code == 404, response.text
     from sqlalchemy import text
     with app.state.chat.store.engine.connect() as conn:
-        assert conn.execute(text("SELECT count(*) FROM hz_conversations WHERE owner_id='u_ana'")).scalar() == 0
-        assert conn.execute(text("SELECT count(*) FROM hz_messages WHERE conversation_id='c_share0001'")).scalar() == 0
+        # The conversation stays with the tombstone; only its share links go.
+        assert conn.execute(text("SELECT count(*) FROM hz_conversations WHERE owner_id='u_ana'")).scalar() == 1
         assert conn.execute(text("SELECT count(*) FROM hz_shares WHERE owner_id='u_ana'")).scalar() == 0
-    # Native uploads and chat artifacts are removed too.
-    assert not (hub / '.hubzoid' / 'chats' / 'web-c_share0001').exists()
 
 
 

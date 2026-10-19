@@ -53,7 +53,7 @@ def record(hub_dir, hub, kind, source, payload):
     base = os.environ.get('HUBZOID_PUBLIC_URL', '').rstrip('/')
     # Explicit allowlist: no workflow outputs or raw exceptions in messages.
     data = {k:payload[k] for k in ('workflow','run_id','count') if k in payload}
-    link = base+'/portal/#/agents/'+quote(hub,safe='')+'/runs'
+    link = base+'/settings#/agents/'+quote(hub,safe='')+'/runs'
     if payload.get('workflow') and payload.get('run_id'):
         link += '/'+quote(payload['workflow'],safe='')+'/'+quote(payload['run_id'],safe='')
     data.update(hub=hub, kind=kind, url=link)

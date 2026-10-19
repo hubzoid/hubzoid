@@ -352,6 +352,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
 
     # MCP: external servers from the hub's connectors/.mcp.json PLUS the
     # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
@@ -456,6 +458,17 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                 if t != SUBAGENT_SPAWN_TOOL
             ]
         options = claude_options(**opts_kwargs)
+
+    # Approvals for MCP tools Claude calls itself (hub tools are wrapped above).
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    from .hitl import gate as hitl_gate
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [*hooks.get("PreToolUse", []),
+                           HookMatcher(hooks=[hitl_gate.claude_hook(hub_dir, _MCP_NAMESPACE)])]
+    options = dataclasses.replace(options, hooks=hooks)
 
     # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
     # own loopback intercept (it renames token attrs -> gen_ai.usage.* so
@@ -702,6 +715,38 @@ def _guarded(options, guard):
     return dataclasses.replace(options, hooks=hooks)
 
 
+def _identity_checked(options, hub_dir, ident):
+    """A PreToolUse hook for the tools Hubzoid does not wrap itself (outside
+    MCP servers, Claude's own tools): the same per-call check as every hub
+    tool (``access.evaluator.check_run``). Hub tools check inside their own
+    wrapper, so they are skipped here."""
+    import asyncio
+    import dataclasses
+    from pathlib import Path
+
+    from claude_agent_sdk import HookMatcher
+
+    from .access.evaluator import check_run
+
+    own = f"mcp__{_MCP_NAMESPACE}__"
+
+    async def admit(tool_input, _tool_use_id, _context):
+        if str((tool_input or {}).get("tool_name") or "").startswith(own):
+            return {}
+        try:
+            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident)
+        except Exception:  # noqa: BLE001 - fail closed
+            decision = None
+        if decision is not None and decision.allowed:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "This account no longer has access."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 def _only_tools(options, allowed: list[str]):
     """A PreToolUse hook that refuses every tool outside ``allowed`` (hub tool
     names; the SDK prefixes them with their MCP namespace)."""
@@ -903,7 +948,7 @@ class ClaudeRuntime:
             `claude` subprocess so its telemetry is attributed.
           * OWUI-connected MCP servers: inject the servers this user connected
             in Open WebUI, each with their own Bearer, so the agent reaches
-            them as the caller (see `owui_mcp`).
+            them as the caller (see `personal_mcp`).
 
         Returns the shared options untouched when none applies (the common
         no-op path), so hubs using none pay nothing."""
@@ -912,7 +957,7 @@ class ClaudeRuntime:
         from .access.guard import visible_map
         from .access.identity import current_identity
         from . import otel as otellib
-        from . import owui_mcp
+        from . import personal_mcp
 
         ident = current_identity()
         hidden = {n for n, shown in visible_map(self._registry).items() if not shown}
@@ -921,7 +966,7 @@ class ClaudeRuntime:
         extra_allowed: list[str] = []
         if self._hub_dir is not None:
             try:
-                extra_specs, extra_allowed = owui_mcp.per_user_specs(
+                extra_specs, extra_allowed = personal_mcp.per_user_specs(
                     self._hub_dir, ident, reserved=set(self._options.mcp_servers or {}))
             except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
                 log.warning("owui-mcp per-user injection skipped", exc_info=True)
@@ -1038,6 +1083,10 @@ class ClaudeRuntime:
         error_status: int | None = None
         try:
             turn_options = self._options_for_turn()
+            if self._hub_dir is not None:
+                from .access import current_identity
+
+                turn_options = _identity_checked(turn_options, self._hub_dir, current_identity())
             if resuming:
                 import dataclasses as _dc
 

@@ -1,18 +1,13 @@
 """The Console's user-account count: scope, dedupe, exclusions and failure.
 
 No model and no network: the two-hub review deployment from
-`tests.review_fixtures`, with an Open WebUI user table written to the SQLite
-file the deployment registers.
+`tests.review_fixtures`, with Hubzoid accounts in its operational store.
 """
 from __future__ import annotations
 
-import sqlite3
 import uuid
-from pathlib import Path
-
 import pytest
 
-from hubzoid import deployment
 import hubzoid.access as access
 from hubzoid.access.account_counts import user_account_summary
 from hubzoid.access.service import Scope
@@ -22,22 +17,26 @@ from tests.review_fixtures import OPERATIONS, OWNER, REVIEW, actor, make_review_
 LEAD = "lead@example.org"  # manages review-hub only
 
 
-def _owui_db(dep) -> Path:
-    return Path(deployment.read(dep.hubs[REVIEW])["owui_db"])
-
-
 def seed_accounts(dep, *emails_roles) -> None:
-    """Write Open WebUI's `user` table (the columns Hubzoid reads plus a few)."""
-    path = _owui_db(dep)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
-    con.execute('CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, '
-                'name TEXT, role TEXT)')
+    """Hubzoid login accounts; role "pending" is an account awaiting approval."""
+    from hubzoid.auth import users
+
+    accounts = users.store(dep.hubs[REVIEW])
     for email, role in emails_roles:
-        con.execute('INSERT INTO "user" VALUES (?,?,?,?)',
-                    (str(uuid.uuid4()), email, email.split("@")[0], role))
-    con.commit()
-    con.close()
+        if ":" in email:  # a service identity is never an account
+            continue
+        accounts.create(email=email, name=email.split("@")[0], id=str(uuid.uuid4()),
+                        role="admin" if role == "admin" else "user",
+                        status="pending" if role == "pending" else "active", source="admin")
+
+
+def _break_directory(monkeypatch):
+    from hubzoid.auth import users
+
+    def boom(*_a, **_k):
+        raise RuntimeError("account store down")
+
+    monkeypatch.setattr(users, "list_users", boom)
 
 
 @pytest.fixture
@@ -120,18 +119,10 @@ def test_the_hub_count_follows_the_scope_it_is_given(dep):
     assert user_account_summary(dep.hubs[REVIEW], scope=scope) == {"accounts": 3, "hubs": 1}
 
 
-def test_an_unreadable_directory_is_unavailable_not_zero(dep):
-    _owui_db(dep).unlink()
+def test_an_unreadable_directory_is_unavailable_not_zero(dep, monkeypatch):
+    _break_directory(monkeypatch)
     assert _summary(dep, OWNER) == {"accounts": None, "hubs": 2}
     assert _summary(dep, LEAD) == {"accounts": None, "hubs": 1}
-
-
-def test_a_directory_without_the_user_table_is_unavailable(dep):
-    con = sqlite3.connect(_owui_db(dep))
-    con.execute('DROP TABLE "user"')
-    con.commit()
-    con.close()
-    assert _summary(dep, OWNER)["accounts"] is None
 
 
 def test_an_unreadable_access_store_is_unavailable_for_a_delegate(dep, monkeypatch):
@@ -146,8 +137,9 @@ def test_an_unreadable_access_store_is_unavailable_for_a_delegate(dep, monkeypat
 
 
 def test_an_empty_directory_is_a_real_zero(dep):
-    con = sqlite3.connect(_owui_db(dep))
-    con.execute('DELETE FROM "user"')
-    con.commit()
-    con.close()
+    from hubzoid.auth import users
+
+    accounts = users.store(dep.hubs[REVIEW])
+    for u in accounts.list():
+        accounts.delete(u["id"])
     assert _summary(dep, OWNER) == {"accounts": 0, "hubs": 2}

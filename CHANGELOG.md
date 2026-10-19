@@ -3,6 +3,36 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Removed (Hubzoid 2.0)
+- Open WebUI. There is no `hubzoid[openwebui]` extra, `HUBZOID_UI` switch,
+  Open WebUI image build, account sync or model-visibility mirror. Deployments
+  that still need Open WebUI stay on 1.x (`pip install "hubzoid<2"`).
+- The standalone Admin Console shell. Its screens are sections of the web
+  app's Settings; `/portal/` sends old links and bookmarks to the same section.
+- `hubzoid access sync`, the Console's `/sync` and `/chat-access` routes, and
+  Open WebUI API keys on the management API.
+
+### Changed
+- Open WebUI settings are named, never ignored. `WEBUI_AUTH`, `WEBUI_URL`,
+  `WEBUI_ADMIN_EMAIL`/`_PASSWORD`, `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD`,
+  `HUBZOID_UI` other than `hubzoid` and a deployment recorded in Open WebUI
+  mode stop `hubzoid run`, `hubzoid gateway`, a separately started bridge and
+  `hubzoid admin`, with the rename to make. Other Open WebUI settings are
+  warnings at start and in `hubzoid doctor`. See docs/UPGRADING.md.
+- Settings gains **Advanced** and **Compatibility** tabs under Workspace
+  settings (the Console's admin settings and parity ledger, which had no link).
+- Links that agents and notices send (access confirmations, workflow alerts,
+  schedules, connections) point at Settings directly.
+- The Open WebUI database reader moved to `hubzoid/migration/openwebui/`
+  (read-only, for `hubzoid migrate openwebui` and `hubzoid migrate readiness`).
+  `hubzoid/owui_mcp.py` is now `hubzoid/personal_mcp.py`.
+
+### Fixed
+- An unknown or not-permitted Settings address opened an empty pane; it now
+  opens the first section (a person's own Schedules for the team's schedules).
+
 ## [1.3.2]
 
 ### Added
