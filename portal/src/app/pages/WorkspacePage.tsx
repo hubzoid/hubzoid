@@ -98,7 +98,7 @@ function Files({ agent }: { agent: string | null }) {
           <Editor key={selected} path={selected} draft={drafts.find((d) => d.path === selected && d.state !== "published") ?? null}
             onChanged={load} />
         ) : (
-          <div className="hz-card p-4 text-[13px] text-mute">{t.workspace.pick}</div>
+          <div className="flex min-h-48 items-center justify-center px-6 py-10 text-center text-[13px] text-mute">{t.workspace.pick}</div>
         )}
       </div>
       <NewFile kind={creating} onClose={() => setCreating(null)} onCreated={async (path) => { setCreating(null); await load(); setSelected(path); }} />

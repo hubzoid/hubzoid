@@ -138,8 +138,15 @@ export default function SettingsPage({ section }: { section: string | null }) {
     document.title = `${current ? current.label : t.account.settings} · ${app.brandName}`;
   }, [current, app.brandName]);
 
+  const personalTabs = items.filter((i) => ["profile", "appearance", "notifications", "data"].includes(i.key));
+  const workspaceTabs = items.filter((i) => ["chat", "brand"].includes(i.key));
+  const tabs = personalTabs.some((i) => i.key === active) ? personalTabs : workspaceTabs.some((i) => i.key === active) ? workspaceTabs : [];
+  const groupKey = (key: Key) => personalTabs.some((i) => i.key === key) ? "profile" : workspaceTabs.some((i) => i.key === key) ? "chat" : key;
+  const groupLabel = (item: Item) => item.key === "profile" ? S.preferences : item.key === "chat" ? S.workspaceSettings : item.label;
   const q = query.trim().toLowerCase();
-  const shown = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : items;
+  const shown = q
+    ? items.filter((i) => `${i.label} ${i.keywords ?? ""} ${groupLabel(i)}`.toLowerCase().includes(q))
+    : items.filter((i) => groupKey(i.key) === i.key);
   const nav = (group: "personal" | "team") => {
     const list = shown.filter((i) => (group === "team" ? i.team : !i.team));
     if (!list.length) return null;
@@ -155,10 +162,10 @@ export default function SettingsPage({ section }: { section: string | null }) {
               go(i.hash);
             }}
             className="hz-nav"
-            aria-current={active === i.key ? "page" : undefined}
+            aria-current={active && (q ? active === i.key : groupKey(active) === i.key) ? "page" : undefined}
           >
             {i.icon}
-            <span className="truncate">{i.label}</span>
+            <span className="truncate">{q ? i.label : groupLabel(i)}</span>
           </a>
         ))}
       </>
@@ -190,9 +197,10 @@ export default function SettingsPage({ section }: { section: string | null }) {
               </label>
               {nav("personal")}
               {nav("team")}
+              {shown.length === 0 && <p className="text-mute px-2">{S.noMatches(query)}</p>}
               <About />
             </nav>
-            <main className="hz-set-main" aria-label={current?.label}>
+            <main className={cx("hz-set-main", active === "chat" && "hz-set-chat")} aria-label={current?.label}>
               <button type="button" className="hz-set-back" onClick={() => {
                   history.replaceState(null, "", "/settings");
                   window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -200,6 +208,14 @@ export default function SettingsPage({ section }: { section: string | null }) {
                 <ArrowLeft size={14} aria-hidden />
                 {t.account.settings}
               </button>
+              {tabs.length > 0 && (
+                <nav className="hz-preference-tabs" aria-label={current && personalTabs.includes(current) ? S.personalPreferences : S.workspaceSettings}>
+                  {tabs.map((item) => (
+                    <a key={item.key} href={`/settings#${item.hash}`} aria-current={active === item.key ? "page" : undefined}
+                      onClick={(e) => { e.preventDefault(); go(item.hash); }}>{item.label}</a>
+                  ))}
+                </nav>
+              )}
               {current && <SectionBody item={current} />}
             </main>
           </div>
