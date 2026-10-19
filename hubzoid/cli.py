@@ -1959,7 +1959,7 @@ def doctor(
         print(_json.dumps(result, indent=2, default=str))
     else:
         marks = {"ok": "[green]✓[/green]", "info": "[dim]·[/dim]", "warn": "[yellow]![/yellow]",
-                 "fail": "[red]✗[/red]"}
+                 "fail": "[red]✗[/red]", "pending": "[cyan]…[/cyan]"}
         for c in checks:
             console.print(f"{marks[c.status]} {c.summary} [dim]({c.id})[/dim]")
             if c.id == "config.layers" and isinstance(c.detail, list):
@@ -3288,25 +3288,58 @@ eval_app = typer.Typer(
 )
 
 
-def _load_cases(hub: Path, tag: str | None, case: str | None):
+class _JsonQuiet:
+    """Swallows progress output while --json prints only the JSON record."""
+
+    def __init__(self, _console):
+        pass
+
+    def print(self, *_args, **_kwargs) -> None:
+        pass
+
+
+def _eval_fail(message: str, code: int, as_json: bool, error_code: str = "invalid_request") -> None:
+    if as_json:
+        print(json.dumps({"detail": {"code": error_code, "message": message}}))
+    else:
+        console.print(f"[red]{escape(message)}[/red]")
+    raise typer.Exit(code)
+
+
+def _load_cases(hub: Path, tag: str | None, case: str | None, *, as_json: bool = False):
     """Discover + filter, turning a bad case file into a clean CLI error."""
     from .evals import cases as cases_lib
 
     try:
         found = cases_lib.discover(hub)
     except cases_lib.EvalCaseError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(2) from exc
+        _eval_fail(str(exc), 2, as_json, "invalid_case")
 
     if not found:
-        console.print(f"no eval cases — add markdown files under {hub / 'evals'}/")
+        if as_json:
+            print(json.dumps({"cases": [], "message": "no eval cases"}))
+        else:
+            console.print(f"no eval cases — add markdown files under {hub / 'evals'}/")
         raise typer.Exit(0)
 
     selected = cases_lib.select(found, tag=tag, case=case)
     if not selected:
-        console.print("[yellow]no cases matched that filter[/yellow]")
+        if as_json:
+            print(json.dumps({"cases": [], "message": "no cases matched that filter"}))
+        else:
+            console.print("[yellow]no cases matched that filter[/yellow]")
         raise typer.Exit(0)
     return selected
+
+
+def _case_json(c, hub: Path) -> dict:
+    return {"id": c.name, "path": str(c.source_path.relative_to(hub)) if c.source_path else None,
+            "tags": list(c.tags), "enabled": c.enabled, "turns": len(c.turns) or 1,
+            "judged": c.is_judged, "schedule": c.schedule, "run_as": c.run_as,
+            "expect_tools": list(c.expect_tools), "forbid_tools": list(c.forbid_tools),
+            "expect_tool_args": sorted(c.expect_tool_args), "contains": len(c.contains),
+            "not_contains": len(c.not_contains), "fake_tools": [f.tool for f in c.fake_tools],
+            "real_tools": list(c.real_tools), "digest": c.digest}
 
 
 @eval_app.command("run")
@@ -3321,6 +3354,8 @@ def eval_run(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print the summary and failures."),
     details: bool = typer.Option(False, "--details", help="Under each case, one line per tool call: its key arguments, ok or failed, and time."),
     run_as: str = typer.Option(None, "--run-as", help="Run cases as this account (an email), with the workflow identity rules. A case's own run_as wins. Grants nothing."),
+    junit: Path = typer.Option(None, "--junit", help="Also write a JUnit XML report to this file, for CI."),
+    as_json: bool = typer.Option(False, "--json", help="Print the results as JSON (the same record as the results file) and nothing else."),
 ) -> None:
     """Run the hub's eval cases. Exits non-zero if any fail — that is the CI gate.
 
@@ -3341,21 +3376,21 @@ def eval_run(
     try:
         run_as = suite_lib.check_run_as(run_as)
     except EvalCaseError as exc:
-        console.print(f"[red]--run-as: {escape(str(exc))}[/red]")
-        raise typer.Exit(2) from exc
-    selected = _load_cases(hub, tag, case)
+        _eval_fail(f"--run-as: {exc}", 2, as_json)
+    selected = _load_cases(hub, tag, case, as_json=as_json)
+    out = _JsonQuiet(console) if as_json else console
 
     judged = [c for c in selected if c.is_judged]
-    console.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")
+    out.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")
     if judged and not no_judge:
-        console.print(f"[dim]judge: {escape(judge_lib.describe(hub, judge_model))}[/dim]")
+        out.print(f"[dim]judge: {escape(judge_lib.describe(hub, judge_model))}[/dim]")
     elif judged:
-        console.print(f"[dim]judge: off — {len(judged)} case(s) will run free checks only[/dim]")
+        out.print(f"[dim]judge: off — {len(judged)} case(s) will run free checks only[/dim]")
     if run_as:
-        console.print(f"[dim]run as: {escape(run_as)} (a case's own run_as wins)[/dim]")
+        out.print(f"[dim]run as: {escape(run_as)} (a case's own run_as wins)[/dim]")
 
     def _progress(result) -> None:
-        if quiet and result.passed:
+        if as_json or (quiet and result.passed):
             return
         mark = "[green]✓[/green]" if result.passed else "[red]✗[/red]"
         console.print(f"  {mark} {escape(result.name)}"
@@ -3373,12 +3408,22 @@ def eval_run(
             trigger=trigger, model=model, judge_model=judge_model,
             on_case=_progress, push=False)
     except EvalCaseError as exc:      # a case file changed under us
-        console.print(f"[red]{escape(str(exc))}[/red]")
-        raise typer.Exit(2) from exc
+        _eval_fail(str(exc), 2, as_json)
+
+    if junit is not None:
+        from .evals import junit as junit_lib
+
+        junit_lib.write(suite, junit)
+    if as_json:
+        print(json.dumps({"path": str(path), **(junit and {"junit": str(junit)} or {}), **suite.to_dict()},
+                         indent=2, default=str))
+        raise typer.Exit(0 if suite.ok else 1)
 
     console.print()
     report_lib.render_table(console, suite)
     console.print(f"[dim]{path}[/dim]")
+    if junit is not None:
+        console.print(f"[dim]junit: {junit}[/dim]")
 
     _push_to_langfuse(hub, suite)
 
@@ -3411,6 +3456,7 @@ def _push_to_langfuse(hub: Path, suite) -> None:
 @eval_app.command("list")
 def eval_list(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """List the hub's eval cases: what each checks, and which are scheduled."""
     from . import scheduling as sch
@@ -3420,9 +3466,11 @@ def eval_list(
     try:
         found = cases_lib.discover(hub)
     except cases_lib.EvalCaseError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(2) from exc
+        _eval_fail(str(exc), 2, as_json, "invalid_case")
 
+    if as_json:
+        print(json.dumps({"hub": hub.name, "cases": [_case_json(c, hub) for c in found]}, indent=2))
+        return
     if not found:
         console.print(f"no eval cases — add markdown files under {hub / 'evals'}/")
         return
@@ -3444,6 +3492,8 @@ def eval_list(
         bits.append("judged" if c.is_judged else "free only")
         if c.run_as:
             bits.append(f"runs as {c.run_as}")
+        if c.fake_tools:
+            bits.append(f"fakes {', '.join(sorted({f.tool for f in c.fake_tools}))}")
         if c.tags:
             bits.append(f"tags: {', '.join(c.tags)}")
         if not c.enabled:
@@ -3458,6 +3508,7 @@ def eval_list(
 @eval_app.command("status")
 def eval_status(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Last run, pass rate, and what is currently failing.
 
@@ -3468,6 +3519,17 @@ def eval_status(
 
     hub = hub.resolve()
     suite = report_lib.latest(hub)
+    if as_json:
+        if suite is None:
+            print(json.dumps({"hub": hub.name, "runs": 0}))
+            return
+        print(json.dumps({"hub": hub.name, "ok": suite.ok, "passed": suite.passed, "failed": suite.failed,
+                          "total": len(suite.cases), "finished_at": suite.finished_at or suite.started_at,
+                          "model": suite.model, "judge_model": suite.judge_model, "trigger": suite.trigger,
+                          "run_as": suite.run_as,
+                          "failing": [{"id": c.name, "reason": c.reason} for c in suite.cases if not c.passed]},
+                         indent=2))
+        return
     if suite is None:
         console.print("no eval runs yet — try `hubzoid eval run`")
         return
@@ -3488,7 +3550,8 @@ def eval_status(
 @eval_app.command("explain")
 def eval_explain(
     hub: Path = typer.Argument(..., help="Hub directory."),
-    case_name: str = typer.Argument(..., metavar="CASE", help="Case name (the md filename stem)."),
+    case_name: str = typer.Argument(..., metavar="CASE", help="Case id: its path under evals/ without .md."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Everything needed to fix one failing case, in one place.
 
@@ -3503,16 +3566,20 @@ def eval_explain(
     hub = hub.resolve()
     suite = report_lib.latest(hub)
     if suite is None:
-        console.print("no eval runs yet — try `hubzoid eval run`")
-        raise typer.Exit(1)
+        _eval_fail("no eval runs yet — try `hubzoid eval run`", 1, as_json, "not_found")
 
     result = next((c for c in suite.cases if c.name == case_name), None)
     if result is None:
         known = ", ".join(c.name for c in suite.cases) or "(none)"
-        console.print(f"[red]no case {case_name!r} in the last run[/red]. Ran: {known}")
-        raise typer.Exit(2)
+        _eval_fail(f"no case {case_name!r} in the last run. Ran: {known}", 2, as_json, "not_found")
 
     case = next((c for c in cases_lib.discover(hub, strict=False) if c.name == case_name), None)
+    if as_json:
+        print(json.dumps({"case_file": str(case.source_path) if case and case.source_path else None,
+                          "stale": bool(case and result.case_digest and case.digest != result.case_digest),
+                          "run_finished_at": suite.finished_at or suite.started_at, **result.to_dict()},
+                         indent=2, default=str))
+        return
 
     console.print(f"[bold]{result.name}[/bold]  "
                   + ("[green]PASS[/green]" if result.passed else "[red]FAIL[/red]")

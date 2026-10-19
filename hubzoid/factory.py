@@ -179,6 +179,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     registry = access.apply(hub_dir, registry)
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
 
     mcp_servers = load_mcp_servers(mcp_loader.load_all_raw(hub_dir))
 

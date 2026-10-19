@@ -523,6 +523,8 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
     from . import handover
     base_registry = dict(registry)
     for delegate in delegates:

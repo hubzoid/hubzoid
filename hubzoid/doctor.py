@@ -588,6 +588,21 @@ def _legacy_management_flag() -> Check | None:
                  "the Console to the managers who use them, then remove the setting.")
 
 
+def _eval_checks(hub: Path) -> list[Check]:
+    """The evals the hub requires in quality/manifest.yaml: one row each, ok,
+    fail or pending (never run, or the case or the hub changed since).
+    Nothing for a hub without the manifest."""
+    from .evals import quality
+
+    try:
+        rows = quality.evidence(hub)
+    except quality.QualityError as exc:
+        return [Check("evals.quality", "fail", str(exc))]
+    except Exception as exc:  # noqa: BLE001 - one unreadable report never hides the rest of doctor
+        return [Check("evals.quality", "warn", f"Eval results could not be read ({type(exc).__name__})")]
+    return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -607,6 +622,7 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if sqlite_check:
             checks.append(sqlite_check)
         checks += _schema(hub)
+        checks += _eval_checks(hub)
         checks += _auth(hub)
         checks += _app_checks(hub)
         google = _google_merge(deployment_values)

@@ -352,6 +352,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import tool_fakes
+    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
 
     # MCP: external servers from the hub's connectors/.mcp.json PLUS the
     # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
