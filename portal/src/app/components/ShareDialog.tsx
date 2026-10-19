@@ -44,6 +44,8 @@ export { copyText };
 
 type Audience = "deployment" | "named" | "public";
 type Share = { id: string; url?: string; revision: number; status: string; audience: { type: Audience }; allow_copy: boolean; created_at: number };
+/** A snapshot link as a full address on this site: the server gives a path. */
+const linkOf = (share: Share) => shareUrl({ share_id: share.id, url: share.url });
 type Preview = { preview_id: string; digest: string; omissions: string[]; projection: { messages: unknown[] } };
 type Member = { principal_id: string; role: "editor" | "viewer"; email?: string | null; name?: string | null };
 
@@ -115,7 +117,7 @@ export function ShareDialog({
       const share = await post<Share>("/api/shares", { preview_id: preview.preview_id, digest: preview.digest },
         { headers: { "Idempotency-Key": crypto.randomUUID() } });
       setPreview(null);
-      if (share.url && (await copyText(share.url))) toast(t.share.copied);
+      if (await copyText(linkOf(share))) toast(t.share.copied);
       reload();
     });
 
@@ -155,13 +157,18 @@ export function ShareDialog({
           ) : (
             shares.map((share) => (
               <div key={share.id} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px]">
-                <span className="min-w-0 flex-1 truncate text-ink">{share.url}</span>
+                {/* The full address, so people can see and select what they share. */}
+                <input
+                  readOnly
+                  aria-label={t.share.linkLabel}
+                  value={linkOf(share)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+                />
                 <span className="text-[12px] text-mute">{t.share.audience[share.audience.type]}</span>
-                {share.url && (
-                  <Button size="sm" variant="ghost" icon={<Copy size={13} aria-hidden />} onClick={() => void copyText(share.url!).then(() => toast(t.share.copied))}>
-                    {t.share.copy}
-                  </Button>
-                )}
+                <Button size="sm" variant="ghost" icon={<Copy size={13} aria-hidden />} onClick={() => void copyText(linkOf(share)).then((ok) => ok && toast(t.share.copied))}>
+                  {t.share.copy}
+                </Button>
                 <Button size="sm" variant="ghost" icon={<Link2Off size={13} aria-hidden />} onClick={() => void revoke(share)} disabled={busy}>
                   {t.share.revoke}
                 </Button>

@@ -130,7 +130,7 @@ const ToolActivity: ToolCallMessagePartComponent = ({ toolName, args, result, is
   const stateText = { running: t.tools.running, done: t.tools.done, failed: t.tools.failed, stopped: t.tools.stopped }[state];
 
   return (
-    <div className="hz-act" data-tool-state={state} data-testid="tool-entry">
+    <div className="hz-act" data-tool-state={state} data-tool-name={toolName} data-testid="tool-entry">
       <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
         {stateIcon[state]}
         <span className="flex-none text-secondary">{humanTool(label.tool)}</span>
