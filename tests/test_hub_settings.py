@@ -352,7 +352,7 @@ def test_an_invalid_reference_is_never_echoed(hub):
 def test_a_crash_message_is_not_shown_and_a_hang_is_killed_with_its_children(hub, tmp_path):
     values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\n")
     marker = tmp_path / "child-alive"
-    probe_file(hub, "leak", "def check(ctx):\n    raise ValueError('token=sk-live-secret-123')\n")
+    probe_file(hub, "leak", "def check(ctx):\n    raise ValueError('token=sk-live-secret-123')\n")  # gitleaks:allow (fake)
     probe_file(hub, "hang", f"""\
         import subprocess, sys
         def check(ctx):
