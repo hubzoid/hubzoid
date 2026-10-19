@@ -371,18 +371,14 @@ def active_all(hub_dir) -> list[Connection]:
     return out
 
 
-def _foreign_refs(hub: str, cid: str, new: dict, old: dict | None) -> list[str]:
-    """Paths of the references this change adds or changes that name
-    something other than this connection's own secrets
-    (``secret:channel/<hub>/<id>/...``): an ``env:`` variable, a deployment
-    secret or a hub secret."""
+def _foreign_refs(hub: str, cid: str, provider_config: dict) -> list[str]:
+    """Paths of the references that name something other than this
+    connection's own secrets (``secret:channel/<hub>/<id>/...``): an ``env:``
+    variable, a deployment secret or a hub secret."""
     from ..secretstore import RefError, parse
 
-    before = dict(_walk_refs((old or {}).get("provider_config") or {}, "/provider_config"))
     out = []
-    for path, value in _walk_refs(new.get("provider_config") or {}, "/provider_config"):
-        if before.get(path) == value:
-            continue
+    for path, value in _walk_refs(provider_config or {}, "/provider_config"):
         try:
             ref = parse(value)
         except (RefError, TypeError):
@@ -398,10 +394,12 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
     as one step. `expected_revision` is an int or "absent". Returns
     `{id, revision, status, created, file}`.
 
-    Without ``any_secret`` (a hub administrator, not an organization
-    administrator or the operator), a reference may be added or changed only
-    to this connection's own secrets: a reference decides which value the
-    connection sends, and to which host."""
+    ``any_secret`` is the operator's (the CLI, this library) and an
+    organization administrator's; a request from a hub administrator passes
+    False. Then a connection whose references name anything but its own
+    secrets keeps its provider settings exactly as they are: a reference
+    decides which value the connection sends, and its settings decide to
+    which host. Pausing it, or its agent and groups, can still change."""
     hub_dir = Path(hub_dir)
     result = validate(hub_dir, data, lines=lines, expected_id=expected_id)
     if not result.valid:
@@ -416,11 +414,12 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
                                                                          "provider is fixed")])
     norm = normalized(cfg, settings)
     if not any_secret:
-        foreign = _foreign_refs(hub, cfg.id, norm, current["config_json"] if current else None)
-        if foreign:
+        foreign = _foreign_refs(hub, cfg.id, norm.get("provider_config") or {})
+        before = (current["config_json"] or {}).get("provider_config") if current else None
+        if foreign and norm.get("provider_config") != before:
             own = f"secret:channel/{hub}/{cfg.id}/<name>"
-            raise ChannelError("permission_denied", f"Only organization administrators choose a secret other than "
-                               f"this connection's own ({own}).", status=403,
+            raise ChannelError("permission_denied", f"Only organization administrators set or change a connection "
+                               f"that uses a secret other than its own ({own}).", status=403,
                                fields=[_err("permission_denied", f, f"Use {own}, or ask an organization "
                                                                     "administrator.", lines) for f in foreign])
     digest = canonical.digest(norm)

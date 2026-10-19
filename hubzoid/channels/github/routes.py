@@ -162,7 +162,8 @@ def mount(router, hub_dir: Path) -> None:
         p = await person(request, "channels.manage", mutation=True)
         b = await body(request)
         return await run(setup.configure, await github_conn(cid), expected_revision=int(b.get("expected_revision") or 0),
-                         actor=p.email, repositories_=b.get("repositories"), sets=b.get("set") or {})
+                         actor=p.email, repositories_=b.get("repositories"), sets=b.get("set") or {},
+                         any_secret=p.org_admin)
 
     @router.post("/channels/{cid}/github/intake", status_code=202)
     async def intake(hub_id: str, cid: str, request: Request):

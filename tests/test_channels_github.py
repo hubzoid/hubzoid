@@ -644,3 +644,15 @@ def test_tools_follow_the_applied_connection_not_a_half_edited_file(hub_dir):
     (hub_dir / "channels").mkdir(exist_ok=True)
     (hub_dir / "channels" / "github.yaml").write_text("provider: github\n  broken: [\n")
     assert len(github_tools.make(SimpleNamespace(hub_dir=hub_dir))) == 31
+
+
+def test_a_hub_admin_cannot_point_github_at_another_secret_through_configure(hub_dir, api):
+    conn = app_conn(hub_dir)
+    with pytest.raises(ChannelError) as exc:
+        setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
+                        sets={"provider_config.webhook_secret_ref": "env:HUBZOID_SECRET_KEY"}, any_secret=False)
+    assert exc.value.status == 403
+    # Its own settings, with its own secrets, still change.
+    out = setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
+                          sets={"provider_config.bot_name": "acme-bot"}, any_secret=False)
+    assert out["revision"] == conn.revision + 1
