@@ -174,6 +174,33 @@ def apply(hub_dir: Path, registry: dict, *, connector: str | None = None) -> dic
     return {name: wrap(ft, hub_dir, connector=connector) for name, ft in registry.items()}
 
 
+def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
+    """``mcp__<server>__<tool>`` as ``(server, tool)``, the bare tool name the
+    other runtimes evaluate, so one hitl.yaml rule applies on all three. A
+    server key with ``__`` in it is matched against the hub's own servers. A
+    rule written with the full name still applies to that name."""
+    from . import config as cfglib
+
+    rest = name[len("mcp__"):] if name.startswith("mcp__") else name
+    try:
+        from ..personal_mcp import _hub_server_keys
+
+        servers = _hub_server_keys(hub_dir)
+    except Exception:  # noqa: BLE001 - fall back to the first separator
+        servers = set()
+    server = max((s for s in servers if rest.startswith(f"{s}__")), key=len, default=None)
+    if server is not None:
+        tool = rest[len(server) + 2:]
+    else:
+        server, _, tool = rest.partition("__")
+    try:
+        if name in cfglib.load(hub_dir).tools:
+            return server or None, name
+    except Exception:  # noqa: BLE001 - an unreadable file asks for every tool anyway
+        pass
+    return server or None, tool or name
+
+
 def claude_hook(hub_dir: Path, hub_namespace: str):
     """A PreToolUse hook for MCP tools Claude calls directly (``mcp__<server>__<tool>``).
     Hub tools (the ``hub_namespace`` server) are already wrapped."""
@@ -183,10 +210,9 @@ def claude_hook(hub_dir: Path, hub_namespace: str):
         name = (tool_input or {}).get("tool_name") or ""
         if not name.startswith("mcp__") or name.startswith(f"mcp__{hub_namespace}__"):
             return {}
-        parts = name.split("__", 2)
-        connector = parts[1] if len(parts) == 3 else None
+        connector, tool = mcp_parts(hub_dir, name)
         args = (tool_input or {}).get("tool_input") or {}
-        verdict = await asyncio.to_thread(evaluate, hub_dir, name, args, connector=connector)
+        verdict = await asyncio.to_thread(evaluate, hub_dir, tool, args, connector=connector)
         if verdict.action == "allow":
             return {}
         if verdict.action == "ask":
