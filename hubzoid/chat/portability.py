@@ -365,15 +365,21 @@ def _imported_name(part: dict) -> str:
 
 
 def _imported_part(part: dict) -> dict:
-    """A message part as history: an attachment names only its stored file."""
-    if part.get("type") in ("file", "image"):
-        part = {k: part.get(k) for k in ("type", "file_id", "name", "mime", "size") if k in part}
-        name = _imported_name(part)
+    """A message part as history, in the shapes an export writes: an
+    attachment names only its stored file, and any other kind of part is
+    kept only as its type's name."""
+    kind = part.get("type")
+    if kind in ("file", "image"):
+        out = {k: part.get(k) for k in ("type", "file_id", "name", "mime", "size") if k in part}
+        name = _imported_name(out)
         if name:
-            part["file_id"] = name
+            out["file_id"] = name
         else:
-            part.pop("file_id", None)
-    return part
+            out.pop("file_id", None)
+        return out
+    if kind in ("text", "tool-call", "reasoning"):
+        return {k: v for k, v in part.items() if k in ("type", "text", "toolCallId", "toolName", "result")}
+    return {"type": "unknown", "original_type": str(kind)}
 
 
 def _apply_graph(conn, hub: str, *, actor_id: str, actor_email: str, agent: str, convs: dict, msgs: list,
