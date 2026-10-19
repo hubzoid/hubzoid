@@ -112,28 +112,7 @@ def test_store_errors_are_a_503(hub, monkeypatch):
     assert exc.value.status_code == 503
 
 
-# ---- Open WebUI mode keeps Open WebUI ---------------------------------------------------------
-
-def test_legacy_mode_still_asks_open_webui(hub, monkeypatch):
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    monkeypatch.setattr(deployment, "owui_url", lambda _: "http://127.0.0.1:43080")
-    seen = {}
-
-    def fake_get(url, headers=None, **kw):
-        seen["url"], seen["auth"] = url, (headers or {}).get("Authorization")
-        return httpx.Response(200, json={"role": "user", "email": "Bo@Example.com", "id": "owui-7"})
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    _, token = account(hub, "ana@example.com")
-    # A Hubzoid session means nothing in Open WebUI mode.
-    assert session.verified_email(request(cookies={"hz_session": token}), hub) == ""
-    assert session.verified_email(request(cookies={"token": "jwt"}), hub) == "bo@example.com"
-    assert seen == {"url": "http://127.0.0.1:43080/api/v1/auths/", "auth": "Bearer jwt"}
-    assert store_for(hub).identity("bo@example.com")["owui_id"] == "owui-7"
-
-
-# ---- configured_owner --------------------------------------------------------------------
+# ---- the configured owner ------------------------------------------------------------------
 
 def test_configured_owner_in_default_mode(hub, monkeypatch, tmp_path):
     assert session.configured_owner(hub) == "admin@localhost"  # sign-in off
@@ -142,30 +121,17 @@ def test_configured_owner_in_default_mode(hub, monkeypatch, tmp_path):
     monkeypatch.setenv("HUBZOID_AUTH", "true")
     assert session.configured_owner(hub) == "x@example.com"
     monkeypatch.delenv("HUBZOID_ADMIN_EMAIL")
+    # Open WebUI's names never name the owner (they stop a start instead).
     monkeypatch.setenv("WEBUI_ADMIN_EMAIL", "Y@Example.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "z@example.com")
-    assert session.configured_owner(hub) == "y@example.com"
+    assert session.configured_owner(hub) == ""
     monkeypatch.delenv("WEBUI_ADMIN_EMAIL")
-    assert session.configured_owner(hub) == "z@example.com"
     monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_EMAIL")
     deployment.save(tmp_path / "deployment.json",
                     hubs=[dict(key="sales", name="Sales", path=str(hub), model_id="sales")],
-                    operational_url=f"sqlite:///{tmp_path / 'ops.db'}", owui_url="", owui_db="",
+                    operational_url=f"sqlite:///{tmp_path / 'ops.db'}", owui_db="",
                     owner="Recorded@Example.com")
     assert session.configured_owner(hub) == "recorded@example.com"
-
-
-def test_configured_owner_in_legacy_mode_is_unchanged(hub, monkeypatch):
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "ignored@example.com")
-    monkeypatch.setenv("HUBZOID_AUTH", "true")  # legacy reads WEBUI_AUTH only
-    assert session.configured_owner(hub) == "admin@localhost"
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    monkeypatch.setenv("WEBUI_ADMIN_EMAIL", "legacy@example.com")
-    assert session.configured_owner(hub) == "legacy@example.com"
-
-
-# ---- the same-origin rule -------------------------------------------------------------------
 
 @pytest.mark.parametrize("origin,host,ok", [
     ("http://testserver", "testserver", True),
@@ -189,23 +155,6 @@ def test_require_same_origin(monkeypatch, origin, host, ok):
         with pytest.raises(HTTPException) as exc:
             session.require_same_origin(req)
         assert exc.value.status_code == 403
-
-
-def test_require_same_origin_in_legacy_mode_is_unchanged(monkeypatch):
-    """Open WebUI deployments keep the 1.0.x rule: the Origin's host must be
-    the request's Host, whatever origins are configured."""
-    from fastapi import HTTPException
-
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com")
-    with pytest.raises(HTTPException):
-        session.require_same_origin(request(host="127.0.0.1:3080",
-                                            headers={"origin": "https://hub.example.com"}))
-    session.require_same_origin(request(host="hub.example.com",
-                                        headers={"origin": "https://hub.example.com"}))
-
-
-# ---- MCP OAuth consent on Hubzoid sessions ------------------------------------------------
 
 def _mcp(hub_root, monkeypatch):
     from tests.test_mcp_oauth import RESOURCE
@@ -298,6 +247,4 @@ def test_mcp_account_dispatch(hub, monkeypatch, tmp_path):
     users.sync_identity(hub, user)
     assert mcp_oauth.account(hub, email="m@example.com") == {"account_id": user["id"],
                                                                "email": "m@example.com"}
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(tmp_path / "missing.db"))
-    assert mcp_oauth.account(hub, email="m@example.com") is None  # legacy reads Open WebUI
+

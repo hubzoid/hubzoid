@@ -1,11 +1,10 @@
-"""The connection pages: `/portal/connect/<id>` and its actions, and
-`/portal/connections`, where a signed-in person sees and manages theirs.
+"""The connection pages: `/portal/connect/<id>` and its actions. A person sees
+and manages their connections in the web app's Settings (`/account/connections`);
+the older `/portal/connections` address sends them there.
 
 Every link page is bound to the journey's account: it needs a signed-in
 session whose account id and email are the ones that asked, checked
-server-side: a Hubzoid session (`hubzoid.auth.current_user`) in the default UI
-mode, a live Open WebUI session check (`access.session.verified_person`) in
-Open WebUI mode. A signed-out visitor is sent to sign in and brought back to
+server-side: a Hubzoid session (`hubzoid.auth.current_user`). A signed-out visitor is sent to sign in and brought back to
 the same page. Another account, even one with the same email, gets 403 and the
 attempt is audited.
 Mutations (`start`, `cancel`) also require the same Origin. The pages use
@@ -37,7 +36,8 @@ from .providers import JourneyError, label
 log = logging.getLogger("hubzoid.connect")
 
 POLL_SECONDS = 30
-PAGE = "/portal/connections"
+PAGE = "/account/connections"
+OLD_PAGE = "/portal/connections"
 
 
 def _headers(nonce: str | None = None) -> dict:
@@ -93,8 +93,8 @@ _BACK_SCRIPT = ("(function(){var a=document.getElementById('back');if(!a)return;
 
 
 def _chat_url(j: dict) -> str | None:
-    """Where the person asked, on this site: the conversation (the web app and
-    Open WebUI both serve one at ``/c/<id>``), or the chat's home when the id
+    """Where the person asked, on this site: the conversation (``/c/<id>``,
+    also for a journey started in 1.x chat), or the chat's home when the id
     is not a conversation's. None for WhatsApp, Telegram or Slack."""
     if j.get("surface") not in ("web", "owui"):
         return None
@@ -133,7 +133,7 @@ def _agent_name(hub_dir: Path, hub: str) -> str:
 
 
 def _sign_in_url(jid: str, page: str = "") -> str:
-    """Open WebUI's sign-in, returning to this journey afterwards. Built only
+    """The web app's sign-in, returning to this journey afterwards. Built only
     from a journey id that exists, never from the request: no open redirect."""
     return "/auth?redirect=" + quote(f"/portal/connect/{jid}{page}", safe="/")
 
@@ -215,7 +215,7 @@ def _connect_page(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
                 f"You approve access on {_e(name)}'s own page. Hubzoid never sees your password.",
                 *access,
                 "Hubzoid keeps it encrypted, and agents use it only for you. Disconnect any "
-                f"time in <a href=\"{PAGE}\">My workspace, Connections</a>."])
+                f"time in <a href=\"{PAGE}\">Settings, My connections</a>."])
             + f'<div class="actions"><form method="post" action="{base}/start">'
               f'<button class="btn btn-primary" type="submit">Continue to {_e(name)} '
               f'{ui.icon("arrow", 16)}</button></form>'
@@ -229,11 +229,6 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
     router = APIRouter()
     hub_dir = Path(hub_dir)
 
-    def legacy() -> bool:
-        from .. import appmode
-
-        return appmode.is_openwebui(hub_dir)
-
     def who_of(request: Request) -> tuple[str, str]:
         """``(account id, email)`` of the signed-in viewer, or ``("", "")``."""
         if session_email is not None:
@@ -243,11 +238,6 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             from ..connectors import tokens
 
             return tokens.user_id_for(hub_dir, email) or "", email
-        if legacy():
-            from ..access.session import verified_person
-
-            who = verified_person(request, hub_dir)
-            return (who[0], normalize(who[1])) if who else ("", "")
         from ..auth import current_user
 
         user = current_user(request, hub_dir)
@@ -433,24 +423,14 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         return JSONResponse({"state": j["status"], "app": j["app"],
                              "checked": int(time.time())}, headers=hdrs)
 
-    # ---- Connections (My workspace) ----------------------------------------------
-    @router.get(PAGE)
+    # ---- The older connections address ------------------------------------------
+    @router.get(OLD_PAGE)
     def connections(request: Request):
-        """Open WebUI mode: a person's connections are a tab of the Console,
-        `/portal/#/connections`. This address stays (links in chat history and
-        sign-ins under way return here) and carries its query into the tab.
-        The web app has its own Settings → Connections."""
-        if not legacy() and session_email is None:
-            return RedirectResponse("/account/connections", status_code=302)
+        """An older address for a person's connections. It stays, because links
+        in chat history and sign-ins under way return here, and carries its
+        query (``connected``, ``connector``, ``error``) into Settings."""
         query = f"?{request.url.query}" if request.url.query else ""
-        try:
-            signed_in = bool(who_of(request)[1])
-        except HTTPException:
-            signed_in = True     # can't check now: the tab shows the problem
-        if not signed_in:        # sign in first, to an address without a fragment
-            return RedirectResponse("/auth?redirect=" + quote(PAGE + query, safe="/"), status_code=302,
-                                    headers={"Cache-Control": "no-store"})
-        return RedirectResponse("/portal/#/connections" + query, status_code=302,
+        return RedirectResponse(PAGE + query, status_code=302,
                                 headers={"Cache-Control": "no-store"})
 
     return router

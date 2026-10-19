@@ -2,10 +2,11 @@
 
 Hubzoid's surfaces reach a hub's bridge (``/v1/chat/completions``) on loopback
 with the bridge API key and say who is asking in headers:
-``X-OpenWebUI-User-Email`` or ``X-Hubzoid-User`` (the person),
+``X-OpenWebUI-User-Email`` (the 1.x name, kept on the wire) or
+``X-Hubzoid-User`` (the person),
 ``X-Hubzoid-Groups`` (groups the surface resolved) and ``X-Hubzoid-Surface``.
 
-In the web app mode the API key alone no longer vouches for those headers. The
+The API key alone does not vouch for those headers. The
 caller signs them: ``X-Hubzoid-Assertion`` is an HMAC (``secretbox.sign``, the
 deployment key shared by every process of the deployment) over exactly those
 values, for this hub, issued in the last 60 seconds. The bridge trusts the
@@ -14,10 +15,6 @@ is anonymous (an agent whose access is managed in the Console refuses it, any
 other answers without restricted tools). A bridge API key therefore can't be
 used to act as somebody else, and the edge strips every client-sent
 ``X-Hubzoid-*`` header anyway.
-
-Open WebUI mode keeps the 1.0.x rule (Open WebUI and the adapters
-hold the bridge key, so their headers are trusted) and its callers send no
-assertion.
 
 Token: ``v1.<base64url(payload JSON)>.<hex HMAC-SHA256>``, the HMAC taken over
 ``hubzoid-identity-assertion.v1.<base64url part>``. Payload:
@@ -183,23 +180,18 @@ def vouched(hub_dir, headers: Mapping[str, str], *, now: float | None = None) ->
 
 
 def identity_headers(hub_dir, *, surface: str, email: str | None = None,
-                     groups: Iterable[str] | None = None, legacy: bool | None = None) -> dict[str, str]:
-    """The identity headers an internal caller sends to `hub_dir`'s bridge.
-
-    Open WebUI mode: exactly the 1.0.x headers. Web app mode: the same headers plus
-    `X-Hubzoid-Assertion`. When the deployment key can't be used, the assertion
-    is left out and the bridge treats the call as anonymous (fail closed)."""
+                     groups: Iterable[str] | None = None) -> dict[str, str]:
+    """The identity headers an internal caller sends to `hub_dir`'s bridge: the
+    caller's email and groups plus a signed `X-Hubzoid-Assertion`. When the
+    deployment key can't be used, the assertion is left out and the bridge
+    treats the call as anonymous (fail closed)."""
     headers = {"X-Hubzoid-Surface": surface}
     if email:
         headers["X-OpenWebUI-User-Email"] = email
     groups = [g for g in (groups or []) if str(g).strip()]
     if groups:
         headers["X-Hubzoid-Groups"] = ",".join(groups)
-    if legacy is None:
-        from .appmode import is_openwebui
-
-        legacy = is_openwebui(Path(hub_dir)) if hub_dir is not None else False
-    if legacy or hub_dir is None:
+    if hub_dir is None:
         return headers
     try:
         headers[HEADER] = issue(hub_dir, email=email, groups=groups, surface=surface)

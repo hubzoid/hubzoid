@@ -163,7 +163,7 @@ class CodexRuntime:
 
     async def stream_events(self, prompt):
         """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
+        caller connected personal MCP servers (see `personal_mcp`),
         their tools join a per-turn copy of the registry for this turn only.
         The shared registry never changes."""
         personal = self._personal_servers()
@@ -189,10 +189,10 @@ class CodexRuntime:
     def _personal_servers(self):
         if not (self.personal_mcp and self.hub_dir):
             return []
-        from . import owui_mcp
+        from . import personal_mcp
         from .access.identity import current_identity
         try:
-            return owui_mcp.per_user_servers(self.hub_dir, current_identity())
+            return personal_mcp.per_user_servers(self.hub_dir, current_identity())
         except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
             log.warning("owui-mcp per-user injection skipped", exc_info=True)
             return []

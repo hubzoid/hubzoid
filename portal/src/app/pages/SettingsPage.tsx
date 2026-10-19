@@ -21,7 +21,9 @@ import {
   Palette,
   PencilRuler,
   Plug,
+  ListChecks,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Star,
   UserRound,
@@ -58,7 +60,9 @@ type Key =
   | "chat"
   | "instructions"
   | "brand"
-  | "health";
+  | "health"
+  | "advanced"
+  | "parity";
 
 /** `team`: for people who manage the deployment; `admin`: administrators only
  *  (the chat app's own section rather than a management screen). */
@@ -80,7 +84,9 @@ const ITEMS: Item[] = [
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
   { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
   { key: "brand", label: S.brand, icon: <Sparkles size={16} aria-hidden />, hash: "/settings/appearance", team: true, keywords: "logo colours colors name" },
-  { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, keywords: "diagnostics support checks advanced compatibility" },
+  { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, keywords: "diagnostics support checks" },
+  { key: "advanced", label: S.advanced, icon: <SlidersHorizontal size={16} aria-hidden />, hash: "/settings/admin", team: true, admin: true, keywords: "admin.yaml advanced deployment settings plan apply" },
+  { key: "parity", label: S.parity, icon: <ListChecks size={16} aria-hidden />, hash: "/settings/parity", team: true, admin: true, keywords: "parity compatibility open webui librechat checklist ledger" },
 ];
 
 /** Which section a hash shows. */
@@ -88,13 +94,13 @@ function keyFor(hash: string): Key | null {
   const path = hash.replace(/^#/, "").split("?")[0];
   const [a, b] = path.split("/").filter(Boolean);
   if (a === "me") return (ITEMS.find((i) => i.hash === `/me/${b}`)?.key as Key) ?? "profile";
-  if (a === "agents" || a === "home") return "agents";
+  if (a === "agents" || a === "home" || a === "connectors") return "agents";
   if (a === "people" || a === "confirm") return "people";
   if (a === "activity" || a === "runs") return "activity";
   if (a === "schedules") return "schedules";
   if (a === "diagnostics") return "health";
   if (a === "workspace") return "instructions";
-  if (a === "settings") return b === "appearance" ? "brand" : b === "admin" || b === "parity" ? "health" : "chat";
+  if (a === "settings") return b === "appearance" ? "brand" : b === "admin" ? "advanced" : b === "parity" ? "parity" : "chat";
   return null;
 }
 
@@ -134,12 +140,23 @@ export default function SettingsPage({ section }: { section: string | null }) {
   }, [section]);
   const active = keyFor(hash);
   const current = items.find((i) => i.key === active) ?? null;
+  // An address this person has no section for (an old link, a typo) opens the
+  // first section on a wide screen rather than an empty pane. The team's
+  // schedules, for someone who doesn't manage the deployment, are their own.
+  useEffect(() => {
+    if (current || !hash) return;
+    const own = active === "schedules" && items.some((i) => i.key === "my-schedules");
+    if (!own && window.innerWidth < 768) return;
+    history.replaceState(null, "", `/settings#${own ? "/me/schedules" : items[0].hash}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash, current]);
   useEffect(() => {
     document.title = `${current ? current.label : t.account.settings} · ${app.brandName}`;
   }, [current, app.brandName]);
 
   const personalTabs = items.filter((i) => ["profile", "appearance", "notifications", "data"].includes(i.key));
-  const workspaceTabs = items.filter((i) => ["chat", "brand", "health"].includes(i.key));
+  const workspaceTabs = items.filter((i) => ["chat", "brand", "health", "advanced", "parity"].includes(i.key));
   const tabs = personalTabs.some((i) => i.key === active) ? personalTabs : workspaceTabs.some((i) => i.key === active) ? workspaceTabs : [];
   const groupKey = (key: Key) => personalTabs.some((i) => i.key === key) ? "profile" : workspaceTabs.some((i) => i.key === key) ? "chat" : key;
   const groupLabel = (item: Item) => item.key === "profile" ? S.preferences : item.key === "chat" ? S.workspaceSettings : item.label;

@@ -230,6 +230,8 @@ export const en = {
     chat: "Chat defaults",
     brand: "Brand",
     health: "Health & support",
+    advanced: "Advanced",
+    parity: "Compatibility",
     sources: "Sources",
     sourcesLede: "Your own material the agents can search and cite: files, notes and web pages. Only you, and people you choose, can read a collection.",
     instructions: "Agent instructions",

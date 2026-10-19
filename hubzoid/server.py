@@ -42,9 +42,7 @@ from . import _request_ctx
 from . import _signing
 from . import access
 from . import browser as browser_lib
-from .access import owui_db
 from . import memory as memlib
-from . import owui as owui_lib
 from . import runtime as runtime_lib
 from . import settings as settingslib
 from . import uploads as uploads_lib
@@ -71,6 +69,12 @@ def build_app() -> FastAPI:
     conflicts = appmode.deployment_conflicts(hub_dir)
     if conflicts:
         raise RuntimeError(" ".join(conflicts))
+    # The rest of the retired Open WebUI settings change nothing; name them, as
+    # `hubzoid run` and `hubzoid doctor` do, for a bridge started on its own.
+    for retired in appmode.retired_settings(hub_dir):
+        if not retired.fatal:
+            log.warning("%s is an Open WebUI setting Hubzoid 2.0 no longer uses. %s",
+                        retired.name, retired.advice)
     # Bring Hubzoid's own tables to the current schema before serving anything;
     # a schema this version can't use stops the bridge here, loudly.
     from . import db as dblib
@@ -97,8 +101,7 @@ def build_app() -> FastAPI:
     inflight = _InFlight()
 
     # Hosted MCP surface (MCP_SERVER=true): external clients bring their own
-    # model and use this hub's tools/knowledge, authenticated per-user with
-    # OWUI API keys. Mounted as a root sub-app below; its lifespan (the
+    # model and use this hub's tools/knowledge, authenticated per-user. Mounted as a root sub-app below; its lifespan (the
     # Streamable HTTP session manager) is composed into ours.
     mcp_app = None
     if settings.mcp_server:
@@ -148,20 +151,6 @@ def build_app() -> FastAPI:
             log.error("scheduled markdown tasks are not running: the workflow engine "
                       "did not start (see the error above)")
         app.state.scheduler = sched
-        from . import deployment
-        from .access.reconcile import sync_owui
-        async def visibility_loop():
-            while True:
-                await asyncio.to_thread(sync_owui, hub_dir)
-                await asyncio.sleep(30)
-        registered = deployment.hubs(hub_dir)
-        from .access import owui as owui_lib
-        # Only mirror to the chat app when there is one configured. A standalone
-        # bridge with no Open WebUI has nothing to sync — starting the loop there
-        # would just log a permanent, meaningless "sync failed".
-        visibility_task = (asyncio.create_task(visibility_loop())
-            if deployment.read(hub_dir) and Path(registered[0]['path']) == hub_dir.resolve()
-            and owui_lib.configured(hub_dir) else None)
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -172,12 +161,6 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
-            if visibility_task is not None:
-                visibility_task.cancel()
-                try:
-                    await visibility_task
-                except asyncio.CancelledError:
-                    pass
             if wf_dispatcher is not None:
                 await wf_dispatcher.stop()
             await sched.stop()
@@ -190,7 +173,7 @@ def build_app() -> FastAPI:
     # In-bridge OTLP normalize intercept (opt-in, claude-local only). When on,
     # the `claude` subprocess exports OTel to this loopback route instead of
     # straight to the backend; we rename Claude Code's non-standard token attrs
-    # to the gen_ai.usage.* names Langfuse maps and promote the OWUI user to
+    # to the gen_ai.usage.* names Langfuse maps and promote the user to
     # span user.id, then forward. This makes cost + per-user work on claude-local
     # with NO separate collector process. See hubzoid.otel / docs/OBSERVABILITY.md.
     from . import otel as otellib
@@ -264,7 +247,7 @@ def build_app() -> FastAPI:
         identity = _derive_identity(body, request, hub_dir)
         # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
         # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
-        owui_account = _enforce_use_hub(request, hub_dir)
+        _enforce_use_hub(request, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
         # and direct-API uploads) into the canonical per-chat uploads store now;
@@ -277,27 +260,13 @@ def build_app() -> FastAPI:
         if not prompt:
             raise HTTPException(status_code=400, detail="empty prompt after flattening messages")
 
-        # Open WebUI uploads arrive as a RAG-wrapped prompt referencing files it
-        # stored under its data dir's uploads/. Normalize them into the SAME
-        # canonical per-chat uploads store the base64 path just used, so ONE store
-        # is authoritative — read_upload, vision and ticket attachments all resolve
-        # OWUI files from it, and no downstream reader has to know OWUI exists.
-        # Strips OWUI's RAG boilerplate/chunks; pass-through on any non-match.
-        owui_uploads = _owui_uploads_dir(hub_dir)
-        if owui_uploads.is_dir():
-            normalized = _normalize_owui_uploads(hub_dir, chat_id, prompt, owui_uploads)
-            if normalized is not None:
-                prompt = normalized
-
-        # Base64/Slack notes go on top, AFTER the OWUI rewrite (which replaces the
-        # prompt body), so an image + a document in the same turn both survive.
+        # Base64/Slack notes go on top of the prompt.
         if attachment_notes:
             prompt = "\n\n".join(attachment_notes) + "\n\n" + prompt
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir,
-                        owui_account),
+                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -305,7 +274,7 @@ def build_app() -> FastAPI:
         inflight.enter()
         started = time.monotonic()
         try:
-            with _request_ctx.chat_scope(chat_id), _request_ctx.owui_account_scope(owui_account):
+            with _request_ctx.chat_scope(chat_id):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
                     raw_usage = _request_ctx.drain_usage()
@@ -321,8 +290,7 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     from . import appmode
 
-    web_app = not appmode.is_openwebui(hub_dir)
-    if web_app and not appmode.auth_enabled(hub_dir):
+    if not appmode.auth_enabled(hub_dir):
         # Sign-in off: the local owner is the only person, and owns every hub
         # from the first start, before any page is opened. Best effort: a store
         # problem never stops the bridge, whose access checks fail closed.
@@ -349,7 +317,7 @@ def build_app() -> FastAPI:
         expires = request.query_params.get("e")
         if not _signing.verify_artifact_token(
             safe_chat, safe_name, token, expires, hub_dir=hub_dir
-        ) and not (web_app and await asyncio.to_thread(
+        ) and not (await asyncio.to_thread(
             _owns_conversation, request, hub_dir, safe_chat
         )):
             auth = request.headers.get("authorization", "")
@@ -411,23 +379,13 @@ def build_app() -> FastAPI:
     from .workflows.webhooks import build_router as workflow_webhooks
     app.include_router(workflow_webhooks(hub_dir))
 
-    # The Hubzoid web app (default UI mode): sign-in, conversations, personal
-    # connections, agents and the page shell. Registered before the portal's
-    # static mount so /portal/api/... routes it adds are not shadowed. The legacy
-    # Open WebUI mode (HUBZOID_UI=openwebui) keeps the 1.0.x surface unchanged.
-    from . import appmode
+    # The Hubzoid web app: sign-in, conversations, personal connections,
+    # agents and the page shell. Registered before the portal's static mount so
+    # /portal/api/... routes it adds are not shadowed.
+    from . import webapp
 
-    if not appmode.is_openwebui(hub_dir):
-        from . import webapp
-
-        webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
-                     model_label=model_label)
-    else:
-        # Connectors are managed in the Console in both modes: its API, people's
-        # connections and the OAuth return (the edge routes /oauth/connectors/ here).
-        from .connectors import routes as connector_routes
-
-        connector_routes.mount(app, hub_dir)
+    webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
+                 model_label=model_label)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
@@ -471,8 +429,7 @@ class _InFlight:
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
                   inflight: _InFlight | None = None,
-                  identity=None, hub_dir: Path | None = None,
-                  owui_account=_request_ctx.UNSET) -> AsyncIterator[bytes]:
+                  identity=None, hub_dir: Path | None = None) -> AsyncIterator[bytes]:
     if inflight:
         inflight.enter()
     started = time.monotonic()
@@ -494,8 +451,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         from .tool_events import THINKING, Status
 
-        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity), \
-                _request_ctx.owui_account_scope(owui_account):
+        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
                 if isinstance(delta, Status):
                     # A running tool's line ("Running X…"), or None to clear it.
@@ -519,8 +475,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             yield _status_event(model, None)
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
-        # empty choices + top-level usage. Open WebUI reads this to populate its
-        # native per-message token stats (previously it received zeros).
+        # empty choices + top-level usage, for clients that show token counts.
         usage_chunk = {
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
             "object": "chat.completion.chunk",
@@ -545,9 +500,9 @@ _WAITING = "Working on it…"
 
 
 def _waiting_status(model: str, *, done: bool) -> bytes:
-    """Open WebUI status event (top-level `event` on a chunk with no choices).
-    Open WebUI shows it as a status line and stores it as message metadata;
-    other clients see an empty chunk, like the usage chunk."""
+    """A status event (top-level `event` on a chunk with no choices) on the
+    OpenAI-compatible stream. Clients that know it show a status line; others
+    see an empty chunk, like the usage chunk."""
     return _status_event(model, None if done else _WAITING)
 
 
@@ -613,39 +568,33 @@ _UNSET = object()
 
 
 def _trust(request: Request, hub_dir: Path | None):
-    """(openwebui, vouched) for this request, computed once.
-
-    Open WebUI mode: identity headers are trusted as sent, because only
-    holders of the bridge key (Open WebUI, the adapters) reach the bridge.
-    Web app mode: only what a valid `X-Hubzoid-Assertion` covers exactly
-    (`hubzoid.assertions`); `vouched` is None for an anonymous request."""
+    """What a valid `X-Hubzoid-Assertion` vouches for on this request
+    (`hubzoid.assertions`), computed once; None for an anonymous request.
+    Identity headers count only as far as the assertion covers them."""
     state = getattr(request, "state", None)
     cached = getattr(state, "hubzoid_trust", _UNSET) if state is not None else _UNSET
     if cached is not _UNSET:
         return cached
-    from . import appmode, assertions
+    from . import assertions
 
-    openwebui = appmode.is_openwebui(hub_dir)
-    vouched = None if openwebui else assertions.vouched(hub_dir, request.headers)
-    result = (openwebui, vouched)
+    vouched = assertions.vouched(hub_dir, request.headers)
     if state is not None:
         try:
-            state.hubzoid_trust = result
+            state.hubzoid_trust = vouched
         except AttributeError:
             pass
-    return result
+    return vouched
 
 
 def _enforce_use_hub(request: Request, hub_dir: Path | None):
     """Require `use_hub` to enter the hub at all.
 
     Uses ONLY the verified identity — never the caller-controlled `body.user` —
-    so a hub cannot be entered anonymously or under a spoofed subject. Open
-    WebUI mode: the trusted front headers (`X-OpenWebUI-User-Email` /
-    `X-Hubzoid-User`). Web app mode: the email a valid identity assertion
-    vouches for. Fail-closed: a store error denies (503)."""
+    so a hub cannot be entered anonymously or under a spoofed subject: the
+    email a valid identity assertion vouches for. Fail-closed: a store error
+    denies (503)."""
     if hub_dir is None:
-        return _request_ctx.UNSET
+        return
     from .access import store_for
     from .access.store import USE_HUB
 
@@ -654,24 +603,9 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
-    openwebui, vouched = _trust(request, hub_dir)
-    if openwebui:
-        verified = (
-            request.headers.get("x-openwebui-user-email")
-            or request.headers.get("x-hubzoid-user")
-            or ""
-        ).strip().lower()
-        account_id = request.headers.get('x-openwebui-user-id')
-    else:
-        # No Open WebUI in this mode: its account id header means nothing and
-        # is never used to rebind an identity.
-        verified = vouched.email if vouched is not None else ""
-        account_id = None
+    vouched = _trust(request, hub_dir)
+    verified = vouched.email if vouched is not None else ""
     try:
-        if verified and account_id:
-            from .access.session import bind_owui_account
-
-            bind_owui_account(hub_dir, verified, account_id)
         blocked = bool(verified and gs.is_suspended(verified))
     except Exception:
         raise HTTPException(503, detail="access check unavailable")
@@ -684,14 +618,6 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
         )
     try:
         ok = gs.can(verified, hub_dir.name, USE_HUB)
-        # Open WebUI mode: the configured owner may chat before ever opening the
-        # Console. Provision them here exactly as a Console sign-in would (same
-        # owner and administrator match, once per hub, never after a revoke).
-        if not ok and openwebui and request.headers.get("x-openwebui-user-role") == "admin":
-            from .access.session import configured_owner
-
-            if verified == configured_owner(hub_dir) and gs.provision_owner(verified, hub_dir.name):
-                ok = gs.can(verified, hub_dir.name, USE_HUB)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub can() failed for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
@@ -706,73 +632,30 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
                    "Ask your hub administrator for chat access, then start a new chat.")
             ),
         )
-    # The turn runs with this account id in scope: connectors in an Open WebUI
-    # chat need it to match the account the connections belong to.
-    return account_id if openwebui else _request_ctx.UNSET
 
 
 def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | None = None):
     """Resolve the caller's verified identity for this request.
 
-    The user, groups, and surface come from headers the trusted front sets;
-    they are trusted because reaching the bridge already requires its API key
-    (``_auth``), and end users talk to Open WebUI, never to the bridge directly.
-
-    Groups are the UNION of three sources, so an identity can carry all of them
-    (see ``access.effective_groups``):
-
-      1. Open WebUI's forwarded ``X-OpenWebUI-User-Email`` — the bridge looks up
-         that user's groups in OWUI's own database (where the admin manages them
-         on the Groups screen). This is what makes adding a person to a group in
-         Open WebUI grant the matching permission, with no proxy and no logout.
-      2. The hub roster (``identity/access.{csv,py}``) keyed by that same email —
-         so a coordinator granted a group in the roster gets it on Open WebUI too,
-         not only on WhatsApp. Additive: an email absent from the roster adds
-         nothing, so OWUI-only users are never locked out.
-      3. ``X-Hubzoid-Groups`` (comma-separated) — groups supplied by a surface
-         resolver or trusted front (e.g. the inbound WhatsApp/Telegram bridge),
-         merged on top rather than overriding.
-
-    Groups describe the person; they authorize nothing. Restricted tools need a
-    grant in the access store, and a surface that does not verify a person
-    (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``) is refused them
-    regardless. ``body["user"]`` is never an identity.
-
-    That is Open WebUI mode. In the web app mode the headers count
-    only when a valid ``X-Hubzoid-Assertion`` covers exactly their values
-    (``hubzoid.assertions``); the groups are then the roster's and the
-    asserted ones (descriptive only). Without one the request is anonymous
-    on the ``api`` surface, and ``body["user"]`` is ignored.
+    The user, groups and surface count only when a valid
+    ``X-Hubzoid-Assertion`` covers exactly their values
+    (``hubzoid.assertions``). Groups are then the hub roster's
+    (``identity/access.{csv,py}``) and the asserted ones (``X-Hubzoid-Groups``),
+    merged by ``access.effective_groups``. Groups describe the person; they
+    authorize nothing: restricted tools need a grant in the access store, and a
+    surface that does not verify a person (Slack) is refused them regardless.
+    Without an assertion the request is anonymous on the ``api`` surface, and
+    ``body["user"]`` (caller-controlled) is never an identity.
     """
-    openwebui, vouched = _trust(request, hub_dir)
-    if not openwebui:
-        if vouched is None:
-            return access.Identity.make(user=None, groups=None, surface="api")
-        email = vouched.email or None
-        surface = vouched.surface or "api"
-        groups = access.effective_groups(
-            hub_dir, email=email, surface=surface, header_groups=list(vouched.groups),
-        )
-        return access.Identity.make(user=email, groups=groups, surface=surface)
-    headers = request.headers
-    owui_email = headers.get("x-openwebui-user-email")
-    user = headers.get("x-hubzoid-user") or owui_email
-    # `body.user` (the OpenAI-API `user` field) is caller-controlled, so it is
-    # never an identity: that would let a bridge-key caller assert any grantee.
-
-    # Groups are the UNION of every store that applies to this surface: the
-    # user's Open WebUI groups, the hub roster keyed by the same email, and any
-    # X-Hubzoid-Groups header. See access.effective_groups for the source rule.
-    # Non-breaking: an OWUI-only email with no roster still gets exactly its
-    # OWUI groups; the roster only ever adds, never gates.
-    surface = headers.get("x-hubzoid-surface") or "owui"
+    vouched = _trust(request, hub_dir)
+    if vouched is None:
+        return access.Identity.make(user=None, groups=None, surface="api")
+    email = vouched.email or None
+    surface = vouched.surface or "api"
     groups = access.effective_groups(
-        hub_dir,
-        email=owui_email,
-        surface=surface,
-        header_groups=headers.get("x-hubzoid-groups"),
+        hub_dir, email=email, surface=surface, header_groups=list(vouched.groups),
     )
-    return access.Identity.make(user=user, groups=groups, surface=surface)
+    return access.Identity.make(user=email, groups=groups, surface=surface)
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +666,7 @@ def _derive_chat_id(body: dict[str, Any], request: Request, messages: list) -> s
 
     Tried in order:
       1. body["chat_id"]
-      2. body["metadata"]["chat_id"]              (Open WebUI shape)
+      2. body["metadata"]["chat_id"]
       3. request header X-Hubzoid-Chat-Id
       4. body["user"]                             (OpenAI's user field, sometimes set)
       5. hash of the first user message text      (stable fallback)
@@ -799,7 +682,6 @@ def _derive_chat_id(body: dict[str, Any], request: Request, messages: list) -> s
         candidates.append(meta.get("chat_id"))
         candidates.append(meta.get("conversation_id"))
     candidates.append(request.headers.get("x-hubzoid-chat-id"))
-    candidates.append(request.headers.get("x-openwebui-chat-id"))
     candidates.append(body.get("user"))
 
     for raw in candidates:
@@ -826,7 +708,7 @@ def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
     """True when the signed-in person (web app session) owns the conversation
     whose files live under this chat id (its ``chat.store.chat_key``: ``web-<id>``,
     or the Open WebUI id of an imported one). Another surface's chat (Slack,
-    Telegram, WhatsApp, an Open WebUI chat) is never a conversation's,
+    Telegram, WhatsApp) is never a conversation's,
     even when a conversation has the same id. Any failure is a no."""
     try:
         from . import auth
@@ -869,73 +751,6 @@ def _attachment_note(safe_name: str, size: int, mime: str, target: Path) -> str:
         f"Read it with read_upload('{safe_name}'), or pass its on-disk path to a "
         f"path-accepting tool or script: {target}]"
     )
-
-
-def _owui_uploads_dir(hub_dir: Path) -> Path:
-    """Where Open WebUI stored this hub's uploads.
-
-    OWUI writes uploads next to its DB (``<DATA_DIR>/uploads``). Resolve them
-    from the SAME override the access layer uses: ``owui_db.db_path`` returns the
-    gateway DB when ``HUBZOID_OWUI_DB`` is set (gateway mode: the shared OWUI and
-    its DB live in the gateway data dir, NOT ``<hub>/.openwebui-data`` which never
-    exists there) and the per-hub ``<hub>/.openwebui-data/webui.db`` otherwise. So
-    uploads track the DB in both single-hub and gateway deployments.
-
-    Before this, the path was hard-coded to ``<hub>/.openwebui-data/uploads`` and
-    every gateway upload landed elsewhere, so the bridge saw an empty store and
-    told the user their attachment was "unreadable" on every turn.
-    """
-    return owui_db.db_path(hub_dir).parent / "uploads"
-
-
-def _normalize_owui_uploads(
-    hub_dir: Path, chat_id: str, prompt: str, owui_uploads: Path
-) -> str | None:
-    """Copy every file Open WebUI attached into the ONE canonical per-chat uploads
-    store, then return the prompt rewritten to the same attachment-note shape a
-    Slack / base64 upload produces.
-
-    Returns None when the prompt is not an OWUI RAG wrap (caller passes it through
-    untouched). When OWUI referenced files but some or all could not be read
-    (missing on disk, template drift), those become a LOUD, visible note rather
-    than a silent drop — a silent drop is exactly what makes a user paste a whole
-    file into chat.
-    """
-    result = owui_lib.owui_attachments(prompt, owui_uploads)
-    if result is None:
-        return None
-    resolved, unresolved, user_query = result
-
-    upload_dir = memlib.chat_upload_dir(hub_dir, chat_id)
-    notes: list[str] = []
-    for name, src in resolved:
-        safe_name = _safe_path_component(name)
-        if not safe_name:
-            continue
-        try:
-            payload = src.read_bytes()
-        except OSError as exc:  # unreadable on disk -> treat as unresolved, loudly
-            log.warning("owui: could not read attached file %s: %s", src, exc)
-            unresolved.append(name)
-            continue
-        mime = uploads_lib.guess_mime(safe_name)
-        uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        notes.append(_attachment_note(safe_name, len(payload), mime, upload_dir / safe_name))
-
-    if unresolved:
-        listed = ", ".join(sorted(set(unresolved)))
-        log.warning(
-            "owui: %d attached file(s) referenced but not readable under %s: %s",
-            len(set(unresolved)), owui_uploads, listed,
-        )
-        notes.append(
-            f"[Attachment unreadable: the user attached {listed} but it could not be "
-            f"read from storage. Tell them and ask them to re-upload it or paste the "
-            f"relevant part. Do NOT guess its contents.]"
-        )
-
-    body = "\n\n".join(notes)  # owui_attachments returns non-None only with >=1 ref
-    return f"{body}\n\n{user_query}" if user_query else body
 
 
 def _persist_attachments(
@@ -1061,10 +876,10 @@ def _serve_chat_file(*, base: Path, filename: str, inline: bool) -> FileResponse
     disp = "inline" if inline else "attachment"
     headers = {"Content-Disposition": f'{disp}; filename="{safe_name}"'}
     # Agent-authored artifacts (e.g. a dashboard HTML built by the `dashboard`
-    # skill) are served inline and may be on the same origin as Open WebUI
+    # skill) are served inline and may be on the same origin as the web app
     # behind the edge proxy. Sandbox them: a CSP `sandbox` with NO
     # `allow-same-origin` forces a unique opaque origin, so any script embedded
-    # in the artifact cannot read OWUI's session/JWT or cookies. That opaque
+    # in the artifact cannot read the web app's session or cookies. That opaque
     # origin is the ONLY control that matters here — withholding `allow-forms`
     # etc. adds no security (a script can already exfiltrate via fetch), so we
     # grant the capabilities interactive artifacts legitimately need (charts,

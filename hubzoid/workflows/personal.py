@@ -810,7 +810,7 @@ def after_run(hub_dir, hub: str, env: dict, run_id: str, *, ok: bool, cause: str
 # ---- notices ----------------------------------------------------------------------
 
 
-PAGE = "/portal/#/schedules"
+PAGE = "/settings#/schedules"
 
 
 def page_url(hub_dir) -> str:

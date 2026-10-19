@@ -77,7 +77,7 @@ def confirm_url(path: str) -> str:
     HUBZOID_PUBLIC_URL ends in its artifact prefix (`/b/<hub>`); the Console is
     at the site root."""
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
-    base = re.sub(r"/b/[^/]+$", "", base) or (os.environ.get("WEBUI_URL") or "").rstrip("/")
+    base = re.sub(r"/b/[^/]+$", "", base)
     return base + path
 
 

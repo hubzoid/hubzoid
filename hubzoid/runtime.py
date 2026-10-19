@@ -234,7 +234,7 @@ class OpenAIAgentsRuntime:
 
     async def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]:
         """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
+        caller connected personal MCP servers (see `personal_mcp`),
         the turn runs on a per-turn clone of the agent that also carries those
         servers, each with the caller's own token. The shared agent is never
         modified."""
@@ -253,10 +253,10 @@ class OpenAIAgentsRuntime:
     def _personal_servers(self) -> list:
         if self._hub_dir is None:
             return []
-        from . import owui_mcp
+        from . import personal_mcp
         from .access.identity import current_identity
         try:
-            return owui_mcp.per_user_servers(self._hub_dir, current_identity())
+            return personal_mcp.per_user_servers(self._hub_dir, current_identity())
         except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
             log.warning("owui-mcp per-user injection skipped", exc_info=True)
             return []
@@ -386,11 +386,11 @@ class OpenAIAgentsRuntime:
 
 # ---------------------------------------------------------------------------
 # Personal (per-user) MCP servers for the OpenAI and Codex backends. The Claude
-# backend passes `owui_mcp.per_user_specs` to its SDK, which runs the client.
+# backend passes `personal_mcp.per_user_specs` to its SDK, which runs the client.
 # ---------------------------------------------------------------------------
 def personal_mcp_server(srv):
     """An unconnected Agents-SDK Streamable HTTP client for one
-    `owui_mcp.PerUserServer`, named by its key and limited to the admin's tool
+    `personal_mcp.PerUserServer`, named by its key and limited to the admin's tool
     allow-list. The caller's Bearer rides in the transport headers only."""
     from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 

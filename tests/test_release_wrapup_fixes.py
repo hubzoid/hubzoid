@@ -30,16 +30,6 @@ def _request(auth: str) -> Request:
     return Request({"type": "http", "method": "GET", "path": "/portal/api/me",
                     "headers": [(b"authorization", auth.encode())]})
 
-
-def test_open_webui_api_keys_only_in_the_legacy_mode(monkeypatch):
-    from hubzoid import portal
-
-    monkeypatch.delenv("HUBZOID_UI", raising=False)
-    assert portal.api_key(_request("Bearer sk-old-key")) is None
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    assert portal.api_key(_request("Bearer sk-old-key")) == "sk-old-key"
-
-
 def test_backup_finds_a_web_app_gateways_data_folder(tmp_path, monkeypatch):
     from hubzoid import backup, deployment
 
@@ -53,8 +43,7 @@ def test_backup_finds_a_web_app_gateways_data_folder(tmp_path, monkeypatch):
     data = tmp_path / "gateway-data"
     data.mkdir()
     deployment.save(data / "deployment.json", hubs=hubs,
-                    operational_url=f"sqlite:///{data / 'operational.db'}",
-                    owui_url="", owui_db="", ui_mode="hubzoid", auth=True)
+                    operational_url=f"sqlite:///{data / 'operational.db'}", owui_db="", ui_mode="hubzoid", auth=True)
     plan = backup.plan(tmp_path / "ops")
     assert data.resolve() in {r.path.resolve() for r in plan.roots}
     assert tmp_path.resolve() not in {r.path.resolve() for r in plan.roots}
