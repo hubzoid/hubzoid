@@ -112,6 +112,18 @@ class Adapter:
         enabled connection. Returns a handle with `stop()`, or None."""
         return None
 
+    def check(self, config, settings) -> list[tuple[str, str]]:
+        """Rules that need the whole file (for example "at least one
+        repository when enabled"): (field pointer, message) pairs."""
+        return []
+
+    def authorize(self, conn: "Connection", event: InboundEvent) -> str | None:
+        """A provider-side check before routing that may call the provider
+        (for example a GitHub labeler's live permission). Returns a refusal
+        reason, or None. Raise ChannelError with a 5xx status to try again
+        later. The refused person sees nothing, so private state never leaks."""
+        return None
+
     def context(self, conn: "Connection", event: InboundEvent, *, first: bool) -> str:
         """A short note put before the person's message: where it came from,
         and (when `first`, the person's first request in this thread) any

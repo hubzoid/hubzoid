@@ -233,10 +233,18 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
             _notice(conn, thread, event, "empty_request")
             _finish(hub_dir, row["id"], "ignored", "empty_request")
             return "ignored", None
+        refusal = conn.adapter.authorize(conn, event)
+        if refusal:
+            _finish(hub_dir, row["id"], "denied", refusal)    # silently: nothing private is disclosed
+            return "denied", None
         if conn.config.agent:
             return _route_chat(hub_dir, conn, row, thread, event, app)
         return _route_workflow(hub_dir, conn, row, thread, event)
     except ChannelError as exc:
+        if exc.status >= 500:     # a provider or store outage: try again on a later pass
+            log.warning("channel %s: delivery %s waits: %s", row["connection_id"], row["id"], exc.code)
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
         log.warning("channel %s: delivery %s not routed: %s", row["connection_id"], row["id"], exc.code)
         _finish(hub_dir, row["id"], "failed", exc.code)
         return "failed", None
@@ -469,7 +477,10 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     from ..work_items.errors import WorkItemError
 
     person, reason = person_for(conn, event)
-    unattended = bool(event.data.get("unattended"))
+    # An unattended trigger (a label by a verified collaborator, a new PR) or an
+    # actor the provider itself vouches for (a repository member) runs under the
+    # workflow's own identity, with the verified actor recorded as who asked.
+    unattended = bool(event.data.get("unattended")) or (person is None and bool(event.data.get("provider_trusted")))
     if person is None and not unattended:
         return _deny(hub_dir, conn, row, thread, event, reason)
     if person is not None and not unattended and not _groups_ok(conn, person.email):
