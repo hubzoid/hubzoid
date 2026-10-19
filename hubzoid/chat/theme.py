@@ -58,27 +58,27 @@ _LIGHT = {
 }
 
 _DARK = {
-    # Warm graphite, in the style of desktop chat tools: the page, a slightly
-    # darker sidebar, raised menus and composer, quiet hairlines, a soft coral.
-    "canvas": "#1C1C1B", "surface": "#171716", "elevated": "#252523", "sunken": "#30302E",
-    "hover": "#2D2D2B", "pressed": "#363633",
-    "text": "#F0EFE9", "bodyText": "#E8E6DF", "mutedText": "#AAA79D",
-    "border": "#363630", "borderSoft": "#2C2C29", "input": "#777369",
-    "action": "#E79A78", "actionText": "#211A16", "actionHover": "#F0AA8B",
-    "actionActive": "#D98B69", "actionSoft": "#382820", "link": "#E79A78",
-    "focus": "#F0AA8B", "selection": "#3A2A22", "selectionText": "#F0EFE9",
-    "danger": "#E0716A", "dangerText": "#1C1C1B",
-    "successText": "#A1CEAF", "successBackground": "#223127", "successBorder": "#2D4A39",
-    "warningText": "#E6C283", "warningBackground": "#352E20", "warningBorder": "#5A4826",
-    "errorText": "#F0A09A", "errorBackground": "#382423", "errorBorder": "#633838",
-    "infoText": "#A9C6EA", "infoBackground": "#18263A", "infoBorder": "#32496A",
+    # Neutral near-black, as in the desktop chat tools: the page, a darker
+    # sidebar, raised menus and composer, quiet hairlines, a soft coral.
+    "canvas": "#151515", "surface": "#111111", "elevated": "#1F1F1F", "sunken": "#232323",
+    "hover": "#1E1E1E", "pressed": "#252525",
+    "text": "#ECECEC", "bodyText": "#E2E2E2", "mutedText": "#9B9B9B",
+    "border": "#2A2A2A", "borderSoft": "#222222", "input": "#666666",
+    "action": "#D97757", "actionText": "#111111", "actionHover": "#E48A6B",
+    "actionActive": "#C96A4B", "actionSoft": "#2B1F1A", "link": "#E39274",
+    "focus": "#E48A6B", "selection": "#3A2A22", "selectionText": "#ECECEC",
+    "danger": "#E0716A", "dangerText": "#111111",
+    "successText": "#9FD0AE", "successBackground": "#17261C", "successBorder": "#2D4A39",
+    "warningText": "#E6C283", "warningBackground": "#2B2518", "warningBorder": "#5A4826",
+    "errorText": "#F0A09A", "errorBackground": "#2E1C1B", "errorBorder": "#633838",
+    "infoText": "#A9C6EA", "infoBackground": "#16212F", "infoBorder": "#32496A",
 }
 
 # Black: true black surfaces for OLED screens, otherwise the dark palette.
 _OLED = dict(_DARK, **{
-    "canvas": "#000000", "surface": "#000000", "elevated": "#151515", "sunken": "#222220",
-    "hover": "#1E1E1D", "pressed": "#2A2A28", "border": "#2A2A27", "borderSoft": "#1C1C1A",
-    "actionSoft": "#2E211B", "selection": "#2E211B",
+    "canvas": "#000000", "surface": "#000000", "elevated": "#141414", "sunken": "#1C1C1C",
+    "hover": "#191919", "pressed": "#222222", "border": "#262626", "borderSoft": "#1A1A1A",
+    "actionSoft": "#2B1F1A", "selection": "#2B1F1A",
 })
 
 BUILTIN = {"light": _LIGHT, "dark": _DARK, "oled": _OLED}

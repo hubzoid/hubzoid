@@ -182,7 +182,7 @@ def test_theme_route_serves_css_for_both_surfaces(client):
     body = client.get("/api/chat/theme").json()
     assert body["revision"] == "builtin"
     dark = body["css"]["dark"]
-    assert dark["--hz-accent"] == "#E79A78" and dark["--paper"] == "#252523"
+    assert dark["--hz-accent"] == "#D97757" and dark["--paper"] == "#1F1F1F"
 
 
 def test_cli_apply_matches_api(hub, client, tmp_path):
