@@ -280,6 +280,20 @@ def dispatch(conn, item: dict, *, released_by: str | None = None) -> dict:
     return _update(hub_dir, item["id"], state="dispatched", reason=None, work_item_id=work["id"])
 
 
+def keep_unsent_reply(hub_dir, item_id: str, reply: str, *, reason: str) -> None:
+    """An internal note on the item: a reply the work wrote but could not send
+    (in approve mode, unattended work has nobody to approve it). Kept with the
+    message, encrypted, for a person to read in Intake. Never sent."""
+    item = get(hub_dir, item_id)
+    if item is None:
+        return
+    env = envelope(hub_dir, item)
+    env["unsent_reply"] = {"text": (reply or "")[:20000], "reason": reason, "at": time.time()}
+    with _engine(hub_dir).begin() as c:
+        c.execute(text("UPDATE hz_intake_items SET envelope_enc=:e, updated=:t WHERE id=:i"),
+                  {"e": secretbox.encrypt_json(Path(hub_dir), env), "t": time.time(), "i": item_id})
+
+
 # -- people's decisions -----------------------------------------------------------------------
 
 def release(hub_dir, item_id: str, *, actor: str, reason: str, expected_revision: int) -> dict:
@@ -350,6 +364,7 @@ def view(item: dict, *, full: bool = False, hub_dir=None) -> dict:
     if full and hub_dir is not None:
         env = envelope(hub_dir, item)
         out["text"] = env.get("text")
+        out["unsent_reply"] = env.get("unsent_reply")
         out["attachments"] = [{k: a.get(k) for k in ("id", "filename", "media_type", "declared_bytes", "actual_bytes",
                                                       "sha256", "state", "error_code", "file_id")}
                               for a in attachments(hub_dir, item["id"])]

@@ -66,9 +66,35 @@ class Thread:
             # action, whatever else the caller names, so its write mode applies.
             named = [actions] if isinstance(actions, str) else list(actions or [])
             actions = named + ([send] if send not in named else [])
+            self._refuse_unattended_approval(conn, actions, text)
         draft = getattr(conn.adapter, "draft", None)
         return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
                             draft=draft)
+
+
+    def _refuse_unattended_approval(self, conn, actions, text: str) -> None:
+        """Unattended work (an admitted sender, nobody released it) has no
+        person who could approve a reply. In approve mode the reply is not
+        left waiting for nobody: it is kept on the intake item, unsent, and the
+        work stops with the reason. A released message has a requester who
+        approves, and draft mode saves a real draft, so both go on as usual."""
+        from ..work_items import config as wconfig
+        from ..work_items.operations import OperationFailed
+
+        requester = (self._item.get("requester") or "")
+        if requester and not requester.startswith("workflow:"):
+            return
+        if wconfig.mode_for(wconfig.load(self._hub_dir), actions, conn.id) != "approve":
+            return
+        intake_id = (self._item.get("origin_json") or {}).get("intake_id")
+        if intake_id:
+            from ..intake import service as intake
+
+            intake.keep_unsent_reply(self._hub_dir, intake_id, text, reason="approval_unavailable")
+        raise OperationFailed(
+            "approval_unavailable", "Nobody attended this work, so nobody can approve a reply to the sender. The "
+            "reply was kept on the intake item and not sent. Use draft mode for this channel, or have a person "
+            "release messages from this sender so they approve the replies.", "")
 
 
 def for_current_run() -> Thread:

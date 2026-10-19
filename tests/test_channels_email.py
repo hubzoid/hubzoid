@@ -846,3 +846,29 @@ def test_doctor_says_when_workflows_cannot_run(hub_dir, box, monkeypatch):
     assert checks["workflows"]["code"] == "workflows_off"
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
     assert "workflows" not in {c["id"] for c in doctor.run(config.active(hub_dir, "orders-email"))["checks"]}
+
+
+def test_unattended_work_in_approve_mode_stops_instead_of_waiting(hub_dir, box, started):
+    from hubzoid.intake import service
+    from hubzoid.work_items import store as wstore
+    from hubzoid.work_items.operations import OperationFailed
+
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    box.deliver(message(msgid="<auto-1@shop.example>"))         # allowlisted and signed: admitted unattended
+    poller.poll_once(conn)
+    route_all(hub_dir)
+    [item] = items(hub_dir)
+    work = wstore.get_item(hub_dir, item["work_item_id"])
+    assert work["requester"] == "workflow:orders"
+    _mode(hub_dir, "approve")
+    with pytest.raises(OperationFailed) as exc:
+        _post(hub_dir, work, text="We can ship Friday.")
+    assert exc.value.code == "approval_unavailable" and box.sent == []
+    from sqlalchemy import text as sql
+
+    with wstore.engine(hub_dir).connect() as c:          # nothing waits in Operations for nobody
+        waiting = c.execute(sql("SELECT COUNT(*) FROM hz_operations WHERE state='awaiting_approval'")).scalar()
+    assert waiting == 0
+    kept = service.view(service.require(hub_dir, item["id"]), full=True, hub_dir=hub_dir)["unsent_reply"]
+    assert kept["text"] == "We can ship Friday." and kept["reason"] == "approval_unavailable"

@@ -128,8 +128,10 @@ after the message went) is never repeated on its own; a person resolves it.
 
 Who approves: when a person releases a message from Intake, they asked for
 that work, so they approve its replies. Work from an admitted sender runs
-unattended, as the workflow, with no person to approve; use `draft` for it,
-or its replies wait in Operations.
+unattended, as the workflow, so nobody can approve its replies. Use `draft`
+for such a channel. In `approve` mode an unattended reply is not sent and
+does not wait: the work stops with `approval_unavailable`, and the reply is
+kept on the Intake item for a person to read.
 
 ## Limits
 

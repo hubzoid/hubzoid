@@ -20,7 +20,7 @@ type Attachment = {
   id: string; filename: string; media_type: string; declared_bytes: number | null; actual_bytes: number | null;
   sha256: string | null; state: string; error_code: string | null;
 };
-type Full = Item & { text: string; attachments: Attachment[] };
+type Full = Item & { text: string; attachments: Attachment[]; unsent_reply?: { text: string; reason: string; at: number } | null };
 type Page = { items: Item[]; next_cursor: string | null };
 
 const when = (t: number | null | undefined) => (t ? new Date(t * 1000).toLocaleString() : "");
@@ -178,6 +178,21 @@ function ItemView({ hub, id }: { hub: Hub; id: string }) {
       <Title level={3}>Message <Text type="secondary" style={{ fontSize: 14 }}>(untrusted text from outside)</Text></Title>
       <pre className="hz-untrusted" style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto", padding: 12,
         border: "1px solid var(--hz-border, #d9d9d9)", borderRadius: 6 }}>{d.text}</pre>
+      {d.unsent_reply && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ margin: "16px 0" }}
+          title="A reply was written but not sent"
+          description={<>
+            <Paragraph style={{ marginBottom: 8 }}>
+              Nobody attended this work, so nobody could approve a reply to the sender. Send it yourself if it is
+              right, use draft mode for this channel, or release messages from this sender so a person approves replies.
+            </Paragraph>
+            <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{d.unsent_reply.text}</pre>
+          </>}
+        />
+      )}
       {d.attachments.length > 0 && (
         <>
           <Title level={3}>Attachments</Title>

@@ -35,6 +35,11 @@ the sender is a separate send that follows the hub's write mode, and in
 `approve` mode you approve each exact message. The sender stays who they
 are; they never gain an account or any access.
 
+Work from a sender the channel admitted on its own runs unattended, so in
+`approve` mode its reply is not sent: the work stops with
+`approval_unavailable` and the reply is shown on the item as written but not
+sent.
+
 ## For the workflow
 
 The work item's input carries `intake_id`, `sender`, `subject`, `text`,
