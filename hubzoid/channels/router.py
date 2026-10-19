@@ -233,6 +233,8 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
             _notice(conn, thread, event, "empty_request")
             _finish(hub_dir, row["id"], "ignored", "empty_request")
             return "ignored", None
+        if event.data.get("signal") == "stop":
+            return _stop(hub_dir, conn, row, thread, event, app)
         refusal = conn.adapter.authorize(conn, event)
         if refusal:
             _finish(hub_dir, row["id"], "denied", refusal)    # silently: nothing private is disclosed
@@ -314,6 +316,48 @@ def _deny(hub_dir, conn, row, thread, event, reason: str) -> tuple[str, None]:
         _notice(conn, thread, event, reason)
     _finish(hub_dir, row["id"], "denied", reason)
     return "denied", None
+
+
+# -- stopping --------------------------------------------------------------------------------
+
+def _stop(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEvent, app):
+    """The provider's stop signal (Linear's Stop): stop what this person has
+    running in the thread. Effects already made are reported, never undone."""
+    person, reason = person_for(conn, event)
+    if person is None:
+        _finish(hub_dir, row["id"], "denied", reason)
+        return "denied", None
+    stopped = []
+    chat = getattr(getattr(app, "state", None), "chat", None) if app is not None else None
+    cid = (thread.get("conversations_json") or {}).get(person.id)
+    if chat is not None and cid:
+        import sqlalchemy as sa
+
+        from ..chat import graph as g
+
+        with chat.engine.engine.connect() as c:
+            runs = [r[0] for r in c.execute(sa.select(g.runs.c.id).where(
+                g.runs.c.conversation_id == cid, g.runs.c.status.in_(("queued", "streaming", "running", "admitted"))))]
+        actor = chat.engine.actor(person)
+        for run_id in runs:
+            try:
+                chat.engine.request_cancel(run_id, actor)
+                stopped.append(run_id)
+            except Exception:  # noqa: BLE001 - already finished
+                pass
+    if thread.get("work_item_id"):
+        from ..work_items import service as wi
+        from ..work_items import store as wstore
+
+        item = wstore.get_item(hub_dir, thread["work_item_id"])
+        if item is not None and item["state"] not in wstore.TERMINAL and item.get("requester") == person.email:
+            wi.cancel(hub_dir, item["id"], person.email, reason="stopped from the channel", surface="channel")
+            stopped.append(item["id"])
+    replies.post(conn, thread, kind="notice", key=f"stop:{row['id']}",
+                 text="Stopped. Anything already done stays done; see Hubzoid for details." if stopped
+                 else "Nothing was running to stop.")
+    _finish(hub_dir, row["id"], "routed", None, target="stop", stopped=stopped, replied="stop")
+    return "routed", None
 
 
 # -- agent connections ----------------------------------------------------------------------
