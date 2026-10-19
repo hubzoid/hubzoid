@@ -181,6 +181,35 @@ def test_a_hold_settles_only_with_its_usage_row(hub_dir):
     assert budgets.status(hub_dir)["open_reservations"] == []    # settled with the row that records it
 
 
+def test_a_workflow_call_cut_off_by_its_deadline_settles_its_hold(hub_dir, monkeypatch):
+    from hubzoid import runtime
+    from hubzoid.workflows import deadlines
+
+    limits(hub_dir, "  run:\n    max_output_tokens: 100\n")
+
+    class Slow:
+        last_error = None
+
+        async def aopen(self):
+            pass
+
+        async def aclose(self):
+            pass
+
+        async def stream_events(self, prompt):
+            async def inner():
+                await asyncio.sleep(30)
+                yield "never"
+
+            async for item in budgets.guarded(hub_dir, "claude-local", inner, lambda e: None):
+                yield item
+
+    monkeypatch.setattr(runtime, "build", lambda hd, **kw: Slow())
+    with deadlines.scope(absolute=time.time() + 1, check_exit=False), pytest.raises(BaseException):
+        runtime.run_once(hub_dir, "hi")
+    assert budgets.status(hub_dir)["open_reservations"] == []    # the usage row settled it
+
+
 def test_a_hold_from_last_month_still_counts(hub_dir):
     limits(hub_dir, "  run:\n    max_output_tokens: 100\n  month:\n    max_output_tokens: 100\n")
     held = budgets.admit(hub_dir, model="claude-local", run_id="late-night")
