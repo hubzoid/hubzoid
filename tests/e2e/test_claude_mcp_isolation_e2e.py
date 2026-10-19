@@ -91,7 +91,7 @@ def _wait_port(port: int) -> None:
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
-    from hubzoid import owui_mcp
+    from hubzoid import personal_mcp
     from hubzoid.access import store_for
 
     script = tmp_path / "synthetic_mcp.py"
@@ -128,7 +128,7 @@ def setup(tmp_path, monkeypatch):
                                   "headers": {"Authorization": f"Bearer token-of-{who}"}}},
                 [f"mcp__notes-{who}__*"])
 
-    monkeypatch.setattr(owui_mcp, "per_user_specs", specs)
+    monkeypatch.setattr(personal_mcp, "per_user_specs", specs)
     yield hub, seen
     for p in procs:
         p.terminate()

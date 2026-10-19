@@ -176,21 +176,97 @@ def visible_map(tools: dict) -> dict[str, bool]:
     return out
 
 
+REVOKED_MESSAGE = ("[access ended: this account's access to this agent was removed or its "
+                   "sign-in was revoked, so '{name}' was not run.]")
+
+
+# The run's account or credential ended (removed, revoked, signed out, out of
+# the key's agents): the run stops. Any other refusal is an ordinary "no".
+ENDED_REASONS = frozenset({"account_inactive", "credentials_revoked", "credential_ended", "key_scope"})
+DENIED_MESSAGE = ("[access denied: '{name}' needs access to this agent, which the current "
+                  "user does not have.]")
+UNCHECKED_MESSAGE = ("[access denied: access could not be checked, so '{name}' was not run. "
+                     "Try again shortly.]")
+
+
+def refusal(decision, name: str, *, guarded: bool = False) -> str | None:
+    """The words a refused call answers with, or None to let it run."""
+    if decision.allowed:
+        return None
+    log.info("access: %s refused at call time (%s)", name, decision.reason)
+    if decision.reason in ENDED_REASONS:
+        return REVOKED_MESSAGE.format(name=name)
+    if decision.reason == "store_error":
+        return UNCHECKED_MESSAGE.format(name=name)
+    return None if guarded else DENIED_MESSAGE.format(name=name)
+
+
+def checked_server(server, hub_dir: Path):
+    """``server`` (an Agents SDK MCP server) with the same per-call check as
+    ``run_checked``. Every runtime's MCP tools end in ``server.call_tool``,
+    including servers connected after the registry was built (a hub's MCP
+    servers on Codex and the Agents SDK, and personal connectors)."""
+    original = server.call_tool
+    if getattr(original, "hubzoid_run_checked", False):
+        return server
+    hub_dir = Path(hub_dir)
+
+    async def call_tool(tool_name, arguments, *args, **kwargs):
+        from mcp.types import CallToolResult, TextContent
+
+        from .evaluator import check_run
+
+        decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
+        refused = refusal(decision, tool_name)
+        if refused is not None:
+            return CallToolResult(content=[TextContent(type="text", text=refused)], isError=True)
+        return await original(tool_name, arguments, *args, **kwargs)
+
+    call_tool.hubzoid_run_checked = True
+    server.call_tool = call_tool
+    return server
+
+
+def run_checked(ft: FunctionTool, hub_dir: Path) -> FunctionTool:
+    """A copy of ``ft`` that first checks the run's account may still use the
+    hub (``evaluator.check_run``: active, same credential counter, not
+    blocked, ``use_hub``). Allowed means it runs at once; nothing asks a person."""
+    invoke = getattr(ft, "on_invoke_tool", None)
+    if invoke is None or not dataclasses.is_dataclass(ft) or getattr(invoke, "hubzoid_run_checked", False):
+        return ft
+    original_invoke = ft.on_invoke_tool
+    hub_dir = Path(hub_dir)
+    guarded = getattr(getattr(ft, "is_enabled", None), "hubzoid_permission", None) is not None
+
+    async def _checked_invoke(ctx, input_str):
+        from .evaluator import check_run
+
+        decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
+        refused = refusal(decision, ft.name, guarded=guarded)
+        if refused is not None:
+            return refused
+        # Allowed, or a restricted tool that refuses (and logs) in its own words.
+        return await original_invoke(ctx, input_str)
+
+    _checked_invoke.hubzoid_run_checked = True
+    return dataclasses.replace(ft, on_invoke_tool=_checked_invoke)
+
+
 def apply(hub_dir: Path, registry: dict) -> dict:
-    """Merge guarded restricted tools into `registry`.
+    """Merge guarded restricted tools into `registry`, and make every tool
+    recheck the run's account before it runs (``run_checked``).
 
     Restricted tools win on name conflicts (a door is never silently shadowed by
-    an unguarded built-in). Returns the registry unchanged when the hub has no
-    `restricted/` folder.
+    an unguarded built-in). Every runtime's factory calls this, so the check is
+    the same on Claude, Codex and the Agents SDK.
     """
     restricted = load_restricted(Path(hub_dir))
-    if not restricted:
-        return registry
     out = dict(registry)
     for ft, permission in restricted:
         out[ft.name] = guard_tool(ft, permission, hub_dir)
-    log.info(
-        "access: %d restricted tool(s) under %d permission(s) loaded",
-        len(restricted), len({p for _, p in restricted}),
-    )
-    return out
+    if restricted:
+        log.info(
+            "access: %d restricted tool(s) under %d permission(s) loaded",
+            len(restricted), len({p for _, p in restricted}),
+        )
+    return {name: run_checked(ft, hub_dir) for name, ft in out.items()}

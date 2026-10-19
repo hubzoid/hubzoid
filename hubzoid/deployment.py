@@ -62,11 +62,10 @@ def _write(path: Path, data: dict) -> None:
 
 
 def save(
-    path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str,
+    path: Path, *, hubs: list[dict], operational_url: str, owui_db: str = "",
     owui_database_url: str | None = None, owui_database_schema: str | None = None,
     deployment_secret: dict | None = None, owner: str | None = None,
     public_url: str | None = None, workflow_user: str | None = None,
-    hide_owui_users: bool | None = None, sign_in: dict | None = None,
     ui_mode: str | None = None, auth: bool | None = None,
     allowed_origins: list[str] | None = None, name: str | None = None,
     branding_dir: str | None = None,
@@ -78,14 +77,15 @@ def save(
     let bridges and CLI commands that did not inherit the gateway's environment
     act the same as the gateway. Omitted when unset.
 
-    `sign_in` (from `sign_in_flags`) records how the chat app signs people in,
-    as booleans and a domain list only: never a client id or secret.
+    `owui_db`, `owui_database_url` and `owui_database_schema` say where a
+    gateway that ran Open WebUI on 1.x kept its database, for
+    `hubzoid migrate openwebui` and the upgrade checks only. Omitted when empty.
 
     `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
     external bridges can fetch it. Only the name and region are stored, never a
     value. The key is omitted when there is no deployment secret.
 
-    `ui_mode` ("hubzoid" or "openwebui"), `auth` (sign-in on) and
+    `ui_mode` ("hubzoid"), `auth` (sign-in on) and
     `allowed_origins` record how the whole deployment runs, so bridges started
     separately (`gateway --no-bridges`) behave like the gateway
     (`hubzoid.appmode`). `name` is the deployment's display name and
@@ -97,23 +97,17 @@ def save(
         version=1,
         hubs=hubs,
         operational_url=operational_url,
-        owui_url=owui_url,
-        owui_db=owui_db,
-        owui_database_url=owui_database_url,
-        owui_database_schema=owui_database_schema,
     )
+    for key, value in (("owui_db", owui_db), ("owui_database_url", owui_database_url),
+                       ("owui_database_schema", owui_database_schema)):
+        if value:
+            data[key] = value
     if owner:
         data["owner"] = owner.strip().lower()
     if public_url:
         data["public_url"] = public_url.rstrip("/")
     if workflow_user and workflow_user.strip():
         data["workflow_user"] = workflow_user.strip().lower()
-    if hide_owui_users is not None:
-        # The deployment's default for hiding Open WebUI's user management
-        # (an explicit HUBZOID_HIDE_OWUI_USERS still wins at the edge).
-        data["hide_owui_users"] = bool(hide_owui_users)
-    if sign_in is not None:
-        data["sign_in"] = _flags_only(sign_in)
     if ui_mode is not None:
         data["ui_mode"] = str(ui_mode)
     if auth is not None:
@@ -132,62 +126,6 @@ def save(
         _write(
             Path(hub["path"]) / ".hubzoid" / "deployment.json", {"manifest": str(path)}
         )
-
-
-def hide_owui_users_default(prior: dict, *, fresh: bool, env) -> bool | None:
-    """The deployment's recorded default for hiding Open WebUI's user
-    management. Kept once recorded. Recorded True only for a new deployment (no
-    earlier manifest, no chat-app database yet) set up with Console accounts:
-    sign-in on and the service account configured. None (nothing recorded, the
-    Users page stays) for every existing deployment."""
-    if prior.get("hide_owui_users") is not None:
-        return bool(prior["hide_owui_users"])
-    on = lambda k: (env.get(k) or "").strip().lower() in ("1", "true", "yes", "on")  # noqa: E731
-    if (fresh and not prior and on("WEBUI_AUTH")
-            and (env.get("HUBZOID_GATEWAY_ADMIN_EMAIL") or "").strip()
-            and (env.get("HUBZOID_GATEWAY_ADMIN_PASSWORD") or "").strip()):
-        return True
-    return None
-
-
-def sign_in_flags(env) -> dict:
-    """Non-secret facts about the chat app's sign-in setup, parsed exactly as
-    Open WebUI 0.11.4 parses them (`config.py`), for the Console's Add user.
-
-    * "google": GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are both set (Open
-      WebUI registers Google only then).
-    * "merge_by_email": OAUTH_MERGE_ACCOUNTS_BY_EMAIL is true, so a Google
-      sign-in attaches to the existing account with that email.
-    * "allowed_domains": present only when OAUTH_ALLOWED_DOMAINS restricts
-      Google sign-in (the values, compared exactly as Open WebUI does).
-    * "oauth_settings_in_app": ENABLE_OAUTH_PERSISTENT_CONFIG is true, so the
-      live OAuth settings may have been changed inside the chat app and cannot
-      be read from here.
-
-    Never records a client id, secret or any other value."""
-    def true(key: str, default: str = "False") -> bool:
-        return (env.get(key) or default).lower() == "true"
-
-    flags: dict = {
-        "google": bool(env.get("GOOGLE_CLIENT_ID") and env.get("GOOGLE_CLIENT_SECRET")),
-        "merge_by_email": true("OAUTH_MERGE_ACCOUNTS_BY_EMAIL"),
-    }
-    raw = env.get("OAUTH_ALLOWED_DOMAINS")
-    domains = [d.strip() for d in ("*" if raw is None else raw).split(",")]
-    if "*" not in domains:
-        flags["allowed_domains"] = domains
-    if true("ENABLE_OAUTH_PERSISTENT_CONFIG"):
-        flags["oauth_settings_in_app"] = True
-    return flags
-
-
-def _flags_only(sign_in: dict) -> dict:
-    out = {k: bool(sign_in.get(k)) for k in ("google", "merge_by_email")}
-    if isinstance(sign_in.get("allowed_domains"), list):
-        out["allowed_domains"] = [str(d) for d in sign_in["allowed_domains"]]
-    if sign_in.get("oauth_settings_in_app"):
-        out["oauth_settings_in_app"] = True
-    return out
 
 
 def deployment_secret(hub_dir: Path, env=None) -> dict | None:
@@ -222,14 +160,6 @@ def hub_path(hub_dir: Path, key: str) -> Path:
         if h["key"] == key:
             return Path(h["path"])
     raise KeyError(key)
-
-
-def owui_url(hub_dir: Path) -> str:
-    configured = read(hub_dir).get("owui_url", "").rstrip("/")
-    explicit = os.environ.get("OWUI_INTERNAL_URL", "").rstrip("/")
-    if configured and explicit and configured != explicit:
-        raise ValueError("OWUI_INTERNAL_URL differs from the registered deployment")
-    return configured or explicit or os.environ.get("WEBUI_URL", "").rstrip("/")
 
 
 def permission_catalog(hub_dir: Path) -> list[dict]:

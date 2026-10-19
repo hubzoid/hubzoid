@@ -393,12 +393,12 @@ put `MODEL=hubzoid-test/scripted` in the test hub's own `.env`.
 The agent's read-only Evals tab opens with the score: the latest run's passed
 of total, its time and trigger, a bar for each of the last 10 runs, the cases
 failing now and those never run. Each case shows its last 10 results as dots.
-The agent's card in the Console shows **Evals 8/10** (or **Evals not run**)
+The agent in Settings → Agents shows **Evals 8/10** (or **Evals not run**)
 when the agent has cases. Below that are the cases, paged history and result
 details. Case names and pass or fail results are operational data shown for
 every case.
-There is no Console run button: run evals with the CLI, from CI or on a schedule. Managers can see verdicts, but details of a run
-with `run_as` belong only to that account (which must also have Console/agent
+There is no run button in Settings: run evals with the CLI, from CI or on a schedule. Managers can see verdicts, but details of a run
+with `run_as` belong only to that account (which must also have Settings/agent
 access). Other viewers see an explicit private-result notice. Scheduled suites
 save results before reporting failure to workflow monitoring.
 
@@ -443,8 +443,10 @@ How a faked case runs:
   and not in `real_tools`, is blocked. The agent reads "Blocked in this eval",
   nothing runs, and the case fails with a `fake_tools` check naming the call.
   A missing fake can never cause a real effect.
-- **Access checks still apply.** A restricted tool's access check runs before
-  its fake, so a person who may not use the tool is still refused.
+- **Access checks and approval rules still apply.** A restricted tool's access
+  check runs before its fake, so a person who may not use the tool is still
+  refused. A tool whose approval rule asks first waits for approval, as in any
+  eval. `ask_question` is a hub tool like any other: fake it or it is blocked.
 - **MCP servers are not covered.** Their calls do not pass through Hubzoid's
   tool layer. A faked case on a hub with MCP servers fails unless it sets
   `allow_real_mcp: true` (do that only when those servers just read). A

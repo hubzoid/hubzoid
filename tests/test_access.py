@@ -185,7 +185,11 @@ def test_load_restricted_empty_without_folder(tmp_path):
 
 def test_apply_unchanged_without_restricted_folder(tmp_path):
     registry = {"a": sample_tool}
-    assert access.apply(tmp_path, registry) is registry  # same object, no-op
+    out = access.apply(tmp_path, registry)
+    # Nothing is added or renamed; each tool only gains the per-call account check.
+    assert list(out) == ["a"] and out["a"].name == sample_tool.name
+    assert out["a"].params_json_schema == sample_tool.params_json_schema
+    assert getattr(out["a"].on_invoke_tool, "hubzoid_run_checked", False)
 
 
 def test_apply_guards_restricted_tools_end_to_end(tmp_path):

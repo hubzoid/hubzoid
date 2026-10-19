@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createFixture, perm } = require("./fixture.cjs");
+const { settingsHost } = require("./settings-host.cjs");
 
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
 const shots = process.env.PORTAL_SHOTS || path.join(require("node:os").tmpdir(), "hubzoid-console-tests");
@@ -23,12 +24,14 @@ function step(name) {
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
+  const host = await settingsHost();
   const fixture = createFixture();
   const { state } = fixture;
   let diagnosticPage;
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
     const page = await context.newPage();
+    page.setDefaultTimeout(Number(process.env.JOURNEY_TIMEOUT || 30000));
     diagnosticPage = page;
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));
@@ -63,9 +66,8 @@ function step(name) {
           });
         }
       }
-      if (url.pathname === "/" || url.pathname === "/admin")
-        return route.fulfill({ body: "<title>placeholder</title>", contentType: "text/html" });
-      const relative = url.pathname.replace(/^\/portal\/?/, "") || "index.html";
+      if (await host.forward(route, url)) return;
+      const relative = url.pathname.replace(/^\/(portal\/?)?/, "") || "index.html";
       const file = path.join(root, relative);
       const exists = fs.existsSync(file) && fs.statSync(file).isFile();
       return route.fulfill({
@@ -74,8 +76,10 @@ function step(name) {
       });
     };
     await context.route(`${ORIGIN}/**`, serve());
-    const go = (hash) => page.goto(`${ORIGIN}/portal/${hash ? "#" + hash : ""}`);
+    const go = (hash) => page.goto(`${ORIGIN}/settings${hash ? "#" + hash : ""}`);
     const hash = () => page.evaluate(() => location.hash);
+    // Settings lists access and workflows as items, and people as table rows.
+    const rows = () => page.locator("tr, .hz-access-list > li, .hz-workflow-list > li");
     const drawer = () => page.locator(".ant-drawer-section[role=dialog]");
     const modal = () => page.locator(".ant-modal-confirm").filter({ visible: true });
     const modalTitle = (text) => modal().locator(".ant-modal-confirm-title").getByText(text);
@@ -103,74 +107,37 @@ function step(name) {
     };
 
     // ---- scrolling ---------------------------------------------------------
-    step("Long agent lists scroll independently of desktop and mobile navigation");
+    step("A long agent list stays reachable in Settings without sideways scrolling");
     const manyHubs = Array.from({ length: 30 }, (_, i) => ({
       key: `agent-${i + 1}`, path: `/srv/hubs/agent-${i + 1}`, name: `Agent ${i + 1}`,
     }));
     const longList = (route) => route.fulfill({ json: { hubs: [...state.hubs, ...manyHubs] } });
     await page.route(`${ORIGIN}/portal/api/hubs`, longList);
     try {
-      for (const view of [
-        { width: 1440, height: 950, theme: "light", nav: ".sider" },
-        { width: 1024, height: 640, theme: "dark", nav: ".sider" },
-        { width: 390, height: 844, theme: "light", nav: ".topbar" },
-      ]) {
-        await page.setViewportSize({ width: view.width, height: view.height });
+      for (const view of [{ width: 1440, height: 950 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(view);
         await go("/agents");
-        await page.evaluate(theme => localStorage.setItem("hz-theme", theme), view.theme);
-        await page.reload();
-        await page.getByRole("link", { name: "Agent 30", exact: true }).waitFor();
-        const navigation = page.locator(view.nav);
-        const content = page.locator(".shell > .content");
-        const before = await navigation.boundingBox();
-        const firstCard = await page.locator(".agent-card").first().boundingBox();
-        await content.hover();
-        await page.mouse.wheel(0, 700);
-        await page.waitForFunction(() =>
-          document.querySelector(".content").scrollTop > 0 || document.scrollingElement.scrollTop > 0);
-        const after = await navigation.boundingBox();
-        assert.ok(Math.abs(after.y - before.y) < 1, `${view.width}px navigation stays in place`);
-        assert.ok(Math.abs(after.height - before.height) < 1, "Navigation does not grow with the cards");
-        assert.ok((await page.locator(".agent-card").first().boundingBox()).y < firstCard.y - 100,
-          "The agent list actually moves when scrolled");
-        assert.ok(await content.evaluate(el => el.scrollTop > 0), "The content owns scrolling");
-        assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
-        const lastCard = page.locator(".agent-card").last();
-        await lastCard.scrollIntoViewIfNeeded();
-        const lastBox = await lastCard.boundingBox();
-        assert.ok(lastBox.y >= after.y + (view.nav === ".topbar" ? after.height : 0)
-          && lastBox.y + lastBox.height <= view.height, "The last agent remains reachable");
+        const last = page.getByRole("link", { name: "Agent 30", exact: true });
+        await last.waitFor();
+        await last.scrollIntoViewIfNeeded();
+        const box = await last.boundingBox();
+        assert.ok(box.y >= 0 && box.y + box.height <= view.height, `${view.width}px: the last agent is reachable`);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
           "The long list does not cause sideways scrolling");
-        if (view.nav === ".topbar") {
-          await page.getByRole("button", { name: "Open navigation" }).click();
-          await page.getByRole("dialog").getByRole("link", { name: "People" }).waitFor();
-          await page.keyboard.press("Escape");
-          await page.getByRole("dialog").waitFor({ state: "hidden" });
-        }
       }
-
-      await page.setViewportSize({ width: 1024, height: 320 });
-      await go("/agents");
-      const sidebar = page.locator(".sider");
-      await sidebar.getByRole("button", { name: "Sign out", exact: true }).focus();
-      const footer = await sidebar.getByRole("button", { name: "Sign out", exact: true }).boundingBox();
-      assert.ok(footer.y >= 0 && footer.y + footer.height <= 320,
-        "Sidebar controls are reachable on a short or zoomed viewport");
-      assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
     } finally {
       await page.unroute(`${ORIGIN}/portal/api/hubs`, longList);
-      await page.evaluate(() => localStorage.setItem("hz-theme", "light"));
       await page.setViewportSize({ width: 1440, height: 950 });
     }
 
     // ---- landing -----------------------------------------------------------
     step("The landing page combines five totals and agent cards, with compact navigation");
-    await go("");
+    await go("/agents");
     await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
-    assert.equal(await page.title(), "Hubzoid Admin Console");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "1440px landing has no clipped content");
     const totals = page.getByRole("list", { name: "Totals" });
+    // In Settings the totals sit under a folded Usage overview.
+    await page.getByText("Usage overview", { exact: true }).click();
     await totals.getByText("Across 252 conversations").waitFor();
     assert.equal(await totals.getByRole("listitem").count(), 5);
     await totals.getByText("Workflow runs").waitFor();
@@ -233,25 +200,25 @@ function step(name) {
     step("Access tab shows readable capabilities, inherited rights and account states");
     await go("/agents/finance/access");
     await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
-    const priyaRow = page.getByRole("row").filter({ hasText: "Priya Natarajan" });
+    const priyaRow = rows().filter({ hasText: "Priya Natarajan" });
     await priyaRow.getByText("Read ledger", { exact: true }).waitFor();
     await priyaRow.getByText("Manage invoices", { exact: true }).waitFor();
     await priyaRow.getByText("Active", { exact: true }).waitFor();
-    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
-    await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
+    await rows().filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
+    await rows().filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
     // Not signed up yet: access waits for an account, and People has no page for it.
-    assert.equal(await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByRole("link").count(), 0, "no profile before sign-up");
+    assert.equal(await rows().filter({ hasText: "daniel.okafor" }).getByRole("link").count(), 0, "no profile before sign-up");
     await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
     await drawer().getByText("Not signed up yet", { exact: true }).waitFor();
     assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile before sign-up");
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
-    await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
+    await rows().filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-access.png"), fullPage: true });
 
-    step("Warning helper text is readable in both themes and the compact logo keeps its visible size");
+    step("Warning helper text is readable in both themes; agent cards open the agent");
     for (const mode of ["light", "dark"]) {
       await page.evaluate(mode => localStorage.setItem("hz-theme", mode), mode);
       await page.reload();
@@ -279,9 +246,6 @@ function step(name) {
     }
     await page.setViewportSize({ width: 873, height: 750 });
     await go("/agents");
-    await page.locator(".topbar .brand-wordmark").waitFor();
-    const logo = await page.locator(".topbar .brand-wordmark").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight, fit: getComputedStyle(el).objectFit }));
-    assert.deepEqual(logo, { width: 134, height: 30, fit: "none" });
     await page.locator(".agent-card .agent-card-link").first().waitFor();
 
     // The whole card opens the agent: no buttons, the name is the one link
@@ -290,16 +254,7 @@ function step(name) {
     assert.equal(await page.locator(".agent-card .ant-btn").count(), 0, "Agent cards carry no buttons");
     // The card shows names only; its link carries the agent's key.
     const key = decodeURIComponent((await card.locator(".agent-card-link").getAttribute("href")).split("#/agents/")[1].split("/")[0]);
-    const restBorder = await card.evaluate(el => getComputedStyle(el).borderColor);
-    const nameColor = () => card.locator(".agent-name").evaluate(el => getComputedStyle(el).color);
-    const restName = await nameColor();
-    const usageBox = await card.locator(".agent-card-usage").boundingBox();
-    await page.mouse.move(usageBox.x + 20, usageBox.y + 20);
-    await page.waitForTimeout(250);
-    assert.notEqual(await card.evaluate(el => getComputedStyle(el).borderColor), restBorder, "Hover marks the card");
-    assert.notEqual(await card.evaluate(el => getComputedStyle(el).boxShadow), "none", "Hover lifts the card");
-    assert.notEqual(await nameColor(), restName, `Hover turns the name orange (${restName})`);
-    await page.mouse.click(usageBox.x + 20, usageBox.y + 20);
+    await card.locator(".agent-card-link").click();
     await page.waitForURL(url => url.hash === `#/agents/${key}/access`);
     await go("/agents");
     const status = page.locator(".agent-card").first().locator(".agent-card-status").first();
@@ -339,9 +294,9 @@ function step(name) {
     });
     await page.getByRole("heading", { name: "Access to Support Assistant" }).waitFor();
     assert.equal(await page.getByText("Priya Natarajan").count(), 0, "finance rows must vanish immediately");
-    await page.getByRole("row").filter({ hasText: "Mei Lin Chen" }).getByText("Work tickets").waitFor();
-    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
-    await page.getByRole("row").filter({ hasText: "Mei Lin Chen" }).getByText("Awaiting approval").waitFor();
+    await rows().filter({ hasText: "Mei Lin Chen" }).getByText("Work tickets").waitFor();
+    await rows().filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
+    await rows().filter({ hasText: "Mei Lin Chen" }).getByText("Awaiting approval").waitFor();
     await page.getByText("Everyone signed in can use this agent").waitFor();
     delete state.delays["/access"];
 
@@ -417,7 +372,7 @@ function step(name) {
     assert.deepEqual(state.mutations[0].operations, [
       { action: "revoke", permission: "use_hub" },
     ]);
-    await page.getByRole("row").filter({ hasText: "daniel.okafor" }).waitFor({ state: "detached" });
+    await rows().filter({ hasText: "daniel.okafor" }).waitFor({ state: "detached" });
     state.mutations.length = 0;
 
     step("A legacy service identity keeps its label, grants and management controls");
@@ -537,7 +492,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "Done" }).click();
     await drawer().waitFor({ state: "hidden" });
     await page.getByText("Nia Patel was added").waitFor();
-    await page.getByRole("row").filter({ hasText: "Nia Patel" }).getByText("Read ledger").waitFor();
+    await rows().filter({ hasText: "Nia Patel" }).getByText("Read ledger").waitFor();
     // Done dropped the password: a new form starts empty.
     await addUser();
     assert.equal(await page.locator("#new-account-password").inputValue(), "");
@@ -588,7 +543,7 @@ function step(name) {
     assert.equal(state.accountsCreated.filter((e) => e === "leo.varga@addusers.local").length, 1);
     await drawer().getByRole("button", { name: "Done" }).click();
     await drawer().waitFor({ state: "hidden" });
-    await page.getByRole("row").filter({ hasText: "Leo Varga" }).getByText("Read ledger").waitFor();
+    await rows().filter({ hasText: "Leo Varga" }).getByText("Read ledger").waitFor();
     state.mutations.length = 0;
 
     step("An unconfirmed create is retried safely: the account is detected, never duplicated");
@@ -658,7 +613,7 @@ function step(name) {
     state.identities[LENA] = { display: "Lena Berg", owui_id: "u_lena", pending: 0 };
     state.grants.push([LENA, "finance", USE_HUB_PERM], [LENA, "finance", "old_export"]);
     await page.reload();
-    await page.getByRole("row").filter({ hasText: "Lena Berg" }).getByText("Old Export · no longer available").waitFor();
+    await rows().filter({ hasText: "Lena Berg" }).getByText("Old Export · no longer available").waitFor();
     await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
     assert.deepEqual(
       await drawer().locator(".capability-group-title").allTextContents(),
@@ -849,7 +804,7 @@ function step(name) {
 
     // ---- failed recovery refresh keeps the editor locked (review #2) -----------------------
     step("A failed post-save refresh keeps the access editor locked until a successful retry");
-    const priyaRow2 = page.getByRole("row").filter({ hasText: "Priya Natarajan" });
+    const priyaRow2 = rows().filter({ hasText: "Priya Natarajan" });
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).uncheck();
@@ -929,9 +884,9 @@ function step(name) {
     step("Access names and View profile open the person; unsaved edits ask first");
     const priyaHref = `#/people/${encodeURIComponent(PRIYA)}`;
     await go("/agents/finance/access");
-    const priyaLink = page.getByRole("row").filter({ hasText: "Priya Natarajan" }).getByRole("link", { name: "Priya Natarajan" });
+    const priyaLink = rows().filter({ hasText: "Priya Natarajan" }).getByRole("link", { name: "Priya Natarajan" });
     assert.equal(await priyaLink.getAttribute("href"), priyaHref);
-    assert.equal(await page.getByRole("row").filter({ hasText: "monthly_close" }).getByRole("link").count(), 0, "service identities stay plain text");
+    assert.equal(await rows().filter({ hasText: "monthly_close" }).getByRole("link").count(), 0, "service identities stay plain text");
     await page.getByRole("button", { name: "Edit access for workflow:monthly_close" }).click();
     await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile for a service identity");
@@ -957,8 +912,8 @@ function step(name) {
     await drawer().getByText(PRIYA, { exact: true }).waitFor();
     assert.equal(await hash(), priyaHref);
     await go("/agents/support/access");
-    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByRole("link").count(), 0, "Everyone signed in stays plain text");
+    await rows().filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
+    assert.equal(await rows().filter({ hasText: "Everyone signed in" }).getByRole("link").count(), 0, "Everyone signed in stays plain text");
 
     step("Navigation is refused while a save is in flight");
     await go("/agents/finance/access");
@@ -981,7 +936,7 @@ function step(name) {
     // ---- everyone signed in: shown, never created, removal confirmed ----------------------
     step("Everyone signed in is shown with a confirmed Remove, and can never be granted");
     await go("/agents/support/access");
-    const everyoneRow = page.getByRole("row").filter({ hasText: "Everyone signed in" });
+    const everyoneRow = rows().filter({ hasText: "Everyone signed in" });
     await everyoneRow.getByText("Use this agent", { exact: true }).waitFor();
     assert.equal(await everyoneRow.getByRole("button", { name: /^Edit access/ }).count(), 0, "not editable");
     await everyoneRow.getByRole("button", { name: "Remove access for everyone signed in" }).click();
@@ -997,7 +952,7 @@ function step(name) {
     await answer("Remove access for everyone");
     await page.getByText("Support Assistant is no longer open to everyone signed in.").waitFor();
     assert.deepEqual(lastMutation(), { endpoint: "/access/revoke", subject: "*", hub: "support", permission: "use_hub" });
-    assert.equal(await page.getByRole("row").filter({ hasText: "Everyone signed in" }).count(), 0);
+    assert.equal(await rows().filter({ hasText: "Everyone signed in" }).count(), 0);
     await page.setViewportSize({ width: 1440, height: 950 });
     // The server refuses to create it again, for an organization administrator too.
     await assert.rejects(fixture.handle("POST", "/access/grant", {}, { subject: "*", hub: "support", permission: "use_hub" }),
@@ -1010,15 +965,15 @@ function step(name) {
     step("Runs & schedules explains workflow state, opens runs and run details with steps");
     await go("/agents/finance/runs");
     await page.getByRole("heading", { name: "Workflows in Finance Assistant" }).waitFor();
-    const close = page.getByRole("row").filter({ hasText: "monthly_close" });
+    const close = rows().filter({ hasText: "monthly_close" });
     await close.getByText("Scheduled", { exact: true }).waitFor();
     await close.getByText("Asia/Kolkata").waitFor();
     // Explanations sit behind a "?" help button, named by its text.
-    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByRole("button", { name: "No schedule; runs only when started explicitly." }).waitFor();
-    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByText("Manual", { exact: true }).waitFor();
+    await rows().filter({ hasText: "reissue_invoice" }).getByRole("button", { name: "No schedule; runs only when started explicitly." }).waitFor();
+    await rows().filter({ hasText: "reissue_invoice" }).getByText("Manual", { exact: true }).waitFor();
     await close.getByRole("link", { name: "View runs" }).click();
     await page.getByRole("heading", { name: /Runs of monthly_close/ }).waitFor();
-    await page.getByRole("row").filter({ hasText: "mc-2026-08-01" }).getByText("Failed").waitFor();
+    await rows().filter({ hasText: "mc-2026-08-01" }).getByText("Failed").waitFor();
     await page.getByRole("link", { name: "mc-2026-09-01" }).click();
     await page.getByText("Closed August 2026: 412 entries reconciled").waitFor();
     await page.getByText("Succeeded").first().waitFor();
@@ -1041,17 +996,17 @@ function step(name) {
     await go("/runs");
     await page.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
     // Runs from more than one agent are shown together, each labelled by agent.
-    await page.getByRole("row").filter({ hasText: "mc-2026-09-01" }).getByText("Finance Assistant").waitFor();
-    await page.getByRole("row").filter({ hasText: "td-2026-09-15" }).getByText("Support Assistant").waitFor();
-    await page.getByRole("row").filter({ hasText: "pa-2026-09-17" }).getByText("IT Ops Assistant").waitFor();
+    await rows().filter({ hasText: "mc-2026-09-01" }).getByText("Finance Assistant").waitFor();
+    await rows().filter({ hasText: "td-2026-09-15" }).getByText("Support Assistant").waitFor();
+    await rows().filter({ hasText: "pa-2026-09-17" }).getByText("IT Ops Assistant").waitFor();
     // Status filter is applied server-side (before pagination): only failures remain.
     await page.getByRole("combobox", { name: "Status" }).click();
     await page.locator(".ant-select-item-option").filter({ hasText: "Failed" }).click();
     await page.waitForFunction(() =>
       ![...document.querySelectorAll("tbody tr")].some((tr) => (tr.textContent || "").includes("mc-2026-09-01")),
     );
-    await page.getByRole("row").filter({ hasText: "pa-2026-09-17" }).waitFor(); // itops ERROR survives
-    await page.getByRole("row").filter({ hasText: "mc-2026-08-01" }).waitFor(); // finance ERROR survives
+    await rows().filter({ hasText: "pa-2026-09-17" }).waitFor(); // itops ERROR survives
+    await rows().filter({ hasText: "mc-2026-08-01" }).waitFor(); // finance ERROR survives
     assert.ok((await hash()).includes("status=failed"), await hash());
     // Narrow to one agent as well; the URL carries both filters.
     await page.getByRole("combobox", { name: "Agent" }).click();
@@ -1059,11 +1014,11 @@ function step(name) {
     await page.waitForFunction(() =>
       ![...document.querySelectorAll("tbody tr")].some((tr) => (tr.textContent || "").includes("pa-2026-09-17")),
     );
-    await page.getByRole("row").filter({ hasText: "mc-2026-08-01" }).waitFor();
+    await rows().filter({ hasText: "mc-2026-08-01" }).waitFor();
     assert.ok((await hash()).includes("agent=finance"), await hash());
     // Filters survive a full refresh.
     await page.reload();
-    await page.getByRole("row").filter({ hasText: "mc-2026-08-01" }).waitFor();
+    await rows().filter({ hasText: "mc-2026-08-01" }).waitFor();
     await page.waitForFunction(() =>
       ![...document.querySelectorAll("tbody tr")].some((tr) => (tr.textContent || "").includes("pa-2026-09-17")),
     );
@@ -1074,10 +1029,10 @@ function step(name) {
     await page.getByText("The run failed").waitFor();
     // Back restores the filtered cross-agent view.
     await page.goBack();
-    await page.getByRole("row").filter({ hasText: "mc-2026-08-01" }).waitFor();
+    await rows().filter({ hasText: "mc-2026-08-01" }).waitFor();
     // Reset clears every filter.
     await page.getByRole("button", { name: "Reset filters" }).first().click();
-    await page.getByRole("row").filter({ hasText: "pa-2026-09-17" }).waitFor();
+    await rows().filter({ hasText: "pa-2026-09-17" }).waitFor();
     assert.ok(!(await hash()).includes("status="), await hash());
 
     step("Runs: a filter combination with no matches shows a distinct empty state + reset");
@@ -1087,7 +1042,7 @@ function step(name) {
     await page.locator(".ant-select-item-option").filter({ hasText: "Running" }).click();
     await page.getByText("No runs match these filters.").waitFor(); // support has no running run
     await page.locator(".ant-table-placeholder").getByRole("button", { name: "Reset filters" }).click();
-    await page.getByRole("row").filter({ hasText: "pa-2026-09-17" }).waitFor();
+    await rows().filter({ hasText: "pa-2026-09-17" }).waitFor();
 
     // Auto-refresh is toggleable and URL-persisted; deep behaviour is exercised
     // deterministically on a controlled clock below.
@@ -1120,9 +1075,9 @@ function step(name) {
     await cpage.clock.install({ time: new Date(base) });
 
     // (a) Fires exactly once per interval (the in-flight guard prevents overlap).
-    await cpage.goto(`${ORIGIN}/portal/#/runs?auto=1`);
+    await cpage.goto(`${ORIGIN}/settings#/runs?auto=1`);
     await cpage.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
-    await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
+    await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
     let n = runsGets;
     let resP = cpage.waitForResponse((x) => x.url().includes("/portal/api/runs"));
     await cpage.clock.runFor(11000);
@@ -1136,11 +1091,11 @@ function step(name) {
     await cpage.clock.runFor(11000);
     await resP;
     await cpage.getByText("Couldn’t refresh just now", { exact: false }).waitFor();
-    await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
+    await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
 
     // (c) A live relative window advances its cutoff on each refresh.
-    await cpage.goto(`${ORIGIN}/portal/#/runs?auto=1&range=1d`);
-    await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
+    await cpage.goto(`${ORIGIN}/settings#/runs?auto=1&range=1d`);
+    await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
     const since1 = sinces[sinces.length - 1];
     assert.ok(since1, "a relative window sends a since cutoff");
     await cpage.clock.setSystemTime(new Date(base + 90 * 60 * 1000));
@@ -1151,7 +1106,7 @@ function step(name) {
     assert.ok(since2 > since1, `live window cutoff must advance (${since1} -> ${since2})`);
 
     // (d) Leaving the screen clears the interval — no further /runs calls.
-    await cpage.goto(`${ORIGIN}/portal/#/agents`);
+    await cpage.goto(`${ORIGIN}/settings#/agents`);
     await cpage.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
     const afterLeave = runsGets;
     await cpage.clock.runFor(35000);
@@ -1160,8 +1115,8 @@ function step(name) {
     // (e) A FIXED window (auto off) freezes to absolute since/until and RETAINS them
     //     across a reload after the clock advances — reproducing a shared-link reopen.
     await cpage.clock.setSystemTime(new Date(base + 3 * 60 * 60 * 1000));
-    await cpage.goto(`${ORIGIN}/portal/#/runs?range=1d`); // fixed: frozen on open
-    await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
+    await cpage.goto(`${ORIGIN}/settings#/runs?range=1d`); // fixed: frozen on open
+    await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
     await cpage.waitForFunction(
       () => location.hash.includes("since=") && location.hash.includes("until="),
     );
@@ -1173,7 +1128,7 @@ function step(name) {
     resP = cpage.waitForResponse((x) => x.url().includes("/portal/api/runs"));
     await cpage.reload();
     await resP;
-    await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
+    await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
     assert.equal(sinces[sinces.length - 1], fixedSince, "fixed since retained after clock+reload");
     assert.equal(untils[untils.length - 1], fixedUntil, "fixed until retained (upper bound stays put)");
 
@@ -1184,15 +1139,15 @@ function step(name) {
     step("Activity reads as sentences with names, capabilities and agents; filters work");
     await go("/agents/finance/activity");
     await page.getByText("allowed").first().waitFor();
-    const change = page.getByRole("row").filter({ hasText: "Aisha Rahman" }).filter({ hasText: "Read ledger" }).first();
+    const change = rows().filter({ hasText: "Aisha Rahman" }).filter({ hasText: "Read ledger" }).first();
     await change.getByText("Priya Natarajan").waitFor();
     await change.getByText("Finance Assistant").waitFor();
     // Case-sensitive: the sentence verb is lowercase "allowed"; the status tag is "Allowed".
     await change.getByText("allowed", { exact: true }).waitFor();
     // The saves made earlier in this run are recorded with the viewer as actor.
-    await page.getByRole("row").filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
+    await rows().filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
     // A run control from an agent tool says who, which workflow, where from, and the run.
-    const started = page.getByRole("row").filter({ hasText: "started the monthly_close workflow" });
+    const started = rows().filter({ hasText: "started the monthly_close workflow" });
     await started.getByText("Aisha Rahman").waitFor();
     assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
       /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
@@ -1207,11 +1162,11 @@ function step(name) {
     await page.getByText("allowed").first().waitFor();
     // antd Segmented hides the radio input; click the visible label.
     await page.locator(".ant-segmented-item-label", { hasText: "Tool decisions" }).click();
-    const denied = page.getByRole("row").filter({ hasText: "payroll_run" });
+    const denied = rows().filter({ hasText: "payroll_run" });
     await denied.getByText("Tomás Herrera").waitFor();
     await denied.getByText("was denied").waitFor();
     await denied.getByText("They do not have the permission this tool requires.").waitFor();
-    await page.getByRole("row").filter({ hasText: "ledger_read" }).filter({ hasText: "Priya" }).getByText("used").waitFor();
+    await rows().filter({ hasText: "ledger_read" }).filter({ hasText: "Priya" }).getByText("used").waitFor();
     // Outcome filter (server-side, before pagination): only denials remain.
     await page.getByRole("combobox", { name: "Outcome" }).click();
     await page.locator(".ant-select-item-option").filter({ hasText: "Denied" }).click();
@@ -1252,7 +1207,7 @@ function step(name) {
     );
 
     // Event details: a keyboard-reachable row action opens the full record.
-    await page.getByRole("row").filter({ hasText: "payroll_run" }).getByRole("button", { name: "Details" }).first().click();
+    await rows().filter({ hasText: "payroll_run" }).getByRole("button", { name: "Details" }).first().click();
     await drawer().getByText("Event details").waitFor();
     await drawer().getByText("payroll_run").first().waitFor();
     await drawer().getByText("They do not have the permission this tool requires.").waitFor();
@@ -1260,16 +1215,14 @@ function step(name) {
     await go("/activity");
     await page.getByRole("heading", { name: "Activity across your agents" }).waitFor();
     await page.getByText("made").first().waitFor();
-    await page.getByRole("row").filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").waitFor();
-    await page.getByRole("row").filter({ hasText: "blocked" }).getByText("Tomás Herrera").waitFor();
-    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Support Assistant").first().waitFor();
+    await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").waitFor();
+    await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").waitFor();
+    await rows().filter({ hasText: "Everyone signed in" }).getByText("Support Assistant").first().waitFor();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-activity.png"), fullPage: true });
 
     // ---- people -----------------------------------------------------------------------------
     step("People shows identity vs account state, details drawer and confirmed admin actions");
-    state.visibility = { state: "error", error: "ConnectError: visibility sync failed", updated: Date.now() / 1000 - 120 };
     await go("/people");
-    await page.getByText("Recent access changes haven’t reached the chat app yet").waitFor();
     for (const [who, status] of [
       ["Priya Natarajan", "Active"],
       ["daniel.okafor@example.org", "Not signed up yet"],
@@ -1277,11 +1230,10 @@ function step(name) {
       ["Tomás Herrera", "Blocked"],
       ["workflow:monthly_close", "Legacy service identity"],
     ])
-      await page.getByRole("row").filter({ hasText: who }).getByText(status, { exact: true }).waitFor();
-    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Administrator", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Try again now" }).click();
-    await page.getByText("Chat app visibility is in sync.").waitFor();
-    assert.deepEqual(lastMutation(), { endpoint: "/sync" });
+      await rows().filter({ hasText: who }).getByText(status, { exact: true }).waitFor();
+    await rows().filter({ hasText: "Aisha Rahman" }).getByText("Administrator", { exact: true }).waitFor();
+    // One account system: there is no chat-app sync to report or retry.
+    assert.equal(await page.getByText(/reached the chat app|visibility/i).count(), 0);
     state.mutations.length = 0;
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-people.png"), fullPage: true });
 
@@ -1367,7 +1319,7 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     assert.deepEqual(lastMutation(), { endpoint: "/accounts/gone.user%40example.org", method: "DELETE", confirm_email: "gone.user@example.org" });
     assert.equal(state.grants.filter(([s]) => s === "gone.user@example.org").length, 0, "all their access is removed");
-    assert.equal(await page.getByRole("row").filter({ hasText: "Gone User" }).count(), 0);
+    assert.equal(await rows().filter({ hasText: "Gone User" }).count(), 0);
     state.mutations.length = 0;
 
     step("People filters narrow the list, persist in the URL, and reset");
@@ -1382,13 +1334,13 @@ function step(name) {
           ),
       );
     await noDaniel(); // filtered refetch removed the non-admin (beyond the first page too)
-    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).waitFor();
+    await rows().filter({ hasText: "Aisha Rahman" }).waitFor();
     assert.ok((await hash()).includes("role=admin"), await hash());
     await page.reload(); // URL-persisted filter survives a refresh
     await noDaniel();
-    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).waitFor();
+    await rows().filter({ hasText: "Aisha Rahman" }).waitFor();
     await page.getByRole("button", { name: "Reset filters" }).first().click();
-    await page.getByRole("row").filter({ hasText: "daniel.okafor" }).waitFor();
+    await rows().filter({ hasText: "daniel.okafor" }).waitFor();
 
     step("Person → Edit access opens that person's editor for the agent directly");
     await go(`/people/${encodeURIComponent(PRIYA)}`);
@@ -1472,17 +1424,17 @@ function step(name) {
 
     // ---- deep links and recovery ------------------------------------------------------------
     step("Unknown routes and agents recover to a useful place");
+    // An unknown Settings address opens the first section.
     await go("/nowhere/at/all");
-    await page.getByText("Page not found").waitFor();
-    await page.getByRole("link", { name: "Back to agents" }).click();
-    await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
+    await page.getByRole("heading", { name: "Profile & security" }).waitFor();
+    assert.equal(await hash(), "#/me/profile");
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
     await page.getByText("has Access, Connectors, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
-    // Target the agent's own Activity tab, not the org-level sidebar link.
-    await page.locator(".ant-tabs").getByRole("link", { name: "Activity", exact: true }).click();
+    // Target the agent's own Activity section, not the Settings Activity link.
+    await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();
     assert.equal(await hash(), "#/agents/finance/activity");
     await page.goBack();
     await page.getByRole("heading", { name: "Workflows in Finance Assistant" }).waitFor();
@@ -1498,13 +1450,12 @@ function step(name) {
     await go("/agents");
     await page.getByRole("link", { name: "Finance Assistant", exact: true }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Support Assistant", exact: true }).count(), 0);
-    await page.getByText("Agent administrator").waitFor();
     await go("/agents/finance/access");
     await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
     // An agent administrator sees an existing Everyone grant read-only.
     state.grants.push([EVERYONE_SUBJECT, "finance", USE_HUB_PERM]);
     await page.reload();
-    const readOnly = page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Read-only");
+    const readOnly = rows().filter({ hasText: "Everyone signed in" }).getByText("Read-only");
     await readOnly.hover();
     await page.getByRole("tooltip").filter({ hasText: "Only organization administrators can remove this." }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Remove access for everyone signed in" }).count(), 0);
@@ -1712,20 +1663,17 @@ function step(name) {
     state.mutations.length = 0;
 
     // ---- mobile -------------------------------------------------------------------------------
-    step("Mobile layout keeps navigation reachable and the editor usable");
+    step("On a phone the agents list fits and the access editor is usable");
     state.role = "org";
     await page.reload(); // back to a full org-admin session
     await page.setViewportSize({ width: 390, height: 844 });
     await go("/agents");
+    await page.getByText("Usage overview", { exact: true }).click();
     await page.getByRole("list", { name: "Totals" }).getByText("Messages", { exact: true }).waitFor();
     assert.equal(await page.getByRole("list", { name: "Totals" }).getByRole("listitem").count(), 5);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Mobile dashboard has no horizontal overflow");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview-mobile.png"), fullPage: true });
     await go("/agents/finance/access");
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    await page.getByRole("dialog").getByRole("link", { name: "People" }).waitFor();
-    await page.screenshot({ path: path.join(shots, "hubzoid-portal-mobile-nav.png") });
-    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).waitFor();
@@ -1736,7 +1684,7 @@ function step(name) {
     const touchCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const tpage = await touchCtx.newPage();
     await touchCtx.route(`${ORIGIN}/**`, serve());
-    await tpage.goto(`${ORIGIN}/portal/#/agents/finance/access`);
+    await tpage.goto(`${ORIGIN}/settings#/agents/finance/access`);
     await tpage.getByRole("button", { name: "Edit access for Priya Natarajan" }).tap();
     const tdrawer = tpage.locator(".ant-drawer-section[role=dialog]");
     const ttoggle = tdrawer.getByRole("button", { name: /^Restricted tools/ });
@@ -1749,29 +1697,6 @@ function step(name) {
     await touchCtx.close();
     await page.setViewportSize({ width: 1440, height: 950 });
 
-    // ---- sign out --------------------------------------------------------------------------
-    step("Sign out ends Open WebUI's session in Open WebUI mode, the Hubzoid web app's in the default mode");
-    const signOuts = [];
-    await context.route(`${ORIGIN}/api/v1/auths/signout`, (route) => {
-      signOuts.push(`openwebui ${route.request().method()}`);
-      return route.fulfill({ json: { status: true, redirect_url: "/auth" } });
-    });
-    await context.route(`${ORIGIN}/api/auth/logout`, (route) => {
-      signOuts.push(`hubzoid ${route.request().method()}`);
-      return route.fulfill({ status: 204 });
-    });
-    await context.route(`${ORIGIN}/auth`, (route) => route.fulfill({ body: "<title>Sign in</title>", contentType: "text/html" }));
-    await go("/people");
-    await page.getByRole("button", { name: "Sign out" }).click();
-    await page.waitForURL(`${ORIGIN}/auth`);
-    const legacySignIn = state.signIn;
-    state.signIn = { ...legacySignIn, links: true }; // /me in the default mode: Hubzoid accounts
-    await go("/people");
-    await page.getByRole("button", { name: "Sign out" }).click();
-    await page.waitForURL(`${ORIGIN}/auth`);
-    assert.deepEqual(signOuts, ["openwebui POST", "hubzoid POST"]);
-    state.signIn = legacySignIn;
-
     // ---- signed out or expired ----------------------------------------------------------------
     step("An expired session offers Sign in that returns to the same Console page");
     await go("/agents/finance/activity");
@@ -1782,79 +1707,9 @@ function step(name) {
     await page.getByText("Sign in to continue.").waitFor();
     assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "signed out: Sign in is the one way on");
     assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).getAttribute("href"),
-      `/auth?redirect=${encodeURIComponent("/portal/#/activity")}`);
-    await go("/agents/finance/runs");
-    await page.reload(); // signed out: the gate
-    await page.getByText("Sign in to continue", { exact: true }).waitFor();
-    const gateSignIn = page.getByRole("link", { name: "Sign in", exact: true });
-    assert.equal(await gateSignIn.getAttribute("href"), `/auth?redirect=${encodeURIComponent("/portal/#/agents/finance/runs")}`);
-    assert.match(await gateSignIn.getAttribute("class"), /ant-btn-primary/);
-    assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "one button when signed out");
-    assert.equal(await page.getByRole("link", { name: "Go to the chat app" }).count(), 0, "one button when signed out");
+      `/auth?redirect=${encodeURIComponent("/settings#/activity")}`);
+    // Signed out of the chat app itself, the app's own sign-in takes over (app tests).
     state.role = "org";
-
-    // ---- ordinary user -----------------------------------------------------------------------
-    step("An ordinary user sees their workspace without administration controls");
-    state.role = "user";
-    await page.reload(); // fresh session as an ordinary (non-admin) user
-    await go("");
-    await page.getByText("My workspace", { exact: true }).waitFor();
-    await page.getByRole("heading", { name: "Schedules & reports", exact: true }).waitFor();
-    assert.equal(await page.getByRole("link", { name: "People", exact: true }).count(), 0);
-    assert.equal(await page.getByRole("link", { name: "Activity", exact: true }).count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Add user", exact: true }).count(), 0);
-    await page.getByRole("link", { name: "Back to chat" }).waitFor();
-    assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).count(), 0, "a 403 is not a sign-in problem");
-
-    // ---- OWUI navigation link reacts to SPA login/logout --------------------------------
-    step("OWUI navigation link appears for an admin session and disappears after logout");
-    const pyNav = fs.readFileSync(path.resolve(__dirname, "../../hubzoid/portal_navigation.py"), "utf8");
-    const navMatch = pyNav.match(/SCRIPT = r'''\n([\s\S]*?)'''/);
-    assert.ok(navMatch, "found the injected nav SCRIPT in portal_navigation.py");
-    const navScript = navMatch[1];
-    let navLoggedIn = true; // toggled to simulate SPA logout/login (no page reload)
-    const navCtx = await browser.newContext();
-    const navPage = await navCtx.newPage();
-    await navCtx.route(`${ORIGIN}/**`, async (route) => {
-      const u = new URL(route.request().url());
-      if (u.pathname === "/hubzoid-portal-navigation.js")
-        return route.fulfill({ body: navScript, contentType: "application/javascript" });
-      if (u.pathname === "/portal/api/me")
-        return navLoggedIn
-          ? route.fulfill({ json: { subject: "root", org_admin: true, manageable: [] } })
-          : route.fulfill({ status: 403, json: { detail: "sign in" } });
-      if (u.pathname === "/owui-stub")
-        return route.fulfill({
-          contentType: "text/html",
-          body: '<!doctype html><html><body><div id="app">chat</div><nav id="sidebar" style="width:240px"><div style="display:flex"><span role="button" aria-haspopup="true"><button aria-label="User menu">User</button></span></div></nav>'
-            + '<script src="/hubzoid-portal-navigation.js" defer></script></body></html>',
-        });
-      return route.fulfill({ status: 404, body: "" });
-    });
-    await navPage.goto(`${ORIGIN}/owui-stub`);
-    await navPage.locator("#hubzoid-manage-access").waitFor(); // shown for an admin session
-    assert.equal(await navPage.locator('#sidebar #hubzoid-manage-access').count(), 1);
-    assert.equal(await navPage.locator('#hubzoid-manage-access').getAttribute('title'), 'Hubzoid Admin Console — manage access and view workflow runs');
-    assert.ok(await navPage.locator('#hubzoid-manage-access').evaluate(el => el.nextElementSibling.querySelector('button[aria-label="User menu"]') !== null));
-    assert.equal(await navPage.locator('#hubzoid-manage-access span').isVisible(), true);
-    // Sidebar replacement, as in OWUI's compact layout, must reattach one icon.
-    await navPage.evaluate(() => {
-      document.querySelector('#sidebar').outerHTML = '<nav id="sidebar" style="width:42px"><div style="display:flex"><span role="button" aria-haspopup="true"><button aria-label="User menu">User</button></span></div></nav>';
-    });
-    await navPage.locator('#sidebar #hubzoid-manage-access[data-compact]').waitFor();
-    assert.equal(await navPage.locator('#hubzoid-manage-access span').isVisible(), false);
-    assert.equal(await navPage.locator('#hubzoid-manage-access').count(), 1);
-    await navPage.locator('#hubzoid-manage-access').focus();
-    assert.equal(await navPage.evaluate(() => document.activeElement.id), 'hubzoid-manage-access');
-    // SPA logout: /me now 403; an in-app navigation fires popstate (no reload).
-    navLoggedIn = false;
-    await navPage.evaluate(() => dispatchEvent(new PopStateEvent("popstate")));
-    await navPage.locator("#hubzoid-manage-access").waitFor({ state: "detached" }); // removed
-    // SPA login again: the link comes back on the next navigation.
-    navLoggedIn = true;
-    await navPage.evaluate(() => dispatchEvent(new PopStateEvent("popstate")));
-    await navPage.locator("#hubzoid-manage-access").waitFor();
-    await navCtx.close();
 
     assert.deepEqual(errors, [], "no console or page errors");
     console.log(`\nPASS: ${steps.length} journeys`);
@@ -1866,6 +1721,7 @@ function step(name) {
     throw error;
   } finally {
     await browser.close();
+    await host.close();
   }
 })().catch((error) => {
   console.error(`\nFAIL at: ${steps[steps.length - 1]}\n`, error);

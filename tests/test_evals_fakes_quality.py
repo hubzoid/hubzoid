@@ -192,6 +192,28 @@ def test_a_restricted_tools_access_check_runs_before_its_fake(tmp_path, monkeypa
     assert out.startswith("[access denied") and session.used == [] and real == []
 
 
+def test_an_approval_layer_keeps_fakes_inside_it_and_its_added_tools_are_faked():
+    real: list = []
+    seen: list = []
+
+    def gate(registry):              # wraps every tool again and adds a tool, as hitl.equip does
+        def wrapped(ft):
+            async def invoke(ctx, raw):
+                seen.append(ft.name)
+                return await ft.on_invoke_tool(ctx, raw)
+            return FunctionTool(name=ft.name, description=ft.name, params_json_schema=ft.params_json_schema,
+                                on_invoke_tool=invoke)
+        return {**{n: wrapped(t) for n, t in registry.items()}, "ask_question": tool("ask_question", real)}
+
+    before = tool_fakes.wrap_registry({"send_email": tool("send_email", real)})
+    registry = tool_fakes.wrap_added(before, gate(before))
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="send_email", output="sent")])
+    with tool_fakes.scope(session):
+        assert asyncio.run(registry["send_email"].on_invoke_tool(None, "{}")) == "sent"
+        assert asyncio.run(registry["ask_question"].on_invoke_tool(None, "{}")).startswith("Blocked in this eval")
+    assert seen == ["send_email"] and real == []   # the gate ran first; nothing real ran
+
+
 # ---------------------------------------------------------------------------
 # JSON and JUnit
 # ---------------------------------------------------------------------------

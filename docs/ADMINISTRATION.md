@@ -1,12 +1,11 @@
 # Administering a multi-hub deployment
 
 Hubzoid has two audiences: builders configure agents, tools and workflows;
-end users sign in and use the agents they have been granted. In the default
-mode, Hubzoid owns accounts, authentication and conversations. Open WebUI mode
-uses Open WebUI's accounts and chat. Both use Hubzoid's agent/tool permissions
-and execution inspection. Open **Admin Console** from the web app's account
-menu, or visit `/portal/`. In Open WebUI mode it appears above the profile in
-the sidebar for administrators and people with Manage access.
+end users sign in and use the agents they have been granted. Hubzoid owns
+accounts, sign-in, conversations, agent and tool permissions, and execution
+inspection. Administrators and people with Manage access find the management
+screens in the web app's **Settings**, under Team & deployment. The old
+Console address, `/portal/`, opens the same section there.
 
 ## One deployment, several agents
 
@@ -17,19 +16,14 @@ export HUBZOID_ADMIN_PASSWORD='your-strong-bootstrap-password'
 hubzoid gateway ./finance ./operations --data-dir ./gateway-data
 ```
 
-On a fresh default-mode deployment this creates the first administrator.
-Sign in with that account, then add people in the Console. It gives one-time
+On a fresh deployment this creates the first administrator. Sign in with that
+account, then add people in Settings → People & access. It gives one-time
 sign-in links and sends no email. See [authentication](auth.md).
-To choose the equally supported Open WebUI interface, install `hubzoid[openwebui]`, set
-`HUBZOID_UI=openwebui`, and configure an Open WebUI administrator through
-`HUBZOID_GATEWAY_ADMIN_EMAIL` and `HUBZOID_GATEWAY_ADMIN_PASSWORD`, plus
-`WEBUI_AUTH=true` and a stable `WEBUI_SECRET_KEY`.
 
 The gateway writes `gateway-data/deployment.json` and a discovery pointer at
 `<hub>/.hubzoid/deployment.json`. All registered hubs—including those with no
-grants—appear in the portal. CLI commands find the same operational database
+grants—appear in Settings → Agents. CLI commands find the same operational database
 through these pointers. They do not require repeating the database URL.
-In Open WebUI mode, the internal authentication URL is discovered from the same manifest.
 Protect this file: a database URL can contain credentials (files are mode 0600).
 
 **Hub folder names must be unique (case-insensitively) within one deployment.**
@@ -49,7 +43,6 @@ Default SQLite layout:
 | Data | Owner | Location |
 |---|---|---|
 | Accounts, sessions, conversations, grants, identities, connector credentials, change history, workflow state | Hubzoid | `gateway-data/hubzoid-operational.db` |
-| Accounts, chats and model visibility (Open WebUI mode only) | Open WebUI | `gateway-data/webui.db` |
 | Workflow execution history and checkpoints | DBOS | `<hub>/.hubzoid/dbos.db` per hub |
 | Tool decisions, usage | Hubzoid | `gateway-data/hubzoid-operational.db` |
 
@@ -60,7 +53,7 @@ storage is supported by the libraries. `HUBZOID_OPERATIONAL_DB` and
 `HUBZOID_DBOS_DB` are explicit gateway-level overrides. Multiple hubs must not
 share an explicitly configured SQLite DBOS file. A conflicting operational URL
 in a registered bridge/CLI fails rather than silently writing another store.
-Registered DBOS and internal OWUI URLs follow the same fail-on-conflict rule.
+Registered DBOS URLs follow the same fail-on-conflict rule.
 A copied hub pointer is rejected if that hub is not registered in its manifest.
 
 Use one bridge process per hub with embedded SQLite. The two-process test proves
@@ -70,14 +63,13 @@ Use PostgreSQL for multiple production workers and rehearse deployment upgrades.
 
 ## The owner and first access
 
-Every agent's access is managed in the Console: a person may use an agent only
+Every agent's access is managed in Settings: a person may use an agent only
 with a grant, however the hub was created or deployed. The configured owner
 gets organization administration and entry on every hub at their first verified
-sign-in as an administrator: in the web app, in Open WebUI (a Console visit or
-their first chat) or through MCP sign-in. With sign-in off, the local owner
-(`admin@localhost`) owns every hub from the first start. On a shared
-deployment, set `HUBZOID_ADMIN_EMAIL` (web app) or `WEBUI_ADMIN_EMAIL` /
-`HUBZOID_GATEWAY_ADMIN_EMAIL` (Open WebUI mode) to the intended administrator.
+sign-in as an administrator, in the web app or through MCP sign-in. With
+sign-in off, the local owner (`admin@localhost`) owns every hub from the first
+start. On a shared deployment, set `HUBZOID_ADMIN_EMAIL` to the intended
+administrator.
 
 The verified account must be an administrator and match the configured email.
 Other admins and ordinary users receive no automatic grants. Provisioning
@@ -95,25 +87,23 @@ hubzoid access bootstrap --admin operator@example.com ./finance
 
 Bootstrap administration does not imply every tool capability. Check **Use this
 agent** separately for chat. Keep `HUBZOID_AUTH=true` on shared deployments.
-The chat app and Console share one sign-in. Share the chat URL and a new
-person's one-time sign-in link; nothing is emailed. In Open WebUI mode, account
-changes use its admin API and you share the new account's sign-in details.
+Chat and Settings share one sign-in. Share the chat URL and a new person's
+one-time sign-in link; nothing is emailed.
 
 ## Grant access and verify the end-user experience
 
 1. Open the agent and go to its **Access** tab. For someone without an
-   account, select **Add user** and enter their name and email. In the default
-   mode they choose their password through a one-time sign-in link. Open
-   WebUI mode asks for a password. For an existing user, select **Edit access** on their row,
+   account, select **Add user** and enter their name and email. They choose
+   their password through a one-time sign-in link. For an existing user,
+   select **Edit access** on their row,
    or open them under **People** and use **Add an agent**.
 2. Tick the capabilities they need (a tool capability includes agent entry
    automatically), then review and save (**Create account** for a new user).
-   A new user's one-time link (or Open WebUI sign-in details) is shown once to copy.
-3. The permission check changes immediately. The chat app's model picker reflects
-   the new access within about 30 seconds; the portal retries that projection on
-   its own and only surfaces it if it keeps failing.
+   A new user's one-time link is shown once to copy.
+3. The permission check changes immediately, and the person's agent list
+   follows it.
 4. Ask the person to sign in with that email and open the agent. They should see
-   only their permitted tools. Refresh the model picker if it was already open.
+   only their permitted tools.
 5. Review **Activity → Access changes** for who changed what and **Tool
    decisions** for actual allow/deny decisions. Both are scoped to the administrator.
    Filter by time range, agent, person, who-changed-it/action (access changes), or
@@ -123,10 +113,10 @@ changes use its admin API and you share the new account's sign-in details.
    capability/tool, channel and reason, with copyable identifiers. **People** has the
    same filtering by account status, role and agent.
 
-The portal's **People** screen distinguishes accounts awaiting signup, pending
+The **People & access** section distinguishes accounts awaiting signup, pending
 approval, active accounts, services, and blocked people. **Refresh accounts**
 re-reads the account directory. It does not create accounts. **Add user**
-creates one (see [Accounts in the Console](#accounts-in-the-console)).
+creates one (see [Accounts in Settings](#accounts-in-settings)).
 Organization administrators set a user's **Role** (User or Administrator) in
 their details. Agent admins cannot change roles or use an entry revocation to
 remove another administrator's rights.
@@ -151,9 +141,8 @@ chat accounts rely on it alone. See
 To offboard someone, an organization administrator opens them under People
 and uses **…** → **Delete user**. That removes every grant, then the chat
 account and its chats; Activity history, usage records and published artifacts
-are kept. Their connections to connectors are removed too. In Open WebUI mode, the
-person's API keys stop working with the account.
-The last administrator cannot be made a User or deleted. The Console doesn't
+are kept. Their connections to connectors are removed too.
+The last administrator cannot be made a User or deleted. Settings doesn't
 offer Block. An organization administrator can **Reactivate** someone who is
 blocked from the same "…" menu (see [blocked users](access-management.md#blocked-users)).
 
@@ -173,14 +162,14 @@ ledger:
 Sensitivity is explicit metadata, not inferred from words such as `prod` in a name.
 Permission keys `use_hub` and `manage_access` are reserved by Hubzoid. This file
 labels restricted capabilities only; an entry for a built-in such as `curator`
-is ignored with a warning. The Console groups capabilities and shows whether
+is ignored with a warning. Settings groups capabilities and shows whether
 each one's settings are present. See
-[capabilities in the Console](access-management.md#capabilities-in-the-console).
+[capabilities in Settings](access-management.md#capabilities-in-settings).
 
 ## The Agents page
 
-The Console opens on **Agents**, combining five summary cards and the agent
-cards below them. Choose the last 24 hours, 7 days or 30 days; Refresh reloads
+**Settings → Agents** lists the agents, with five summary cards under
+**Usage overview**. Choose the last 24 hours, 7 days or 30 days; Refresh reloads
 totals, agents and workflow status. A small update time appears beside Refresh.
 Hub administrators see only their agents.
 
@@ -193,34 +182,20 @@ Hub administrators see only their agents.
 | Approx. cost | USD estimate from reported model cost or token prices; unpriced calls are excluded and marked with `*`. The help icon explains subscription billing and estimates. |
 
 Usage comes from Hubzoid's recorded operational data, not historical chat-app
-messages. Click an agent's card to open it at Access; its workflow and eval tags
+messages. Click an agent to open it at Access; its workflow and eval tags
 open **Runs & schedules** and **Evals**.
 Global Runs is no longer a navigation entry; existing direct links still work.
 
 Public email and SSO account registration default to off. Managers create
 accounts with **Add user** (on an agent's Access tab or on People) and grant
-agent access in the same step.
-Open WebUI's **Admin Panel → Users** keeps working unless you hide it (below).
-Explicit sign-up overrides and existing persisted OWUI settings remain
+agent access in the same step. Explicit sign-up settings stay
 operator-controlled. See [authentication](auth.md).
 
-## Accounts in the Console
+## Accounts in Settings
 
-Implemented in this release. Account management is always available to
-organization administrators and delegates once the server is configured for it.
-Nothing about existing accounts changes until someone uses it.
-
-Default mode needs no Open WebUI service account or internal URL. Accounts
-and access use the Hubzoid operational store.
-
-Additional requirements in **Open WebUI mode**:
-
-- the chat app's internal URL: the gateway manifest's `owui_url`, or
-  `OWUI_INTERNAL_URL` under `hubzoid run` (set automatically). A public
-  `WEBUI_URL` alone is refused, so account writes never pass the edge.
-- `HUBZOID_GATEWAY_ADMIN_EMAIL` and `HUBZOID_GATEWAY_ADMIN_PASSWORD`, the
-  deployment's Open WebUI service account (an Open WebUI administrator).
-  Delegates never see or need these credentials.
+Account management is available to organization administrators and delegates.
+Accounts and access live in the Hubzoid operational store; no service account
+or second system is involved.
 
 What managers can do:
 
@@ -229,7 +204,7 @@ What managers can do:
 | Create a user (role `user`) with initial access | Org admins, and delegates within their ceiling | Agent → Access → Add user, or People → Add user |
 | Change an existing user's access | Org admins, and delegates within their ceiling | Agent → Access → Edit access, or People → the user → Edit access / Add an agent |
 | Approve a pending signup | Org admins | People → the user → Role |
-| Issue a one-time password-reset link (a new password in Open WebUI mode) | Org admins | People → the user → Reset password |
+| Issue a one-time password-reset link | Org admins | People → the user → Reset password |
 | Make someone an Administrator, or a User again | Org admins | People → the user → Role |
 | Delete a user | Org admins | People → the user → … → Delete user |
 
@@ -238,31 +213,26 @@ Every action is audited in **Activity → Access changes** (`account_create`,
 without the password. Changing an account's email is not offered. Create a new
 account instead, because grants are keyed on the email.
 
-In Open WebUI mode, creating an account and granting access touch two systems that cannot
-commit together. If access fails after the account exists, the Console says the
-account was created without access, keeps its sign-in details on screen, and
-**Try again** grants to that account. A duplicate email changes nothing: the
-Console says the user exists and links to them, so you edit their access
-instead. Retrying never creates a second account, and no rollback is claimed.
-**Administrator** sets Hubzoid administration and the chat app's admin role
-together and reports a partial result. Details, **Google sign-in only**
-accounts and deletion are in
+A duplicate email changes nothing: Settings says the user exists and links to
+them, so you edit their access instead. If access fails after the account
+exists, Settings says the account was created without access, and **Try
+again** grants to that account; retrying never creates a second account.
+Details, **Google sign-in only** accounts and deletion are in
 [access management](access-management.md#add-a-user-implemented).
 
-Organization administrators cannot change their own role or account, or the
-service account, from the Console. Use `hubzoid admin` for supported operator
-recovery, or Open WebUI's own settings in that mode.
+Organization administrators cannot change their own role or account from
+Settings. Use `hubzoid admin` for supported operator recovery.
 
 ### Access and workflows from chat
 
-Two families of agent tools are off for everyone until granted in the Console,
+Two families of agent tools are off for everyone until granted in Settings,
 under **Hubzoid tools**:
 
 - **Access control → Manage access from chat** (`access_tools`, organization
   administrators grant it). A manager can ask the agent who has access, why a
   person has it, and propose access changes and new accounts, from chat, MCP,
   WhatsApp or Telegram. The agent replies with a link to
-  `/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
+  `/settings#/confirm/<id>`. The manager signs in on the web, reviews the exact
   change and confirms it. Nothing applies before that. Links expire after
   `HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
   [access management](access-management.md#access-tools-in-chat-whatsapp-and-mcp-implemented-off-until-granted).
@@ -272,51 +242,6 @@ under **Hubzoid tools**:
 
 `HUBZOID_ACCESS_TOOLS=false` or `HUBZOID_WORKFLOW_TOOLS=false` in a hub's
 `.env` removes a family from that agent.
-
-### Hiding the Open WebUI Users page (Open WebUI mode only)
-
-A gateway set up fresh with Console accounts (no earlier `deployment.json` or
-chat-app database, `WEBUI_AUTH=true`, and the service account above) hides Open
-WebUI's user management. The gateway records `hide_owui_users: true` in
-`deployment.json` and says so when it starts. An existing deployment records
-nothing and keeps the Users page, so nothing changes on upgrade. An explicit
-`HUBZOID_HIDE_OWUI_USERS=true` or `false` in the gateway (or `hubzoid run`)
-environment overrides the recorded value; set `true` on an existing deployment
-once Console account management is verified there.
-
-When hidden, Open WebUI's whole Users section is hidden: the Admin Panel and
-every `/admin/users` page, the user list and Groups included, open **Settings →
-Integrations**. Open WebUI groups decide nothing about agents. Evaluations,
-Functions and Settings are unchanged. Browser writes to Open WebUI's account admin API
-(`POST /api/v1/auths/add`, `POST /api/v1/users/{id}/update`,
-`DELETE /api/v1/users/{id}`) are refused. Public sign-up stays closed either way.
-
-### Open WebUI APIs Hubzoid relies on (Open WebUI mode only)
-
-These must stay reachable on the internal URL. None of them passes the edge.
-
-| API | Used for |
-|---|---|
-| `POST /api/v1/auths/signin`, `POST /api/v1/auths/signup` | Service-account token (signup only on a fresh gateway) |
-| `GET /api/v1/auths/` | Verifying a Console session cookie |
-| `GET /api/v1/users/?page=` | Refresh accounts; listing administrators for the last-administrator check |
-| `POST /api/v1/auths/add` | Add user |
-| `GET /api/v1/users/{id}` | Reading an account before changing it |
-| `POST /api/v1/users/{id}/update` | Approve, reset password, the chat app's side of the Administrator role |
-| `DELETE /api/v1/users/{id}` | Delete user |
-| `/api/v1/groups/...` | A gateway's first-boot model provisioning |
-| `/api/v1/models/...` | Model registration and the visibility mirror |
-
-Open WebUI API keys are read from its database (read-only) to verify MCP and
-management API callers.
-
-## Open WebUI model visibility
-
-In Open WebUI mode each agent is an Open WebUI model. Hubzoid mirrors who may
-use it into the model's access list, so each person sees only their agents.
-The bridge still checks every turn; the mirror only shapes the picker. Browser
-writes to an agent model's access list are refused at the edge. Run
-`hubzoid access sync` to re-project it if it was ever missed.
 
 ## Workflow execution and inspection
 
@@ -356,8 +281,8 @@ idempotency and code changes. For operators:
 Grant **Use this agent**, the specific **Run <report>** capability, and optionally
 **Schedule reports for themselves**. The workflow must opt into chat execution
 and personal scheduling. A person can then discover reports, find their recent
-results, and edit inputs/timing or pause/stop their own schedules under **My
-workspace → Schedules & reports**, without workflow administration rights.
+results, and edit inputs/timing or pause/stop their own schedules under
+**Settings → Schedules**, without workflow administration rights.
 Administrators can inspect schedule status and pause or stop another person's
 schedule; that does not grant access to its report contents. Email notices need
 explicit opt-in. See [reports and email](reports-and-email.md).
@@ -367,10 +292,10 @@ explicit opt-in. See [reports and email](reports-and-email.md).
 | Symptom | Check |
 |---|---|
 | Grant has no effect | Correct deployment manifest? Matching signup email? Account blocked? |
-| Agent not visible | People screen sync status; service-account credentials; `access sync` |
-| Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
-| Add user says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |
-| **Google sign-in only** is disabled in Add user | The chat app needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` from the environment (not `ENABLE_OAUTH_PERSISTENT_CONFIG=true`). A gateway records this when it starts, so restart it after changing them |
+| Agent not visible | The person's **Use this agent** grant; blocked account; `hubzoid doctor` |
+| Settings shows no Team & deployment sections | The account needs organization administration or Manage access on an agent |
+| The start stops naming an Open WebUI setting | Rename or remove it ([upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-webui-removed)) |
+| **Google sign-in only** is disabled in Add user | The web app needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` from the environment. A gateway records this when it starts, so restart it after changing them |
 | A delegate's grant is refused as outside their access | They must hold that capability in that agent themselves. An org admin can grant it |
 | A confirmation link says the request isn't available | Only the person who proposed it can open it. It expires after `HUBZOID_CHANGE_REQUEST_TTL` seconds and works once |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
@@ -379,40 +304,28 @@ explicit opt-in. See [reports and email](reports-and-email.md).
 | `hubzoid grant '*' ...` is refused | New access for everyone signed in can't be created. Grant named people |
 
 For local UI development only, `HUBZOID_PORTAL_DEV=1` plus
-`HUBZOID_PORTAL_DEV_USER=<bootstrapped-admin>` bypasses OWUI session validation.
+`HUBZOID_PORTAL_DEV_USER=<bootstrapped-admin>` bypasses session validation for
+the management API.
 Never enable this bypass on an exposed deployment.
 
 
 ## Account deletion, replacement and approval
 
-OWUI remains the credential owner. The Console creates, approves, resets and
-deletes accounts through OWUI's admin API (see
-[Accounts in the Console](#accounts-in-the-console)). A successful directory refresh marks missing or
-pending accounts unavailable; signup grants stay pending until the actual account
-exists. The verified OWUI account ID is bound on migration, login and API-key use.
+Hubzoid is the credential owner. Settings creates, approves, resets and deletes
+accounts (see [Accounts in Settings](#accounts-in-settings)). A successful
+directory refresh marks missing or pending accounts unavailable; signup grants
+stay pending until the actual account exists. The verified account ID is bound
+on migration and sign-in.
 If a different account reuses an existing email, direct grants are removed and
 agent access is blocked, with an audit event. An organization administrator must
 review the account, then choose **Reactivate** in its details' "…" menu (or
 call `POST /portal/api/people/block` with `"suspended": false`) and grant access
 again, or delete it. An existing
-"Everyone signed in" grant applies after unblocking. This also protects chat and MCP entry before the next sync.
+"Everyone signed in" grant applies after unblocking. This also protects chat and MCP entry.
 If the replaced account was the only administrator, use the documented local
 `access bootstrap --admin <new-verified-email>` break-glass path, then verify the
 new account. Do not unblock an account solely because its email matches.
 
 Gateway planning isolates each hub's dotenv settings; hub-specific secrets are
-not inherited by other hubs, OWUI or the edge. Put deployment-wide OWUI service
-credentials in the gateway process environment and the operator CLI environment.
-Account refresh failures are visible and do not treat a partial/failed directory
+not inherited by other hubs or the edge. Account refresh failures are visible and do not treat a partial/failed directory
 response as a mass account deletion.
-
-## Upstream administration and hub runtime
-
-Open WebUI retains its account, authentication, connection, functions and
-automation controls. These belong to that application. Hubzoid workflows are
-loaded from the hub folder and are inspected in the Console. Do not configure an
-Open WebUI automation expecting it to become a Hubzoid workflow.
-
-Standalone picker visibility is checked directly against Hubzoid permissions at
-the edge. Gateway deployments also maintain the Open WebUI visibility mirror.
-A mirror warning is not evidence that execution access has been granted.

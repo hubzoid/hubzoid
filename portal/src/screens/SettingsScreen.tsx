@@ -20,8 +20,8 @@ const TABS = [
 const EMBEDDED_TITLES: Record<string, string> = {
   chat: "Chat defaults",
   appearance: "Brand",
-  admin: "Advanced health settings",
-  parity: "Compatibility requirements",
+  admin: "Advanced settings",
+  parity: "Compatibility with Open WebUI and LibreChat",
 };
 
 export function SettingsScreen({ tab, embedded }: { tab?: string; embedded?: boolean }) {

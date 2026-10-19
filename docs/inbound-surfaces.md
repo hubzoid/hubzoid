@@ -47,16 +47,16 @@ senders never reach the LLM. Work runs in a background task so we ack fast
 
 A sender is a person in two ways, checked in this order:
 
-1. **A phone number in the Console.** An organization administrator records a
+1. **A phone number in Settings.** An organization administrator records a
    person's number in **People → the person → Phone**, or when adding them
    (**Add user → Phone**). A WhatsApp sender, or a Telegram sender who shared
    their contact, with that number is that person. One number belongs to one
    person. A blocked person is nobody. No hub file is needed.
-2. **The hub's own roster** in the `identity/` folder, for numbers the Console
+2. **The hub's own roster** in the `identity/` folder, for numbers Settings
    does not know (for example a live CRM lookup).
 
-Who a sender is never decides what they may do: that is their grants in the
-Console (**Agents → the agent → Access**), as on every other surface.
+Who a sender is never decides what they may do: that is their grants in
+Settings (**Agents → the agent → Access**), as on every other surface.
 
 ### The `identity/` folder
 
@@ -69,7 +69,7 @@ phone,email,groups,center
 919800000002,priya@example.org,coordinator,bangalore
 ```
 - `phone` — required, any format (`+91 98000-00001` works; normalized to digits).
-- `email` — the identity key (lowercased to match Open WebUI).
+- `email` — the identity key (lowercased to match the account's email).
 - `groups` — optional, `;`-separated; context the agent can see. Groups grant nothing.
 - any other column (`center`, `name`, …) — preserved as context.
 - Headers case-insensitive + trimmed; blank rows skipped; unknown phone → no access.
@@ -83,7 +83,7 @@ def resolve(surface, handle):
 ```
 Same record as a CSV row; `None` → fail-closed. Wins over the CSV if both exist.
 
-**A number neither the Console nor the roster knows → unknown → rejected.**
+**A number neither Settings nor the roster knows → unknown → rejected.**
 
 ## Access control
 
@@ -92,8 +92,8 @@ Same record as a CSV row; `None` → fail-closed. Wins over the CSV if both exis
   no data**.
 - Restricted tools stay **off** on these surfaces by default (fail-closed). To let
   verified coordinators reach restricted data, add the surface to
-  `HUBZOID_RESTRICTED_SURFACES` (e.g. `owui,web,api,mcp,telegram,whatsapp`) and
-  grant them the capability in the Console. **Note:** the access guard runs in the *bridge*
+  `HUBZOID_RESTRICTED_SURFACES` (e.g. `web,api,mcp,telegram,whatsapp`) and
+  grant them the capability in Settings. **Note:** the access guard runs in the *bridge*
   process, so this env change takes effect on a bridge restart (`hubzoid run`
   starts bridge + inbound together, so they never drift).
 
@@ -128,14 +128,14 @@ What the WhatsApp side adds:
 
 It needs:
 
-- a connector for the app, added in the Console (Agents, the agent,
+- a connector for the app, added in Settings (Agents, the agent,
   Connectors) and offered in the agent. The optional Composio integration is
   unchanged and not part of it.
 - `whatsapp` in `HUBZOID_RESTRICTED_SURFACES`, because a connection is a
   restricted-class capability.
-- the `connector_<app>` capability for the person (a Console grant).
-- a chat-app account for the roster email (Hubzoid's, or Open WebUI's in Open
-  WebUI mode), since the link page needs that person signed in.
+- the `connector_<app>` capability for the person (a grant in Settings).
+- a Hubzoid account for the roster email, since the link page needs that
+  person signed in.
 - in a gateway, a WhatsApp service that can write the gateway's data folder,
   where connections are recorded (see [Running](#running)).
 
@@ -145,16 +145,16 @@ chat).
 
 ## Conversation history (memory)
 
-Slack/OWUI give the agent memory by sending the whole conversation array each turn
-(Slack replays its thread, OWUI reads its DB). Telegram/WhatsApp don't replay the
+Slack and the web app give the agent memory by sending the whole conversation each turn
+(Slack replays its thread, the web app reads its own store). Telegram/WhatsApp don't replay the
 thread, so the harness keeps recent turns per `chat_id` and sends them — same
 mechanism, we hold the thread.
 
 - Stored in the **hub-owned database** (`hubzoid/db.py`), table `hz_inbound_history`
-  (namespaced `hz_`; we never touch OWUI's schema).
+  (namespaced `hz_`).
 - **SQLite by default** at `<hub>/.hubzoid/hub.db` (zero config). Set
-  `DATABASE_URL=postgresql://…` for a separately-hosted Postgres — the same
-  instance you can point Open WebUI at, so there is one database for the hub.
+  `DATABASE_URL=postgresql://…` for a separately-hosted Postgres, so there is
+  one database for the hub.
 - **Bounded:** last `INBOUND_HISTORY_MAX` messages (default 40 ≈ 20 turns), so a
   chat running for months has the same footprint as a fresh one. Optional
   `INBOUND_HISTORY_TTL_DAYS` drops stale turns.
@@ -177,7 +177,7 @@ onto the user's turn:
   a real image block at model-call time — the model **sees** the image directly.
 - **Other files** (PDF, CSV, docs) land in the chat's uploads dir with a
   `read_upload('<name>')` note. The agent reads them on demand **if the hub
-  exposes a file-read tool** — same as Slack/OWUI today.
+  exposes a file-read tool** — same as Slack and the web app today.
 - **Voice/audio notes** are captured as files and referenced, but are only
   *understood* if the hub provides a transcription tool (there is no native audio
   vision). Capture-and-reference works out of the box; transcription is a hub
@@ -236,7 +236,7 @@ Every POST is verified against `X-Telegram-Bot-Api-Secret-Token`.
 Telegram never reveals a phone on a normal message, so a coordinator binds their
 numeric id to their number once:
 1. `/start` → the bot replies with a one-tap **"Share my number"** button.
-2. They tap it → the bot matches the shared phone to a number in the Console
+2. They tap it → the bot matches the shared phone to a number in Settings
    (or the hub's roster) and stores the numeric id. Only the sender's **own**
    contact is accepted.
 3. From then on, messages from that id resolve via the stored phone.
@@ -345,7 +345,7 @@ plan two inbound hubs on the same port.
 | `WEBHOOK_INBOUND_SECRET` | — | shared secret; enables the generic webhook surface |
 | `WEBHOOK_INBOUND_NAME` | `webhook` | generic webhook path segment (`/webhooks/<hub>/<name>`) |
 | `WEBHOOK_INBOUND_HMAC` | false | verify `X-Signature-256` HMAC instead of a shared secret |
-| `HUBZOID_RESTRICTED_SURFACES` | `owui,web,api,mcp` | add `whatsapp`/`telegram` to allow restricted tools |
+| `HUBZOID_RESTRICTED_SURFACES` | `web,api,mcp` (plus `owui`, kept for conversations moved from Open WebUI) | add `whatsapp`/`telegram` to allow restricted tools |
 | `HUBZOID_CONNECT_JOURNEY` | on | "connect my <app>" links, WhatsApp confirmation and YES continuation |
 | `HUBZOID_CONNECT_TTL` | 600 | connection link lifetime in seconds (60 to 3600) |
 | `INBOUND_MSG_VERIFY_PROMPT` / `_VERIFIED` / `_NOT_REGISTERED` / `_NOT_OWN_CONTACT` / `_PLEASE_VERIFY` / `_NO_RESPONSE` | built-in English | override the fixed handshake/gate/fallback messages |
@@ -354,8 +354,9 @@ plan two inbound hubs on the same port.
 
 ## Analytics
 
-No new code: the surface forwards the resolved user as `X-OpenWebUI-User-Email`,
-the same header the web and Slack use, so with `HUBZOID_OTEL_NORMALIZE=true` the
+No new code: the surface forwards the resolved user in the signed identity
+headers (`X-OpenWebUI-User-Email`, a wire name kept from 1.x, vouched for by
+`X-Hubzoid-Assertion`), the same headers the web app and Slack use, so with `HUBZOID_OTEL_NORMALIZE=true` the
 bridge stamps it as the span's `user.id`. Langfuse then slices usage/cost per
 coordinator — no transcript storage. Self-host the OTel backend and use a
 pseudonymous email in the roster if the raw identifier is sensitive.
@@ -374,5 +375,5 @@ script that loops over coordinators and calls `send_template` (WhatsApp) or
   (Connecting a person's Gmail account for tools is a different thing and is
   available now, see above.)
 - **Phase-2 authz** — wire the same `resolve()` into `_derive_identity` for *all*
-  surfaces, so an org can manage auth via its own API instead of Open WebUI.
+  surfaces, so an org can manage auth via its own API.
   Non-breaking.

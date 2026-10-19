@@ -136,3 +136,10 @@ def covered(ft):
 def wrap_registry(registry: dict) -> dict:
     """Every tool of a runtime's registry, wrapped (the factories' last step)."""
     return {name: wrap(ft) for name, ft in registry.items()}
+
+
+def wrap_added(before: dict, after: dict) -> dict:
+    """``after`` with the tools that are not in ``before`` wrapped. A layer that
+    wraps every tool again (the approval gate) keeps the fakes inside it, and
+    a tool it adds (``ask_question``) gets them too."""
+    return {name: (ft if name in before else wrap(ft)) for name, ft in after.items()}

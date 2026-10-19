@@ -318,7 +318,7 @@ def locate(path: Path, *, owui_db: str | None = None, operational_db: str | None
     """Find the hubs, the Open WebUI database and the operational store for
     PATH: a hub folder, a hub registered in a gateway, or a gateway data folder."""
     from . import deployment
-    from .access import owui_db as owui_db_mod
+    from .migration.openwebui import source as owui_db_mod
 
     env = dict(os.environ if env is None else env)
     path = Path(path).expanduser().resolve()

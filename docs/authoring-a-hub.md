@@ -147,9 +147,9 @@ in a sub-agent's `tools:` list.
 
 `${VAR}` references are resolved against the environment at boot.
 
-These servers serve everyone who uses the agent. The Console lists them
+These servers serve everyone who uses the agent. Settings lists them
 read-only under the agent's Connectors. Remote servers that each person signs
-in to, or that use one company key, are added in the Console instead. See
+in to, or that use one company key, are added in Settings instead. See
 [MCP connectors](mcp.md).
 
 ## Evals
@@ -191,7 +191,6 @@ MODEL=openrouter/anthropic/claude-haiku-4.5   # unset => defaults to claude-loca
 # Optional knobs:
 BRIDGE_API_KEYS=dev               # first key is what the UI sends
 MODEL_LABEL=                      # what /v1/models shows; blank = derive from AGENTS.md name
-WEBUI_NAME=                       # tab/top-bar title; blank = derive from AGENTS.md name, else "Hubzoid"
 PORT=3080                         # UI port
 BRIDGE_PORT=8000                  # bridge port
 HTTP_ALLOWLIST=                   # comma-separated hostnames for http_get

@@ -5,9 +5,9 @@ earlier one for the processes it reaches (see docs/DEPLOYING.md and
 hubzoid.config_secrets).
 
   1  built-in          the defaults below                        all processes
-  2a deployment compat Open WebUI and sign-in keys from hub .env  gateway and Open WebUI
-                       files, only when 2b and 2c lack them
-                       (0.9.x compatibility)
+  2a deployment compat sign-in keys from hub .env files, only  gateway
+                       when 2b and 2c lack them (0.9.x
+                       compatibility)
   2b deployment        the gateway's (or a standalone hub's)      see below
                        process environment. Standalone: also
                        the hub .env
@@ -25,8 +25,8 @@ hubzoid.config_secrets).
 Within a layer the AWS secret wins over the file. A standalone hub applies its
 deployment secret after <hub>/.env, so the secret wins there too. A hub in a
 gateway takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret, before
-its own .env. Open WebUI gets the deployment layer without HUBZOID_* keys and
-never a hub or restricted layer. Agent child processes (the claude CLI and its
+its own .env. The edge gets the deployment layer and never a hub secret or
+restricted layer. Agent child processes (the claude CLI and its
 stdio MCP servers) get service secrets, AWS credentials and restricted-layer
 keys blanked (config_secrets.child_env_overrides). With no secret named, the
 files load exactly as before: <hub>/.env then restricted/.env, both overriding
@@ -101,21 +101,24 @@ Environment variables explicitly supported:
                          Default: smtp. See docs/reports-and-email.md.
   MODEL_LABEL            Optional name shown to OpenAI-compatible clients in
                          /v1/models. If blank, derived from AGENTS.md `name`.
-  ENABLE_SIGNUP          Open WebUI public email registration. Default: false;
-                         administrators add accounts through the chat admin panel.
+  ENABLE_SIGNUP          Public email sign-up. Default: false; administrators
+                         add accounts in Settings → People.
   ENABLE_OAUTH_SIGNUP    Automatic account creation through SSO. Default: false;
                          explicitly opt in for an SSO onboarding deployment.
-  WEBUI_NAME             Optional Open WebUI display name. If blank, Open
-                         WebUI uses its default.
-  PORT                   Open WebUI port. Default: 3080.
+  HUBZOID_MFA_REQUIRED   Who must use two-step sign-in until an administrator
+                         picks a rule in Settings: none, admins (default) or all.
+  HUBZOID_SUPPORT_CONTACT  Who people are told to ask for access ("My access",
+                         sign-in help). Default: "your administrator".
+  HUBZOID_SERVER / HUBZOID_API_KEY  The remote CLI's deployment URL and a personal
+                         API key (hzp_...) for `hubzoid auth` and `hubzoid api`.
+  PORT                   Public port (web app, downloads, MCP). Default: 3080.
   BRIDGE_PORT            FastAPI bridge port. Default: 8000.
   HUBZOID_PUBLIC_URL     Public base URL the bridge is reachable at, used to
                          build download links emitted by `write_artifact`.
                          Set this when running behind a reverse proxy / on a
                          different host than the user's browser. If unset,
-                         falls back to WEBUI_URL (same public host fronts both
-                         behind a proxy), then to http://127.0.0.1:<BRIDGE_PORT>
-                         for localhost dev.
+                         falls back to http://127.0.0.1:<BRIDGE_PORT> for
+                         localhost dev.
                          Example: HUBZOID_PUBLIC_URL=https://hub.example.com
   HUBZOID_MAX_UPLOAD_BYTES  Per-file ingress cap, in bytes. Applies to both
                          `data:` URLs decoded from chat-completion message
@@ -161,25 +164,24 @@ Environment variables explicitly supported:
                          Agents -> Access). See docs/mcp-server.md.
   MCP_PUBLIC_URL         Full HTTPS public MCP URL required when MCP_SERVER=true:
                          https://host/mcp or https://host/b/<slug>/mcp.
-                         OAuth only: login in Open WebUI, then Hubzoid consent.
+                         OAuth only: sign in to Hubzoid, then consent.
   SLACK_IDENTITY_MAPPING true | false (default). When true, the Slack adapter
                          resolves each sender's verified Slack profile email
                          (needs the `users:read.email` manifest scope) and
-                         forwards it to the bridge, which looks up that user's
-                         Open WebUI groups. This maps a Slack user to their OWUI
-                         identity so per-group permissions apply over Slack.
+                         forwards it to the bridge. This maps a Slack user to
+                         their Hubzoid identity so their grants apply over Slack.
                          This flag only supplies the identity; restricted tools
                          still require opting the surface into
                          HUBZOID_RESTRICTED_SURFACES (below). Emails must match
-                         between Slack and OWUI (matched case-insensitively); no
+                         between Slack and Hubzoid (matched case-insensitively); no
                          match falls back to anonymous.
   HUBZOID_RESTRICTED_SURFACES
                          Comma-separated COMPLETE list of surfaces that may
                          reach access-controlled tools. Unset = the built-in
-                         default `owui,web,api,mcp`. Setting it REPLACES the
-                         default (it does not extend it), so include the
-                         defaults you still want, e.g.
-                         `owui,web,api,mcp,slack-dm`. Slack surfaces are split:
+                         default `web,api,mcp` (`owui`, the 1.x chat, is still
+                         accepted). Setting it REPLACES the default (it does
+                         not extend it), so include the defaults you still
+                         want, e.g. `web,api,mcp,slack-dm`. Slack surfaces are split:
                          `slack-dm` (1:1 DM / assistant sidebar — one human,
                          safe) and `slack-channel` (shared thread with many
                          authors, answered under the @mentioner's identity —
@@ -202,7 +204,7 @@ Environment variables explicitly supported:
                          the bridge intercepts the `claude` subprocess's OTLP
                          in-process, renames Claude Code's non-standard token
                          attrs to the `gen_ai.usage.*` names Langfuse maps, and
-                         promotes the OWUI user to span `user.id` — so Langfuse
+                         promotes the signed-in user to span `user.id` — so Langfuse
                          shows cost + the real user WITHOUT running a separate
                          collector. No-op on the OpenAI/LiteLLM path (already
                          standard). See docs/OBSERVABILITY.md.
@@ -250,8 +252,6 @@ Environment variables explicitly supported:
   HUBZOID_DEPLOYMENT     Explicit gateway manifest path; normally discovered via
                          <hub>/.hubzoid/deployment.json. Do not copy hub pointers
                          into an unrelated deployment.
-  OWUI_INTERNAL_URL     Server-to-server Open WebUI URL; manifest-authoritative.
-                         WEBUI_URL is a standalone fallback (not a gateway override).
   HUBZOID_SCHEDULES      Enable workflow dispatch for standalone runs (1/true).
                          Gateways enable it automatically. Missed slots are reported,
                          not replayed. Markdown schedules retain their own gate.
@@ -317,13 +317,6 @@ Environment variables explicitly supported:
   HUBZOID_CHANGE_REQUEST_TTL
                          Seconds a proposed access change waits for
                          confirmation in the Console. Default 900.
-  HUBZOID_HIDE_OWUI_USERS
-                         Deployment and edge. true | false. Sends the Open
-                         WebUI user list to Console People, lands its Users
-                         section on Groups and blocks browser writes to Open
-                         WebUI's account endpoints. Unset: on for a gateway set
-                         up fresh with Console accounts (recorded in
-                         deployment.json), off for existing deployments.
   HUBZOID_CONNECT_JOURNEY
                          Hub. true | false (default). Enables the
                          connect_account tool and its bound link journey for
@@ -349,7 +342,6 @@ class Settings:
     model: str | None
     model_label: str | None
     bridge_api_keys: tuple[str, ...]
-    webui_name: str | None
     ui_port: int
     bridge_port: int
     log_level: str
@@ -435,7 +427,6 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         model=os.environ.get("MODEL") or None,
         model_label=os.environ.get("MODEL_LABEL") or None,
         bridge_api_keys=keys,
-        webui_name=os.environ.get("WEBUI_NAME") or None,
         ui_port=int(os.environ.get("PORT", "3080")),
         bridge_port=int(os.environ.get("BRIDGE_PORT", "8000")),
         log_level=os.environ.get("HUB_LOG_LEVEL", "info"),
