@@ -246,9 +246,8 @@ def build_app(
 
     `identity_mapping` (SLACK_IDENTITY_MAPPING): when true, resolve each
     sender's verified Slack profile email and forward it to the bridge so the
-    caller's groups apply: their Open WebUI groups in Open WebUI mode, their
-    Hubzoid account and its groups in the web app mode (an email without an
-    active account is sent as nobody; see hubzoid.channel_identity). Needs the
+    caller's Hubzoid account and its groups apply (an email without an active
+    account is sent as nobody; see hubzoid.channel_identity). Needs the
     `users:read.email` scope.
     """
     app = App(
@@ -293,9 +292,8 @@ def build_app(
         return _as_account(email)
 
     def _as_account(email: str | None) -> str | None:
-        """The verified Slack email as the bridge should see it: unchanged in
-        Open WebUI mode; the sender's Hubzoid account (or nobody) in the web
-        app mode. Looked up on every turn, never cached, so blocking someone
+        """The verified Slack email as the bridge should see it: the sender's
+        Hubzoid account (or nobody). Looked up on every turn, never cached, so blocking someone
         or removing their account takes effect at once."""
         if email is None:
             return None

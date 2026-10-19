@@ -94,13 +94,13 @@ def _truthy(v: str | None) -> bool:
 
 def local_quickstart(hub_dir: Path) -> bool:
     """Authentication off and no deployment: the single-account local mode."""
-    from .. import deployment
+    from .. import appmode, deployment
 
     try:
         registered = bool(deployment.read(Path(hub_dir)))
     except Exception:  # noqa: BLE001 — an unreadable manifest is not local mode
         registered = True
-    return not _truthy(os.environ.get("WEBUI_AUTH")) and not registered
+    return not appmode.auth_enabled(Path(hub_dir)) and not registered
 
 
 def configured(hub_dir: Path, *, hub: str | None = None,

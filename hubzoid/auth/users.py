@@ -654,8 +654,7 @@ def _truthy(value: str | None) -> bool:
 
 def bootstrap_admin_from_env(hub_dir: Path, env: Mapping[str, str] | None = None) -> dict | None:
     """Create the first administrator from ``HUBZOID_ADMIN_EMAIL`` and
-    ``HUBZOID_ADMIN_PASSWORD`` (or Open WebUI's ``WEBUI_ADMIN_EMAIL`` and
-    ``WEBUI_ADMIN_PASSWORD``) when sign-in is on and no account exists yet
+    ``HUBZOID_ADMIN_PASSWORD`` when sign-in is on and no account exists yet
     (the local owner does not count). The new administrator gets the owner's
     grants on every hub of the deployment, once, like the configured owner at
     first sign-in. Returns the account, or None when nothing was created.
@@ -665,8 +664,8 @@ def bootstrap_admin_from_env(hub_dir: Path, env: Mapping[str, str] | None = None
 
     env = os.environ if env is None else env
     hub_dir = Path(hub_dir)
-    email = normalize_email(env.get("HUBZOID_ADMIN_EMAIL") or env.get("WEBUI_ADMIN_EMAIL"))
-    password = env.get("HUBZOID_ADMIN_PASSWORD") or env.get("WEBUI_ADMIN_PASSWORD") or ""
+    email = normalize_email(env.get("HUBZOID_ADMIN_EMAIL"))
+    password = env.get("HUBZOID_ADMIN_PASSWORD") or ""
     if not email or not password or not appmode.auth_enabled(hub_dir, env):
         return None
     st = store(hub_dir)
@@ -725,7 +724,7 @@ def mcp_account(hub_dir: Path, *, email: str | None = None,
                 account_id: str | None = None) -> dict | None:
     """The account behind an MCP OAuth grant: ``{"account_id", "email"}`` for
     an existing, active, unblocked account whose access identity is bound to
-    it, else None. Mirrors ``mcp_oauth.account`` for Open WebUI accounts."""
+    it, else None."""
     from ..access import store_for
 
     try:

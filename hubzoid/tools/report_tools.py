@@ -65,7 +65,7 @@ def _page_line(hub_dir: Path, surface: str) -> str:
     from ..workflows import personal
 
     url = personal.page_url(hub_dir)
-    return "See and change them: " + (url if surface in TEXT_ONLY else f"[My workspace]({url})")
+    return "See and change them: " + (url if surface in TEXT_ONLY else f"[Schedules & reports]({url})")
 
 
 def _ago(ts: float | None, tz: str = "UTC") -> str:

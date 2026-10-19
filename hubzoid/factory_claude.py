@@ -903,7 +903,7 @@ class ClaudeRuntime:
             `claude` subprocess so its telemetry is attributed.
           * OWUI-connected MCP servers: inject the servers this user connected
             in Open WebUI, each with their own Bearer, so the agent reaches
-            them as the caller (see `owui_mcp`).
+            them as the caller (see `personal_mcp`).
 
         Returns the shared options untouched when none applies (the common
         no-op path), so hubs using none pay nothing."""
@@ -912,7 +912,7 @@ class ClaudeRuntime:
         from .access.guard import visible_map
         from .access.identity import current_identity
         from . import otel as otellib
-        from . import owui_mcp
+        from . import personal_mcp
 
         ident = current_identity()
         hidden = {n for n, shown in visible_map(self._registry).items() if not shown}
@@ -921,7 +921,7 @@ class ClaudeRuntime:
         extra_allowed: list[str] = []
         if self._hub_dir is not None:
             try:
-                extra_specs, extra_allowed = owui_mcp.per_user_specs(
+                extra_specs, extra_allowed = personal_mcp.per_user_specs(
                     self._hub_dir, ident, reserved=set(self._options.mcp_servers or {}))
             except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
                 log.warning("owui-mcp per-user injection skipped", exc_info=True)

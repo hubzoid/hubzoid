@@ -1,8 +1,7 @@
 """The personal MCP servers of the current turn, for all three runtimes.
 
-Kept under its 1.1 name so the runtime adapters do not move. Since 1.2 every
-UI mode uses the connectors added in the Console (``hubzoid.connectors``): Open
-WebUI's own MCP servers are no longer read. The rules (signed-in person,
+The servers are the connectors added in Settings (``hubzoid.connectors``). The
+rules (signed-in person,
 allowed surface, not blocked, offered in this agent, the ``connector_<id>``
 grant, a usable token) live in ``hubzoid.connectors.per_user``.
 
@@ -25,7 +24,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-log = logging.getLogger("hubzoid.owui_mcp")
+log = logging.getLogger("hubzoid.personal_mcp")
 
 _APP_RE = re.compile(r"[^a-z0-9_]+")
 

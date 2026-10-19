@@ -1,9 +1,12 @@
-# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
-"""Shared SQLite/Postgres access to Open WebUI's identity and OAuth tables.
+# Hubzoid migration. Apache-2.0 licensed like the rest of the repository.
+"""Read-only SQLite/Postgres access to an Open WebUI (1.x) database, for
+``hubzoid migrate openwebui`` and the upgrade checks.
 
-Use OWUI's DATABASE_URL when configured; never fall back to a stale SQLite
-file on connection failure. Read connections enforce read-only transactions.
-Only OAuth refresh uses the explicitly separate write connection.
+Where the database is: the deployment's recorded ``owui_db`` /
+``owui_database_url`` (a gateway that ran Open WebUI), else ``DATABASE_URL``,
+else ``HUBZOID_OWUI_DB``, else ``<hub>/.openwebui-data/webui.db``. Never falls
+back to a stale SQLite file on connection failure, and every connection runs
+read-only transactions.
 """
 from __future__ import annotations
 
@@ -16,12 +19,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, URL, make_url
 from sqlalchemy.pool import NullPool
 
-log = logging.getLogger("hubzoid.access")
+log = logging.getLogger("hubzoid.migration")
 
 
 def db_path(hub_dir) -> Path:
-    """Legacy SQLite path (also the gateway's OWUI data-directory hint)."""
-    from .. import deployment
+    """The SQLite path (also the hint for Open WebUI's data directory)."""
+    from ... import deployment
 
     configured = deployment.read(Path(hub_dir)).get("owui_db")
     override = os.environ.get("HUBZOID_OWUI_DB")
@@ -39,7 +42,7 @@ def _normalize_url(value: str) -> URL:
 
 def database_config(hub_dir) -> tuple[URL, str | None]:
     """Resolve the registered deployment or OWUI environment configuration."""
-    from .. import deployment
+    from ... import deployment
 
     manifest = deployment.read(Path(hub_dir))
     registered = manifest.get("owui_database_url")
@@ -65,7 +68,8 @@ def _engine(url: URL):
     return create_engine(url, poolclass=NullPool, connect_args=args, hide_parameters=True)
 
 
-def _connect(hub_dir, *, readonly: bool) -> Connection | None:
+def connect_ro(hub_dir) -> Connection | None:
+    """Read-only connection, or None (fail closed). Caller must close it."""
     con = None
     try:
         url, schema = database_config(hub_dir)
@@ -73,13 +77,10 @@ def _connect(hub_dir, *, readonly: bool) -> Connection | None:
             path = Path(url.database or "").resolve()
             if not path.is_file():
                 return None
-            # URI mode=rw also refuses accidental creation on the refresh path.
-            url = URL.create("sqlite", database=path.as_uri(),
-                             query={"mode": "ro" if readonly else "rw", "uri": "true"})
+            url = URL.create("sqlite", database=path.as_uri(), query={"mode": "ro", "uri": "true"})
         con = _engine(url).connect()
         if url.get_backend_name() == "postgresql":
-            if readonly:
-                con.execute(text("SET TRANSACTION READ ONLY"))
+            con.execute(text("SET TRANSACTION READ ONLY"))
             if schema:
                 # One exact schema, transaction-local; never interpolate SQL.
                 search_path = '"' + schema.replace('"', '""') + '"'
@@ -90,15 +91,5 @@ def _connect(hub_dir, *, readonly: bool) -> Connection | None:
         if con is not None:
             con.close()
         # Driver exceptions can contain a password/URL. Do not log their text.
-        log.warning("Open WebUI database unavailable or misconfigured; denying lookup")
+        log.warning("Open WebUI database unavailable or misconfigured")
         return None
-
-
-def connect_ro(hub_dir) -> Connection | None:
-    """Read-only connection, or None (fail closed). Caller must close it."""
-    return _connect(hub_dir, readonly=True)
-
-
-def connect_rw(hub_dir) -> Connection | None:
-    """Existing DB connection for OAuth refresh only. Caller commits/closes."""
-    return _connect(hub_dir, readonly=False)
