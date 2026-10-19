@@ -1,4 +1,4 @@
-"""Durable work items and safe external writes. Revision op_0030.
+"""Durable work items and safe external writes. Revision op_0050.
 
 Execution history, stage checkpoints, messages and versions stay in the workflow
 engine (DBOS). These tables hold only what it does not:
@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "op_0030"
+revision = "op_0050"
 down_revision = "op_0019"
 branch_labels = None
 depends_on = None
