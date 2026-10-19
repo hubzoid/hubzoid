@@ -23,7 +23,7 @@ The first match wins:
 4. The **setup default**: the owner account recorded when Hubzoid first set up
    the deployment.
 
-Runs, `hubzoid schedule list` and the Console's **Runs as** column all use this
+Runs, `hubzoid schedule list` and the **Runs as** column in Settings all use this
 one resolution, and name where the account came from. A run's result is shown
 only to that account; managers see that a result exists and whose it is.
 
@@ -53,7 +53,7 @@ Omit `run_as` and the run uses the configured default. `hubzoid schedule list
 - **Local quickstart** (`hubzoid run` with authentication off): the one local
   account, `admin@localhost`.
 - **Shared deployment**: the configured initial owner. That is the account in
-  `HUBZOID_GATEWAY_ADMIN_EMAIL` (or `WEBUI_ADMIN_EMAIL`). The first time that
+  `HUBZOID_ADMIN_EMAIL`. The first time that
   owner signs in, Hubzoid provisions it and records it as the workflow default.
   `admin@company.com` in examples is only an example, and Hubzoid never creates
   it.
@@ -70,9 +70,9 @@ An account is usable when all of these hold:
 
 - it has signed in at least once (so it is bound to a real chat account);
 - it is not awaiting approval, blocked or replaced;
-- on a Console-managed hub, it holds **Use this agent**.
+- it holds **Use this agent**.
 
-Otherwise the run fails, and its error in the Console and `hubzoid schedule
+Otherwise the run fails, and its error in Settings and `hubzoid schedule
 status` names the fix. Hubzoid **never falls back** to another account, whatever
 the reason.
 
@@ -90,7 +90,7 @@ exactly what that account can do at that moment.
 `run_as` and `HUBZOID_WORKFLOW_USER` are read only from files and operator
 configuration. The operators who can edit `workflows/`, `schedule/` and `.env`
 are trusted to choose them. No API, agent tool or model argument can set them.
-Any future way to start a workflow from chat or the Console runs as the person
+Any future way to start a workflow from chat or Settings runs as the person
 asking, unless an explicit, authorized delegation exists.
 
 ## Personal state, files and connections
@@ -104,14 +104,14 @@ asking, unless an explicit, authorized delegation exists.
 | A markdown task's scratch folder | The run's account: `.hubzoid/schedule/<task>@<person>/`. |
 | `hub.publish_artifact(...)` | The run's account. See [reports-and-email.md](reports-and-email.md). |
 | `hub.send_email(...)` | Goes only to the run's account. |
-| Personal connections (Console connectors) | That account's own, used through `hub.call_agent`. |
+| Personal connections (connectors added in Settings) | That account's own, used through `hub.call_agent`. |
 
 State written before this release (`hub.state` rows and a markdown task's
 `.hubzoid/schedule/<task>/` folder) is kept exactly as it was and belongs to no
 one. A person's state starts empty. To carry it over deliberately, copy the old state
 file into the person's folder before their first run.
 
-A personal connection (for example Gmail through a Console connector) is used
+A personal connection (for example Gmail through a connector added in Settings) is used
 by the agent: `hub.call_agent(...)` acts as the run's account,
 so its tools use that person's connection, never the workflow author's or an
 administrator's. If the person has not connected, or their connection expired
@@ -139,7 +139,7 @@ This is access control inside Hubzoid, not an operating-system sandbox. Workflow
 Python, `run:` scripts and restricted tools run in the bridge process as the
 same operating-system user. Anyone who can edit a hub's code or configuration
 can read what that process can read. The rules above keep people's data apart
-across chat, agents, the artifact viewer, email and the Console.
+across chat, agents, the artifact viewer, email and Settings.
 
 A `run:` script finds the account it runs as in `HUBZOID_RUN_AS`. This is for
 information only.
