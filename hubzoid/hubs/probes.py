@@ -16,9 +16,10 @@ non-secret ``settings`` and, for secret settings, only whether each is
 Each check runs in its own process group with a deadline, at most four at
 once and 64 KiB of output each. A check that overruns either is killed with
 everything it started, so a crash or a hang becomes one failed row and never
-stops the others. A crash is reported by its exception class only, because
-its message may carry a credential from the environment. Checks are trusted hub code, like the hub's tools: Hubzoid
-runs them only when doctor runs, never when a hub is loaded or installed.
+stops the others. A crash is reported by its exception class only, never its
+message or traceback, which may carry a credential from the environment.
+Checks are trusted hub code, like the hub's tools: Hubzoid runs them only when
+doctor runs, never when a hub is loaded or installed.
 """
 from __future__ import annotations
 
@@ -105,13 +106,21 @@ class Result:
 
 _RUNNER = r"""
 import importlib.util, json, sys
-path, func, context = sys.argv[1], sys.argv[2], json.loads(sys.stdin.read())
-spec = importlib.util.spec_from_file_location("hubzoid_hub_probe", path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-result = getattr(module, func)(context)
-print("\x1ehubzoid-probe" + json.dumps(result, default=str))
+try:
+    path, func, context = sys.argv[1], sys.argv[2], json.loads(sys.stdin.read())
+    spec = importlib.util.spec_from_file_location("hubzoid_hub_probe", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = "\x1ehubzoid-probe" + json.dumps(getattr(module, func)(context), default=str)
+except BaseException as exc:
+    # The class only, and no traceback: the message may carry a credential.
+    sys.__stdout__.write("\x1ehubzoid-crash" + type(exc).__name__ + "\n")
+    sys.__stdout__.flush()
+    sys.exit(1)
+print(result)
 """
+_CRASH = "\x1ehubzoid-crash"
+_CLASS_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
 
 def _entry_file(hub_dir: Path, probe: Probe) -> Path:
@@ -140,13 +149,13 @@ def _stop(proc: subprocess.Popen) -> None:
         pass
 
 
-def _crash_class(stderr: str) -> str:
-    """The exception's class name from a traceback, never its message (which
-    may carry a credential from the environment)."""
-    for line in reversed(stderr.strip().splitlines()):
-        name = line.split(":", 1)[0].strip()
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", name or ""):
-            return name.rsplit(".", 1)[-1]
+def _crash_class(stdout: str) -> str:
+    """The exception class the runner reported, else "an error". Never text
+    from a message or a traceback, which may carry a credential."""
+    if _CRASH in stdout:
+        name = stdout.rsplit(_CRASH, 1)[1].split("\n", 1)[0]
+        if _CLASS_RE.fullmatch(name):
+            return name
     return "an error"
 
 
@@ -186,12 +195,10 @@ def _run(hub_dir: Path, probe: Probe, context: dict) -> Result:
             return Result(probe.id, "fail", "Wrote more than 64 KiB of output.",
                           "Return a short summary and put the rest in details.")
         out.seek(0)
-        err.seek(0)
         stdout = out.read(MAX_OUTPUT).decode("utf-8", "replace")
-        stderr = err.read(MAX_OUTPUT).decode("utf-8", "replace")
     marker = "\x1ehubzoid-probe"
     if proc.returncode != 0 or marker not in stdout:
-        return Result(probe.id, "fail", f"The check crashed with {_crash_class(stderr)}.",
+        return Result(probe.id, "fail", f"The check crashed with {_crash_class(stdout)}.",
                       f"Run {probe.entrypoint} by hand to see the error.")
     try:
         data = json.loads(stdout.rsplit(marker, 1)[1])

@@ -360,15 +360,25 @@ def test_a_crash_message_is_not_shown_and_a_hang_is_killed_with_its_children(hub
             import time; time.sleep(30)
     """)
     probe_file(hub, "noisy", "def check(ctx):\n    print('x' * 200000)\n    return {'status': 'ok', 'summary': 'ok'}\n")
+    # A token alone on a message's last line looks like a class name in a traceback.
+    token = "'ghp' + '_' + 'Zq7' * 12"  # built at run time, so no token is in this file
+    probe_file(hub, "multiline", f"def check(ctx):\n    raise RuntimeError('authentication failed\\n' + {token})\n")
+    probe_file(hub, "bare", f"import os, sys\ndef check(ctx):\n    sys.stderr.write({token} + '\\n')\n"
+                            "    sys.stderr.flush()\n    os._exit(3)\n")
     (hub / "hub.manifest.yaml").write_text(textwrap.dedent("""\
         version: 1
         doctor:
           - {id: leak, entrypoint: doctor/leak.py:check, required: true}
           - {id: hang, entrypoint: doctor/hang.py:check, timeout_seconds: 1, required: true}
           - {id: noisy, entrypoint: doctor/noisy.py:check, required: true}
+          - {id: multiline, entrypoint: doctor/multiline.py:check, required: true}
+          - {id: bare, entrypoint: doctor/bare.py:check, required: true}
     """))
     got = {r.id: r for r in probes.run(hub)}
     assert got["leak"].summary == "The check crashed with ValueError." and "sk-live" not in json.dumps(got["leak"].__dict__)
+    assert got["multiline"].summary == "The check crashed with RuntimeError."
+    assert got["bare"].summary == "The check crashed with an error."  # no exception: a fixed message
+    assert "Zq7Zq7" not in json.dumps([got["multiline"].__dict__, got["bare"].__dict__])
     assert got["hang"].status == "fail" and "1 seconds" in got["hang"].summary
     assert got["noisy"].status == "fail" and "64 KiB" in got["noisy"].summary
     import time
