@@ -378,3 +378,13 @@ def test_workflow_route_starts_one_work_item(hub_dir, fake, monkeypatch):
     # The same event again (a redelivery under a new id) starts nothing new.
     send(conn, ev(data={"unattended": True}), delivery_id="d9")
     assert store.open_deliveries(hub_dir, "desk") == []
+
+
+def test_mention_upgrades_an_earlier_unaddressed_copy_once(hub_dir):
+    conn = applied(hub_dir)
+    send(conn, ev(trigger=False), delivery_id="d1")            # the plain message event
+    out = send(conn, ev(kind="mention"), delivery_id="d2")      # its app_mention
+    assert out.events[0]["status"] == "accepted"
+    again = send(conn, ev(kind="mention"), delivery_id="d3")    # a retry of the mention
+    assert again.events[0]["status"] == "duplicate"
+    assert len(store.open_deliveries(hub_dir, "desk")) == 1

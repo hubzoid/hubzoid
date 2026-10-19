@@ -112,6 +112,12 @@ class Adapter:
         enabled connection. Returns a handle with `stop()`, or None."""
         return None
 
+    def context(self, conn: "Connection", event: InboundEvent, *, first: bool) -> str:
+        """A short note put before the person's message: where it came from,
+        and (when `first`, the person's first request in this thread) any
+        earlier thread messages as context. Never instructions."""
+        return ""
+
     def workspace(self, conn: "Connection") -> str | None:
         """The provider workspace this connection serves (a Slack team, a
         Linear organization), for account links. None when it varies."""

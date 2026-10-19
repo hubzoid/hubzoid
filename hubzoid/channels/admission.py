@@ -154,6 +154,18 @@ def _admit_one(c, conn: Connection, verified: Verified, event: InboundEvent, ind
                 body_digest=body_digest, kind=event.kind, verification=verified.method,
                 actor_json=event.actor.to_json() if event.actor else {})
     same = store.find_semantic(c, hub=hub, cid=cid, semantic_key=event.semantic_key)
+    if same is not None and event.trigger and same["status"] == "ignored" and same["reason"] == "not_addressed":
+        # The same message seen first without its mention (Slack sends both a
+        # message and an app_mention): the mention upgrades it, exactly once.
+        thread = store.get_thread(conn.hub_dir, same["thread_id"], conn=c)
+        status, reason = _disposition(conn, event, thread, backlog, c)
+        upgraded = store.update_delivery(conn.hub_dir, same["id"], expect_status="ignored", conn=c,
+                                         status=status, reason=reason, kind=event.kind,
+                                         event_enc=secretbox.encrypt_json(conn.hub_dir, event.to_json()))
+        if upgraded is not None:
+            store.insert_delivery(c, **base, status="duplicate", reason="same_event", thread_id=same["thread_id"],
+                                  route_json={"original": same["id"], "upgraded": True})
+            return upgraded, False
     if same is not None:
         # Another delivery already carried this event. Link to it, do nothing.
         return store.insert_delivery(c, **base, status="duplicate", reason="same_event",

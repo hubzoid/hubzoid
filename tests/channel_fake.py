@@ -98,7 +98,7 @@ class FakeAdapter(Adapter):
     def doctor(self, conn, inputs):
         return [Check("fake", "ok", "The fake provider answers.")]
 
-    def context_line(self, event):
+    def context(self, conn, event, *, first):
         return f"(Fake thread {event.origin.coordinates['thread']})"
 
 

@@ -344,9 +344,10 @@ def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEven
             store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting",
                                   reason="thread_busy")
             return "waiting", None
-    if mine is None:
+    first = mine is None
+    if first:
         mine = _open_conversation(hub_dir, conn, thread, actor, chat)
-    content = _content(conn, event, person, chat, mine)
+    content = _content(conn, event, person, chat, mine, first=first)
     branch = thread_branch(engine, mine, actor.id)
     out, plan = engine.enqueue(mine, actor, {"content": content, "lane": "queue", "branch_id": branch},
                                key=f"channel:{row['id']}")
@@ -421,8 +422,8 @@ def _open_conversation(hub_dir: Path, conn, thread: dict, actor, chat) -> str:
     raise ChannelError("unavailable", "Could not bind the thread to a conversation.", status=503)
 
 
-def _content(conn, event: InboundEvent, person, chat, conversation_id: str) -> list[dict]:
-    context = conn.adapter.context_line(event) if hasattr(conn.adapter, "context_line") else ""
+def _content(conn, event: InboundEvent, person, chat, conversation_id: str, *, first: bool = False) -> list[dict]:
+    context = conn.adapter.context(conn, event, first=first)
     body = event.text.strip()
     parts: list[dict] = [{"type": "text", "text": f"{context}\n\n{body}".strip() if context else body}]
     notes = []
