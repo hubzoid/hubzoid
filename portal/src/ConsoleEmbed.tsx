@@ -47,7 +47,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
         <div className="console-embed">
           {personal ? (
             <Suspense fallback={<Spin />}>
-              <SchedulesScreen admin={false} />
+              <SchedulesScreen admin={false} embedded />
             </Suspense>
           ) : (
             <Embedded />

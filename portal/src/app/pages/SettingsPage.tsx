@@ -125,7 +125,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
   }, [current, app.brandName]);
 
   const personalTabs = items.filter((i) => ["profile", "appearance", "notifications", "data"].includes(i.key));
-  const workspaceTabs = items.filter((i) => ["chat", "brand"].includes(i.key));
+  const workspaceTabs = items.filter((i) => ["chat", "brand", "health"].includes(i.key));
   const tabs = personalTabs.some((i) => i.key === active) ? personalTabs : workspaceTabs.some((i) => i.key === active) ? workspaceTabs : [];
   const groupKey = (key: Key) => personalTabs.some((i) => i.key === key) ? "profile" : workspaceTabs.some((i) => i.key === key) ? "chat" : key;
   const groupLabel = (item: Item) => item.key === "profile" ? S.preferences : item.key === "chat" ? S.workspaceSettings : item.label;

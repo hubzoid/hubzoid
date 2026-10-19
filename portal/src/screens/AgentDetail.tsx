@@ -16,6 +16,7 @@ export function AgentDetail({
   me,
   tab,
   rest,
+  embedded = false,
 }: {
   hub: Hub;
   hubs: Hub[];
@@ -23,6 +24,7 @@ export function AgentDetail({
   tab: AgentTab;
   /** Remaining route segments after the tab (workflow and run id, or an eval run). */
   rest: string[];
+  embedded?: boolean;
 }) {
   return (
     <>
@@ -56,7 +58,7 @@ export function AgentDetail({
       />
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} />}
-        {tab === "connectors" && <AgentConnectors hub={hub} me={me} />}
+        {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
         {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
         {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}

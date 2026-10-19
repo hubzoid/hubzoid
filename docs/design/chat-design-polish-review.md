@@ -3,7 +3,7 @@
 Reviewed and implemented on `hz2/chat-design-polish`, based on `hz2/chat-design`.
 The review used an isolated deployment with five hubs: Operations, Engineering,
 Customer Desk, Finance and People Operations. No new dependencies or backend
-changes were needed. The standalone Console source and styling were left alone.
+changes were needed. The standalone Console's default presentation is preserved.
 
 ## Recommendations and resulting changes
 
@@ -65,3 +65,83 @@ also reviewed.
 
 This is a bounded visual/navigation change, not full release certification.
 No API, data-model, runtime, authorization or provider configuration was changed.
+
+## Annotated follow-up
+
+The second review reproduced the constrained-width problems at 1172×740.
+Document overflow checks alone had missed the cramped identities inside tables.
+
+- **Agents:** use single-column directory rows with compact per-agent usage.
+  Put deployment totals and their period filter behind **Usage overview**.
+  On narrower layouts, omit per-row metrics; aggregate usage remains available.
+- **People:** reserve space for the avatar and identity. Show the number of
+  accessible agents as a link to the person's details, instead of stacking
+  every agent/capability badge. Keep account state and Details visible.
+- **Schedules:** clarify that this page lists recurring requests and reports
+  created from chat. Authored workflows, their triggers and runs remain in
+  each agent's **Runs & schedules** tab.
+- **Brand:** explain the actual precedence. An activated, immutable revision
+  determines the published brand. UI edits and CLI file imports both produce
+  drafts requiring review and activation. Editing files alone does not replace
+  a published revision; UI drafts are not automatically written back to the Hub.
+  Before any activation, the legacy branding folder supplies the fallback.
+  Recommend files for authoring and version control, with the UI for preview,
+  review, activation and export. Removing UI editing would be a separate decision.
+- **Health:** place Health & support under Workspace settings and omit its
+  duplicate usage statistics in the embedded view. Keep checks and reports.
+- **Sidebar:** increase the gap between the workspace identity and New chat.
+- **Sign-in:** centre the form vertically, use a lighter centred heading,
+  quiet filled fields and rounded actions, with Google below email/password.
+  Reference: [Open WebUI's authentication page](https://github.com/open-webui/open-webui/blob/main/src/routes/auth/%2Bpage.svelte).
+- **Populated connectors:** compact the embedded table so its switches and
+  actions fit. Keep technical URLs/IDs in the editor. Flatten My connections
+  and fix its status badges, which inherited an unrelated orange badge style.
+
+Shared management screens now accept an optional embedded presentation. Their
+standalone defaults are retained. No authentication or publication precedence
+was changed.
+
+### Review data
+
+The isolated deployment contains four clearly labeled sample connectors:
+GitHub (OAuth configuration only), Linear (disabled), Team knowledge (a working
+local MCP service without sign-in), and Finance data (a fictional shared-key
+configuration pointing to that local service). Owner and Ana can see them;
+Ben retains his limited access. No customer accounts or credentials are used.
+The local service exposes two harmless tools over fictional data. Discovery
+and the Team knowledge connection were exercised successfully.
+
+A localhost-only preview at port 4195 adds the Google provider to the session
+response without changing production authentication code. Its Google action
+opens an explanatory preview page, not a real OAuth flow. The five-hub review
+deployment remains on port 4194.
+
+### Recommendations awaiting product choice
+
+**Themes:** offer Light and Dark, plus Use system. OLED black can be an optional
+dark variant rather than a third equally prominent theme. Preserve existing
+preferences and administrator restrictions during any future change. This
+pass does not remove an appearance mode.
+
+**Inbound MCP:** add a guided **Use in your assistant** panel, separate from
+the outgoing app connectors in My connections. Select an agent, show whether
+hosted MCP is enabled, expose its verified public connection address with Copy,
+explain the assistant-side sign-in step, and link to existing connection/revoke
+controls. Never imply that copying a URL establishes a connection. The current
+native agents response does not provide hosted-MCP readiness or its canonical
+public URL; those need a small, separately scoped read-only contract before a
+live panel can accurately report availability. Reuse the existing OAuth flow.
+
+### Follow-up verification
+
+- Production build and lint pass (existing lint/chunk warnings remain).
+- The expanded Settings test passes, including collapsed usage, the Health tab,
+  and a geometry assertion preventing avatar/name overlap at 1172px.
+- The 22 existing connector checks and the reports suite pass with standalone
+  defaults. These do not resolve the broader failures recorded above.
+- Populated desktop and phone screens have no document overflow; the reviewed
+  desktop pages report no uncaught JavaScript errors. Table scrolling stays
+  inside the table on phones. Screenshots wait for loading indicators to finish.
+- The Google/password phone preview passes Axe serious/critical checks in
+  Light, Dark and OLED after theme transitions settle. The temporary preview
+  label's light-theme contrast was corrected. Real Google OAuth is still untested.
