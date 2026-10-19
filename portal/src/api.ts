@@ -620,10 +620,20 @@ export type SecretList = {
   can_manage: boolean;
 };
 
+/** A hub-scoped route (/api/hubs/{hub}/...): channels, secrets. Errors are {"detail": {"code", "message"}}. */
+export async function hubRequest<T>(
+  url: string,
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  return secretsRequest<T>(url, method, body, signal);
+}
+
 /** /api/hubs/{hub}/secrets or /api/secrets. Errors are {"detail": {"code", "message"}}. */
 export async function secretsRequest<T>(
   url: string,
-  method: "GET" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
@@ -657,6 +667,7 @@ export async function secretsRequest<T>(
     }
     throw new ApiError(message, response.status, code, data);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 

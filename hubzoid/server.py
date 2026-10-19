@@ -154,6 +154,13 @@ def build_app() -> FastAPI:
             log.error("scheduled markdown tasks are not running: the workflow engine "
                       "did not start (see the error above)")
         app.state.scheduler = sched
+        # Channels: route provider deliveries saved before a restart, post
+        # replies that were due, and start Socket Mode or mailbox transports.
+        from .channels import router as channel_router
+        try:
+            await channel_router.start(app, hub_dir)
+        except Exception:  # noqa: BLE001 - channels never stop the bridge from serving
+            log.exception("channels: could not start routing")
         from . import deployment
         from .access.reconcile import sync_owui
         async def visibility_loop():
@@ -184,6 +191,7 @@ def build_app() -> FastAPI:
                     await visibility_task
                 except asyncio.CancelledError:
                     pass
+            await channel_router.stop()
             if wf_dispatcher is not None:
                 await wf_dispatcher.stop()
             await sched.stop()

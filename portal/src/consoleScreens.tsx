@@ -21,7 +21,7 @@ const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then(
 export const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.MyAgents })));
 export const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
 
-const TABS: AgentTab[] = ["access", "connectors", "secrets", "runs", "evals", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "secrets", "channels", "runs", "evals", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: () => void, embedded = false): { screen: ReactNode; active: Area } {
@@ -46,7 +46,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Connectors, Secrets, Runs & schedules, Evals and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Access, Connectors, Secrets, Channels, Runs & schedules, Evals and Activity, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />
