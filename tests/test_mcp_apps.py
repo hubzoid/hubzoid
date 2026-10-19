@@ -208,12 +208,20 @@ def test_a_result_that_breaks_its_card_keeps_the_tools_own_text(hub):
 
 
 def test_a_call_waiting_for_approval_makes_no_card(hub):
-    # On the MCP server, as in chat, the card wrapper sits inside the approval gate.
-    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  order_summary: {ask: always}\n")
+    # On the MCP server, as in chat, the card wrapper sits inside the approval
+    # gate: a custom card (which takes any JSON) never sees the gate's answer.
+    page = hub / "cards" / "note.html"
+    page.write_text("<!doctype html><p>note</p>")
+    digest = hashlib.sha256(page.read_bytes()).hexdigest()
+    _card(hub, "note.yaml", "version: 1\nid: note\ntitle: Note\nbinding: {tool: send_note}\n"
+                            "resource: {file: cards/note.html, sha256: '" + digest + "'}\n")
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  send_note: {ask: always}\n")
     _apply(hub)
-    out = asyncio.run(_call(hub, "order_summary"))
+    out = asyncio.run(_call(hub, "send_note", {"text": "x"}))
     assert json.loads(out["text"])["status"] == "waiting" and out["card"] is None
-    assert cards.present(hub, "order_summary", "{}", out["text"]) is None
+    assert cards.store.list_instances(hub, "cardhub", requester=OWNER) == []     # nothing stored either
+    # A tool's own result that merely looks like a wait still gets its card.
+    assert cards.present(hub, "send_note", "{}", '{"status": "waiting", "request_id": "job-42"}') is not None
 
 
 def test_the_runtime_takes_the_card_of_its_own_call(hub):

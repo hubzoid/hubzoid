@@ -210,8 +210,6 @@ def present(hub_dir: Path, tool: str, args_json: str, result: Any, *, call_id: s
         return None
     if isinstance(result, str) and result.startswith(("[access denied", "[access ended")):
         return None
-    if _waiting(result):
-        return None   # the approval gate's answer, not the tool's result
     row, res, card = found
     try:
         checked = check_result(hub_dir, card, result, res.limits)
@@ -246,17 +244,6 @@ def present(hub_dir: Path, tool: str, args_json: str, result: Any, *, call_id: s
     _request_ctx.record_card(text, envelope(hub, card, instance["id"], checked, text, arguments=args),
                              call_id=call_id)
     return text
-
-
-def _waiting(result: Any) -> bool:
-    """Whether ``result`` is the approval gate's "waiting for a person" answer."""
-    value = result
-    if isinstance(result, str) and result.startswith('{"status": "waiting"'):
-        try:
-            value = json.loads(result)
-        except ValueError:
-            return False
-    return isinstance(value, dict) and value.get("status") == "waiting" and "request_id" in value
 
 
 def _custom_text(checked: dict) -> str:
