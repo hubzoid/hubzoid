@@ -594,3 +594,15 @@ def test_recently_closed_tcp_connections_do_not_block_restart():
         restarted.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         restarted.bind(('127.0.0.1', port))
         restarted.listen()
+
+
+def test_the_gateways_bridge_wait_can_be_raised_and_a_silent_bridge_is_not_blamed_on_its_label(monkeypatch):
+    from hubzoid import cli
+
+    monkeypatch.delenv("HUBZOID_GATEWAY_BRIDGE_TIMEOUT", raising=False)
+    assert cli._gateway_bridge_timeout() == 180.0
+    monkeypatch.setenv("HUBZOID_GATEWAY_BRIDGE_TIMEOUT", "600")
+    assert cli._gateway_bridge_timeout() == 600.0
+    monkeypatch.setenv("HUBZOID_GATEWAY_BRIDGE_TIMEOUT", "soon")
+    assert cli._gateway_bridge_timeout() == 180.0
+    assert cli._health_of("http://127.0.0.1:9/healthz") is None  # nothing listening: "did not answer"

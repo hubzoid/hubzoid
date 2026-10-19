@@ -1153,6 +1153,29 @@ def _wait_any(procs: list, *, interval: float = 0.5) -> None:
 _GATEWAY_BRIDGE_TIMEOUT = 180.0
 
 
+def _gateway_bridge_timeout() -> float:
+    """HUBZOID_GATEWAY_BRIDGE_TIMEOUT (seconds), else the default."""
+    raw = (os.environ.get("HUBZOID_GATEWAY_BRIDGE_TIMEOUT") or "").strip()
+    try:
+        return max(10.0, float(raw)) if raw else _GATEWAY_BRIDGE_TIMEOUT
+    except ValueError:
+        console.print(f"[yellow]HUBZOID_GATEWAY_BRIDGE_TIMEOUT={escape(raw)} is not a number of seconds; "
+                      f"using {_GATEWAY_BRIDGE_TIMEOUT:.0f}.[/yellow]")
+        return _GATEWAY_BRIDGE_TIMEOUT
+
+
+def _health_of(url: str) -> dict | None:
+    """What a bridge's health check says right now, or None when it doesn't answer."""
+    import httpx
+
+    try:
+        r = httpx.get(url, timeout=3.0)
+        body = r.json() if r.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    return body if isinstance(body, dict) else {}
+
+
 def _stop_groups(procs, *, timeout: float = 15.0) -> None:
     """Stop child services and everything they started. Each was started in its
     own session (process group), so a bridge's server process stops with the
@@ -1340,21 +1363,29 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
             procs.append(subprocess.Popen(cmd, env=bridge_env, start_new_session=True))
             console.print(f"[cyan]→ bridge[/cyan]  {b.slug}  http://127.0.0.1:{b.bridge_port}")
 
+    wait = _gateway_bridge_timeout()
     for i, b in enumerate(gp.backends):
         url = f"http://127.0.0.1:{b.bridge_port}/healthz"
         identity = dict(expected_hub=b.hub_dir.name, expected_model=b.model_label)
-        ready = (_wait_for_bridge(procs[i], url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity)
-                 if launch_bridges else _wait_for(url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity))
+        ready = (_wait_for_bridge(procs[i], url, timeout=wait, **identity)
+                 if launch_bridges else _wait_for(url, timeout=wait, **identity))
         if not ready:
             code = procs[i].poll() if launch_bridges else None
+            seen = _health_of(url)
             if code is not None:
                 # The bridge stopped on its own; its own message (printed above) says why.
                 console.print(f"[red]bridge {b.slug} stopped before it was ready (exit {code}). "
                               "Its message above says why; fix that hub, then start the gateway again.[/red]")
+            elif seen is None:
+                # Still starting: many bridges at once on a busy machine can take longer.
+                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) did not answer within {wait:.0f} s. "
+                              "It may still be starting on a busy machine: allow more time with "
+                              "HUBZOID_GATEWAY_BRIDGE_TIMEOUT=<seconds>, or start fewer hubs.[/red]")
             else:
-                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
-                              f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
-                              "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
+                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) answers as hub "
+                              f"{escape(str(seen.get('hub')))!r} and model {escape(str(seen.get('model')))!r}, not "
+                              f"{escape(b.hub_dir.name)!r} and {escape(b.model_label)!r}. Another process may hold "
+                              "this port, or the hub's MODEL_LABEL changed: restart its bridge, then the gateway.[/red]")
             raise typer.Exit(1)
     console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
 
