@@ -26,8 +26,6 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts",
                # workflows from chat (op_0019): report series, personal schedules, proposals
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
-               # secrets set in the Console (op_0040)
-               "hz_secrets",
                # work items and safe external writes (op_0050)
                "hz_work_items", "hz_operations", "hz_idempotency",
                # isolated agents and handoffs (op_0051)
@@ -38,6 +36,8 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_budget_reservations",
                # cards (op_0054)
                "hz_app_config_revisions", "hz_app_resources", "hz_app_instances",
+               # secrets set in the Console (op_0060)
+               "hz_secrets",
                # channels (op_0070)
                "hz_channel_connections", "hz_channel_threads", "hz_channel_deliveries", "hz_channel_links"}
 
@@ -346,12 +346,12 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019, op_0050 to op_0054 and op_0070.
+        # And op_0019, op_0050 to op_0054, op_0060 (secrets) and op_0070.
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
                       "hz_work_items", "hz_operations", "hz_idempotency",
                       "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps",
                       "hz_budget_reservations", "hz_app_config_revisions", "hz_app_resources",
-                      "hz_app_instances", "hz_channel_connections", "hz_channel_threads",
+                      "hz_app_instances", "hz_secrets", "hz_channel_connections", "hz_channel_threads",
                       "hz_channel_deliveries", "hz_channel_links"):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))

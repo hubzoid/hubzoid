@@ -16,6 +16,7 @@ import json
 import re
 from typing import Mapping
 
+from .. import appmode
 from .. import config_secrets as cs
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -55,7 +56,8 @@ def env_name(name: str) -> bool:
 def operator_only(name: str) -> bool:
     """A name only an operator source may set."""
     upper = (name or "").upper()
-    return upper in _OPERATOR_KEYS or upper.startswith(_OPERATOR_PREFIXES) or cs.owui_setting(upper)
+    # A retired Open WebUI name would stop the hub at start (appmode.RETIRED).
+    return upper in _OPERATOR_KEYS or upper.startswith(_OPERATOR_PREFIXES) or upper in appmode.RETIRED
 
 
 def problem(name: str) -> str | None:
