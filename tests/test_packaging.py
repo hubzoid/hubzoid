@@ -85,10 +85,15 @@ def test_template_bytecode_never_ships():
     assert "*.pyc" in excluded and "**/__pycache__/*" in excluded
 
 
+def _normalize(name: str) -> str:
+    """A distribution name as PEP 503 compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _requirement_names(reqs: list[str]) -> dict[str, str]:
     out = {}
     for req in reqs:
-        name = re.split(r"[\s\[<>=!~;]", req, maxsplit=1)[0].lower().replace("_", "-")
+        name = _normalize(re.split(r"[\s\[<>=!~;]", req, maxsplit=1)[0])
         out[name] = req
     return out
 
@@ -148,7 +153,7 @@ def _pins(name: str) -> dict[str, str]:
     for line in (ROOT / name).read_text().splitlines():
         m = re.match(r"^([A-Za-z0-9_.-]+)==([^\s;]+)", line)
         if m:
-            pins[m.group(1).lower()] = m.group(2)
+            pins[_normalize(m.group(1))] = m.group(2)
     return pins
 
 
@@ -167,5 +172,6 @@ def test_locks_pin_this_release_line(lock):
     assert pins["pwdlib"].startswith("0.3.")
     assert pins["python-multipart"].startswith("0.0.")
     # The image installs the lock, then the package with --no-deps: a dependency
-    # missing here is missing there (openapi-spec-validator was).
+    # the lock does not name is missing there (openapi-spec-validator was). This
+    # checks names only, not environment markers.
     assert set(_requirement_names(PYPROJECT["project"]["dependencies"])) - set(pins) == set()
