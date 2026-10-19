@@ -32,6 +32,18 @@ All notable changes to Hubzoid. Versions follow the package version in
 ### Fixed
 - An unknown or not-permitted Settings address opened an empty pane; it now
   opens the first section (a person's own Schedules for the team's schedules).
+- Shared snapshots and their copies no longer carry signed download links; the
+  old create-link route is removed; a deleted or blocked person's links stop.
+- `hubzoid migrate openwebui --rehearse` copies a whole gateway. `--apply`
+  creates the configured owner when needed, imports the sign-in-off account
+  blocked, and the dry run counts people who would have no agent access.
+- Tool overflow files stay internal instead of opening as documents.
+- Agent instructions shows flat `skills/<name>.md` skills; publishing commits
+  under the hub write lock.
+- `hubzoid --version`; the package reports `2.0.0.dev0` until release.
+
+### Added
+- `display_name:` in `AGENTS.md` sets the agent's name as people see it.
 
 ## [1.3.2]
 
