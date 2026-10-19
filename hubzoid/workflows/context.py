@@ -348,7 +348,9 @@ class Hub:
 
         ctx = _ctx()
         run = re.sub(r"[^A-Za-z0-9._-]+", "-", ctx.run_id or "local").strip("-.") or "local"
-        path = Path(ctx.hub_dir) / ".hubzoid" / "runs" / ctx.workflow / run
+        from ..datadir import state
+
+        path = state(ctx.hub_dir) / "runs" / ctx.workflow / run
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -378,7 +380,9 @@ class Hub:
         ctx = _ctx()
         source = Path(path)
         if not source.is_absolute():
-            source = Path(ctx.hub_dir) / source
+            from ..datadir import resolve
+
+            source = resolve(ctx.hub_dir, source)
         from . import inputs as inputs_lib
 
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
@@ -569,7 +573,9 @@ class Hub:
         "note": str | None, "by": email}``; a request for changes is not approved."""
         import hashlib
 
-        source = Path(path) if Path(path).is_absolute() else Path(_ctx().hub_dir) / path
+        from ..datadir import resolve
+
+        source = Path(path) if Path(path).is_absolute() else resolve(_ctx().hub_dir, path)
         data = source.read_bytes()
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         # Publish a copy named by its digest, so the approved bytes are exactly
@@ -729,7 +735,9 @@ def data_dir(hub_dir=None) -> Path:
     """A private folder for a hub's own data files: `<hub>/.hubzoid/data/`.
     Agent file tools can't read it and backups include it. Workflows reach the
     same folder as `hub.data_dir`."""
-    path = _hub_dir_here(hub_dir) / ".hubzoid" / "data"
+    from ..datadir import state
+
+    path = state(_hub_dir_here(hub_dir)) / "data"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

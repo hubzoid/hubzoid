@@ -199,7 +199,9 @@ class BrowserManager:
 
     def _open_logfile(self):
         try:
-            logs_dir = Path(self._s.hub_dir) / "logs"
+            from .datadir import root
+
+            logs_dir = root(Path(self._s.hub_dir)) / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             return open(logs_dir / "browser-mcp.log", "a", encoding="utf-8")
         except Exception:  # noqa: BLE001

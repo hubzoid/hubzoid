@@ -258,7 +258,9 @@ def build_app(
         import functools
 
         dispatch_fn = functools.partial(default_dispatch, hub_dir=Path(hub_dir))
-    inbound_dir = Path(hub_dir) / ".inbound"
+    from ..datadir import root
+
+    inbound_dir = root(Path(hub_dir)) / ".inbound"
     dedup = Dedup(inbound_dir / "dedup")
     history = History(db.engine_for(hub_dir), max_messages=history_max,
                       ttl_seconds=history_ttl_seconds)

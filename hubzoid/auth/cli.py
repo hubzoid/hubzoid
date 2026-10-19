@@ -48,7 +48,9 @@ def _fail(message: str, code: int = 1) -> None:
 def _prepare(hub: Path) -> Path:
     """The hub, with its configuration loaded as ``hubzoid run`` loads it."""
     hub = Path(hub).resolve()
-    if not (hub / "AGENTS.md").is_file() and not (hub / ".hubzoid" / "deployment.json").is_file():
+    from ..datadir import state
+
+    if not (hub / "AGENTS.md").is_file() and not (state(hub) / "deployment.json").is_file():
         _fail(f"{hub} is not a hub (no AGENTS.md). Run this in a hub directory or pass one.", 2)
     try:
         from ..cli import _load_settings

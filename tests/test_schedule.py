@@ -1024,6 +1024,18 @@ def test_write_hub_file_refuses_schedule_policy_dir(tmp_path):
     assert "wrote" in ok.lower() and (hub / "notes.txt").exists()
 
 
+def test_a_hosted_hubs_task_writes_only_its_own_state(tmp_path, monkeypatch):
+    hub, data = tmp_path / "hub", tmp_path / "data"
+    hub.mkdir()
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(data))         # the hub's files come from its image
+    task = _task(name="t", write=["."])
+    _, write = schedule_tools.make(hub, task, lambda **kw: None)
+    out = _invoke(write, path="notes.txt", content="hi")
+    assert "refused" in out.lower() and "Git" in out and not (hub / "notes.txt").exists()
+    ok = _invoke(write, path=f"{task.scratch_rel}/state.json", content="{}")
+    assert "wrote" in ok.lower() and (data / task.scratch_rel / "state.json").is_file()
+
+
 def test_script_large_output_is_bounded_not_buffered(tmp_path):
     import sys
     hub = tmp_path / "hub"

@@ -486,7 +486,9 @@ class ScheduleState:
 
     def __init__(self, hub_dir: Path):
         self.hub_dir = Path(hub_dir)
-        self.path = self.hub_dir / STATE_DIRNAME / STATE_FILENAME
+        from .datadir import state
+
+        self.path = state(self.hub_dir) / STATE_FILENAME
 
     def _read(self) -> dict[str, dict[str, Any]]:
         if self.path.is_file():

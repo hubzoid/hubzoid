@@ -30,7 +30,9 @@ KEEP_RUNS = 200
 
 
 def runs_dir(hub_dir: Path) -> Path:
-    return Path(hub_dir) / RUNS_DIRNAME
+    from ..datadir import root
+
+    return root(hub_dir) / RUNS_DIRNAME
 
 
 from contextlib import contextmanager

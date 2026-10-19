@@ -265,6 +265,16 @@ Environment variables explicitly supported:
   HUBZOID_DEPLOYMENT     Explicit gateway manifest path; normally discovered via
                          <hub>/.hubzoid/deployment.json. Do not copy hub pointers
                          into an unrelated deployment.
+  HUBZOID_DATA_DIR       Where a hub writes its state: .hubzoid/ (databases, keys,
+                         chats, artifacts), output/, logs/ and .inbound/. Default:
+                         the hub folder. Set it to a durable volume (/data) when the
+                         hub's own files are baked into an image from Git; they are
+                         then only read, and read-only in Settings. One hub per
+                         data folder.
+  HUBZOID_BACKUPS        Scheduled verified backups: weekly (default), daily or off.
+  HUBZOID_BACKUP_KEEP    How many scheduled backups to keep (default 4).
+  HUBZOID_BACKUP_DIR     Where they go (default <data>/.hubzoid/backups).
+  HUBZOID_PG_BIN         Folder holding pg_dump and pg_restore, when not on PATH.
   HUBZOID_SCHEDULES      Enable workflow dispatch for standalone runs (1/true).
                          Gateways enable it automatically. Missed slots are reported,
                          not replayed. Markdown schedules retain their own gate.

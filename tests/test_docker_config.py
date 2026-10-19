@@ -80,11 +80,14 @@ def _run_steps(dockerfile: str) -> list[str]:
 
 
 def test_image_is_slim_and_has_no_open_webui_option():
-    """No system packages, no Open WebUI build argument, one reviewed lock."""
+    """One system package (the PostgreSQL client, for backups), no Open WebUI
+    build argument, one reviewed lock."""
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "WITH_OPENWEBUI" not in dockerfile and "openwebui" not in dockerfile.lower()
     steps = _run_steps(dockerfile)
-    assert not [s for s in steps if "apt-get install" in s]
+    installs = [s for s in steps if "apt-get install" in s]
+    assert len(installs) == 1 and "--no-install-recommends postgresql-client" in installs[0]
+    assert "rm -rf /var/lib/apt/lists/*" in installs[0]
     (deps,) = [s for s in steps if "-r /tmp/hubzoid-src/requirements" in s]
     assert "requirements.lock" in deps and "pytorch" not in deps
     assert '--no-deps /tmp/hubzoid-src' in dockerfile

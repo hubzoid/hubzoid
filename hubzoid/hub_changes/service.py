@@ -110,6 +110,15 @@ def _can(hub_dir: Path, email: str, permission: str) -> bool:
         return False
 
 
+def _writable(hub_dir: Path) -> None:
+    """A hosted hub's files come from its image (HUBZOID_DATA_DIR): a change
+    written here would be lost on the next deploy."""
+    from .. import datadir
+
+    if datadir.hub_read_only(hub_dir):
+        raise ChangeError(datadir.READ_ONLY, code="hub_read_only", status=409)
+
+
 def can_review(hub_dir: Path, email: str) -> bool:
     return _can(hub_dir, email, REVIEW_PERMISSION)
 
@@ -270,6 +279,7 @@ def propose(hub_dir: Path, *, title: str, edits: list[dict], actor: str, via: st
     """Save a proposal. A hub manager's change to knowledge/ only, made by a
     person who is there, is applied at once."""
     actor = (actor or "").strip().lower()
+    _writable(hub_dir)
     if not can_propose(hub_dir, actor):
         raise ChangeError("You can't propose changes to this hub. An admin can give you Save shared knowledge.",
                           code="permission_denied", status=403)
@@ -303,6 +313,8 @@ def decide(hub_dir: Path, change_id: int, *, actor: str, decision: str, expected
     ch = get(hub_dir, change_id)
     if ch is None:
         raise ChangeError(f"There is no change #{change_id}.", code="not_found", status=404)
+    if decision == "approve":
+        _writable(hub_dir)
     if not can_review(hub_dir, actor):
         raise ChangeError("Only someone who manages this hub can apply or reject changes.",
                           code="permission_denied", status=403)
@@ -326,7 +338,9 @@ def write_lock(hub_dir: Path):
     """The hub write lock: hub changes and scheduled-task commits take turns."""
     from .. import _file_lock
 
-    path = Path(hub_dir) / ".hubzoid" / "hub-write.lock"
+    from ..datadir import state
+
+    path = state(hub_dir) / "hub-write.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+b") as fh:
         _file_lock.lock(fh)
@@ -444,6 +458,7 @@ def _publish(hub_dir: Path) -> tuple[str | None, str | None]:
 
 def apply(hub_dir: Path, change_id: int, *, actor: str, note: str | None = None) -> dict:
     hub_dir = Path(hub_dir)
+    _writable(hub_dir)
     with write_lock(hub_dir):
         ch = get(hub_dir, change_id)
         if ch is None or ch["status"] not in ("pending", "applying"):

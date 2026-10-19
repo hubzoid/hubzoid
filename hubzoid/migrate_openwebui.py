@@ -46,6 +46,8 @@ from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+
+from . import datadir
 from typing import Any, Iterator
 
 import typer
@@ -288,7 +290,7 @@ def _operational_url(hub_dir: Path, env) -> str:
             raise MigrationBlocked("HUBZOID_OPERATIONAL_DB differs from the registered deployment.")
         return configured
     return explicit or (env.get("DATABASE_URL") or "").strip() or \
-        f"sqlite:///{Path(hub_dir).resolve() / '.hubzoid' / 'hub.db'}"
+        f"sqlite:///{datadir.state(Path(hub_dir).resolve()) / 'hub.db'}"
 
 
 def _hub_env(hub: Path) -> dict[str, str]:
@@ -325,7 +327,7 @@ def locate(path: Path, *, owui_db: str | None = None, operational_db: str | None
         raise MigrationBlocked(f"{path} is not a folder.")
     entry = path
     gateway_manifest = path / "deployment.json"
-    if gateway_manifest.is_file() and not (path / ".hubzoid" / "deployment.json").is_file():
+    if gateway_manifest.is_file() and not (datadir.state(path) / "deployment.json").is_file():
         try:
             data = json.loads(gateway_manifest.read_text())
         except (OSError, ValueError):

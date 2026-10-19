@@ -83,7 +83,9 @@ def find_breaches(events: list[dict], limits: dict) -> list[dict]:
 
 @step()
 def write_report(window_end: str, results: list[dict]) -> str:
-    out = HUB_DIR / "output" / "watchtower"
+    from hubzoid.datadir import root  # HUBZOID_DATA_DIR on a hosted hub, else the hub
+
+    out = root(HUB_DIR) / "output" / "watchtower"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{window_end[:16].replace(':', '')}.md"
     lines = [f"# Watchtower report, window ending {window_end}", ""]

@@ -177,6 +177,10 @@ def apply(hub_dir, text_: str, *, expected_revision: str | None, actor: str = ""
 
     from .work_items import store
 
+    from . import datadir
+
+    if datadir.hub_read_only(hub_dir):
+        raise BudgetError("hub_read_only", datadir.READ_ONLY, status=409)
     new = parse(text_)
     path = Path(hub_dir) / FILE
     with store.locked(hub_dir, f"budgets-file:{Path(hub_dir).name}"):

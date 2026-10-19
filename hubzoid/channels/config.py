@@ -392,6 +392,13 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)
+    from .. import datadir
+
+    # The active configuration is the revision in the database. An image-built
+    # hub keeps it there (the data folder) and writes no file into its image,
+    # where a redeploy would undo it: `hubzoid channels export` gives the file
+    # to commit.
+    image_built = datadir.hub_read_only(hub_dir)
     status = "enabled" if cfg.enabled else "disabled"
     with store.locked(hub_dir, f"channel:{hub}:{cfg.id}") as conn:
         out = store.put_connection(conn, hub=hub, cid=cfg.id, provider=cfg.provider, config=norm,
@@ -399,13 +406,14 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
                                    file_path=str(path.relative_to(hub_dir)) if path.is_relative_to(hub_dir)
                                    else str(path), actor=actor)
         try:
-            _write_atomic(path, body)
+            if not image_built:
+                _write_atomic(path, body)
         except OSError as exc:
             raise ChannelError("hub_read_only", f"Cannot write {path}: {exc.strerror}. The hub folder must "
                                "be writable to apply channel changes.", status=503) from exc
     audit(hub_dir, actor, "channel_apply", f"{cfg.id}@{out['revision']}")
     return {"id": cfg.id, "revision": out["revision"], "status": status, "created": out["created"],
-            "file": str(path), "digest": digest}
+            "file": str(path), "digest": digest, "file_written": not image_built}
 
 
 def export(hub_dir, cid: str) -> dict:

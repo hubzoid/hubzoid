@@ -306,6 +306,9 @@ def test_database_passwords_are_left_out_unless_asked(tmp_path, monkeypatch):
     manifest["hubs"][1]["dbos_url"] = "postgresql://hz@127.0.0.1:1/dbos?sslmode=require&password=s3cret"
     (gw / "deployment.json").write_text(json.dumps(manifest, indent=2))
     monkeypatch.setattr(bk, "running_runs", lambda plan, unknown=None: [])
+    dumped = []                                       # the databases themselves are not running here
+    monkeypatch.setattr(bk, "_pg_dump", lambda url, dest: (dumped.append(url), dest.write_bytes(b"PGDMP")))
+    monkeypatch.setattr(bk, "_pg_run", lambda *a, **k: None)
 
     def holds_password(archive: Path) -> bool:
         with tarfile.open(archive) as t:
@@ -330,11 +333,12 @@ def test_database_passwords_are_left_out_unless_asked(tmp_path, monkeypatch):
     assert holds_password(tmp_path / "all.tar.gz")
 
 
-def test_postgres_is_named_not_copied(tmp_path, monkeypatch):
+def test_postgres_is_planned_as_a_dump(tmp_path, monkeypatch):
     hub = _hub(tmp_path)
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", "postgresql://hz:pw@db:5432/hubzoid")
     p = bk.plan(hub)
     assert p.external == ["postgresql://hz:***@db:5432/hubzoid"]
+    assert p.postgres == {"postgresql://hz:pw@db:5432/hubzoid": ["operational"]}
 
 
 def _crafted(tmp_path: Path, roots: list[dict], files: dict[str, bytes], sqlite=()) -> Path:

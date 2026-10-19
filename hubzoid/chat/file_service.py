@@ -315,7 +315,7 @@ class FileService:
     def _staging(self, upload_id: str) -> Path:
         from ..control import deploy
 
-        p = deploy.root(self.hub_dir) / ".hubzoid" / "files-staging"
+        p = deploy.state_root(self.hub_dir) / ".hubzoid" / "files-staging"
         p.mkdir(parents=True, exist_ok=True)
         return p / upload_id
 

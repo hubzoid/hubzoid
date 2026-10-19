@@ -400,7 +400,7 @@ class ImportStore:
     def __init__(self, hub_dir: Path):
         from ..control import deploy
 
-        self.root = deploy.root(Path(hub_dir)) / ".hubzoid" / "imports"
+        self.root = deploy.state_root(Path(hub_dir)) / ".hubzoid" / "imports"
 
     def save(self, actor_id: str, data: bytes, fmt: str, objects: list[dict]) -> dict:
         pid = str(uuid.uuid4())

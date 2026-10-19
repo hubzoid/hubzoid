@@ -775,6 +775,7 @@ export const en = {
   workspace: {
     hubContext: (name: string) => `Files from ${name}`,
     elsewhere: "The selected agent lives in a different hub. Edit its instructions in that hub folder with Claude Code or Codex. The files below belong to the hub named above.",
+    readOnly: "This agent's files come from its Git repository, so they are read-only here. Change them in Git and redeploy.",
     files: "Files",
     openapi: "OpenAPI actions",
     kinds: { agent: "Agent instructions", skill: "Skills", prompt: "Shared prompts" } as Record<string, string>,
