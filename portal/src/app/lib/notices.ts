@@ -26,8 +26,6 @@ const prefs = { desktop: false, sound: false };
 const emit = () => listeners.forEach((l) => l());
 
 export function noticeLabel(kind: string) {
-  if (kind === "space.mention") return t.notices.mention;
-  if (kind === "calendar.reminder") return t.notices.reminder;
   return kind === "run.failed" ? t.notices.failed : kind === "run.interrupted" ? t.notices.interrupted : t.notices.completed;
 }
 

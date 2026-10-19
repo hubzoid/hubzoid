@@ -7,6 +7,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { DropdownMenu as Menu, Popover } from "radix-ui";
 import { enc, get, hubUrl, post, put } from "../lib/api";
+import { navigate } from "../lib/router";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -23,6 +24,7 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  BookOpen,
   Braces,
   Check,
   ChevronDown,
@@ -635,6 +637,10 @@ function PlusMenu({ disabled, web, onWeb }: { disabled: boolean; web: boolean | 
           <Menu.Item className="hz-menu-item" onSelect={() => setPanel("prompt")}>
             <Braces size={15} aria-hidden />
             {t.chat.promptShort}
+          </Menu.Item>
+          <Menu.Item className="hz-menu-item" onSelect={() => navigate("/settings#/me/sources")}>
+            <BookOpen size={15} aria-hidden />
+            {t.chat.sourcesShort}
           </Menu.Item>
           {web !== null && (
             <>

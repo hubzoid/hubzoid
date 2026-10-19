@@ -106,6 +106,8 @@ def test_session_says_whether_the_console_opens(hub, monkeypatch):
         c = client(hub)
         sign_in(c, email=email)
         seen[email] = me(c)["console"]
+        # Only people who manage the deployment see the Hubzoid version (Settings).
+        assert ("version" in me(c)) is people[email]
     assert seen == people
 
     def unavailable(self, actor):

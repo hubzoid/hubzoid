@@ -166,12 +166,16 @@ def _console(hub_dir: Path, user: AuthUser) -> bool:
 def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     """The signed-in person for the web app: the public fields, how this
     session signed in, whether there is a password to change, and whether the
-    Console opens for them."""
+    Console opens for them. People who manage the deployment also see the
+    Hubzoid version, in Settings."""
+    from .. import __version__
+
     row = users.get(hub_dir, user.id) or {}
+    console = _console(hub_dir, user)
     return {**user.public(), "method": user.method,
             "password_enabled": bool(row.get("password_enabled")),
             "has_password": bool(row.get("has_password")),
-            "console": _console(hub_dir, user)}
+            "console": console, **({"version": __version__} if console else {})}
 
 
 def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:  # noqa: ARG001 — ctx is for other parts

@@ -1,10 +1,11 @@
-// A full page beside the sidebar (Sources, Spaces): a title, an optional line
-// under it, actions on the right, and the page's own content below.
-import { useEffect, type ReactNode } from "react";
+// A page's frame: a title, an optional line under it, actions on the right,
+// and the page's own content below. Inside Settings it is a section heading.
+import { useContext, useEffect, type ReactNode } from "react";
 import { Menu as MenuIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { IconButton } from "../components/ui";
+import { InSettings } from "./SettingsFrame";
 
 export function PageFrame({ title, description, actions, wide, children }: {
   title: string;
@@ -14,9 +15,23 @@ export function PageFrame({ title, description, actions, wide, children }: {
   children: ReactNode;
 }) {
   const app = useApp();
+  const embedded = useContext(InSettings);
   useEffect(() => {
-    document.title = `${title} · ${app.brandName}`;
-  }, [title, app.brandName]);
+    if (!embedded) document.title = `${title} · ${app.brandName}`;
+  }, [title, app.brandName, embedded]);
+  if (embedded)
+    return (
+      <>
+        <div className="hz-set-head flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2>{title}</h2>
+            {description && <p>{description}</p>}
+          </div>
+          {actions && <div className="flex flex-none items-center gap-2">{actions}</div>}
+        </div>
+        {children}
+      </>
+    );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-2 sm:px-4 lg:hidden">

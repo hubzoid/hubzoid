@@ -1,5 +1,5 @@
 // The bell at the foot of the sidebar: a dot for anything unread, and a small
-// inbox of replies that finished elsewhere, mentions and reminders. Opening a
+// inbox of replies that finished elsewhere. Opening a
 // notice marks it read; opening the inbox alone does not.
 import { useState } from "react";
 import { Bell, MoreHorizontal } from "lucide-react";

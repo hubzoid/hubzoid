@@ -1,14 +1,16 @@
 // One Settings page for everything personal and, for people who manage the
 // deployment, everything about the team: a section list on the left and the
 // section on the right, inside the chat shell. Personal sections are the chat
-// app's own; team sections show the management screens (agents, people,
-// activity, schedules, chat defaults, brand, health) without their own
-// navigation. The URL hash names the section, so links and Back work.
+// app's own (Sources among them); team sections show the management screens
+// (agents, people, activity, schedules, chat defaults, brand, health) without
+// their own navigation, and Agent instructions for administrators. The URL
+// hash names the section, so links and Back work.
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowLeft,
   Bell,
+  BookOpen,
   Bot,
   CalendarClock,
   Database,
@@ -17,11 +19,14 @@ import {
   Menu as MenuIcon,
   MessageSquare,
   Palette,
+  PencilRuler,
   Plug,
   Search,
   Sparkles,
+  Star,
   UserRound,
   UsersRound,
+  X,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { post } from "../lib/api";
@@ -34,6 +39,8 @@ import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm 
 import { InSettings, Section } from "./SettingsFrame";
 
 const ConnectionsPage = lazy(() => import("./ConnectionsPage"));
+const SourcesPage = lazy(() => import("./SourcesPage"));
+const WorkspacePage = lazy(() => import("./WorkspacePage"));
 const ConsoleEmbed = lazy(() => import("../../ConsoleEmbed"));
 
 type Key =
@@ -41,6 +48,7 @@ type Key =
   | "appearance"
   | "notifications"
   | "connections"
+  | "sources"
   | "data"
   | "my-schedules"
   | "agents"
@@ -48,10 +56,13 @@ type Key =
   | "activity"
   | "schedules"
   | "chat"
+  | "instructions"
   | "brand"
   | "health";
 
-type Item = { key: Key; label: string; icon: ReactNode; hash: string; team?: boolean; keywords?: string };
+/** `team`: for people who manage the deployment; `admin`: administrators only
+ *  (the chat app's own section rather than a management screen). */
+type Item = { key: Key; label: string; icon: ReactNode; hash: string; team?: boolean; admin?: boolean; keywords?: string };
 
 const S = t.settingsPage;
 const ITEMS: Item[] = [
@@ -59,6 +70,7 @@ const ITEMS: Item[] = [
   { key: "appearance", label: S.appearance, icon: <Palette size={16} aria-hidden />, hash: "/me/appearance", keywords: "theme dark light text size spacing time zone" },
   { key: "notifications", label: S.notifications, icon: <Bell size={16} aria-hidden />, hash: "/me/notifications", keywords: "alerts sound desktop" },
   { key: "connections", label: S.connections, icon: <Plug size={16} aria-hidden />, hash: "/me/connections", keywords: "accounts github google sign in" },
+  { key: "sources", label: S.sources, icon: <BookOpen size={16} aria-hidden />, hash: "/me/sources", keywords: "collections documents knowledge files web pages citations" },
   { key: "data", label: S.data, icon: <Database size={16} aria-hidden />, hash: "/me/data", keywords: "import export archive delete" },
   { key: "my-schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/me/schedules", keywords: "reports timetable" },
   { key: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, hash: "/agents", team: true, keywords: "usage cost tokens connectors evals runs" },
@@ -66,6 +78,7 @@ const ITEMS: Item[] = [
   { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
+  { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
   { key: "brand", label: S.brand, icon: <Sparkles size={16} aria-hidden />, hash: "/settings/appearance", team: true, keywords: "logo colours colors name" },
   { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, keywords: "diagnostics support checks advanced compatibility" },
 ];
@@ -80,6 +93,7 @@ function keyFor(hash: string): Key | null {
   if (a === "activity" || a === "runs") return "activity";
   if (a === "schedules") return "schedules";
   if (a === "diagnostics") return "health";
+  if (a === "workspace") return "instructions";
   if (a === "settings") return b === "appearance" ? "brand" : b === "admin" || b === "parity" ? "health" : "chat";
   return null;
 }
@@ -103,7 +117,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const app = useApp();
   const hash = useHash();
   const team = app.isAdmin || !!app.user?.console;
-  const items = ITEMS.filter((i) => (i.team ? team : true)).filter((i) => !(team && i.key === "my-schedules"));
+  const items = ITEMS.filter((i) => (i.admin ? app.isAdmin : i.team ? team : true)).filter((i) => !(team && i.key === "my-schedules"));
   const [query, setQuery] = useState("");
   // ?section= (from links elsewhere in the app) becomes the hash.
   useEffect(() => {
@@ -176,6 +190,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
               </label>
               {nav("personal")}
               {nav("team")}
+              <About />
             </nav>
             <main className="hz-set-main" aria-label={current?.label}>
               <button type="button" className="hz-set-back" onClick={() => {
@@ -205,6 +220,12 @@ function Heading({ title, lede }: { title: string; lede?: string }) {
 
 function SectionBody({ item }: { item: Item }) {
   const app = useApp();
+  if (item.key === "instructions")
+    return (
+      <Suspense fallback={<PageSpinner />}>
+        <WorkspacePage agent={new URLSearchParams(location.hash.split("?")[1] ?? "").get("agent")} />
+      </Suspense>
+    );
   if (item.team)
     return (
       <Suspense fallback={<PageSpinner />}>
@@ -256,6 +277,12 @@ function SectionBody({ item }: { item: Item }) {
           </Suspense>
         </>
       );
+    case "sources":
+      return (
+        <Suspense fallback={<PageSpinner />}>
+          <SourcesPage />
+        </Suspense>
+      );
     case "data":
       return (
         <>
@@ -275,6 +302,56 @@ function SectionBody({ item }: { item: Item }) {
     default:
       return null;
   }
+}
+
+const STAR_KEY = "hz.settings.hideStar";
+const REPO = "https://github.com/hubzoid/hubzoid";
+
+/** For people who manage the deployment: the Hubzoid version, and a quiet
+ *  invitation to star the project. Each person can hide the star (in this
+ *  browser); `hidden_features: [github_star]` in the brand hides it for all. */
+function About() {
+  const app = useApp();
+  const version = app.user?.version;
+  const off = app.branding.manifest?.presentation?.hidden_features?.includes("github_star") ?? false;
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(STAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (!version) return null;
+  return (
+    <div className="hz-set-about">
+      {!off && !hidden && (
+        <div className="hz-set-star">
+          <a href={REPO} target="_blank" rel="noreferrer">
+            <Star size={13} aria-hidden />
+            {S.star}
+          </a>
+          <button
+            type="button"
+            aria-label={S.hideStar}
+            title={S.hideStar}
+            onClick={() => {
+              setHidden(true);
+              try {
+                localStorage.setItem(STAR_KEY, "1");
+              } catch {
+                /* hidden for this visit only */
+              }
+            }}
+          >
+            <X size={12} aria-hidden />
+          </button>
+        </div>
+      )}
+      <a className="hz-set-version" href={`${REPO}/releases/tag/v${version}`} target="_blank" rel="noreferrer">
+        {S.version(version)}
+      </a>
+    </div>
+  );
 }
 
 function SignOut() {

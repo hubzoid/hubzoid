@@ -68,7 +68,7 @@ export function setLeaveGuard(fn: (() => boolean) | null) {
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
   if (leaveGuard && !leaveGuard()) return;
-  if (!isAppPath(to.split("?")[0])) {
+  if (!isAppPath(to.split(/[?#]/)[0])) {
     if (options.replace) location.replace(to);
     else location.assign(to);
     return;
@@ -107,7 +107,6 @@ export type Route =
   | { name: "sources" }
   | { name: "workspace" }
   | { name: "settings"; section: string | null }
-  | { name: "spaces"; id: string | null; tab: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
 
@@ -133,8 +132,6 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
   if (parts[0] === "workspace" && parts.length === 1) return { name: "workspace" };
   if (parts[0] === "settings" && parts.length === 1) return { name: "settings", section: search.get("section") };
-  if (parts[0] === "spaces" && parts.length <= 2)
-    return { name: "spaces", id: parts[1] ?? null, tab: search.get("tab") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
     if (parts[1] === "connections" && parts.length === 2)

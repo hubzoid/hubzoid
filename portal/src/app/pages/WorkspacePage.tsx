@@ -17,11 +17,12 @@ type Draft = { id: string; path: string; kind: string; state: string; revision: 
   content: string; diff: string; problems: { code: string; message: string; field?: string }[]; note: string | null };
 type Version = { version_id: string; sha256: string; published_by: string; published_at: number; current: boolean };
 
-export default function WorkspacePage() {
+/** `agent`: open that agent's instructions when this hub holds them. */
+export default function WorkspacePage({ agent = null }: { agent?: string | null }) {
   const [tab, setTab] = useState<"files" | "openapi">("files");
   return (
-    <PageFrame title={t.workspace.title} description={t.workspace.description} wide>
-      <nav className="mb-5 flex gap-1 border-b border-line" aria-label={t.workspace.title}>
+    <PageFrame title={t.settingsPage.instructions} description={t.settingsPage.instructionsLede} wide>
+      <nav className="mb-5 flex gap-1 border-b border-line" aria-label={t.settingsPage.instructions}>
         {(["files", "openapi"] as const).map((k) => (
           <button key={k} type="button" onClick={() => setTab(k)} aria-current={tab === k ? "page" : undefined}
             className={cx("-mb-px border-b-2 px-3 pb-2 pt-1 text-[13px] font-medium",
@@ -30,26 +31,32 @@ export default function WorkspacePage() {
           </button>
         ))}
       </nav>
-      {tab === "files" ? <Files /> : <OpenApi />}
+      {tab === "files" ? <Files agent={agent} /> : <OpenApi />}
     </PageFrame>
   );
 }
 
-function Files() {
+function Files({ agent }: { agent: string | null }) {
   const [files, setFiles] = useState<FileItem[] | null>(null);
+  const [elsewhere, setElsewhere] = useState(false);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<null | "skill" | "prompt">(null);
   const load = useCallback(async () => {
     try {
-      setFiles((await get<{ items: FileItem[] }>(`${A}/files`)).items);
+      const got = await get<{ items: FileItem[]; hub?: string }>(`${A}/files`);
+      setFiles(got.items);
       setDrafts((await get<{ items: Draft[] }>(`${A}/drafts`)).items);
+      // From an agent's page: its instructions, when this hub is that agent.
+      if (agent && got.hub && agent.toLowerCase() === got.hub) {
+        setSelected((s) => s ?? (got.items.some((f) => f.path === "AGENTS.md") ? "AGENTS.md" : null));
+      } else if (agent) setElsewhere(true);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 403 ? t.workspace.denied : describeError(e));
       setFiles([]);
     }
-  }, []);
+  }, [agent]);
   useEffect(() => void load(), [load]);
   const groups = useMemo(() => ({
     agent: (files ?? []).filter((f) => f.kind === "agent"),
@@ -58,6 +65,8 @@ function Files() {
   }), [files]);
   if (error) return <Notice tone="error">{error}</Notice>;
   return (
+    <>
+    {elsewhere && <Notice tone="info" className="mb-4">{t.workspace.elsewhere}</Notice>}
     <div className="grid gap-5 md:grid-cols-[240px_1fr]">
       <div className="space-y-4">
         {(["agent", "skill", "prompt"] as const).map((kind) => (
@@ -89,11 +98,12 @@ function Files() {
           <Editor key={selected} path={selected} draft={drafts.find((d) => d.path === selected && d.state !== "published") ?? null}
             onChanged={load} />
         ) : (
-          <div className="hz-card text-[13px] text-mute">{t.workspace.pick}</div>
+          <div className="hz-card p-4 text-[13px] text-mute">{t.workspace.pick}</div>
         )}
       </div>
       <NewFile kind={creating} onClose={() => setCreating(null)} onCreated={async (path) => { setCreating(null); await load(); setSelected(path); }} />
     </div>
+    </>
   );
 }
 
@@ -160,7 +170,7 @@ function Editor({ path, draft: initial, onChanged }: { path: string; draft: Draf
   };
   if (!draft)
     return (
-      <div className="hz-card">
+      <div className="hz-card p-4">
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{path}</span>
           <Button size="sm" variant="primary" icon={<FilePlus2 size={13} aria-hidden />} loading={busy}
@@ -172,7 +182,7 @@ function Editor({ path, draft: initial, onChanged }: { path: string; draft: Draf
   const dirty = text !== draft.content;
   const editable = draft.state === "draft" || draft.state === "rejected";
   return (
-    <div className="hz-card space-y-3">
+    <div className="hz-card space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{path}</span>
         <span className="hz-pill">{t.workspace.states[draft.state] ?? draft.state}</span>
@@ -290,7 +300,7 @@ function OpenApi() {
       <Button size="sm" variant="primary" disabled={!raw.trim()} onClick={() => void run()}>{t.workspace.validate}</Button>
       {error && <Notice tone="error">{error}</Notice>}
       {ops && (
-        <div className="hz-card space-y-2">
+        <div className="hz-card space-y-2 p-4">
           <div className="text-[12.5px] font-semibold text-ink">{t.workspace.operations(ops.length)}</div>
           {ops.map((o) => (
             <label key={o.operation_id} className="flex items-center gap-2 text-[12.5px]">

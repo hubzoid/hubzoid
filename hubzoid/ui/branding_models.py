@@ -161,7 +161,7 @@ class Announcement(_Strict):
 
 
 HIDEABLE = ("connections", "schedules", "console_link", "sharing", "files", "voice",
-            "models", "spaces", "feedback")
+            "models", "feedback", "github_star")
 
 
 class Presentation(_Strict):

@@ -1,4 +1,4 @@
-import { Button, Breadcrumb, Tabs } from "antd";
+import { Button, Breadcrumb, Space, Tabs } from "antd";
 import type { Hub, Me } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
 import { AgentAvatar, PageHeader } from "../components/common";
@@ -16,6 +16,7 @@ export function AgentDetail({
   me,
   tab,
   rest,
+  embedded = false,
 }: {
   hub: Hub;
   hubs: Hub[];
@@ -23,6 +24,8 @@ export function AgentDetail({
   tab: AgentTab;
   /** Remaining route segments after the tab (workflow and run id, or an eval run). */
   rest: string[];
+  /** Inside the chat app's Settings, where Agent instructions also lives. */
+  embedded?: boolean;
 }) {
   return (
     <>
@@ -38,9 +41,14 @@ export function AgentDetail({
         }
         description="Who can use it, what it connects to, its workflows, quality checks and activity."
         extra={
-          hub.can_chat && hub.model_id ? (
-            <Button href={`/?models=${encodeURIComponent(hub.model_id)}`}>Open chat</Button>
-          ) : undefined
+          <Space>
+            {embedded && me.org_admin && (
+              <Button href={`/settings#/workspace?agent=${encodeURIComponent(hub.key)}`}>Edit instructions</Button>
+            )}
+            {hub.can_chat && hub.model_id && (
+              <Button href={`/?models=${encodeURIComponent(hub.model_id)}`}>Open chat</Button>
+            )}
+          </Space>
         }
       />
       <Tabs

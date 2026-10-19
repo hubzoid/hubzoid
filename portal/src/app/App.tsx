@@ -30,9 +30,6 @@ const SharePage = lazy(() => import("./pages/SharePage"));
 const SignInPage = lazy(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
-const SourcesPage = lazy(() => import("./pages/SourcesPage"));
-const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
-const SpacesPage = lazy(() => import("./pages/SpacesPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const BrandPreviewPage = lazy(() => import("./pages/BrandPreviewPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
@@ -323,9 +320,8 @@ export default function App() {
     );
   else if (route.name === "settings") page = <SettingsPage section={route.section} />;
   else if (route.name === "account") page = <RedirectTo to="/settings#/me/profile" />;
-  else if (route.name === "sources") page = <SourcesPage />;
-  else if (route.name === "workspace") page = <WorkspacePage />;
-  else if (route.name === "spaces") page = <SpacesPage spaceId={route.id} tab={route.tab} />;
+  else if (route.name === "sources") page = <RedirectTo to="/settings#/me/sources" />;
+  else if (route.name === "workspace") page = <RedirectTo to="/settings#/workspace" />;
   else if (route.name === "connections")
     page = <ConnectionsPage connected={route.connected} connector={route.connector} error={route.error} />;
   else page = <NotFoundPage />;

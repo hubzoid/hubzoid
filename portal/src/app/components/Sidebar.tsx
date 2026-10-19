@@ -8,7 +8,6 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
-  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -23,7 +22,6 @@ import {
   MoreHorizontal,
   PanelLeft,
   Pencil,
-  PencilRuler,
   Pin,
   PinOff,
   Plus,
@@ -33,7 +31,6 @@ import {
   SquarePen,
   Sun,
   Trash2,
-  UsersRound,
   X,
 } from "lucide-react";
 import { t } from "../i18n/en";
@@ -129,17 +126,6 @@ function Rail({ route }: { route: Route["name"] }) {
       <IconButton label={t.sidebar.search} onClick={sidebarState.openSearch}>
         <Search size={17} aria-hidden />
       </IconButton>
-      <IconButton label={t.sources.nav} onClick={go("/sources")} aria-current={route === "sources" ? "page" : undefined}>
-        <BookOpen size={17} aria-hidden />
-      </IconButton>
-      <IconButton label={t.spaces.nav} onClick={go("/spaces")} aria-current={route === "spaces" ? "page" : undefined}>
-        <UsersRound size={17} aria-hidden />
-      </IconButton>
-      {app.isAdmin && (
-        <IconButton label={t.workspace.nav} onClick={go("/workspace")} aria-current={route === "workspace" ? "page" : undefined}>
-          <PencilRuler size={17} aria-hidden />
-        </IconButton>
-      )}
       <span className="flex-1" />
       <NotificationsButton />
       <IconButton label={t.account.settings} onClick={go("/settings")} aria-current={route === "settings" ? "page" : undefined}>
@@ -437,9 +423,6 @@ function SidebarBody({
           testId="new-chat"
         />
         <NavRow icon={<Search size={16} aria-hidden />} label={t.sidebar.searchPlaceholder} onClick={sidebarState.openSearch} hint={mac ? "⌘K" : "Ctrl K"} testId="open-search" />
-        <NavRow icon={<BookOpen size={16} aria-hidden />} label={t.sources.nav} href="/sources" current={route === "sources"} />
-        <NavRow icon={<UsersRound size={16} aria-hidden />} label={t.spaces.nav} href="/spaces" current={route === "spaces"} />
-        {app.isAdmin && <NavRow icon={<PencilRuler size={16} aria-hidden />} label={t.workspace.nav} href="/workspace" current={route === "workspace"} />}
       </div>
 
       <div className="hz-side-scroll" aria-busy={list.loading || undefined}>

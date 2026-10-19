@@ -50,7 +50,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
             label={`Open ${hub.name}`}
           />
         );
-      else screen = <AgentDetail hub={hub} hubs={list} me={me} tab={tab} rest={rest.slice(2)} />;
+      else screen = <AgentDetail hub={hub} hubs={list} me={me} tab={tab} rest={rest.slice(2)} embedded={embedded} />;
     }
   } else if (area === "runs") {
     active = "runs";
