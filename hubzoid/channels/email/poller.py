@@ -47,11 +47,18 @@ class Poller:
             self._thread.join(timeout=5)
 
     def _loop(self) -> None:
+        last = None
         while not self._stop.is_set():
             try:
                 poll_once(self.conn, owner=self.owner)
+                last = None
+            except ChannelError as exc:     # expected states (not connected, storage full): once per change
+                if exc.code != last:
+                    log.warning("channel %s: mail not read: %s (%s)", self.conn.id, exc.message, exc.code)
+                last = exc.code
             except Exception:  # noqa: BLE001 - logged; the next pass tries again
                 log.exception("channel %s: mail poll failed", self.conn.id)
+                last = None
             self._stop.wait(self.conn.settings.poll_seconds)
 
 
@@ -74,6 +81,21 @@ def poll_once(conn, *, owner: str = "cli") -> dict:
         return {"state": "paused", "messages": 0}
     if not _lease(conn, owner, max(60, conn.settings.poll_seconds * 2)):
         return {"state": "busy", "messages": 0}
+    try:
+        return _pass(conn)
+    finally:
+        _release(conn, owner)       # one pass at a time; between passes anyone may read
+
+
+def _release(conn, owner: str) -> None:
+    def release(state: dict):
+        lease = state.get("email_poll_lease") or {}
+        return ({"email_poll_lease": {}} if lease.get("owner") == owner else None), None
+
+    store.swap_connection_state(conn.hub_dir, conn.hub, conn.id, release)
+
+
+def _pass(conn) -> dict:
     cursor = (conn.state or {}).get("email_cursor")
     try:
         messages, new_cursor = transports.for_conn(conn).fetch_new(conn, cursor)

@@ -76,6 +76,13 @@ def run(conn: Connection, inputs: dict | None = None) -> dict:
             checks.append(Check(f"secret:{name}", "fail", exc.message, exc.code,
                                 f"hubzoid secrets set {conn.hub_dir} --ref {ref} --stdin --apply"))
     checks.append(_public_url_check(conn))
+    if conn.config.workflow:
+        from ..workflows.boot import schedules_enabled
+
+        if not schedules_enabled():
+            checks.append(Check("workflows", "fail", "Code workflows are off on this deployment, so work from this "
+                                "channel is recorded but never runs.", "workflows_off",
+                                "Set HUBZOID_SCHEDULES=1 in the hub's .env and restart the hub."))
     if conn.config.agent and not conn.config.allowed_groups:
         checks.append(Check("groups", "warn", "allowed_groups is empty, so nobody can start work from this "
                             "channel.", "no_groups", "List the groups whose members may ask, then apply."))

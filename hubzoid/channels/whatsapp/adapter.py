@@ -416,7 +416,13 @@ def receipt_for(conn, provider_message_id: str) -> dict | None:
 def _mode_checks(conn) -> list[Check]:
     from ...work_items import config as wconfig
 
-    mode = wconfig.mode_for(wconfig.load(conn.hub_dir), ["customer_reply.send"], conn.id)
+    from ...work_items.errors import WorkItemError
+
+    try:
+        mode = wconfig.mode_for(wconfig.load(conn.hub_dir), ["customer_reply.send"], conn.id)
+    except WorkItemError as exc:
+        return [Check("whatsapp:send_mode", "fail", exc.message, "invalid_config", "Fix work-items.yaml, then run "
+                      "hubzoid work-items config apply.")]
     if mode == "draft":
         return [Check("whatsapp:send_mode", "fail", "customer_reply.send is draft for this channel, but WhatsApp has "
                       "no drafts.", "draft_unsupported", f"Set write_mode_overrides.{conn.id}.customer_reply.send to "

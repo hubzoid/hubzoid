@@ -278,8 +278,13 @@ def _last_inbound(conn, origin: Origin) -> dict:
 def _mode_checks(conn) -> list[Check]:
     from ...work_items import config as wconfig
 
-    cfg = wconfig.load(conn.hub_dir)
-    mode = wconfig.mode_for(cfg, ["email.send"], conn.id)
+    from ...work_items.errors import WorkItemError
+
+    try:
+        mode = wconfig.mode_for(wconfig.load(conn.hub_dir), ["email.send"], conn.id)
+    except WorkItemError as exc:
+        return [Check("email:send_mode", "fail", exc.message, "invalid_config", "Fix work-items.yaml, then run "
+                      "hubzoid work-items config apply.")]
     verified = bool((conn.state or {}).get("email_draft_verified"))
     msg = {"off": "Replies are off: workflows cannot email senders.",
            "draft": "Replies are saved as drafts in the mailbox for a person to send." + (

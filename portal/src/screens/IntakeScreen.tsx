@@ -24,6 +24,7 @@ type Full = Item & { text: string; attachments: Attachment[] };
 type Page = { items: Item[]; next_cursor: string | null };
 
 const when = (t: number | null | undefined) => (t ? new Date(t * 1000).toLocaleString() : "");
+const size = (b: number) => (b < 1024 ? `${b} bytes` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 
 const STATE: Record<string, { label: string; color: string }> = {
   received: { label: "Received", color: "processing" },
@@ -190,7 +191,7 @@ function ItemView({ hub, id }: { hub: Hub; id: string }) {
                 ? <a href={`${base(hub)}/${encodeURIComponent(id)}/attachments/${encodeURIComponent(a.id)}`}>{a.filename}</a>
                 : a.filename },
               { title: "Type", dataIndex: "media_type" },
-              { title: "Size", render: (_, a) => `${Math.round((a.actual_bytes ?? a.declared_bytes ?? 0) / 1024)} KB` },
+              { title: "Size", render: (_, a) => size(a.actual_bytes ?? a.declared_bytes ?? 0) },
               { title: "State", render: (_, a) => <Tag color={a.state === "available" ? "green" : "red"}>{a.state}{a.error_code ? `: ${a.error_code}` : ""}</Tag> },
             ]}
           />

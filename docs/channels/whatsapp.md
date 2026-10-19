@@ -82,7 +82,7 @@ channel is `off` or `approve`:
 ```yaml
 version: 1
 write_modes:
-  customer_reply.send: off
+  customer_reply.send: "off"
 write_mode_overrides:
   whatsapp-desk:
     customer_reply.send: approve

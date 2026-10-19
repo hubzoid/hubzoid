@@ -828,3 +828,21 @@ def test_a_paused_release_goes_back_to_review(hub_dir, box, started, monkeypatch
         service.release(hub_dir, item["id"], actor="ops@desk.example", reason="ok", expected_revision=item["revision"])
     again = service.require(hub_dir, item["id"])
     assert again["state"] == "quarantined" and not again["decided_by"]
+
+
+def test_a_manual_read_right_after_a_background_pass_is_not_busy(hub_dir, box, started):
+    conn = imap_conn(hub_dir)
+    assert poller.poll_once(conn, owner="background")["state"] == "started"
+    box.deliver(message())
+    assert poller.poll_once(conn, owner="console")["messages"] == 1     # the lease ends with each pass
+
+
+def test_doctor_says_when_workflows_cannot_run(hub_dir, box, monkeypatch):
+    from hubzoid.channels import doctor
+
+    monkeypatch.delenv("HUBZOID_SCHEDULES", raising=False)
+    monkeypatch.delenv("HUBZOID_GATEWAY", raising=False)
+    checks = {c["id"]: c for c in doctor.run(imap_conn(hub_dir))["checks"]}
+    assert checks["workflows"]["code"] == "workflows_off"
+    monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
+    assert "workflows" not in {c["id"] for c in doctor.run(config.active(hub_dir, "orders-email"))["checks"]}
