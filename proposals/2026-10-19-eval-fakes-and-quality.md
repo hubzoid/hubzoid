@@ -25,7 +25,8 @@ discussion #62 (dummy tool results).
     the agent reads that it was blocked, and the case fails naming the call.
   - Fakes apply after the access check, so a refused person stays refused.
   - MCP servers are outside this layer, so a faked case on a hub with MCP
-    servers fails unless it says `allow_real_mcp: true`.
+    servers fails unless it says `allow_real_mcp: true`, and a person's own
+    connectors are left out of a faked case unless it says the same.
   - Outside a faked case nothing changes.
 - **Subfolders.** Cases may live in subfolders. A case's id is its path under
   `evals/` without `.md`. `_`, `.` and `fixtures/` are not cases.
@@ -37,8 +38,9 @@ discussion #62 (dummy tool results).
   - `quality/manifest.yaml` lists the cases (ids, globs or tags) a hub
     requires.
   - Doctor shows one row per required case: `ok`, `fail`, or `pending` when
-    it never ran or the case, or the hub's instructions, tools or settings,
-    changed since its last result.
+    it never ran, ran without its judge, or the case, or the hub's
+    instructions, tools, settings or non-secret configuration, changed since
+    its last result. A pending case keeps doctor from reporting ok.
   - Each result records the digest of its case file, and each run the digest
     of the hub.
 
