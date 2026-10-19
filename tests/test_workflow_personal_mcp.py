@@ -4,7 +4,7 @@ account, and only that account, on the `workflow` surface.
 The full path, not just the surface list: a workflow's `hub.call_agent` goes
 through the agent seam to `runtime.run_once`, which builds the hub's real
 runtime and binds the run's account on the `workflow` surface; the runtime's
-per-turn injection (`owui_mcp`) picks that person's Open WebUI session, checks
+per-turn injection (`personal_mcp`) picks that person's Open WebUI session, checks
 their `connector_<app>` grant, and connects to a real MCP HTTP server that
 answers only the bearers it knows and says whom it thinks it is serving.
 
@@ -20,7 +20,7 @@ import pytest
 from agents import RunConfig, RunContextWrapper
 from agents.tool_context import ToolContext
 
-from hubzoid import owui_mcp
+from hubzoid import personal_mcp
 from hubzoid.access import Identity, identity_scope
 from hubzoid.workflows import context as wctx
 from hubzoid.workflows.context import hub as wf_hub, run_scope
@@ -62,7 +62,7 @@ def team(tmp_path, monkeypatch, mail):
     gs = access.store_for(hub_dir)
     for who, uid in ((ALICE, "ua"), (BOB, "ub")):
         gs.upsert_identity(email=who, owui_id=uid)
-        gs.grant(who, hub_dir.name, owui_mcp.capability("mail"), actor="test")
+        gs.grant(who, hub_dir.name, personal_mcp.capability("mail"), actor="test")
     # The agent seam exactly as the bridge wires it (server.py).
     from hubzoid import runtime as agent_rt
 
@@ -146,7 +146,7 @@ def test_revoking_the_connector_grant_denies_the_next_run(team, probe):
     hub_dir, gs, *_ = team
     with _run_as(hub_dir, ALICE):
         wf_hub.call_agent("check my mail")
-        gs.revoke(ALICE, hub_dir.name, owui_mcp.capability("mail"), actor="admin@example.org")
+        gs.revoke(ALICE, hub_dir.name, personal_mcp.capability("mail"), actor="admin@example.org")
         wf_hub.call_agent("check my mail")                        # same run, next call
     assert probe.servers == [["my_mail"], []]
     assert probe.seen == [ALICE]
@@ -193,10 +193,10 @@ async def test_claude_and_codex_select_the_same_account_on_the_workflow_surface(
     hub_dir, gs, *_ = team
     for who, token in ((ALICE, "tok-alice"), (BOB, "tok-bob")):
         with identity_scope(Identity.make(who, surface="workflow")):
-            specs, allowed = owui_mcp.per_user_specs(hub_dir, Identity.make(who, surface="workflow"))
-            servers = owui_mcp.per_user_servers(hub_dir, Identity.make(who, surface="workflow"))
+            specs, allowed = personal_mcp.per_user_specs(hub_dir, Identity.make(who, surface="workflow"))
+            servers = personal_mcp.per_user_servers(hub_dir, Identity.make(who, surface="workflow"))
         assert set(specs) == {"my_mail"} and allowed == ["mcp__my_mail__*"]
         assert specs["my_mail"]["headers"]["Authorization"] == f"Bearer {token}"
         assert [s.headers["Authorization"] for s in servers] == [f"Bearer {token}"]
-    gs.revoke(BOB, hub_dir.name, owui_mcp.capability("mail"), actor="admin@example.org")
-    assert owui_mcp.per_user_specs(hub_dir, Identity.make(BOB, surface="workflow")) == ({}, [])
+    gs.revoke(BOB, hub_dir.name, personal_mcp.capability("mail"), actor="admin@example.org")
+    assert personal_mcp.per_user_specs(hub_dir, Identity.make(BOB, surface="workflow")) == ({}, [])

@@ -272,15 +272,6 @@ def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch):
     assert users.bootstrap_admin_from_env(hub) is None
     assert users.find_by_email(hub, "other@example.com") is None
 
-
-def test_bootstrap_falls_back_to_open_webui_names_and_ignores_the_local_owner(hub, monkeypatch):
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    users.ensure_local_owner(hub)  # from an earlier run with sign-in off
-    monkeypatch.setenv("WEBUI_ADMIN_EMAIL", "first@example.com")
-    monkeypatch.setenv("WEBUI_ADMIN_PASSWORD", "another good password")
-    assert users.bootstrap_admin_from_env(hub)["email"] == "first@example.com"
-
-
 @pytest.mark.parametrize("env", [
     {"HUBZOID_ADMIN_EMAIL": "a@example.com", "HUBZOID_ADMIN_PASSWORD": "short"},
     {"HUBZOID_ADMIN_EMAIL": "not-an-email", "HUBZOID_ADMIN_PASSWORD": "long enough pass"},

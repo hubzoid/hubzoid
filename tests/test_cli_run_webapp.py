@@ -1,8 +1,8 @@
-"""`hubzoid run` in the default mode: the Hubzoid web app, no Open WebUI.
+"""`hubzoid run`: the Hubzoid web app, the only interface since 2.0.
 
 Processes are never started: Popen is replaced and the readiness probe answers
-at once. Open WebUI mode (HUBZOID_UI=openwebui) is checked for the
-extra and for keeping its 1.0.x processes.
+at once. Open WebUI (1.x) settings and data are checked only to name them and
+stop or warn.
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ _WAIT_ANY = cli._wait_any
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch):
     # Never stamp branding into, or patch, an installed Open WebUI.
-    monkeypatch.setattr(branding, "static_dirs", lambda: [])
     monkeypatch.setattr(webui, "_patch_owui_suffix", lambda strip: None)
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
@@ -113,7 +112,6 @@ def test_default_mode_runs_bridge_and_edge_only(tmp_path, launched):
     edge = _edge(launched)
     assert edge["env"]["HUBZOID_EDGE_DEFAULT"] == "http://127.0.0.1:3802"  # every path to the bridge
     assert json.loads(edge["env"]["HUBZOID_EDGE_ROUTES"]) == []
-    assert edge["env"]["HUBZOID_UI"] == "hubzoid"
     assert edge["cmd"][edge["cmd"].index("--host") + 1] == "127.0.0.1"
     assert edge["cmd"][edge["cmd"].index("--port") + 1] == "3801"
     bridge = _bridge(launched)
@@ -185,9 +183,8 @@ def test_localhost_is_kept_as_typed(tmp_path, launched):
     assert bridge["HUBZOID_ALLOWED_ORIGINS"] == "https://tools.example.com,http://127.0.0.1:3801"
 
 
-@pytest.mark.parametrize("env", ["HUBZOID_PUBLIC_URL=https://hub.example.com\n", "WEBUI_URL=https://hub.example.com\n"])
-def test_a_configured_public_url_is_kept(tmp_path, launched, env):
-    result = _run(_hub(tmp_path, env))
+def test_a_configured_public_url_is_kept(tmp_path, launched):
+    result = _run(_hub(tmp_path, "HUBZOID_PUBLIC_URL=https://hub.example.com\n"))
     assert result.exit_code == 0, result.output
     bridge = _bridge(launched)
     assert bridge.get("HUBZOID_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
@@ -239,9 +236,8 @@ def test_network_host_allowed_when_explicitly_accepted(tmp_path, launched):
     assert edge["cmd"][edge["cmd"].index("--host") + 1] == "0.0.0.0"
 
 
-@pytest.mark.parametrize("flag", ["HUBZOID_AUTH=true", "WEBUI_AUTH=true"])
-def test_sign_in_allows_a_network_host(tmp_path, launched, flag):
-    result = _run(_hub(tmp_path, flag + "\n"), "--host", "0.0.0.0")
+def test_sign_in_allows_a_network_host(tmp_path, launched):
+    result = _run(_hub(tmp_path, "HUBZOID_AUTH=true\n"), "--host", "0.0.0.0")
     assert result.exit_code == 0, result.output
     assert "sign-in on" in result.output
 
@@ -337,8 +333,7 @@ def test_sign_in_with_an_unmigrated_open_webui_install_stops(tmp_path, launched)
     assert _flat(f"hubzoid migrate openwebui {hub}") in _flat(result.output)
     assert "dry run first" in out and _flat(f"hubzoid backup {hub}") in _flat(result.output)
     assert "stop the hub, and apply" in out
-    assert _flat('pip install "hubzoid[openwebui]"') in _flat(result.output)
-    assert "HUBZOID_UI=openwebui" in out
+    assert "stay on Hubzoid 1.x" in out
     assert launched == []
 
 
@@ -372,42 +367,6 @@ def test_an_empty_open_webui_database_is_not_an_install(tmp_path, launched):
 
 # ---------------------------------------------------------------------------
 # Open WebUI mode
-# ---------------------------------------------------------------------------
-def test_legacy_mode_without_the_extra_explains_how_to_install_it(tmp_path, launched, monkeypatch):
-    monkeypatch.setattr(webui, "_find_binary", lambda: None)
-    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"))
-    assert result.exit_code == 1
-    assert _flat('pip install "hubzoid[openwebui]"') in _flat(result.output)
-    assert "not installed" in " ".join(result.output.split())
-    assert launched == []
-
-
-def test_legacy_bridge_only_needs_no_extra(tmp_path, launched, monkeypatch):
-    monkeypatch.setattr(webui, "_find_binary", lambda: None)
-    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"), "--no-ui")
-    assert result.exit_code == 0, result.output
-
-
-def test_legacy_mode_keeps_open_webui_behind_the_edge(tmp_path, launched):
-    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\nMCP_SERVER=true\nMCP_PUBLIC_URL=http://127.0.0.1:3801/mcp\n"))
-    assert result.exit_code == 0, result.output
-    assert [c for c in launched if c["cmd"][0] == "/fake/open-webui"]
-    edge = _edge(launched)["env"]
-    assert edge["HUBZOID_EDGE_DEFAULT"] == f"http://127.0.0.1:{cli._owui_internal_port(3801)}"
-    prefixes = [r["prefix"] for r in json.loads(edge["HUBZOID_EDGE_ROUTES"])]
-    assert prefixes[:3] == ["/artifacts", "/portal", "/mcp"]
-    assert _bridge(launched)["OWUI_INTERNAL_URL"] == f"http://127.0.0.1:{cli._owui_internal_port(3801)}"
-    assert "Hubzoid is ready" not in result.output
-
-
-def test_legacy_mode_may_bind_the_network_without_hubzoid_sign_in(tmp_path, launched):
-    """1.0.x behaviour: Open WebUI has its own sign-in settings."""
-    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"), "--host", "0.0.0.0")
-    assert result.exit_code == 0, result.output
-
-
-# ---------------------------------------------------------------------------
-# Opening the browser
 # ---------------------------------------------------------------------------
 def test_browser_opens_on_the_ready_url(tmp_path, launched, monkeypatch):
     opened = []
@@ -588,32 +547,37 @@ def test_occupied_port_refuses_start_without_launching_children(tmp_path, monkey
     assert "unavailable" in result.output and option in result.output
     assert not started
 
-
-@pytest.mark.parametrize("code", [0, 1])
-def test_openwebui_exit_after_readiness_fails_the_standalone_run(tmp_path, monkeypatch, launched, code):
-    original = subprocess.Popen
-
-    def failing_ui(cmd, *args, **kwargs):
-        proc = original(cmd, *args, **kwargs)
-        if cmd[0] == "/fake/open-webui":
-            proc.poll.side_effect = [None, None, code, code, code]
-        return proc
-
-    monkeypatch.setattr(subprocess, "Popen", failing_ui)
-    monkeypatch.setattr(cli, "_wait_any", _WAIT_ANY)
-    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"))
-    assert result.exit_code == 1, result.output
-
-
-@pytest.mark.parametrize("mode", ["hubzoid", "openwebui"])
-def test_public_service_readiness_timeout_is_a_failure(tmp_path, monkeypatch, launched, mode):
+def test_public_service_readiness_timeout_is_a_failure(tmp_path, monkeypatch, launched):
     def readiness(proc, url, **kwargs):
         return kwargs.get('label', 'bridge') == 'bridge'
 
     monkeypatch.setattr(cli, '_wait_for_bridge', readiness)
-    result = _run(_hub(tmp_path, f"HUBZOID_UI={mode}\n"))
+    result = _run(_hub(tmp_path))
     assert result.exit_code == 1, result.output
     assert 'Hubzoid is ready' not in result.output
+
+
+@pytest.mark.parametrize("setting, native", [
+    ("WEBUI_AUTH=false", "HUBZOID_AUTH"),   # blank or false: still stops, never turns sign-in off
+    ("WEBUI_AUTH=", "HUBZOID_AUTH"),
+    ("WEBUI_URL=https://hub.example.com", "HUBZOID_PUBLIC_URL"),
+    ("WEBUI_ADMIN_EMAIL=owner@example.com", "HUBZOID_ADMIN_EMAIL"),
+    ("HUBZOID_UI=openwebui", "Hubzoid 1.x"),
+    ("HUBZOID_UI=legacy", "Hubzoid 1.x"),
+])
+def test_open_webui_settings_that_decide_sign_in_stop_the_start(tmp_path, launched, setting, native):
+    result = _run(_hub(tmp_path, f"HUBZOID_AUTH=true\n{setting}\n"))
+    assert result.exit_code == 2, result.output
+    out = " ".join(result.output.split())
+    assert setting.split("=")[0] in out and native in out
+    assert launched == []
+
+
+def test_other_open_webui_settings_are_named_but_do_not_stop_the_start(tmp_path, launched):
+    result = _run(_hub(tmp_path, "ENABLE_MEMORY=true\nOWUI_NATIVE_MCP=true\n"))
+    assert result.exit_code == 0, result.output
+    out = " ".join(result.output.split())
+    assert "ENABLE_MEMORY is an Open WebUI setting" in out and "OWUI_NATIVE_MCP" in out
 
 
 @pytest.mark.slow

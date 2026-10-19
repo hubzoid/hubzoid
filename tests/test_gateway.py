@@ -7,22 +7,13 @@ shared OWUI's connection env and the edge's per-hub artifact routes.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from typer.testing import CliRunner
 
 from hubzoid import cli, gateway
 from hubzoid.settings import Settings
-
-
-@pytest.fixture(autouse=True)
-def _legacy_ui(monkeypatch):
-    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui); the
-    web app mode is covered by tests/test_gateway_app*.py."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 def _settings(hub_dir: Path, bridge_port: int, keys=("k",), label=None) -> Settings:
@@ -31,7 +22,6 @@ def _settings(hub_dir: Path, bridge_port: int, keys=("k",), label=None) -> Setti
         model="claude-local",
         model_label=label,
         bridge_api_keys=tuple(keys),
-        webui_name=None,
         ui_port=3080,
         bridge_port=bridge_port,
         log_level="info",
@@ -48,21 +38,6 @@ def _loader(mapping: dict[str, Settings]):
 # ---------------------------------------------------------------------------
 # Planning
 # ---------------------------------------------------------------------------
-def test_plan_builds_aligned_connection_env(tmp_path):
-    sales, support = tmp_path / "sales", tmp_path / "support"
-    sales.mkdir(); support.mkdir()
-    load = _loader({
-        str(sales): _settings(sales, 8000, keys=("sales-key",), label="sales-agent"),
-        str(support): _settings(support, 8001, keys=("support-key",), label="support-agent"),
-    })
-    gp = gateway.plan([sales, support], load=load)
-    env = gp.connection_env()
-    assert env["ENABLE_OPENAI_API"] == "True"
-    assert env["OPENAI_API_BASE_URLS"] == "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1"
-    # Keys are positionally aligned with the URLs.
-    assert env["OPENAI_API_KEYS"] == "sales-key;support-key"
-
-
 def test_plan_edge_routes_namespace_per_hub(tmp_path):
     sales, support = tmp_path / "sales", tmp_path / "support"
     sales.mkdir(); support.mkdir()
@@ -72,14 +47,13 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
     })
     gp = gateway.plan([sales, support], load=load)
     routes = gp.edge_routes()
-    # /portal/api reaches each hub's own bridge in the legacy UI mode too, so the
-    # Console's eval redirect for a hub that is not first lands on its bridge.
-    assert routes == [
-        {"prefix": "/b/sales/artifacts", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/sales"},
-        {"prefix": "/b/sales/portal/api", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/sales"},
-        {"prefix": "/b/support/artifacts", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/support"},
-        {"prefix": "/b/support/portal/api", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/support"},
-    ]
+    # Each hub's artifacts, Console API, web app API and branding reach its own
+    # bridge, with the /b/<slug> prefix stripped.
+    expected = []
+    for slug, port in (("sales", 8000), ("support", 8001)):
+        expected += [{"prefix": f"/b/{slug}{part}", "upstream": f"http://127.0.0.1:{port}",
+                      "strip_prefix": f"/b/{slug}"} for part in ("/artifacts", "/portal/api", "/api", "/branding")]
+    assert routes == expected
 
 
 def test_plan_edge_routes_add_webhooks_for_inbound_hub(tmp_path):
@@ -187,41 +161,6 @@ def test_plan_dedupes_colliding_slugs(tmp_path):
     gp = gateway.plan([a, b], load=load)
     assert [x.slug for x in gp.backends] == ["hub", "hub-2"]
 
-
-def test_plan_captures_per_hub_identity(tmp_path):
-    """The plan carries each hub's display identity (name, description,
-    suggestions from AGENTS.md frontmatter, logo from branding/) so the
-    gateway can provision per-model config in Open WebUI."""
-    sales = tmp_path / "sales"
-    sales.mkdir()
-    (sales / "AGENTS.md").write_text(
-        "---\nname: Sales Agent\ndescription: Sales order helper\n"
-        "suggestions:\n  - How do I place an order?\n  - What is TDS?\n---\nbody"
-    )
-    (sales / "branding").mkdir()
-    (sales / "branding" / "logo.png").write_bytes(b"png-bytes")
-
-    gp = gateway.plan([sales], load=_loader({str(sales): _settings(sales, 8000)}))
-    b = gp.backends[0]
-    assert b.display_name == "Sales Agent"
-    assert b.description == "Sales order helper"
-    assert b.suggestions == ("How do I place an order?", "What is TDS?")
-    assert b.logo == sales / "branding" / "logo.png"
-
-
-def test_plan_identity_defaults_are_empty(tmp_path):
-    """A hub with no AGENTS.md frontmatter extras and no branding/ dir gets
-    safe empty defaults — never an error."""
-    a = tmp_path / "a"
-    a.mkdir()
-    gp = gateway.plan([a], load=_loader({str(a): _settings(a, 8000)}))
-    b = gp.backends[0]
-    assert b.display_name == "a"          # falls back to folder name
-    assert b.description == ""
-    assert b.suggestions == ()
-    assert b.logo is None
-
-
 def test_plan_rejects_duplicate_bridge_ports(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(); b.mkdir()
@@ -257,165 +196,6 @@ def test_plan_model_label_matches_bridge_derivation(tmp_path):
     # No AGENTS.md name: both sides must fall back identically.
     gp = gateway.plan([hub], load=_loader({str(hub): _settings(hub, 8000)}))
     assert gp.backends[0].model_label == server_slugify(_safe_id(hub.name))
-
-
-def test_connection_env_forward_headers_operator_override(tmp_path, monkeypatch):
-    """Identity forwarding defaults on (access control needs the email), but an
-    operator who explicitly turns it off in the environment keeps that choice —
-    connection_env must not hard-force it."""
-    sales = tmp_path / "sales"; sales.mkdir()
-    monkeypatch.setenv("ENABLE_FORWARD_USER_INFO_HEADERS", "false")
-    gp = gateway.plan([sales], load=_loader({str(sales): _settings(sales, 8000)}))
-    assert gp.connection_env()["ENABLE_FORWARD_USER_INFO_HEADERS"] == "false"
-
-
-# ---------------------------------------------------------------------------
-# CLI wiring
-# ---------------------------------------------------------------------------
-def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
-    sales, support = tmp_path / "sales", tmp_path / "support"
-    for h in (sales, support):
-        h.mkdir()
-        (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
-
-    fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
-        gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
-    ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
-
-    captured = {}
-
-    def fake_start_gateway(**kwargs):
-        captured["connection_env"] = kwargs["connection_env"]
-        proc = MagicMock()
-        proc._log_path = tmp_path / "log"
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-    from hubzoid import webui
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-
-    popen_calls = []
-
-    def fake_popen(cmd, env=None, **kw):
-        popen_calls.append({"cmd": cmd, "env": env or {}})
-        proc = MagicMock()
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
-    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
-    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
-    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
-    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-
-    result = CliRunner().invoke(
-        cli.app,
-        ["gateway", str(sales), str(support), "--public-url", "https://host", "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-
-    assert " ".join(result.output.lower().split()).count("gateway ready") == 1
-
-    # Shared OWUI got both bridges, positionally aligned.
-    conn = captured["connection_env"]
-    assert conn["OPENAI_API_BASE_URLS"] == "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1"
-    assert conn["OPENAI_API_KEYS"] == "sales-key;support-key"
-
-    # Two bridges launched headless on their ports.
-    bridge_cmds = [c["cmd"] for c in popen_calls if "run" in c["cmd"]]
-    assert len(bridge_cmds) == 2
-    for c in bridge_cmds:
-        assert "--no-ui" in c and "--bridge-port" in c
-
-    # Per-hub public URL injected into each bridge's env.
-    bridge_envs = [c["env"] for c in popen_calls if "run" in c["cmd"]]
-    pub_urls = sorted(e.get("HUBZOID_PUBLIC_URL", "") for e in bridge_envs)
-    assert pub_urls == ["https://host/b/sales", "https://host/b/support"]
-
-    # The edge got per-hub artifact routes.
-    edge_env = next(c["env"] for c in popen_calls if "hubzoid.edge:_factory" in c["cmd"])
-    assert "/b/sales/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
-    assert "/b/support/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
-    # Every bridge can serve the portal; the others take over when one is down.
-    import json
-    portal = next(r for r in json.loads(edge_env["HUBZOID_EDGE_ROUTES"]) if r["prefix"] == "/portal")
-    assert portal["upstream"] != portal["fallbacks"][0]
-    assert len(portal["fallbacks"]) == 1
-
-
-@pytest.mark.parametrize("database_url", [None, "postgresql+psycopg://test@localhost/shared"])
-def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_url):
-    """Each bridge is told where the SHARED gateway DB lives (HUBZOID_OWUI_DB),
-    so Open WebUI account lookups (API keys, personal connections) read the
-    gateway's webui.db, not the nonexistent per-hub .openwebui-data/webui.db."""
-    sales, support = tmp_path / "sales", tmp_path / "support"
-    if database_url:
-        monkeypatch.setenv("DATABASE_URL", database_url)
-        monkeypatch.setenv("DATABASE_SCHEMA", "shared_owui")
-    else:
-        monkeypatch.delenv("DATABASE_URL", raising=False)
-        monkeypatch.delenv("DATABASE_SCHEMA", raising=False)
-    for h in (sales, support):
-        h.mkdir()
-        (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
-
-    fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
-        gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
-    ))
-    def fake_plan_with_hub_env(hub_dirs, **kw):
-        # settings.load mutates the process environment during plan creation.
-        os.environ["DATABASE_URL"] = "postgresql+psycopg://wrong@localhost/wrong"
-        os.environ["DATABASE_SCHEMA"] = "wrong"
-        return fake_plan
-    monkeypatch.setattr(gateway, "plan", fake_plan_with_hub_env)
-
-    from hubzoid import webui
-
-    def fake_start_gateway(**kwargs):
-        assert os.environ.get("DATABASE_URL") == database_url
-        assert os.environ.get("DATABASE_SCHEMA") == ("shared_owui" if database_url else None)
-        proc = MagicMock()
-        proc._log_path = tmp_path / "log"
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-
-    popen_calls = []
-
-    def fake_popen(cmd, env=None, **kw):
-        popen_calls.append({"cmd": cmd, "env": env or {}})
-        proc = MagicMock()
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
-    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
-    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
-    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
-    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-
-    gwdata = tmp_path / "gwdata"
-    result = CliRunner().invoke(
-        cli.app,
-        ["gateway", str(sales), str(support), "--data-dir", str(gwdata), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-
-    expected = str(gwdata.resolve() / "webui.db")
-    bridge_envs = [c["env"] for c in popen_calls if "run" in c["cmd"]]
-    assert bridge_envs, "no bridges launched"
-    for e in bridge_envs:
-        assert e.get("HUBZOID_OWUI_DB") == expected
-        assert e.get("DATABASE_URL") == database_url
-    from hubzoid import deployment
-    manifest = deployment.read(sales)
-    assert manifest["owui_database_url"] == (database_url or f"sqlite:///{expected}")
-    assert manifest["owui_database_schema"] == ("shared_owui" if database_url else None)
-
 
 def _gateway_harness(tmp_path, monkeypatch):
     """Shared fake-process harness for gateway CLI wiring tests."""
@@ -455,267 +235,21 @@ def _gateway_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     return sales
 
-
-def test_gateway_provisions_when_admin_creds_set(tmp_path, monkeypatch):
-    """With HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD in the env AND auth on, the
-    gateway provisions per-hub OWUI entries after OWUI is up — passing each
-    hub's identity from the plan, and allowing first-admin bootstrap only on
-    a fresh data dir."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-
-    calls = {}
-
-    def fake_provision(*, base_url, email, password, hubs, allow_bootstrap, client=None):
-        calls.update(base_url=base_url, email=email, password=password,
-                     hubs=hubs, allow_bootstrap=allow_bootstrap)
-        return ["sales-agent: created (group 'sales' has read access)"]
-    monkeypatch.setattr(gwp, "provision", fake_provision)
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-    assert calls["email"] == "admin@org.com"
-    assert calls["password"] == "s3cret"
-    assert calls["allow_bootstrap"] is True    # fresh data dir: no webui.db yet
-    spec = calls["hubs"][0]
-    assert spec.model_id == "sales-agent"
-    assert spec.group == "sales"
-    assert spec.suggestions == ("How do I place an order?",)
-    assert "created" in result.output
-
-
-def test_gateway_no_bootstrap_on_established_data_dir(tmp_path, monkeypatch):
-    """A data dir that already has a webui.db is an established gateway: the
-    provisioner must not be allowed to create accounts there (a wrong password
-    should fail loudly, not quietly sign up a stray user)."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    gw = tmp_path / "gw"
-    gw.mkdir()
-    (gw / "webui.db").write_bytes(b"")   # established
-
-    calls = {}
-
-    def fake_provision(**kwargs):
-        calls.update(kwargs)
-        return []
-    monkeypatch.setattr(gwp, "provision", fake_provision)
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(gw), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-    assert calls["allow_bootstrap"] is False
-
-
-def test_gateway_provisioning_requires_auth_on(tmp_path, monkeypatch):
-    """Admin creds with WEBUI_AUTH off must NOT provision: with auth off,
-    OWUI's signin ignores credentials and creates the well-known
-    admin@localhost/'admin' account — a security trap. Skip with a message
-    that names WEBUI_AUTH."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
-    monkeypatch.delenv("WEBUI_AUTH", raising=False)
-    monkeypatch.setattr(gwp, "provision",
-                        lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-    assert "WEBUI_AUTH" in result.output
-
-
-def test_gateway_provision_skip_message_when_owui_not_ready(tmp_path, monkeypatch):
-    """Creds set + OWUI never became ready: the skip message must blame OWUI
-    readiness, not tell the operator to set variables they already set."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    # Bridges healthy, but the OWUI probe times out.
-    monkeypatch.setattr(cli, "_wait_for_bridge", lambda proc, url, **kw: "healthz" in url)
-    monkeypatch.setattr(cli, "_wait_for", lambda url, **kw: "healthz" in url)
-    monkeypatch.setattr(gwp, "provision",
-                        lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 1, result.output
-    assert "not ready" in result.output.lower()
-    assert "set BOTH" not in result.output
-
-
-def test_gateway_branding_failure_never_kills_boot(tmp_path, monkeypatch):
-    """branding.apply hitting e.g. a read-only site-packages must not abort
-    the gateway boot — warn and continue."""
-    from hubzoid import branding
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-
-    def boom(*a, **k):
-        raise PermissionError("read-only install")
-    monkeypatch.setattr(branding, "static_dirs", lambda: [tmp_path / "static"])
-    monkeypatch.setattr(branding, "apply", boom)
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-
-
-def test_gateway_skips_provisioning_without_creds(tmp_path, monkeypatch):
-    """No admin creds -> provisioning is skipped entirely (today's behavior),
-    and the boot proceeds normally."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_EMAIL", raising=False)
-    monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", raising=False)
-    monkeypatch.setattr(gwp, "provision",
-                        lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-
-
-def test_gateway_provisioning_failure_never_kills_boot(tmp_path, monkeypatch):
-    """Provisioning blowing up (bad creds, OWUI hiccup) logs a warning and the
-    gateway keeps running — it must never take the boot down."""
-    from hubzoid import gateway_provision as gwp
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "wrong")
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    monkeypatch.setattr(gwp, "provision",
-                        lambda **kw: (_ for _ in ()).throw(gwp.ProvisionError("bad creds")))
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-    assert "provision" in result.output.lower()
-
-
-def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
-    """The gateway stamps its OWN logo into OWUI's static dirs at boot (so the
-    chrome logo is deterministic, not a leftover from a prior single-hub run),
-    using the gateway baseline CSS that keeps Workspace visible for admins."""
-    from hubzoid import branding, webui
-
-    sales = tmp_path / "sales"
-    sales.mkdir()
-    (sales / "AGENTS.md").write_text("---\nname: x\n---\nbody")
-
-    fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="k", model_label="sales-agent"),
-    ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
-
-    def fake_start_gateway(**kwargs):
-        proc = MagicMock()
-        proc._log_path = tmp_path / "log"
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-
-    def fake_popen(cmd, env=None, **kw):
-        proc = MagicMock()
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
-    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
-    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
-    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
-    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-
-    # Fake OWUI static dir + the gateway's own branding source.
-    static = tmp_path / "owui_static"
-    static.mkdir()
-    monkeypatch.setattr(branding, "static_dirs", lambda: [static])
-    gwdata = tmp_path / "gwdata"
-    (gwdata / "branding").mkdir(parents=True)
-    (gwdata / "branding" / "logo.png").write_bytes(b"GWLOGO")
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(gwdata), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-
-    # The gateway's logo became OWUI's favicon (deterministic chrome branding).
-    assert (static / "favicon.png").read_bytes() == b"GWLOGO"
-    # Gateway CSS keeps Workspace visible (admins manage groups/ACLs there).
-    assert 'a[href="/workspace"]' not in (static / "custom.css").read_text()
-
-
 def test_inherited_deployment_env_takes_only_missing_deployment_keys(tmp_path):
-    """Sign-in settings kept in hub .env files still reach the shared UI when the
+    """Sign-in settings kept in hub .env files still reach the deployment when the
     gateway's own environment lacks them (0.9.x behaviour: last hub listed wins).
-    Model keys, WEBUI_NAME and anything the gateway already sets stay out."""
+    Model keys, Open WebUI's names and anything the gateway already sets stay out."""
     a, b = tmp_path / "a", tmp_path / "b"
     for h in (a, b):
         h.mkdir()
-    (a / ".env").write_text("WEBUI_SECRET_KEY=one\nWEBUI_NAME=A\nANTHROPIC_API_KEY=model-key\n"
-                            "DEFAULT_USER_ROLE=user\n")
-    (b / ".env").write_text("WEBUI_SECRET_KEY=two\nWEBUI_URL=https://hub.example.com\n")
+    (a / ".env").write_text("OAUTH_CLIENT_ID=one\nWEBUI_NAME=A\nWEBUI_SECRET_KEY=x\n"
+                            "ANTHROPIC_API_KEY=model-key\nENABLE_SIGNUP=false\n")
+    (b / ".env").write_text("OAUTH_CLIENT_ID=two\nHUBZOID_PUBLIC_URL=https://hub.example.com\n")
 
-    values, conflicts = gateway.inherited_deployment_env(
-        [a, b], {"WEBUI_AUTH": "true", "DEFAULT_USER_ROLE": "pending"})
+    values, conflicts = gateway.inherited_deployment_env([a, b], {"ENABLE_SIGNUP": "true"})
 
-    assert values == {"WEBUI_SECRET_KEY": "two", "WEBUI_URL": "https://hub.example.com"}
-    assert conflicts == {"WEBUI_SECRET_KEY": ["a", "b"]}
-
-
-def test_gateway_ui_gets_sign_in_settings_from_hub_env(tmp_path, monkeypatch):
-    """A deployment whose WEBUI_SECRET_KEY lives only in a hub .env (with
-    WEBUI_AUTH=true on the gateway) must still boot the shared UI with that key.
-    The hub's model key must not reach the shared UI."""
-    from hubzoid import webui
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    (sales / ".env").write_text("WEBUI_SECRET_KEY=hub-secret\nANTHROPIC_API_KEY=model-key\n")
-    monkeypatch.setenv("WEBUI_SECRET_KEY", "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    seen = {}
-
-    def fake_start_gateway(**kwargs):
-        seen.update(secret=os.environ.get("WEBUI_SECRET_KEY"), model=os.environ.get("ANTHROPIC_API_KEY"))
-        proc = MagicMock()
-        proc._log_path = tmp_path / "log"
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"])
-
-    assert result.exit_code == 0, result.output
-    assert seen == {"secret": "hub-secret", "model": ""}
-    assert "WEBUI_SECRET_KEY" in result.output
-    assert "hub-secret" not in result.output
-
+    assert values == {"OAUTH_CLIENT_ID": "two", "HUBZOID_PUBLIC_URL": "https://hub.example.com"}
+    assert conflicts == {"OAUTH_CLIENT_ID": ["a", "b"]}
 
 def test_owned_child_exit_never_counts_as_readiness(monkeypatch):
     proc = MagicMock()

@@ -17,7 +17,7 @@ import json
 import pytest
 from agents import Agent, FunctionTool, RunContextWrapper, function_tool
 
-from hubzoid import owui_mcp
+from hubzoid import personal_mcp
 from hubzoid.access import Identity, identity_scope
 from tests import connect_helpers as h
 
@@ -311,11 +311,11 @@ async def test_each_runtime_needs_the_connector_grant(hub, monkeypatch):
     import hubzoid.access as access
 
     gs = access.store_for(hub)
-    gs.revoke(X, hub.name, owui_mcp.capability("mail"), actor="test")
+    gs.revoke(X, hub.name, personal_mcp.capability("mail"), actor="test")
     gs.grant(X, hub.name, "use_hub")
     specs, _ = await _claude_surface(hub, _who(X))
     assert specs == {}
-    gs.grant(X, hub.name, owui_mcp.capability("mail"))
+    gs.grant(X, hub.name, personal_mcp.capability("mail"))
     specs, _ = await _claude_surface(hub, _who(X))
     assert set(specs) == {"my_mail"}
 
@@ -387,8 +387,8 @@ async def test_a_dead_personal_server_never_breaks_the_turn(hub, monkeypatch):
 def test_parity_spec_is_the_same_data_for_every_runtime(hub):
     """One neutral source: the Claude spec and the OpenAI/Codex client are
     built from the same PerUserServer."""
-    (srv_,) = owui_mcp.per_user_servers(hub, _who(X))
-    specs, _ = owui_mcp.per_user_specs(hub, _who(X))
+    (srv_,) = personal_mcp.per_user_servers(hub, _who(X))
+    specs, _ = personal_mcp.per_user_specs(hub, _who(X))
     assert specs[srv_.key]["url"] == srv_.url
     assert specs[srv_.key]["headers"] == srv_.headers
 

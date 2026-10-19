@@ -54,27 +54,10 @@ def _owui_db(hub, people=3):
 def test_default_mode(hub):
     c = _checks(hub)
     assert c["ui.mode"].status == "info" and c["ui.mode"].summary == "Chat UI: Hubzoid web app"
-    assert c["ui.mode"].detail["source"] == "default" and c["ui.mode"].detail["auth"] is False
+    assert c["ui.mode"].detail["auth"] is False
     assert c["auth.chat_signin"].status == "info" and "local mode" in c["auth.chat_signin"].summary
     assert c["exposure.local_mode"].status == "ok"
     assert "ui.openwebui_extra" not in c and "ui.openwebui_data" not in c
-
-
-def test_legacy_mode_needs_the_extra(hub, monkeypatch):
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setattr(webui, "_find_binary", lambda: None)
-    c = _checks(hub)
-    assert c["ui.mode"].summary == "Chat UI: Open WebUI (Open WebUI mode)"
-    assert c["ui.openwebui_extra"].status == "fail"
-    assert 'pip install "hubzoid[openwebui]"' in c["ui.openwebui_extra"].summary
-    assert "exposure.local_mode" not in c  # legacy keeps the 1.0 auth.chat_signin check
-
-    real = importlib.util.find_spec
-    monkeypatch.setattr(webui, "_find_binary", lambda: "/venv/bin/open-webui")
-    monkeypatch.setattr(importlib.util, "find_spec",
-                        lambda name, *a, **k: object() if name == "open_webui" else real(name, *a, **k))
-    assert _checks(hub)["ui.openwebui_extra"].status == "ok"
-
 
 def test_open_webui_install_not_moved_yet(hub, monkeypatch):
     _owui_db(hub)

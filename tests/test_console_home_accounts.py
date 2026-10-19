@@ -29,21 +29,7 @@ from tests.review_fixtures import OPERATIONS, OWNER, REVIEW, make_review_deploym
 LEAD = "lead@example.org"  # manages review-hub only
 
 
-def _owui_db(dep) -> Path:
-    return Path(deployment.read(dep.hubs[REVIEW])["owui_db"])
-
-
-def _seed_accounts(dep, *emails_roles) -> None:
-    path = _owui_db(dep)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
-    con.execute('CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, '
-                'name TEXT, role TEXT)')
-    for email, role in emails_roles:
-        con.execute('INSERT INTO "user" VALUES (?,?,?,?)',
-                    (str(uuid.uuid4()), email, email.split("@")[0], role))
-    con.commit()
-    con.close()
+from tests.test_account_counts import seed_accounts as _seed_accounts, _break_directory  # noqa: E402
 
 
 @pytest.fixture
@@ -117,8 +103,8 @@ def test_the_account_figure_does_not_follow_the_period(home):
     assert (day["totals"]["active_users"], week["totals"]["active_users"]) == (1, 2)
 
 
-def test_an_unreadable_directory_is_unavailable_not_zero(home):
-    _owui_db(home.dep).unlink()
+def test_an_unreadable_directory_is_unavailable_not_zero(home, monkeypatch):
+    _break_directory(monkeypatch)
     assert _summary(home)["user_accounts"] == {"accounts": None, "hubs": 2}
     _as_delegate(home)
     assert _summary(home)["user_accounts"] == {"accounts": None, "hubs": 1}

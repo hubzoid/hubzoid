@@ -57,11 +57,7 @@ def _hub(root: Path, name: str, port: int, env: str = "", agent_name: str | None
 def test_plan_routes_hub_scoped_web_app_calls(tmp_path):
     sales, support = _hub(tmp_path, "sales", 3611), _hub(tmp_path, "support", 3612)
     gp = gateway.plan([sales, support])
-    legacy = gp.edge_routes()
-    # The Console's per-hub reads (evals) reach each bridge in both UI modes.
-    assert {r["prefix"] for r in legacy} == {"/b/sales/artifacts", "/b/support/artifacts",
-                                             "/b/sales/portal/api", "/b/support/portal/api"}
-    routes = {r["prefix"]: r for r in gp.edge_routes(web_app=True)}
+    routes = {r["prefix"]: r for r in gp.edge_routes()}
     for slug, port in (("sales", 3611), ("support", 3612)):
         for part in ("api", "artifacts", "branding", "portal/api"):
             r = routes[f"/b/{slug}/{part}"]
@@ -144,7 +140,7 @@ def test_gateway_runs_bridges_and_an_edge_without_open_webui(tmp_path, monkeypat
     manifest = json.loads((gw / "deployment.json").read_text())
     assert manifest["ui_mode"] == "hubzoid" and manifest["auth"] is False
     assert manifest["allowed_origins"] == ["https://hub.example.org"]
-    assert manifest["name"] == "Acme" and manifest["owui_url"] == ""
+    assert manifest["name"] == "Acme" and "owui_url" not in manifest
     assert manifest["branding_dir"] == str(sales / "branding")   # the first hub by default
     assert [h["slug"] for h in manifest["hubs"]] == ["sales", "support"]
     assert [h["model_id"] for h in manifest["hubs"]] == ["sales", "support"]
@@ -185,12 +181,17 @@ def test_a_hub_that_would_split_the_deployment_stops_the_gateway(tmp_path, monke
     assert run.popen == []
 
 
-def test_hubs_disagreeing_on_sign_in_stop_the_gateway(tmp_path, monkeypatch):
+def test_open_webui_sign_in_names_stop_the_gateway_until_renamed(tmp_path, monkeypatch):
     sales = _hub(tmp_path, "sales", 3611, env="WEBUI_AUTH=true\n")
     support = _hub(tmp_path, "support", 3612, env="WEBUI_AUTH=false\n")
     run = _Run(monkeypatch, tmp_path)
     result = run.invoke(sales, support, "--data-dir", tmp_path / "gw")
-    assert result.exit_code == 2 and "WEBUI_AUTH" in result.output
+    assert result.exit_code == 2 and "WEBUI_AUTH" in result.output and "HUBZOID_AUTH" in result.output
+    assert run.popen == []
+    for hub in (sales, support):  # renamed: the hubs drop the Open WebUI name
+        env = hub / ".env"
+        env.write_text("".join(l for l in env.read_text().splitlines(True) if not l.startswith("WEBUI_AUTH")))
+    monkeypatch.delenv("WEBUI_AUTH", raising=False)  # a fresh process would not have it
     monkeypatch.setenv("HUBZOID_AUTH", "true")   # decided once, for everyone
     assert run.invoke(sales, support, "--data-dir", tmp_path / "gw").exit_code == 0
     assert all(b["env"]["HUBZOID_AUTH"] == "true" for b in run.bridges())
@@ -207,66 +208,6 @@ def test_no_sign_in_on_a_network_address_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_AUTH", "true")
     assert run.invoke(sales, "--host", "0.0.0.0", "--data-dir", tmp_path / "gw").exit_code == 0
 
-
-def test_an_open_webui_gateway_is_not_started_blind(tmp_path, monkeypatch):
-    sales = _hub(tmp_path, "sales", 3611)
-    gw = tmp_path / "gw"
-    gw.mkdir()
-    (gw / "webui.db").write_bytes(b"")          # 1.0.x left its Open WebUI data here
-    run = _Run(monkeypatch, tmp_path)
-    monkeypatch.setenv("HUBZOID_AUTH", "true")
-    result = run.invoke(sales, "--data-dir", gw)
-    assert result.exit_code == 1 and "hubzoid migrate openwebui" in result.output
-    assert "HUBZOID_UI=openwebui" in result.output and run.popen == []
-    # Local mode: a notice, and the gateway starts.
-    monkeypatch.setenv("HUBZOID_AUTH", "false")
-    result = run.invoke(sales, "--data-dir", gw)
-    assert result.exit_code == 0 and "migrate openwebui" in result.output
-    # Once people have Hubzoid accounts, sign-in mode starts too.
-    eng = create_engine(f"sqlite:///{gw / 'hubzoid-operational.db'}")
-    with eng.begin() as conn:
-        conn.execute(text("INSERT INTO hz_users (id, email, role, status, source, created_at, "
-                          "updated_at) VALUES ('u1', 'a@example.org', 'admin', 'active', 'migrated', 0, 0)"))
-    monkeypatch.setenv("HUBZOID_AUTH", "true")
-    assert run.invoke(sales, "--data-dir", gw).exit_code == 0
-
-
-def test_legacy_gateway_still_runs_open_webui_and_records_its_mode(tmp_path, monkeypatch):
-    sales = _hub(tmp_path, "sales", 3611)
-    gw = tmp_path / "gw"
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    started = {}
-
-    def fake_start_gateway(**kwargs):
-        started.update(kwargs)
-        proc = MagicMock()
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-
-    from hubzoid import webui
-
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-    def fake_popen(*a, **kw):
-        proc = MagicMock()
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
-    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
-    monkeypatch.setattr(cli, "_wait_any", lambda *a: None)
-    monkeypatch.setattr(cli, "_stop_groups", lambda procs: list(procs))
-    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-    result = CliRunner().invoke(cli.app, ["gateway", str(sales), "--data-dir", str(gw)])
-    assert result.exit_code == 0, result.output
-    assert started["data_dir"] == gw.resolve()
-    manifest = json.loads((gw / "deployment.json").read_text())
-    assert manifest["ui_mode"] == "openwebui" and manifest["owui_url"]
-
-
-# ---------------------------------------------------------------------------
-# agents and branding across the deployment
-# ---------------------------------------------------------------------------
 @pytest.fixture
 def deployment_hubs(tmp_path, monkeypatch):
     """Two hubs registered in one manifest, one shared store; sales is managed
@@ -283,7 +224,7 @@ def deployment_hubs(tmp_path, monkeypatch):
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key=h.name, name=h.name.title(), path=str(h), model_id=f"{h.name}-agent",
                                slug=h.name) for h in (sales, support)],
-                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="", owui_db="",
+                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_db="",
                     ui_mode="hubzoid", auth=True, name="Acme", branding_dir=str(gw / "branding"))
     gs = access.store_for(sales)
     gs.bootstrap(["boss@example.org"])
@@ -407,7 +348,7 @@ def test_the_stock_init_marks_are_not_a_custom_logo(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # the edge, by mode
 # ---------------------------------------------------------------------------
-def _edge(monkeypatch, *, web_app, routes=(), default="http://bridge1", fallbacks=(), answers=None):
+def _edge(monkeypatch, *, routes=(), default="http://bridge1", fallbacks=(), answers=None):
     real_client = httpx.AsyncClient
     seen = []
 
@@ -433,39 +374,13 @@ def _edge(monkeypatch, *, web_app, routes=(), default="http://bridge1", fallback
 
     monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(upstream)))
-    app = edge.build_edge_app(default_base=default, routes=list(routes), public_scheme="https",
-                              web_app=web_app, default_fallbacks=fallbacks)
+    app = edge.build_edge_app(default_base=default, routes=list(routes), public_scheme="https", default_fallbacks=fallbacks)
     return app, seen
-
-
-def test_web_app_edge_runs_no_open_webui_rewrites(monkeypatch):
-    monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
-    monkeypatch.setenv("HUBZOID_LOCK_OWUI_ACCESS_UI", "true")
-    monkeypatch.setenv("HUBZOID_DEPLOYMENT", "/nonexistent/deployment.json")
-    app, seen = _edge(monkeypatch, web_app=True,
-                      routes=[edge.EdgeRoute("/portal", "http://bridge1", fallbacks=("http://bridge2",))])
-    with StarletteClient(app) as c:
-        for path in ("/admin", "/admin/users", "/admin/users/overview"):
-            r = c.get(path, follow_redirects=False)
-            assert r.status_code == 200 and r.text == f"bridge1:{path}"
-        assert c.post("/api/v1/auths/add").status_code == 200
-        assert c.delete("/api/v1/users/u1").status_code == 200
-        assert c.post("/api/v1/models/model/update", json={"id": "sales", "access_grants": []}).status_code == 200
-        assert c.post("/api/v1/groups/create").status_code == 200
-        models = c.get("/api/models").json()
-        assert [m["id"] for m in models["data"]] == ["sales", "support"]      # not filtered
-        assert "hubzoid-portal-navigation" not in c.get("/page").text          # not injected
-        assert c.get("/hubzoid-portal-navigation.js").text == "bridge1:/hubzoid-portal-navigation.js"
-        c.cookies.set("hz_connect", "a" * 24)
-        r = c.get("/oauth/clients/x/callback", follow_redirects=False)
-        assert r.headers["location"] == "/"                                   # not rewritten
-    assert not any(req.url.path.endswith("chat-access") for req in seen)
-
 
 @pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/models", "/uploads/c1/x.txt",
                                   "/otel/v1/traces"])
 def test_web_app_edge_keeps_the_bridge_api_on_loopback(monkeypatch, path):
-    app, seen = _edge(monkeypatch, web_app=True)
+    app, seen = _edge(monkeypatch)
     with StarletteClient(app) as c:
         assert c.post(path, content=b"{}").status_code == 404
     assert seen == []
@@ -477,7 +392,7 @@ def test_web_app_edge_keeps_the_bridge_api_on_loopback(monkeypatch, path):
 def test_web_app_edge_routes_strip_prefix_and_say_so(monkeypatch):
     routes = [edge.EdgeRoute("/b/sales/api", "http://sales", "/b/sales"),
               edge.EdgeRoute("/b/sales/branding", "http://sales", "/b/sales")]
-    app, seen = _edge(monkeypatch, web_app=True, routes=routes)
+    app, seen = _edge(monkeypatch, routes=routes)
     with StarletteClient(app) as c:
         r = c.get("/b/sales/api/agents", headers={
             "X-Forwarded-Prefix": "/b/evil", "X-Hubzoid-User": "boss@example.org",
@@ -493,46 +408,13 @@ def test_web_app_edge_routes_strip_prefix_and_say_so(monkeypatch):
 
 
 def test_web_app_edge_falls_back_to_the_next_bridge(monkeypatch):
-    app, seen = _edge(monkeypatch, web_app=True, fallbacks=("http://bridge2",),
+    app, seen = _edge(monkeypatch, fallbacks=("http://bridge2",),
                       answers={"bridge1": httpx.ConnectError("refused")})
     with StarletteClient(app) as c:
         r = c.post("/api/auth/login", json={"email": "a@example.org"})
     assert r.text == "bridge2:/api/auth/login"
     assert [req.url.host for req in seen] == ["bridge1", "bridge2"]
     assert seen[-1].content == b'{"email":"a@example.org"}'
-
-
-def test_open_webui_edge_keeps_every_open_webui_rewrite(monkeypatch):
-    monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
-    app, seen = _edge(monkeypatch, web_app=False, default="http://owui",
-                      routes=[edge.EdgeRoute("/portal", "http://bridge1"),
-                              edge.EdgeRoute("/b/sales/api", "http://sales", "/b/sales")])
-    with StarletteClient(app) as c:
-        assert c.get("/admin/users/overview", follow_redirects=False).headers["location"] == edge.SETTINGS_LANDING
-        assert c.post("/api/v1/auths/add").status_code == 403
-        assert [m["id"] for m in c.get("/api/models").json()["data"]] == ["sales"]
-        assert "hubzoid-portal-navigation" in c.get("/page").text
-        c.get("/b/sales/api/agents", headers={"X-Forwarded-Prefix": "/b/evil"})
-        assert c.post("/v1/chat/completions").status_code == 200   # to Open WebUI, as in 1.0.x
-    sales_request = next(r for r in seen if r.url.host == "sales")
-    assert sales_request.headers.get("x-forwarded-prefix") == "/b/evil"   # 1.0.x: untouched
-
-
-def test_mode_detection(tmp_path, monkeypatch):
-    assert edge.web_app_mode({}) is True
-    assert edge.web_app_mode({"HUBZOID_UI": "openwebui"}) is False
-    manifest = tmp_path / "deployment.json"
-    manifest.write_text(json.dumps({"ui_mode": "openwebui"}))
-    assert edge.web_app_mode({"HUBZOID_DEPLOYMENT": str(manifest)}) is False
-    assert edge.web_app_mode({"HUBZOID_DEPLOYMENT": str(manifest), "HUBZOID_UI": "hubzoid"}) is True
-    monkeypatch.setenv("HUBZOID_EDGE_DEFAULT", "http://a")
-    monkeypatch.setenv("HUBZOID_EDGE_DEFAULT_FALLBACKS", json.dumps(["http://b"]))
-    seen = {}
-    monkeypatch.setattr(edge, "build_edge_app", lambda **kw: seen.update(kw))
-    edge._factory()
-    assert seen["default_fallbacks"] == ("http://b",)
-    assert os.environ.get("HUBZOID_UI") is None
-
 
 def test_api_base_for_each_hub(deployment_hubs, tmp_path):
     sales, support, _gw, _gs = deployment_hubs
@@ -559,3 +441,4 @@ def test_edge_redacts_oauth_callback_logs_when_connections_provide_it(monkeypatc
     assert edge._factory() == "app"            # never stops the front door
     monkeypatch.delattr(connector_routes, "redact_oauth_callback_logs")
     assert edge._factory() == "app"            # a build without connections
+
