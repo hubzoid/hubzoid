@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..work_items.errors import Parked
 from . import config as config_lib
 from . import replies, store
 from .errors import ChannelError
@@ -58,11 +59,51 @@ class Thread:
         if not isinstance(key, str) or not key.strip() or len(key) > 200:
             raise ValueError("key names the post, 1 to 200 characters")
         conn = config_lib.active(self._hub_dir, self.channel)
-        if kind == "progress" and not conn.config.progress:
-            return []
+        if kind == "progress" and (not conn.config.progress or conn.adapter.customer_facing):
+            return []                   # customers get answers, never progress chatter
+        send = getattr(conn.adapter, "send_action", None)
+        if conn.adapter.customer_facing and send:
+            # A message to someone outside always performs the adapter's send
+            # action, whatever else the caller names, so its write mode applies.
+            named = [actions] if isinstance(actions, str) else list(actions or [])
+            actions = named + ([send] if send not in named else [])
         draft = getattr(conn.adapter, "draft", None)
-        return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
-                            draft=draft)
+        try:
+            return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
+                                draft=draft)
+        except Parked as parked:
+            if parked.kind == "approval" and conn.adapter.customer_facing and self._unattended():
+                self._stop_unapprovable(parked.operation_id, text)
+            raise
+
+
+    def _unattended(self) -> bool:
+        requester = self._item.get("requester") or ""
+        return not requester or requester.startswith("workflow:")
+
+    def _stop_unapprovable(self, op_id: str, text: str) -> None:
+        """Unattended work (an admitted sender nobody released) has no person
+        who could approve a reply. The operation milestone D just parked for
+        approval is closed at once, the reply is kept on the intake item,
+        unsent, and the work stops with the reason, so nothing waits for
+        nobody (HUB-93). Released messages have a requester who approves, and
+        draft mode never parks, so both go on as usual. This is the one place
+        the decision is made, on the mode D itself chose."""
+        from ..work_items import store as wstore
+        from ..work_items.operations import OperationFailed
+
+        wstore.update_op(self._hub_dir, op_id, expect_state=("awaiting_approval",), state="abandoned",
+                         resolution_json={"decision": "abandon", "by": "system", "reason": "approval_unavailable",
+                                          "at": wstore.now()})
+        intake_id = (self._item.get("origin_json") or {}).get("intake_id")
+        if intake_id:
+            from ..intake import service as intake
+
+            intake.keep_unsent_reply(self._hub_dir, intake_id, text, reason="approval_unavailable")
+        raise OperationFailed(
+            "approval_unavailable", "Nobody attended this work, so nobody can approve a reply to the sender. The "
+            "reply was kept on the intake item and not sent. Use draft mode for this channel, or have a person "
+            "release messages from this sender so they approve the replies.", op_id)
 
 
 def for_current_run() -> Thread:

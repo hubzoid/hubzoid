@@ -31,6 +31,7 @@ type Delivery = {
 };
 type Reply = {
   id: string; kind: string; state: string; thread_id: string | null; error: string | null; attempts: number;
+  delivery?: { status: string; at: number; error?: string | null } | null;
   created: number;
 };
 type Thread = {
@@ -488,6 +489,7 @@ function Replies({ url }: { url: string }) {
             { title: "Kind", dataIndex: "kind" },
             { title: "State", dataIndex: "state", render: (s: string) => tag(REPLY, s) },
             { title: "Attempts", dataIndex: "attempts" },
+            { title: "Delivery", render: (_: unknown, r: Reply) => (r.delivery ? <Tag>{r.delivery.status}</Tag> : "") },
             { title: "Error", dataIndex: "error", render: (e: string | null) => (e ? <Text type="secondary">{e}</Text> : null) },
             {
               title: "", render: (_: unknown, r) => r.state === "ambiguous" ? (
@@ -643,7 +645,58 @@ function ProviderPanel({ url, provider }: { url: string; provider: string }) {
   if (provider === "slack") return <SlackPanel url={url} />;
   if (provider === "github") return <GitHubPanel url={url} />;
   if (provider === "linear") return <LinearPanel url={url} />;
+  if (provider === "email") return <EmailPanel url={url} />;
   return null;
+}
+
+type EmailStatus = {
+  transport: string; mailbox: string; started: boolean; last_poll: number | null; last_error: string | null;
+  draft_verified: boolean; connected: boolean; senders_allowed: number; authentication: string; pending: number;
+  gap: { messages: number; at: number } | null;
+};
+
+function EmailPanel({ url }: { url: string }) {
+  const status = useLoad<EmailStatus>(`${url}/email/status`);
+  const [note, setNote] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+  const act = async (what: "connect" | "poll" | "rehearse-draft") => {
+    setNote(null);
+    try {
+      const out = await hubRequest<Record<string, unknown>>(`${url}/email/${what}`, "POST", {});
+      if (what === "connect") setLink(String(out.authorization_url));
+      else if (what === "poll") setNote(out.state === "busy" ? { type: "info", text: "The mailbox is being read right now. Try again in a moment." }
+        : out.state === "paused" ? { type: "info", text: "The channel is paused, so mail is not read." }
+        : { type: "success", text: out.state === "started" ? "Started: mail from now on is read." : `Read ${out.messages} new message(s).` });
+      else setNote({ type: "success", text: String(out.note) });
+      status.reload();
+    } catch (e) {
+      setNote({ type: "error", text: errorText(e) });
+    }
+  };
+  if (!status.data) return status.error ? <Alert type="warning" showIcon title={status.error} style={{ marginBottom: 16 }} /> : null;
+  const d = status.data;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Title level={4}>Mailbox {d.mailbox} {d.connected ? <Tag color="green">connected</Tag> : <Tag>not connected</Tag>}</Title>
+      <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
+        <Descriptions.Item label="Transport">{d.transport}</Descriptions.Item>
+        <Descriptions.Item label="Reading">{d.started ? `since start, last read ${when(d.last_poll)}` : "not started"}{d.pending ? ` · ${d.pending} waiting to be read` : ""}</Descriptions.Item>
+        <Descriptions.Item label="Senders who start work">{d.senders_allowed} allowed address(es), {d.authentication === "aligned_dkim" ? "with a valid signature from their domain" : "every message reviewed"}</Descriptions.Item>
+        <Descriptions.Item label="Drafts">{d.draft_verified ? "checked: real drafts work" : "not checked yet"}</Descriptions.Item>
+        {d.last_error && <Descriptions.Item label="Last problem">{d.last_error}</Descriptions.Item>}
+        {d.gap && <Descriptions.Item label="Not re-read">{d.gap.messages} older message(s) after a mailbox reset ({when(d.gap.at)})</Descriptions.Item>}
+      </Descriptions>
+      <Space wrap>
+        {d.transport !== "imap" && <Button onClick={() => act("connect")}>{d.connected ? "Reconnect" : "Get the consent link"}</Button>}
+        <Button onClick={() => act("poll")}>Read new mail now</Button>
+        <Popconfirm title="Save one draft in the mailbox (to itself) and read it back? Nothing is sent." onConfirm={() => act("rehearse-draft")}>
+          <Button>Check drafts</Button>
+        </Popconfirm>
+      </Space>
+      {link && <Paragraph style={{ marginTop: 8 }}><a href={link} target="_blank" rel="noreferrer">Open this signed in as {d.mailbox}</a> (works once, for 10 minutes)</Paragraph>}
+      {note && <Alert style={{ marginTop: 8 }} type={note.type} showIcon title={note.text} />}
+    </div>
+  );
 }
 
 type GitHubSetup = { state: string; app_id: number | null; slug: string | null; installation_url: string | null; error: string | null };

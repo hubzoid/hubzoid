@@ -43,6 +43,7 @@ _MOUNTS = (
     "hubzoid.connectors.routes",
     "hubzoid.secretstore.routes",
     "hubzoid.channels.routes",
+    "hubzoid.intake.routes",
     "hubzoid.access.access_routes",
     "hubzoid.auth.directory.scim",
     "hubzoid.webapp_gateway",

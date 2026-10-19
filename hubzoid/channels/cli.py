@@ -408,7 +408,7 @@ def _providers() -> None:
     import importlib
 
     for name, module in (("slack", "hubzoid.channels.slack.cli"), ("github", "hubzoid.channels.github.cli"),
-                         ("linear", "hubzoid.channels.linear.cli")):
+                         ("linear", "hubzoid.channels.linear.cli"), ("email", "hubzoid.channels.email.cli")):
         try:
             mod = importlib.import_module(module)
         except ImportError:

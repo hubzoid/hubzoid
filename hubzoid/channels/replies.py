@@ -218,6 +218,19 @@ def outbox(hub_dir, hub: str, cid: str, *, state: str | None = None, thread: str
                     "receipt": _json.loads(r["result_json"]) if r["result_json"] else None,
                     "attempts": len(_json.loads(r["attempts_json"] or "[]")), "created": r["created"],
                     "updated": r["updated"], "revision": r["revision"]})
+    if any(isinstance(o["receipt"], dict) and (o["receipt"].get("result") or o["receipt"]).get("provider_message_id")
+           for o in out):
+        # Providers that report delivery (WhatsApp) keep the newest status per
+        # sent message in the connection's state; show it with the reply.
+        from . import store as channel_store
+
+        conn_row = channel_store.get_connection(Path(hub_dir), hub, cid) or {}
+        known = (conn_row.get("state_json") or {}).get("delivery_receipts") or {}
+        for o in out:
+            rec = o["receipt"] if isinstance(o["receipt"], dict) else {}
+            mid = (rec.get("result") or rec).get("provider_message_id")
+            if mid:
+                o["delivery"] = known.get(mid)
     return out
 
 
