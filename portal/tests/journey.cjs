@@ -1431,7 +1431,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Connectors, Runs & schedules, Evals and Activity").waitFor();
+    await page.getByText("has Access, Connectors, Setup, Secrets, Channels, Intake, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity section, not the Settings Activity link.
     await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();

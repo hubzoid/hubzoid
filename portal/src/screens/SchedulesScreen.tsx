@@ -40,6 +40,7 @@ import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
 import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, When } from "../components/common";
 import { formatDuration } from "../lib/format";
+import { displayName } from "../app/lib/format";
 
 const { Text, Title } = Typography;
 
@@ -97,7 +98,7 @@ function Mine() {
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
   const { agents, schedules, reports } = data.data;
   const api = (hub: string) => agents.find((a) => a.key === hub)?.api;
-  const name = (hub: string) => agents.find((a) => a.key === hub)?.name ?? hub;
+  const name = (hub: string) => displayName(agents.find((a) => a.key === hub)?.name ?? hub);
   const act: Act = async (s, action) => {
     if (action === "stop" && !(await confirm(`Stop "${s.name}"?`, "It won't run again. Its live link keeps the last copy.", "Stop schedule"))) return;
     try {
@@ -476,7 +477,7 @@ function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catal
   return <Section title="Reports you can run" help="Reports this agent offers with your current access. Open chat and use the suggested request.">
     <List dataSource={catalog} renderItem={(r) => <List.Item>
       <Space direction="vertical" style={{ width: "100%" }}>
-        <Text strong>{r.title}</Text><Text type="secondary">{agents.find((a) => a.key === r.hub)?.name} · {r.schedulable ? "Run once or schedule" : "Run once"}</Text>
+        <Text strong>{r.title}</Text><Text type="secondary">{displayName(agents.find((a) => a.key === r.hub)?.name ?? r.hub)} · {r.schedulable ? "Run once or schedule" : "Run once"}</Text>
         <Text copyable={{ text: `Run ${r.title} for me` }}>Ask in chat: “Run {r.title} for me”</Text>
         {r.schema && Object.keys(r.schema.properties).length > 0 && <Text type="secondary">The agent asks for: {Object.entries(r.schema.properties).map(([k, p]) => (p as { title?: string }).title || k.replace(/_/g, " ")).join(", ")}</Text>}
         <Button href={agents.find((a) => a.key === r.hub)?.chat ?? "/"}>Open chat ↗</Button>
@@ -494,9 +495,9 @@ function RecentRuns({ agents }: { agents: MyAgent[] }) {
   if (!agent) return null;
   return <Section title="Recent requests" help="Your recent one-off reports and answers on one agent, including work that continued after chat stopped waiting. Pick the agent to see its requests.">
     {usable.length > 1 && <Select aria-label="Recent requests agent" value={agent.key} onChange={setSelected}
-      options={usable.map((a) => ({ value: a.key, label: a.name }))} style={{ minWidth: 220 }} />}
+      options={usable.map((a) => ({ value: a.key, label: displayName(a.name) }))} style={{ minWidth: 220 }} />}
     {data.data ? <List dataSource={data.data.runs} locale={{ emptyText: usable.length > 1
-        ? `No recent requests on ${agent.name}. Pick another agent above, or ask in chat to run a report.`
+        ? `No recent requests on ${displayName(agent.name)}. Pick another agent above, or ask in chat to run a report.`
         : "No recent requests yet. Ask in chat to run a report." }}
       renderItem={(r) => <List.Item><Space direction="vertical" style={{ width: "100%" }}>
         <Space wrap><Text strong>{r.report}</Text><RunStatusTag status={r.status} /></Space>

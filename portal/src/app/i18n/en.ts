@@ -256,7 +256,7 @@ export const en = {
     agents: "Agents",
     features: "Features",
     none: "No agents are available to you yet.",
-    also: (labels: string) => `Also: ${labels}`,
+    also: (labels: string) => `you can also ${labels.charAt(0).toLowerCase()}${labels.slice(1)}`,
     on: "On",
     off: "Off",
     ask: (who: string) => `To get more, ask ${who}.`,

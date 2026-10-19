@@ -749,6 +749,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         blocked = gs.is_suspended(email)
         bases = api_bases(hub_dir)
         agents, schedules, reports, catalog = [], [], [], []
+        from .loaders import agents as agents_loader
+
         for h in deployment.hubs(hub_dir):
             path, key = Path(h["path"]), normalize(h["key"])
             mine = [s for s in personal.for_owner(path, key, email)
@@ -759,8 +761,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 continue
             model = h.get("model_id") or key
             chat = f"/?agent={quote(model)}" if usable else None
-            agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api",
-                               chat=chat))
+            agents.append(dict(key=key, name=agents_loader.display_name(path, h.get("name") or key),
+                               api=bases.get(key, "") + "/portal/api", chat=chat))
             schemas = input_schemas(path, key) if mine or usable else {}
             if usable:
                 from .workflows.observe import definitions
