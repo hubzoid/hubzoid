@@ -317,7 +317,7 @@ type AccountInfo = {
   subject: string;
   name: string | null;
   role: string | null;
-  sign_in?: "password" | "google" | null;
+  sign_in?: "password" | "google" | "directory" | null;
   /** "admin" | "user" when both halves agree; "console_only" | "chat_only" when not. */
   administrator?: string;
 };
@@ -388,6 +388,75 @@ function PersonDrawer({
     setShownLink(null);
     setTyped("");
     navigate("/people");
+  }
+
+  /** The account security actions live on the sign-in API (/api/people/...),
+   *  and resetting MFA asks the administrator to confirm it's them first. */
+  async function signInAction(action: "reset-mfa" | "revoke-credentials", question: string, done: string) {
+    if (!person?.owui_id) return;
+    const ok = await new Promise<boolean>((resolve) =>
+      modal.confirm({ title: "Are you sure?", content: question, okText: "Yes", onOk: () => resolve(true),
+                      onCancel: () => resolve(false) }));
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    const send = () => fetch(`/api/people/${encodeURIComponent(person.owui_id as string)}/${action}`, {
+      method: "POST", credentials: "same-origin", headers: { accept: "application/json" } });
+    try {
+      let r = await send();
+      if (r.status === 403) {
+        const body = await r.json().catch(() => ({}));
+        if (body?.detail?.code === "reauth_required") {
+          const proved = await confirmItsYou(body.detail.reauth ?? {});
+          if (!proved) return;
+          r = await send();
+        }
+      }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.detail?.message || `The server answered ${r.status}.`);
+      }
+      message.success(done);
+      data.reload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmItsYou(options: { password?: boolean; code?: boolean }): Promise<boolean> {
+    let password = "";
+    let code = "";
+    return await new Promise<boolean>((resolve) =>
+      modal.confirm({
+        title: "Confirm it's you",
+        okText: "Confirm",
+        content: (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Text type="secondary">For your security, confirm before changing someone's sign-in.</Text>
+            {options.password !== false && (
+              <Input.Password placeholder="Your password" autoFocus onChange={(e) => { password = e.target.value; }} />
+            )}
+            {options.code && (
+              <Input placeholder="Code from your authenticator app" inputMode="numeric" onChange={(e) => { code = e.target.value; }} />
+            )}
+          </Space>
+        ),
+        onOk: async () => {
+          const r = await fetch("/api/auth/reauth", {
+            method: "POST", credentials: "same-origin",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({ password, code }),
+          });
+          if (!r.ok) {
+            message.error("That didn't match. Try again.");
+            throw new Error("reauth failed");
+          }
+          resolve(true);
+        },
+        onCancel: () => resolve(false),
+      }));
   }
 
   async function call(sub: string, body: unknown, done: string, method?: "POST" | "DELETE") {
@@ -627,7 +696,9 @@ function PersonDrawer({
                       key: "password",
                       label: "Password",
                       children:
-                        info.data?.sign_in === "google" ? (
+                        info.data?.sign_in === "directory" ? (
+                          <Text type="secondary">Signs in through your company directory, which manages their sign-in.</Text>
+                        ) : info.data?.sign_in === "google" ? (
                           <Text type="secondary">Signs in with Google. Their password is managed through Google.</Text>
                         ) : (
                           <Button
@@ -642,6 +713,26 @@ function PersonDrawer({
                             Reset password
                           </Button>
                         ),
+                    },
+                    {
+                      key: "security",
+                      label: "Sign-in security",
+                      children: (
+                        <Space wrap>
+                          <Button size="small" disabled={busy || !person?.owui_id}
+                            onClick={() => void signInAction("reset-mfa",
+                              "Reset their two-step sign-in? They set it up again at their next sign-in, and are signed out everywhere now.",
+                              "Two-step sign-in reset. They're signed out everywhere.")}>
+                            Reset two-step sign-in
+                          </Button>
+                          <Button size="small" disabled={busy || !person?.owui_id}
+                            onClick={() => void signInAction("revoke-credentials",
+                              "Sign them out on every device and end their API keys and assistant connections?",
+                              "Signed out everywhere.")}>
+                            Sign out everywhere
+                          </Button>
+                        </Space>
+                      ),
                     },
                   ]
                 : []),
@@ -699,9 +790,9 @@ function PersonDrawer({
             <div className="agent-access">
               <Text strong>Delete {name}?</Text>
               <Paragraph style={{ margin: 0 }}>
-                Their sign-in account and their chats are deleted, and all their access is removed. Activity history,
-                usage records and artifacts they published are kept; their public links stop working. This can’t be
-                undone.
+                They can no longer sign in, their API keys end and all their access is removed. Their chats,
+                activity history, usage records and published artifacts are kept under their name; their share links
+                stop working. Their email can be used for a new account. This can’t be undone.
               </Paragraph>
               <div className="field">
                 <label className="field-label" htmlFor="delete-confirm">

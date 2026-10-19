@@ -105,6 +105,12 @@ Environment variables explicitly supported:
                          add accounts in Settings → People.
   ENABLE_OAUTH_SIGNUP    Automatic account creation through SSO. Default: false;
                          explicitly opt in for an SSO onboarding deployment.
+  HUBZOID_MFA_REQUIRED   Who must use two-step sign-in until an administrator
+                         picks a rule in Settings: none, admins (default) or all.
+  HUBZOID_SUPPORT_CONTACT  Who people are told to ask for access ("My access",
+                         sign-in help). Default: "your administrator".
+  HUBZOID_SERVER / HUBZOID_API_KEY  The remote CLI's deployment URL and a personal
+                         API key (hzp_...) for `hubzoid auth` and `hubzoid api`.
   PORT                   Public port (web app, downloads, MCP). Default: 3080.
   BRIDGE_PORT            FastAPI bridge port. Default: 8000.
   HUBZOID_PUBLIC_URL     Public base URL the bridge is reachable at, used to

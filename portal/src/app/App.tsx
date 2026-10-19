@@ -45,6 +45,7 @@ function normalizeSession(raw: Partial<Session> | null | undefined): Session {
     password: raw?.password !== false,
     signup: !!raw?.signup,
     branding_name: raw?.branding_name,
+    unsafe_network: !!raw?.unsafe_network,
   };
 }
 
@@ -283,7 +284,7 @@ export default function App() {
     return wrap(
       <Suspense fallback={<PageSpinner />}>
         {route.name === "signin" ? (
-          <SignInPage redirect={route.redirect} error={route.error} />
+          <SignInPage redirect={route.redirect} error={route.error} step={route.step} />
         ) : (
           <SetPasswordPage token={route.token} />
         )}
@@ -342,6 +343,11 @@ export default function App() {
         <SearchDialog />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
           <OfflineBanner />
+          {value.session.unsafe_network && (
+            <div role="alert" className="bg-warning-soft px-4 py-2 text-center text-[12.5px] text-warning" data-testid="unsafe-network">
+              {t.unsafeNetwork}
+            </div>
+          )}
           <AnnouncementBanner
             manifest={branding.manifest}
             dismissed={brandMe.me?.dismissed_announcements ?? []}

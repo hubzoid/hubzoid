@@ -568,7 +568,19 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     task.state_rel = idlib.markdown_scratch(Path(hub_dir), task.name, identity)
     # Establish the scope before runtime construction/aopen: MCP tool-serving
     # tasks inherit it, as do every round and its timeout child task.
-    with (identity_scope(Identity.make(identity.subject, surface="workflow")),
+    ident = Identity.make(identity.subject, surface="workflow")
+    if identity.is_person:
+        import uuid
+
+        from .access import run_identity
+
+        record = run_identity.admit_or_refuse(
+            Path(hub_dir), run_kind="schedule", run_id=f"{task.name}:{uuid.uuid4().hex[:12]}",
+            acts_as_id=identity.account_id, acts_as_email=identity.subject,
+            requested_by=identity.subject, started_from="schedule", origin_id=task.name,
+            person_present=False, credential_kind="schedule")
+        ident = run_identity.identity(record, "workflow")
+    with (identity_scope(ident),
           _request_ctx.schedule_read_scope(Path(hub_dir), task.scratch_rel)):
         return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture,
                                events=events or [])

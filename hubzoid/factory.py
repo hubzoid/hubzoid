@@ -180,7 +180,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
 
-    mcp_servers = load_mcp_servers(mcp_loader.load_all_raw(hub_dir))
+    mcp_servers = [access.guard.checked_server(s, hub_dir)
+                   for s in load_mcp_servers(mcp_loader.load_all_raw(hub_dir))]
 
     # Delegates run as within-turn subagents the main agent calls (as_tool),
     # each on its own model. Built from the gated registry so their tool scope

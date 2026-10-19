@@ -101,7 +101,7 @@ export type Route =
   | { name: "conversation"; id: string }
   | { name: "share"; id: string }
   | { name: "brand-preview"; id: string }
-  | { name: "signin"; redirect: string; error: string | null }
+  | { name: "signin"; redirect: string; error: string | null; step: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
   | { name: "sources" }
@@ -125,7 +125,8 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   if (parts[0] === "branding-preview" && parts[1] && parts.length === 2) return { name: "brand-preview", id: parts[1] };
   if (parts[0] === "auth") {
     if (parts.length === 1)
-      return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error") };
+      return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error"),
+               step: search.get("step") };
     if (parts[1] === "set-password" || parts[1] === "reset-password")
       return { name: "set-password", token: search.get("token") };
   }

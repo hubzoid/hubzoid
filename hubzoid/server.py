@@ -206,9 +206,24 @@ def build_app() -> FastAPI:
             # never back-pressure or crash the turn that produced it.
             return Response(status_code=200)
 
-    def _auth(request: Request) -> None:
+    def _auth(request: Request, *, personal: bool = False) -> None:
+        """The bridge's own keys, or (``personal``: the chat API only) a
+        person's API key. Files, uploads and artifacts take bridge keys only:
+        a person's key reaches them through the chat API's own checks."""
         auth = request.headers.get("authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
+        if token.startswith("hzp_") and not personal:
+            raise HTTPException(status_code=401, detail="invalid api key")
+        if token.startswith("hzp_") and hub_dir is not None:
+            # A person's own API key: the call runs as them, within the key's
+            # limits (``hubzoid.auth.api_keys``), not as the trusted front.
+            from .auth import sessions as sessionlib
+
+            user = sessionlib.resolve(request, hub_dir)
+            if user is None:
+                raise HTTPException(status_code=401, detail="invalid api key")
+            request.state.hz_key_user = user
+            return
         if token not in api_keys:
             raise HTTPException(status_code=401, detail="invalid api key")
 
@@ -218,7 +233,7 @@ def build_app() -> FastAPI:
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> JSONResponse:
-        _auth(request)
+        _auth(request, personal=True)
         return JSONResponse(
             {
                 "object": "list",
@@ -230,7 +245,7 @@ def build_app() -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
-        _auth(request)
+        _auth(request, personal=True)
         try:
             body = await request.json()
         except Exception as exc:  # noqa: BLE001
@@ -244,10 +259,19 @@ def build_app() -> FastAPI:
         # of the first user message so multi-turn chats from clients that
         # don't send an id still get a consistent directory.
         chat_id = _derive_chat_id(body, request, messages)
-        identity = _derive_identity(body, request, hub_dir)
-        # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
-        # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
-        _enforce_use_hub(request, hub_dir)
+        key_user = getattr(request.state, "hz_key_user", None)
+        if key_user is not None:
+            # The client's chat id is only a label within the key owner's own
+            # space: it can't select another person's (or chat's) files.
+            chat_id = _personal_chat_id(key_user.id, chat_id)
+            identity = await asyncio.to_thread(_key_identity, hub_dir, key_user, chat_id)
+        else:
+            identity = _derive_identity(body, request, hub_dir)
+            # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
+            # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
+            _enforce_use_hub(request, hub_dir)
+            if identity.user and hub_dir is not None:
+                identity = await asyncio.to_thread(_channel_identity, hub_dir, identity, chat_id)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
         # and direct-API uploads) into the canonical per-chat uploads store now;
@@ -634,6 +658,29 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
         )
 
 
+def _key_identity(hub_dir: Path, user, chat_id: str):
+    """A ``/v1`` call made with a personal API key: the key's owner may use
+    this hub (``access.evaluator.authorize``), and the call gets its run
+    identity (started from the API, no one watching)."""
+    from .access import Identity, run_identity
+    from .access.evaluator import authorize
+    from .access.store import USE_HUB
+
+    decision = authorize(hub_dir, user, USE_HUB, hub=hub_dir.name)
+    if not decision.allowed:
+        status = 503 if decision.reason == "store_error" else 403
+        raise HTTPException(status_code=status, detail="this API key's owner may not use this agent")
+    try:
+        record = run_identity.admit_or_refuse(
+        hub_dir, run_kind="api", run_id=f"v1:{uuid.uuid4().hex}", acts_as_id=user.id,
+        acts_as_email=user.email, started_from="api", origin_id=chat_id, person_present=False,
+        credential_kind="api_key", credential_id=user.credential_id,
+        scope={"hubs": list(user.hubs)} if user.hubs is not None else None)
+    except run_identity.NotAdmitted as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return run_identity.identity(record, "api")
+
+
 def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | None = None):
     """Resolve the caller's verified identity for this request.
 
@@ -661,6 +708,30 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
 # ---------------------------------------------------------------------------
 # Chat-id derivation
 # ---------------------------------------------------------------------------
+def _channel_identity(hub_dir: Path, identity, chat_id: str):
+    """A verified person writing from a channel (WhatsApp or Telegram, matched
+    to their account by phone; Slack): the run's identity record, so each tool
+    call checks that account's state and credential counter."""
+    import uuid
+
+    from .access import run_identity
+
+    try:
+        record = run_identity.admit_or_refuse(
+            Path(hub_dir), run_kind="webhook", run_id=f"{identity.surface}:{uuid.uuid4().hex}",
+            acts_as_email=identity.user, started_from="webhook", origin_id=chat_id,
+            person_present=True, credential_kind=identity.surface)
+    except run_identity.NotAdmitted as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return run_identity.identity(record, identity.surface, identity.groups)
+
+
+def _personal_chat_id(account_id: str, client_chat_id: str) -> str:
+    """A personal API key's chat space: the account plus the client's id."""
+    digest = hashlib.sha256(f"{account_id}\0{client_chat_id}".encode("utf-8")).hexdigest()
+    return "key-" + digest[:32]
+
+
 def _derive_chat_id(body: dict[str, Any], request: Request, messages: list) -> str:
     """Pick the most specific chat id available, sanitised.
 

@@ -114,6 +114,18 @@ def _is_bridge_internal(path: str) -> bool:
     return any(path == p or path.startswith(p + "/") for p in _BRIDGE_INTERNAL)
 
 
+# The OpenAI-compatible chat API is public only for a person's own API key
+# (``Authorization: Bearer hzp_...``): the bridge checks the key and runs the
+# call as its owner. The bridge's own keys stay internal.
+_PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
+
+
+def _personal_key_call(request) -> bool:
+    auth = (request.headers.get("authorization") or "").strip()
+    return (_clean_path(request.url.path) in _PERSONAL_KEY_PATHS
+            and auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_"))
+
+
 def _has_dot_segment(path: str) -> bool:
     """`.` or `..` path segments. The prefix checks below run on the path as
     sent, while the upstream client collapses dot segments, so
@@ -292,7 +304,7 @@ def build_edge_app(
             return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
         if _has_dot_segment(request.url.path):
             return Response("Bad request", status_code=400)
-        if _is_bridge_internal(request.url.path):
+        if _is_bridge_internal(request.url.path) and not _personal_key_call(request):
             return Response("Not found", status_code=404)
         upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
         matched = _match(request.url.path, norm_routes)

@@ -124,8 +124,8 @@ class HubzoidAccounts:
 
     @staticmethod
     def _view(user: dict | None) -> dict | None:
-        if user is None:
-            return None
+        if user is None or user.get("status") == "deleted":
+            return None  # a deleted account's tombstone is not an account here
         from ..auth.users import sign_in_of
 
         return {"id": user["id"], "email": user["email"], "name": user.get("name") or "",
@@ -197,12 +197,19 @@ class HubzoidAccounts:
             raise AccountError(409, "not_found", "The account no longer exists.")
 
     def delete(self, account_id: str) -> None:
-        """Delete the account, its sessions, external sign-ins, links and
-        personal connection tokens."""
+        """Delete the account (a tombstone that keeps their conversations), its
+        sessions, external sign-ins, links, MFA, keys and personal connection tokens."""
         from ..auth import users
 
         self._store()
         if not self._run(users.delete, self.hub_dir, account_id):
+            raise AccountError(409, "not_found", "The account no longer exists.")
+
+    def discard(self, account_id: str) -> None:
+        """Remove an account created moments ago that was never used (no tombstone)."""
+        from ..auth import users
+
+        if not self._run(lambda: users.store(self.hub_dir).purge(account_id)):
             raise AccountError(409, "not_found", "The account no longer exists.")
 
     # ---- default mode only ---------------------------------------------------------

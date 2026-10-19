@@ -22,7 +22,7 @@ export type SignInOptions = {
   /** Only these email domains may sign in with Google (absent: any). */
   google_domains?: string[];
 };
-export type SignIn = "password" | "google";
+export type SignIn = "password" | "google" | "directory";
 export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean };
 export type Permission = {
   permission: string;

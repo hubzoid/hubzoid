@@ -702,6 +702,38 @@ def _guarded(options, guard):
     return dataclasses.replace(options, hooks=hooks)
 
 
+def _identity_checked(options, hub_dir, ident):
+    """A PreToolUse hook for the tools Hubzoid does not wrap itself (outside
+    MCP servers, Claude's own tools): the same per-call check as every hub
+    tool (``access.evaluator.check_run``). Hub tools check inside their own
+    wrapper, so they are skipped here."""
+    import asyncio
+    import dataclasses
+    from pathlib import Path
+
+    from claude_agent_sdk import HookMatcher
+
+    from .access.evaluator import check_run
+
+    own = f"mcp__{_MCP_NAMESPACE}__"
+
+    async def admit(tool_input, _tool_use_id, _context):
+        if str((tool_input or {}).get("tool_name") or "").startswith(own):
+            return {}
+        try:
+            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident)
+        except Exception:  # noqa: BLE001 - fail closed
+            decision = None
+        if decision is not None and decision.allowed:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "This account no longer has access."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 def _only_tools(options, allowed: list[str]):
     """A PreToolUse hook that refuses every tool outside ``allowed`` (hub tool
     names; the SDK prefixes them with their MCP namespace)."""
@@ -1038,6 +1070,10 @@ class ClaudeRuntime:
         error_status: int | None = None
         try:
             turn_options = self._options_for_turn()
+            if self._hub_dir is not None:
+                from .access import current_identity
+
+                turn_options = _identity_checked(turn_options, self._hub_dir, current_identity())
             if resuming:
                 import dataclasses as _dc
 

@@ -2593,6 +2593,15 @@ app.add_typer(
     help="Accounts: create administrators and users, reset passwords.",
     rich_help_panel="Commands",
 )
+from .auth.remote_cli import api as _api_command, auth_app as _auth_app  # noqa: E402
+
+app.add_typer(
+    _auth_app,
+    name="auth",
+    help="Your account on a hosted Hubzoid: sign in, API keys, devices, two-step sign-in.",
+    rich_help_panel="Commands",
+)
+app.command("api", rich_help_panel="Commands")(_api_command)
 app.add_typer(
     migrate_app,
     name="migrate",
