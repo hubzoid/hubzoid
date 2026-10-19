@@ -15,8 +15,8 @@ def make(ctx) -> list:
     except ImportError:
         return []
     hub_dir = getattr(ctx, "hub_dir", None) or getattr(ctx, "root", None)
-    if hub_dir is None:
-        return []
+    if hub_dir is None or not _has_github_file(hub_dir):
+        return []           # no GitHub channel file: never open (or create) the hub's database
     try:
         conns = [c for c in config.active_all(hub_dir) if c.provider == "github" and c.enabled]
     except Exception:  # noqa: BLE001 - no channel store yet
@@ -28,3 +28,22 @@ def make(ctx) -> list:
     from ..channels.github import operations
 
     return operations.tools(conns[0])
+
+
+def _has_github_file(hub_dir) -> bool:
+    from pathlib import Path
+
+    import yaml
+
+    from ..channels import config
+
+    folder = config.channels_dir(Path(hub_dir))
+    if not folder.is_dir():
+        return False
+    for f in list(folder.glob("*.yaml")) + list(folder.glob("*.yml")):
+        try:
+            if (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("provider") == "github":
+                return True
+        except Exception:  # noqa: BLE001 - a broken file is the channel validator's to report
+            continue
+    return False
