@@ -54,6 +54,10 @@ const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
         contentType: file.endsWith(".js") ? "application/javascript" : file.endsWith(".css") ? "text/css" : "text/html" });
     });
     await page.clock.install();
+    // With the web app on, a person's Console pages open in the chat app's Settings.
+    await page.goto("http://hubzoid.test/portal/#/schedules");
+    await page.waitForURL(/\/settings#\/me\/schedules$/);
+    my.web_app = false;
     await page.goto("http://hubzoid.test/portal/#/schedules");
     await page.getByRole("heading", { name: "Reports you can run" }).waitFor();
     await page.getByRole("link", { name: "My completed report" }).waitFor();

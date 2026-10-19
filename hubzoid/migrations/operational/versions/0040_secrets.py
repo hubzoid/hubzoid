@@ -9,8 +9,9 @@
   read back through any API. A removed secret keeps its row with a null
   ``value_enc``, so its ``revision`` keeps counting and never repeats.
 
-Numbered 0040 so it does not collide with other 2.0 work in progress. Whichever
-branch merges second points its ``down_revision`` at the other.
+It follows the 2.0 chat migrations (op_0031). Numbered 0040 so it does not
+collide with other 2.0 work in progress: whichever branch merges second points
+its ``down_revision`` at the other.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "op_0040"
-down_revision = "op_0019"
+down_revision = "op_0031"
 branch_labels = None
 depends_on = None
 

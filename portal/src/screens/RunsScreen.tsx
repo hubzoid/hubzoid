@@ -65,14 +65,16 @@ export function RunsScreen({
   hub,
   workflow,
   run,
+  embedded = false,
 }: {
   hub: Hub;
   workflow?: string;
   run?: string;
+  embedded?: boolean;
 }) {
   if (workflow && run) return <RunDetail hub={hub} workflow={workflow} run={run} />;
   if (workflow) return <RunList key={`${hub.key}:${workflow}`} hub={hub} workflow={workflow} />;
-  return <WorkflowList hub={hub} />;
+  return <WorkflowList hub={hub} embedded={embedded} />;
 }
 
 function HealthAlerts({ workflows }: { workflows: Workflow[] }) {
@@ -112,7 +114,7 @@ function HealthAlerts({ workflows }: { workflows: Workflow[] }) {
   );
 }
 
-function WorkflowList({ hub }: { hub: Hub }) {
+function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   const data = useData<{ workflows: Workflow[] }>("/workflows" + query({ hub: hub.key }));
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
   const workflows = data.data.workflows;
@@ -136,7 +138,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
         </Text>
       )}
       <HealthAlerts workflows={workflows} />
-      <Table<Workflow>
+      {embedded && workflows.length > 0 ? <WorkflowRows hub={hub} workflows={workflows} /> : <Table<Workflow>
         rowKey={(w) => `${w.hub}:${w.name}`}
         size="middle"
         dataSource={workflows}
@@ -250,13 +252,40 @@ function WorkflowList({ hub }: { hub: Hub }) {
             render: (_, w) => <Space wrap>{!w.webhook && !w.name.startsWith("md:") && !w.error && <RunNow hub={hub} workflow={w} />}{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
           },
         ]}
-      />
+      />}
       <Webhooks hub={hub} />
       <Text type="secondary">
         People's schedules and live reports are on <a href={hrefWith("/schedules", { scope: "everyone", hub: hub.key })}>Schedules &amp; reports</a>.
       </Text>
     </div>
   );
+}
+
+/** In Settings, keep the workflow's context and actions together at narrow widths. */
+function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
+  return <ul className="hz-workflow-list" aria-label="Workflows">
+    {workflows.map((w) => <li key={w.name}>
+      <div className="hz-workflow-info">
+        <div className="hz-workflow-title"><a href={runsHref(hub, w.name)}>{w.name}</a><WorkflowStateTag state={w.state} /><Help text={workflowState(w.state).hint} /></div>
+        {w.error && <Text type="danger">{w.error}</Text>}
+        {w.runs_as && <div className="hz-workflow-account"><Text type={w.runs_as.error ? 'danger' : 'secondary'}>
+          {w.runs_as.error ? `Cannot run: ${w.runs_as.error}` : `Runs as ${w.runs_as.account}`}
+        </Text>{w.runs_as.via && <Help text={w.runs_as.via} />}</div>}
+        <div className="hz-workflow-schedule">
+          {w.webhook ? <span>On webhook · <Text code>{w.webhook}</Text></span>
+            : w.schedule ? <span>{w.schedule_text ?? describeCron(w.schedule)} · {w.timezone} <Help text={`Cron: ${w.schedule}`} /></span>
+            : <span>On demand</span>}
+          {w.next_run && <span title={formatTime(w.next_run)}>Next <When value={w.next_run} /></span>}
+        </div>
+        {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
+      </div>
+      <div className="hz-workflow-actions">
+        {!w.webhook && !w.name.startsWith('md:') && !w.error && <RunNow hub={hub} workflow={w} />}
+        <Button href={runsHref(hub, w.name)}>View runs</Button>
+        {!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand('run', w.name, hub.path || hub.key)} />}
+      </div>
+    </li>)}
+  </ul>;
 }
 
 function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {

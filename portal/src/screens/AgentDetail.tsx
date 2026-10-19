@@ -1,7 +1,7 @@
-import { Button, Breadcrumb, Tabs } from "antd";
+import { Button, Breadcrumb, Space, Tabs } from "antd";
 import type { Hub, Me } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
-import { AgentAvatar, PageHeader, InfoHelp } from "../components/common";
+import { AgentAvatar, PageHeader } from "../components/common";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
@@ -17,6 +17,7 @@ export function AgentDetail({
   me,
   tab,
   rest,
+  embedded = false,
 }: {
   hub: Hub;
   hubs: Hub[];
@@ -24,6 +25,8 @@ export function AgentDetail({
   tab: AgentTab;
   /** Remaining route segments after the tab (workflow and run id, or an eval run). */
   rest: string[];
+  /** Inside the chat app's Settings, where Agent instructions also lives. */
+  embedded?: boolean;
 }) {
   return (
     <>
@@ -32,19 +35,30 @@ export function AgentDetail({
       />
       <PageHeader
         title={
-          <span className="agent-title">
-            <AgentAvatar size={40} />
+          <span className="agent-title" title={hub.key}>
+            <AgentAvatar size={32} />
             <span>{hub.name}</span>
           </span>
         }
-        description={
-          <>
-            <span className="identity">{hub.key}</span> <InfoHelp text="Manage agent access, connections and secrets, check workflows and evals, and review activity." />
-          </>
+        description="Who can use it, what it connects to, its secrets, workflows, quality checks and activity."
+        extra={
+          <Space>
+            {embedded && me.org_admin && (
+              <Button href={`/settings#/workspace?agent=${encodeURIComponent(hub.key)}`}>Edit instructions</Button>
+            )}
+            {hub.can_chat && hub.model_id && (
+              <Button href={`/?models=${encodeURIComponent(hub.model_id)}`}>Open chat</Button>
+            )}
+          </Space>
         }
       />
-      {hub.can_chat && hub.model_id && <Button href={`/?models=${encodeURIComponent(hub.model_id)}`} style={{ marginBottom: 16 }}>Open chat with {hub.name} ↗</Button>}
-      <Tabs
+      {embedded ? (
+        <nav className="hz-agent-tabs" aria-label="Agent sections">
+          {([['access', 'Access'], ['connectors', 'Connectors'], ['secrets', 'Secrets'], ['runs', 'Runs & schedules'], ['evals', 'Evals'], ['activity', 'Activity']] as const).map(([key, label]) => (
+            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? 'page' : undefined}>{label}</a>
+          ))}
+        </nav>
+      ) : <Tabs
         activeKey={tab}
         onChange={(key) => navigate(`/agents/${encodeURIComponent(hub.key)}/${key}`)}
         items={[
@@ -55,13 +69,13 @@ export function AgentDetail({
           { key: "evals", label: <a href={agentHref(hub.key, "evals")}>Evals</a> },
           { key: "activity", label: <a href={agentHref(hub.key, "activity")}>Activity</a> },
         ]}
-      />
+      />}
       <div key={`${hub.key}:${tab}`}>
-        {tab === "access" && <AccessEditor hub={hub} />}
-        {tab === "connectors" && <AgentConnectors hub={hub} me={me} />}
+        {tab === "access" && <AccessEditor hub={hub} embedded={embedded} />}
+        {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
         {tab === "secrets" && <AgentSecrets hub={hub} />}
-        {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
-        {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
+        {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} embedded={embedded} />}
+        {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} embedded={embedded} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
       </div>
     </>

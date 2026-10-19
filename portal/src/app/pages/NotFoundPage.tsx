@@ -11,7 +11,7 @@ export default function NotFoundPage() {
   }, [app.brandName]);
   return (
     <>
-      <header className="flex h-14 flex-none items-center border-b border-line px-3 lg:hidden">
+      <header className="flex h-12 flex-none items-center border-b border-line px-3 lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />
         </IconButton>

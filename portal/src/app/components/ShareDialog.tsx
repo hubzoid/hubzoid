@@ -1,13 +1,14 @@
-// Create, copy and revoke the read-only link for one conversation
-// (GET/POST/DELETE /api/conversations/{id}/share).
+// Share a conversation: a snapshot link (previewed, then published for named
+// people, everyone signed in here, or the public when allowed), or live
+// collaborators who read along or write on their own branches.
 import { useEffect, useState } from "react";
-import { Copy, Link2, Link2Off } from "lucide-react";
+import { Copy, Link2, Link2Off, UserMinus, Users } from "lucide-react";
 import { t } from "../i18n/en";
-import { ApiError, del, enc, get, post } from "../lib/api";
+import { del, enc, get, post, put } from "../lib/api";
 import { describeError } from "../lib/errors";
 import type { Conversation, ShareLink } from "../lib/types";
 import { toast } from "./toast";
-import { Button, Modal, Notice, Spinner } from "./ui";
+import { Button, Field, Modal, Notice, Spinner, cx } from "./ui";
 
 export function shareUrl(link: ShareLink): string {
   if (link.url && /^https?:\/\//.test(link.url)) return link.url;
@@ -41,6 +42,11 @@ async function copyText(text: string): Promise<boolean> {
 
 export { copyText };
 
+type Audience = "deployment" | "named" | "public";
+type Share = { id: string; url?: string; revision: number; status: string; audience: { type: Audience }; allow_copy: boolean; created_at: number };
+type Preview = { preview_id: string; digest: string; omissions: string[]; projection: { messages: unknown[] } };
+type Member = { principal_id: string; role: "editor" | "viewer"; email?: string | null; name?: string | null };
+
 export function ShareDialog({
   conversation,
   onClose,
@@ -49,138 +55,200 @@ export function ShareDialog({
   onClose: () => void;
 }) {
   const open = !!conversation;
-  const [link, setLink] = useState<ShareLink | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [busy, setBusy] = useState<"create" | "revoke" | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const id = conversation?.id;
+  const [tab, setTab] = useState<"snapshot" | "live">("snapshot");
+  const [shares, setShares] = useState<Share[] | null>(null);
+  const [audience, setAudience] = useState<Audience>("deployment");
+  const [people, setPeople] = useState("");
+  const [allowCopy, setAllowCopy] = useState(true);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [members, setMembers] = useState<{ revision: number; members: Member[] } | null>(null);
+  const [invite, setInvite] = useState("");
+  const [role, setRole] = useState<"viewer" | "editor">("viewer");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = () => {
     if (!id) return;
-    let cancelled = false;
-    setStatus("loading");
-    setLink(null);
+    get<{ items: Share[] }>(`/api/shares?conversation_id=${enc(id)}`)
+      .then((r) => setShares(r.items.filter((s) => s.status === "active")))
+      .catch((e) => setError(describeError(e, t.share.loadError)));
+    get<{ revision: number; members: Member[] }>(`/api/conversations/${enc(id)}/collaborators`)
+      .then(setMembers)
+      .catch(() => setMembers(null));
+  };
+  useEffect(() => {
+    setPreview(null);
     setError(null);
-    get<ShareLink>(`/api/conversations/${enc(id)}/share`)
-      .then((data) => {
-        if (cancelled) return;
-        setLink(data && data.share_id ? data : null);
-        setStatus("ready");
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        if (e instanceof ApiError && e.status === 404) {
-          setLink(null);
-          setStatus("ready");
-        } else {
-          setError(describeError(e, t.share.loadError));
-          setStatus("error");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+    setShares(null);
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const create = async () => {
-    if (!id) return;
-    setBusy("create");
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
     setError(null);
     try {
-      const data = await post<ShareLink>(`/api/conversations/${enc(id)}/share`);
-      setLink(data);
-      if (data?.share_id && (await copyText(shareUrl(data)))) toast(t.share.copied);
+      await fn();
     } catch (e) {
       setError(describeError(e));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const revoke = async () => {
-    if (!id) return;
-    setBusy("revoke");
-    setError(null);
-    try {
-      await del(`/api/conversations/${enc(id)}/share`);
-      setLink(null);
+  const makePreview = () =>
+    run(async () => {
+      const principals = people.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+      setPreview(
+        await post<Preview>("/api/shares/previews", {
+          conversation_id: id,
+          audience: audience === "named" ? { type: "named", principals } : { type: audience },
+          allow_copy: allowCopy,
+        }),
+      );
+    });
+
+  const publish = () =>
+    run(async () => {
+      if (!preview) return;
+      const share = await post<Share>("/api/shares", { preview_id: preview.preview_id, digest: preview.digest },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } });
+      setPreview(null);
+      if (share.url && (await copyText(share.url))) toast(t.share.copied);
+      reload();
+    });
+
+  const revoke = (share: Share) =>
+    run(async () => {
+      await del(`/api/shares/${enc(share.id)}`, { body: { expected_revision: share.revision } });
       toast(t.share.revoked);
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy(null);
-    }
-  };
+      reload();
+    });
 
-  const url = link?.share_id ? shareUrl(link) : "";
+  const setCollaborators = (next: Member[]) =>
+    run(async () => {
+      const out = await put<{ revision: number; members: Member[] }>(`/api/conversations/${enc(id!)}/collaborators`, {
+        expected_revision: members?.revision ?? 0,
+        members: next.map((m) => ({ principal_id: m.principal_id, role: m.role })),
+      });
+      setMembers(out);
+      setInvite("");
+    });
 
   return (
-    <Modal
-      open={open}
-      onOpenChange={(o) => !o && onClose()}
-      title={t.share.title}
-      description={t.share.body}
-    >
-      {status === "loading" ? (
-        <div className="flex justify-center py-6">
-          <Spinner />
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {error && <Notice tone="error">{error}</Notice>}
-          {url ? (
-            <>
-              <div>
-                <label className="hz-label" htmlFor="hz-share-url">
-                  {t.share.linkLabel}
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="hz-share-url"
-                    readOnly
-                    value={url}
-                    onFocus={(e) => e.currentTarget.select()}
-                    className="hz-input min-w-0 flex-1 font-mono !text-[13px]"
-                  />
-                  <Button
-                    variant="primary"
-                    icon={<Copy size={15} aria-hidden />}
-                    onClick={async () => {
-                      if (await copyText(url)) toast(t.share.copied);
-                    }}
-                  >
+    <Modal open={open} onOpenChange={(o) => !o && !busy && onClose()} title={t.share.title}>
+      <div className="hz-tabs mb-3" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "snapshot"} onClick={() => setTab("snapshot")}>
+          <Link2 size={14} aria-hidden /> {t.share.snapshot}
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "live"} onClick={() => setTab("live")}>
+          <Users size={14} aria-hidden /> {t.share.live}
+        </button>
+      </div>
+      {error && <Notice tone="error" className="mb-3">{error}</Notice>}
+      {tab === "snapshot" ? (
+        <div className="space-y-3" data-testid="share-snapshot">
+          <p className="m-0 text-[13px] text-mute">{t.share.snapshotBody}</p>
+          {shares === null ? (
+            <Spinner size={14} />
+          ) : (
+            shares.map((share) => (
+              <div key={share.id} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px]">
+                <span className="min-w-0 flex-1 truncate text-ink">{share.url}</span>
+                <span className="text-[12px] text-mute">{t.share.audience[share.audience.type]}</span>
+                {share.url && (
+                  <Button size="sm" variant="ghost" icon={<Copy size={13} aria-hidden />} onClick={() => void copyText(share.url!).then(() => toast(t.share.copied))}>
                     {t.share.copy}
                   </Button>
-                </div>
-              </div>
-              <div className="flex justify-between gap-2 border-t border-line-soft pt-4">
-                <Button
-                  variant="ghost"
-                  className="!text-danger"
-                  icon={<Link2Off size={15} aria-hidden />}
-                  loading={busy === "revoke"}
-                  onClick={() => void revoke()}
-                >
-                  {busy === "revoke" ? t.share.revoking : t.share.revoke}
+                )}
+                <Button size="sm" variant="ghost" icon={<Link2Off size={13} aria-hidden />} onClick={() => void revoke(share)} disabled={busy}>
+                  {t.share.revoke}
                 </Button>
-                <Button onClick={onClose}>{t.close}</Button>
               </div>
-            </>
-          ) : status === "ready" ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="m-0 text-sm text-mute">{t.share.none}</p>
-              <Button
-                variant="primary"
-                icon={<Link2 size={15} aria-hidden />}
-                loading={busy === "create"}
-                onClick={() => void create()}
-              >
-                {busy === "create" ? t.share.creating : t.share.create}
+            ))
+          )}
+          {!preview ? (
+            <div className="space-y-2.5 rounded-lg border border-line p-3">
+              <fieldset className="m-0 flex flex-wrap gap-3 border-0 p-0 text-[13px]">
+                <legend className="mb-1 text-[12px] font-medium text-mute">{t.share.who}</legend>
+                {(["deployment", "named", "public"] as Audience[]).map((a) => (
+                  <label key={a} className="flex items-center gap-1.5">
+                    <input type="radio" name="audience" checked={audience === a} onChange={() => setAudience(a)} />
+                    {t.share.audience[a]}
+                  </label>
+                ))}
+              </fieldset>
+              {audience === "named" && (
+                <Field label={t.share.people} value={people} onChange={(e) => setPeople(e.target.value)} placeholder="ana@example.org, ben@example.org" />
+              )}
+              <label className="flex items-center gap-1.5 text-[13px]">
+                <input type="checkbox" checked={allowCopy} onChange={(e) => setAllowCopy(e.target.checked)} />
+                {t.share.allowCopy}
+              </label>
+              <Button size="sm" onClick={() => void makePreview()} loading={busy} data-testid="share-preview">
+                {t.share.previewButton}
               </Button>
             </div>
-          ) : null}
+          ) : (
+            <div className="space-y-2 rounded-lg border border-line p-3 text-[13px]" data-testid="share-preview-result">
+              <p className="m-0 text-ink">{t.share.previewSummary(preview.projection.messages.length)}</p>
+              {preview.omissions.length > 0 && (
+                <p className="m-0 text-mute">{t.share.omitted(preview.omissions.join(", "))}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>
+                  {t.cancel}
+                </Button>
+                <Button size="sm" variant="primary" loading={busy} onClick={() => void publish()} data-testid="share-publish">
+                  {t.share.publish}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3" data-testid="share-live">
+          <p className="m-0 text-[13px] text-mute">{t.share.liveBody}</p>
+          <ul className="m-0 list-none space-y-1 p-0">
+            {(members?.members ?? []).map((m) => (
+              <li key={m.principal_id} className="flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
+                <span className="min-w-0 flex-1 truncate">{m.name || m.email || m.principal_id}</span>
+                <span className="text-[12px] text-mute">{t.share.roles[m.role]}</span>
+                <button
+                  type="button"
+                  className="text-mute hover:text-ink"
+                  aria-label={t.share.remove}
+                  onClick={() => void setCollaborators((members?.members ?? []).filter((x) => x.principal_id !== m.principal_id))}
+                >
+                  <UserMinus size={14} aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <form
+            className="flex items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (invite.trim()) void setCollaborators([...(members?.members ?? []), { principal_id: invite.trim(), role }]);
+            }}
+          >
+            <div className="flex-1">
+              <Field label={t.share.addPerson} value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="name@company.com" />
+            </div>
+            <select className={cx("hz-input !w-auto")} value={role} onChange={(e) => setRole(e.target.value as "viewer" | "editor")} aria-label={t.share.role}>
+              <option value="viewer">{t.share.roles.viewer}</option>
+              <option value="editor">{t.share.roles.editor}</option>
+            </select>
+            <Button type="submit" size="sm" loading={busy} disabled={!invite.trim()}>
+              {t.share.add}
+            </Button>
+          </form>
         </div>
       )}
     </Modal>
   );
 }
+
+/** A pre-2.0 link's URL (kept for old shares). */
+export type { ShareLink };

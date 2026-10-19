@@ -235,7 +235,8 @@ def reset_password(
 
 
 @admin_app.command("list")
-def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP)) -> None:
+def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP),
+                  as_json: bool = typer.Option(False, "--json", help="Print the accounts as JSON.")) -> None:
     """List every account: role, status, how they sign in, last sign-in."""
     from ..access import store_for
     from . import users
@@ -243,6 +244,19 @@ def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP)) -> None
     hub = _prepare(hub)
     gs = store_for(hub)
     people = users.list_users(hub)
+    if as_json:
+        import json as _json
+
+        rows = []
+        for u in people:
+            with gs.engine.connect() as conn:
+                blocked = gs._meta_get(conn, "suspended:" + u["email"]) == "1"  # noqa: SLF001
+            rows.append({"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"],
+                         "status": "blocked" if blocked else u["status"],
+                         "sign_in": users.sign_in_of(u) if u["source"] != "local" else "local",
+                         "last_login_at": u["last_login_at"]})
+        print(_json.dumps({"accounts": rows}, indent=2, default=str))
+        return
     table = Table(show_header=True, header_style="bold")
     for column in ("Email", "Name", "Role", "Status", "Signs in with", "Last sign-in"):
         table.add_column(column, overflow="fold")
