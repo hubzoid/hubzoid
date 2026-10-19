@@ -99,7 +99,9 @@ class ValuesFile(BaseModel):
 
 # Problems that only say something is still needed. They never block saving
 # other values (setup happens in steps), but doctor fails until they are fixed.
-MISSING = ("setting_required", "secret_unavailable")
+# A stored secret this deployment key cannot read, or one stored for another
+# destination, needs setting again.
+MISSING = ("setting_required", "secret_unavailable", "secret_unreadable", "secret_rebind")
 
 
 @dataclass
@@ -282,8 +284,13 @@ def coerce(decl: Declaration, raw: Any) -> tuple[Any, str | None]:
     return value, None
 
 
-def _secret_available(hub_dir: Path, ref: str, env: Mapping[str, str]) -> tuple[bool, Problem | None]:
-    from ..secretstore import RefError, parse
+def _secret_available(hub_dir: Path, ref: str, env: Mapping[str, str], *,
+                      stored: bool) -> tuple[bool, Problem | None]:
+    """Whether ``ref`` resolves now. A stored value is decrypted to find out
+    and then dropped: never returned or logged. With ``stored`` an ``env:``
+    name that ``env`` lacks may come from the store, as at bridge start."""
+    from ..assertions import hub_key
+    from ..secretstore import Ref, RefError, SecretError, parse, resolve
 
     try:
         parsed = parse(ref)
@@ -292,35 +299,39 @@ def _secret_available(hub_dir: Path, ref: str, env: Mapping[str, str]) -> tuple[
         return False, Problem(None, "invalid_ref", "is not a valid reference. Write secret:hub/<hub>/<name>, "
                                                    "secret:deployment/<name> or env:<NAME>.")
     if parsed.provider == "env":
-        return bool((env.get(parsed.name) or "").strip()), None
-    if parsed.scope in ("hub", "channel"):
-        from ..assertions import hub_key
-
-        if parsed.hub != hub_key(Path(hub_dir)):
-            return False, Problem(None, "permission_denied", "A hub can use only its own secrets.")
-    from ..secretstore import store
-
-    meta = store.get_meta(hub_dir, scope=parsed.scope, target=parsed.target, name=parsed.name)
-    return meta is not None, None
+        if (env.get(parsed.name) or "").strip():
+            return True, None
+        if not stored:
+            return False, None
+        # The hub's stored value, else the deployment's, joins the environment.
+        candidates = [Ref("secret", parsed.name, "hub", hub=hub_key(Path(hub_dir))),
+                      Ref("secret", parsed.name, "deployment")]
+    else:
+        candidates = [parsed]
+    problem = None
+    for candidate in candidates:
+        try:
+            resolve(candidate, hub_dir, env=env)
+            return True, None
+        except SecretError as err:
+            if err.code != "secret_unavailable" and problem is None:
+                problem = Problem(None, err.code, err.message)
+    return False, problem
 
 
 def _secret_env(hub_dir: Path, env: Mapping[str, str] | None) -> dict[str, str]:
     """What an env: reference can see: the given environment, else this
-    process's environment plus the hub's layers and stored secrets."""
+    process's environment plus the hub's layers (stored secrets are checked
+    in the store, `_secret_available`)."""
     if env is not None:
         return dict(env)
     out = dict(os.environ)
     try:
         from .. import config_secrets as cs
-        from ..assertions import hub_key
-        from ..secretstore import store
 
         for _layer, _source, values in cs._layers(Path(hub_dir), cs._start_env(), fetch_secrets=False,
                                                   strict=False):
             out.update({k: v for k, v in values.items() if v.strip()})
-        for scope, target in (("deployment", ""), ("hub", hub_key(Path(hub_dir)))):
-            for meta in store.list_meta(hub_dir, scope=scope, target=target):
-                out.setdefault(meta.name, "<stored>")
     except Exception:  # noqa: BLE001 - availability is best effort here; doctor reports layers
         pass
     return out
@@ -347,18 +358,20 @@ def resolve(hub_dir: Path, *, values: ValuesFile | None = None, env: Mapping[str
         elif decl.secret:
             ref = refs.get(f"{decl.name}_ref") or f"env:{decl.name}"
             r.source = "hub.settings.yaml" if f"{decl.name}_ref" in refs else "default"
-            r.available, problem = _secret_available(hub_dir, ref, secret_env)
+            r.available, problem = _secret_available(hub_dir, ref, secret_env, stored=env is None)
+            if problem is None or problem.code in MISSING:
+                r.ref = ref
             if problem:
                 problem.key = decl.name
                 if problem.code == "invalid_ref":
                     problem.message = f"{decl.name}_ref {problem.message}"
+                elif problem.code in MISSING:  # stored, but unusable: set it again
+                    problem.message = f"{decl.name}: {problem.message}"
                 r.problems.append(problem)
-            else:
-                r.ref = ref
-                if decl.required and not r.available:
-                    r.problems.append(Problem(decl.name, "secret_unavailable",
-                                              f"{decl.name} is required. Set it with hubzoid secrets set "
-                                              f"--name {decl.name}, or point {decl.name}_ref at a secret."))
+            elif decl.required and not r.available:
+                r.problems.append(Problem(decl.name, "secret_unavailable",
+                                          f"{decl.name} is required. Set it with hubzoid secrets set "
+                                          f"--name {decl.name}, or point {decl.name}_ref at a secret."))
         else:
             raw, source = None, None
             r.stored = vals.get(decl.name)

@@ -387,6 +387,23 @@ def test_a_crash_message_is_not_shown_and_a_hang_is_killed_with_its_children(hub
     assert not marker.exists()  # the hung check's child was killed with it
 
 
+def test_a_stored_secret_this_key_cannot_read_is_not_available(hub, monkeypatch):
+    values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\n")
+    for name in ("GITHUB_TOKEN", "gh-app-key"):
+        store.put(hub, scope="hub", target="factory", name=name, value="stored-value-41f2", actor="t")
+    assert hs.validate(hub)[1] == []  # the default env:GITHUB_TOKEN finds the stored value
+    # A database restored under another deployment key: the rows are there, the values are not.
+    monkeypatch.setenv("HUBZOID_SECRET_KEY", secretbox.Fernet.generate_key().decode())
+    secretbox.reset_cache()
+    for refs in ("", "secrets:\n  GITHUB_TOKEN_ref: secret:hub/factory/gh-app-key\n"):
+        values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\n" + refs)
+        resolved, problems = hs.validate(hub)
+        token = next(r for r in resolved if r.decl.secret).public()
+        assert token["available"] is False and token["status"] == "missing" and token["ref"]
+        assert [(p.key, p.code, p.blocking) for p in problems] == [("GITHUB_TOKEN", "secret_unreadable", False)]
+        assert "stored-value-41f2" not in json.dumps([token, [p.public() for p in problems]])
+
+
 def test_an_unknown_check_id_is_refused(hub):
     from hubzoid.cli import app
 
