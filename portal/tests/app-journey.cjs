@@ -191,7 +191,7 @@ function chartPng(width = 160, height = 100) {
     // ---- new chat --------------------------------------------------------------------
     step("A new chat picks its agent from the header menu; ?agent= and the Console's ?models= preselect one");
     await page.goto(`${BASE}/`);
-    await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+    await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
     await onlyFixture("agent picker", async () => {
       // The page is "New chat", not the agent: with one hub its name is the brand too.
       await page.waitForFunction(() => document.title === "New chat · Hubzoid");
@@ -203,20 +203,20 @@ function chartPng(width = 160, height = 100) {
       await page.keyboard.press("Escape");
       await menu.waitFor({ state: "hidden" });
       await page.goto(`${BASE}/?agent=finance`);
-      await page.getByRole("heading", { name: "What can Finance Assistant help with?" }).waitFor();
+      await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       await page.getByTestId("agent-switcher").click();
       await menu.getByRole("option", { name: /Finance Assistant/, selected: true }).waitFor();
       await page.keyboard.press("Escape");
       await page.goto(`${BASE}/?models=it-ops`);
-      await page.getByRole("heading", { name: "What can IT Ops help with?" }).waitFor();
+      await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       await page.goto(`${BASE}/?agent=nobody`);
       // The last agent used (IT Ops, just above) takes its place.
       await page.getByText("The agent in that link isn't available to you, so this chat uses IT Ops.").waitFor();
-      // "Change agent" under the greeting opens the same menu.
-      await page.getByRole("button", { name: "Change agent", exact: true }).click();
+      // The agent's name in the header opens the menu.
+      await page.getByTestId("agent-switcher").click();
       await menu.getByRole("option", { name: /Hubzoid Guide/ }).click();
       await menu.waitFor({ state: "hidden" });
-      await page.getByRole("heading", { name: "What can Hubzoid Guide help with?" }).waitFor();
+      await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       await page.getByRole("button", { name: "What is Hubzoid?" }).waitFor();
     });
     await shot(page, "app-02-new-chat");
@@ -654,7 +654,7 @@ function chartPng(width = 160, height = 100) {
     // ---- account ---------------------------------------------------------------------
     step("Account: change the display name and the password");
     await page.goto(`${BASE}/account`);
-    await page.getByRole("heading", { name: "Account", level: 1 }).waitFor();
+    await page.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
     await axe(page, "account");
     await onlyFixture("account changes", async () => {
       await page.getByLabel("Display name").fill("Ada O.");
@@ -704,10 +704,10 @@ function chartPng(width = 160, height = 100) {
     // ---- keyboard ----------------------------------------------------------------------
     step("Ctrl+Shift+O starts a new chat from anywhere");
     await page.goto(`${BASE}/account`);
-    await page.getByRole("heading", { name: "Account", level: 1 }).waitFor();
+    await page.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
     await page.keyboard.press("Control+Shift+O");
     await page.waitForURL(`${BASE}/`);
-    await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+    await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
 
     step("Keyboard only: Tab to the composer, Shift+Enter for a new line, Enter to send");
     await page.goto(`${BASE}/`);
@@ -776,7 +776,7 @@ function chartPng(width = 160, height = 100) {
     const mobile = await phone.newPage();
     watch(mobile);
     await mobile.goto(`${BASE}/`);
-    await mobile.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+    await mobile.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
     await noHorizontalScroll(mobile, "phone new chat");
     if (fixture) {
       // The empty state starts at the top; the header names the agent and opens the menu.
@@ -802,7 +802,7 @@ function chartPng(width = 160, height = 100) {
       await shot(mobile, "app-21-phone-conversation");
     }
     await mobile.goto(`${BASE}/account`);
-    await mobile.getByRole("heading", { name: "Account", level: 1 }).waitFor();
+    await mobile.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
     await noHorizontalScroll(mobile, "phone account");
     await mobile.goto(`${BASE}/account/connections`);
     await mobile.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
@@ -883,7 +883,7 @@ function chartPng(width = 160, height = 100) {
       await page.evaluate(() => (window.__sameDocument = true));
       await fetch(`${BASE}/__fixture/flag/no_agents/false`);
       await page.getByRole("button", { name: "Try again" }).click();
-      await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       assert.ok(await page.evaluate(() => window.__sameDocument), "the agent opens without a page reload");
 
       step("With many agents the header menu searches them, recent agents first");
@@ -899,7 +899,7 @@ function chartPng(width = 160, height = 100) {
       await search.fill("payroll");
       assert.equal(await page.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 1);
       await search.press("Enter");
-      await page.getByRole("heading", { name: "What can Payroll Desk help with?" }).waitFor();
+      await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       await page.getByTestId("agent-switcher").click();
       await page.getByRole("option", { name: /Payroll Desk/, selected: true }).waitFor();
       await shot(page, "app-24b-many-agents");
@@ -933,7 +933,7 @@ function chartPng(width = 160, height = 100) {
       await invited.getByLabel("Confirm password").fill("a-long-password");
       await invited.getByRole("button", { name: "Save password and sign in" }).click();
       await invited.waitForURL(`${BASE}/`);
-      await invited.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      await invited.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       // Only the new person's agents, never the previous person's list.
       await invited.getByTestId("agent-switcher").click();
       assert.equal(await invited.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 2);
@@ -1033,7 +1033,7 @@ function chartPng(width = 160, height = 100) {
       const lp = await lctx.newPage();
       watch(lp);
       await lp.goto(`${LOCAL_BASE}/`);
-      await lp.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      await lp.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       assert.equal(new URL(lp.url()).pathname, "/");
       await lp.getByRole("button", { name: /^Account menu: Local mode/ }).click();
       await lp.getByRole("menuitem", { name: "Admin Console" }).waitFor();
@@ -1044,7 +1044,7 @@ function chartPng(width = 160, height = 100) {
       assert.equal(await lp.getByRole("button", { name: "Sign out" }).count(), 0);
       await lp.goto(`${LOCAL_BASE}/auth`);
       await lp.waitForURL(`${LOCAL_BASE}/`);
-      await lp.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      await lp.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
       await shot(lp, "app-25-local-mode");
       step("The Console still loads from /portal/ in the same bundle");
       await lp.goto(`${LOCAL_BASE}/portal/`);

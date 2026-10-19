@@ -11,11 +11,17 @@ import { upsertConversation } from "./lib/conversations";
 import { displayName } from "./lib/format";
 import { navigate, parseRoute, signInHref, useLocation, type Route } from "./lib/router";
 import { applyTheme, useTheme } from "./lib/theme";
+import { clearAccount, loadAccount, loadPublic, refreshTheme } from "../lib/presentation";
+import { AnnouncementBanner, applyBrandHead, TermsGate, useBrandMe } from "./components/BrandChrome";
 import type { AgentsResponse, Branding, Conversation, Session, SessionUser } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
+import { SearchDialog } from "./components/SearchDialog";
+import { sidebar as sidebarState } from "./lib/sidebarState";
 import { announce, LiveRegion, Toaster } from "./components/toast";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
-import { Button, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
+import { Button, Notice, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
+import { loadDevices, useConnection, useContrast } from "./lib/devices";
+import { ShortcutsDialog, useShortcuts } from "./components/Shortcuts";
 
 applyTheme();
 
@@ -23,9 +29,10 @@ const ChatPage = lazy(() => import("./chat/ChatPage"));
 const SharePage = lazy(() => import("./pages/SharePage"));
 const SignInPage = lazy(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
-const AccountPage = lazy(() => import("./pages/AccountPage"));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+const BrandPreviewPage = lazy(() => import("./pages/BrandPreviewPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const PUBLIC_ROUTES: Route["name"][] = ["signin", "set-password", "share"];
 
@@ -76,6 +83,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void loadPublic();
+    void loadDevices();
     void loadSession();
     get<Branding>("/api/branding", { quiet401: true })
       .then((b) => setBranding(b ?? {}))
@@ -92,6 +101,12 @@ export default function App() {
   }, [location.path]);
 
   const authenticated = !!session?.authenticated;
+
+  // Account preferences follow the person; signing out drops them.
+  useEffect(() => {
+    if (authenticated) void loadAccount();
+    else clearAccount();
+  }, [authenticated, session?.user?.id]);
   const isPublic = PUBLIC_ROUTES.includes(route.name);
 
   useEffect(() => {
@@ -123,26 +138,34 @@ export default function App() {
     if (userId !== null) loadAgents();
   }, [userId, loadAgents]);
 
-  // Branding: favicon and an optional stylesheet from the hub's branding folder.
+  // Branding: the deployment's activated brand (favicon, touch icon, the
+  // decorative stylesheet). A new activation is picked up on focus and every
+  // minute, without leaving the page or interrupting a reply.
   useEffect(() => {
-    if (branding.favicon_url) {
-      let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = branding.favicon_url;
-      link.removeAttribute("type");
-    }
-    if (branding.custom_css_url && !document.querySelector("link[data-hz-branding]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = branding.custom_css_url;
-      css.dataset.hzBranding = "true";
-      document.head.appendChild(css);
-    }
-  }, [branding.favicon_url, branding.custom_css_url]);
+    applyBrandHead(branding.manifest, branding.favicon_url);
+  }, [branding.manifest, branding.favicon_url]);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      get<Branding>("/api/branding", { quiet401: true })
+        .then((b) => {
+          if (!b) return;
+          setBranding((current) => {
+            const changed = (current.manifest?.generation ?? 0) !== (b.manifest?.generation ?? 0);
+            if (changed) void refreshTheme();
+            return changed || current.name !== b.name ? b : current;
+          });
+        })
+        .catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+  const brandMe = useBrandMe(branding.manifest, !!session?.authenticated);
 
   const brandName = displayName(branding.name || session?.branding_name || "") || t.product;
 
@@ -273,7 +296,16 @@ export default function App() {
         <SharePage shareId={route.id} />
       </Suspense>,
     );
+  if (route.name === "brand-preview")
+    return wrap(
+      <Suspense fallback={<PageSpinner />}>
+        <BrandPreviewPage draftId={route.id} />
+      </Suspense>,
+    );
   if (!authenticated) return <PageSpinner />;
+  const manifest = branding.manifest;
+  if (manifest?.legal.require_acceptance && brandMe.me?.terms_required && brandMe.me.policy_hash)
+    return wrap(<TermsGate manifest={manifest} policyHash={brandMe.me.policy_hash} onAccepted={brandMe.reload} />);
 
   let page: ReactNode;
   if (route.name === "new" || route.name === "conversation")
@@ -286,7 +318,10 @@ export default function App() {
         onConversationCreated={onConversationCreated}
       />
     );
-  else if (route.name === "account") page = <AccountPage />;
+  else if (route.name === "settings") page = <SettingsPage section={route.section} />;
+  else if (route.name === "account") page = <RedirectTo to="/settings#/me/profile" />;
+  else if (route.name === "sources") page = <RedirectTo to="/settings#/me/sources" />;
+  else if (route.name === "workspace") page = <RedirectTo to="/settings#/workspace" />;
   else if (route.name === "connections")
     page = <ConnectionsPage connected={route.connected} connector={route.connector} error={route.error} />;
   else page = <NotFoundPage />;
@@ -301,14 +336,62 @@ export default function App() {
       >
         {t.skipToContent}
       </a>
+      <DeviceChrome onNewChat={() => value.newChat()} onToggleSidebar={() => (window.innerWidth >= 1024 ? sidebarState.toggleCollapsed() : setDrawerOpen((o) => !o))} />
       <div className="flex h-dvh w-full overflow-hidden bg-bg text-ink">
         <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
+        <SearchDialog />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
+          <OfflineBanner />
+          <AnnouncementBanner
+            manifest={branding.manifest}
+            dismissed={brandMe.me?.dismissed_announcements ?? []}
+            onDismissed={brandMe.reload}
+          />
           <PageErrorBoundary resetKey={location.href}>
             <Suspense fallback={<PageSpinner />}>{page}</Suspense>
           </PageErrorBoundary>
         </main>
       </div>
     </>,
+  );
+}
+
+/** Old addresses that moved into Settings. */
+function RedirectTo({ to }: { to: string }) {
+  useEffect(() => {
+    history.replaceState(null, "", to);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, [to]);
+  return <PageSpinner />;
+}
+
+/** Shortcuts, contrast: device-level behaviour that needs no layout of its own. */
+function DeviceChrome({ onNewChat, onToggleSidebar }: { onNewChat: () => void; onToggleSidebar: () => void }) {
+  useContrast();
+  const handlers = useMemo(
+    () => ({
+      "chat.new": onNewChat,
+      "chat.toggle_sidebar": onToggleSidebar,
+      "chat.search": sidebarState.openSearch,
+      "chat.focus_composer": () => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus(),
+      "chat.stop": () => document.querySelector<HTMLButtonElement>('[data-testid="stop"]')?.click(),
+      "chat.copy_last": () => {
+        const last = [...document.querySelectorAll('[data-role="assistant"]')].pop();
+        if (last) void navigator.clipboard?.writeText((last as HTMLElement).innerText).then(() => announce(t.copied));
+      },
+    }),
+    [onNewChat, onToggleSidebar],
+  );
+  const { effective, open, setOpen, reload } = useShortcuts(handlers);
+  return <ShortcutsDialog open={open} onOpenChange={setOpen} effective={effective} reload={() => void reload()} />;
+}
+
+function OfflineBanner() {
+  const state = useConnection();
+  if (state === "online") return null;
+  return (
+    <div className="px-3 pt-2" role="status" data-testid="offline-banner">
+      <Notice tone="warning">{t.connection.offline}</Notice>
+    </div>
   );
 }

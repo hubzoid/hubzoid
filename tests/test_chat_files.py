@@ -2,6 +2,8 @@
 headers, and how the agent is told about them."""
 from __future__ import annotations
 
+import hashlib
+
 import json
 
 import pytest
@@ -50,8 +52,10 @@ def _upload(client, name, payload, mime, conv="c_files0001", headers=ORIGIN):
 def test_upload_stores_file_and_sidecar(hub, client):
     r = _upload(client, "notes.txt", b"hello world", "text/plain")
     assert r.status_code == 201
-    assert r.json() == {"file_id": "notes.txt", "name": "notes.txt", "size": 11,
-                        "mime": "text/plain", "kind": "file"}
+    got = r.json()
+    assert {k: got[k] for k in ("file_id", "name", "size", "mime", "kind")} == {
+        "file_id": "notes.txt", "name": "notes.txt", "size": 11, "mime": "text/plain", "kind": "file"}
+    assert got["id"] and got["content_sha256"] == hashlib.sha256(b"hello world").hexdigest()  # a lasting file id
     folder = memory.chat_upload_dir(hub, "web-c_files0001")
     assert (folder / "notes.txt").read_bytes() == b"hello world"
     assert uploads.read_meta(folder, "notes.txt") == {"mime": "text/plain", "size": 11, "kind": "text"}
@@ -191,6 +195,8 @@ def test_attached_files_reach_the_prompt_and_the_message(app, client):
     assert seen[-1].startswith("[user]\n[Image: chart.png]  (attached image, shown to you directly)")
     assert "[User attached file: notes.txt (5 bytes, text/plain)." in seen[-1]
     stored = client.get("/api/conversations/c_files0001").json()["messages"][0]["content"]
+    for part in stored:
+        assert part.pop("id", "x")  # file parts carry their lasting file id too
     assert stored == [
         {"type": "text", "text": "What do these show?"},
         {"type": "image", "file_id": "chart.png", "name": "chart.png", "mime": "image/png",
