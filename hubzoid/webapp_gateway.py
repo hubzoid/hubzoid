@@ -139,14 +139,16 @@ def agent_card(hub_dir: Path, *, model_label: str | None = None, api_base: str =
     hub_dir = Path(hub_dir)
     try:
         main = agents_loader.load_main(hub_dir)
-        name, description = main.spec.name, main.spec.description
+        slug, description = main.spec.name, main.spec.description
+        name = (main.spec.display_name or "").strip() or slug
         suggestions = list(main.spec.suggestions)
     except Exception:  # noqa: BLE001 — a broken AGENTS.md still gets a card
         log.warning("webapp: could not load the main agent of %s", hub_dir.name)
-        name, description, suggestions = fallback_name or hub_dir.name, "", []
+        slug = name = fallback_name or hub_dir.name
+        description, suggestions = "", []
     logo = _find(hub_dir / "branding", _LOGO_CANDIDATES, custom=True)
     return {
-        "id": model_label or _slugify(name),
+        "id": model_label or _slugify(slug),
         "name": name,
         "description": description,
         "suggestions": suggestions,

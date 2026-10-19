@@ -435,3 +435,17 @@ def test_edge_redacts_oauth_callback_logs_when_connections_provide_it(monkeypatc
     monkeypatch.delattr(connector_routes, "redact_oauth_callback_logs")
     assert edge._factory() == "app"            # a build without connections
 
+
+
+def test_an_agents_display_name_is_shown_as_written(tmp_path):
+    from hubzoid.loaders import agents as agents_loader
+    from hubzoid.webapp_gateway import agent_card
+
+    hub = _hub(tmp_path, "irs", 3613, agent_name="irs-hub")
+    assert agent_card(hub)["name"] == "irs-hub"  # the app turns a slug into "Irs Hub"
+    (hub / "AGENTS.md").write_text("---\nname: irs-hub\ndisplay_name: IRS Hub\ndescription: d\n---\nbody")
+    card = agent_card(hub)
+    assert (card["name"], card["id"]) == ("IRS Hub", "irs-hub")  # the id stays the slug
+    assert agents_loader.display_name(hub) == "IRS Hub"
+    (hub / "AGENTS.md").write_text("---\nname: [broken\n---")
+    assert agents_loader.display_name(hub, "IRS") == "IRS"
