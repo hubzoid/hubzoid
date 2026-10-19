@@ -3227,6 +3227,12 @@ app.add_typer(handoffs_app, name="handoffs",
               help="Handoff documents between stations of a work item.",
               rich_help_panel="Commands")
 
+from .sandbox.cli import sandbox_app  # noqa: E402
+
+app.add_typer(sandbox_app, name="sandbox",
+              help="Sandboxes for agents: doctor, profiles, probes and cleanup.",
+              rich_help_panel="Commands")
+
 
 if __name__ == "__main__":
     app()

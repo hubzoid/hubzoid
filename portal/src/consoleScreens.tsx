@@ -17,13 +17,14 @@ export const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").th
 export const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
 const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
 export const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
+const SandboxesScreen = lazy(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
 const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
-export type Area = "home" | "agents" | "runs" | "work" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
+export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
 
 export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: () => void, embedded = false): { screen: ReactNode; active: Area } {
   const [area, ...rest] = parts;
@@ -60,6 +61,9 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
   } else if (area === "work") {
     active = "work";
     screen = <WorkItemsScreen hubs={list} />;
+  } else if (area === "sandboxes") {
+    active = "sandboxes";
+    screen = <SandboxesScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
     screen = <PeopleScreen me={me} hubs={list} selected={rest[0]} embedded={embedded} />;

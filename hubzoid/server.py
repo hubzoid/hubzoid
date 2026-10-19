@@ -161,6 +161,8 @@ def build_app() -> FastAPI:
                 await asyncio.to_thread(hub_changes.recover, hub_dir)
             except Exception:  # noqa: BLE001
                 log.exception("hub changes: recovery failed")
+        from .sandbox import service as sandbox_service
+        reaper_task = asyncio.create_task(sandbox_service.reaper_loop(hub_dir))  # idle when sandboxes are off
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -171,6 +173,11 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            reaper_task.cancel()
+            try:
+                await reaper_task
+            except asyncio.CancelledError:
+                pass
             if hitl_task is not None:
                 hitl_task.cancel()
             if wf_dispatcher is not None:

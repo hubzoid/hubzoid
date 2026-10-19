@@ -1,0 +1,1 @@
+import{g as e}from"./src-BdRMu3l_.js";var t=e(({flowchart:e})=>{let t=e?.subGraphTitleMargin?.top??0,n=e?.subGraphTitleMargin?.bottom??0;return{subGraphTitleTopMargin:t,subGraphTitleBottomMargin:n,subGraphTitleTotalMargin:t+n}},`getSubGraphTitleMargins`);export{t};

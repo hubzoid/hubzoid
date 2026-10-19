@@ -421,6 +421,7 @@ export const en = {
     myWork: "My work items",
     myWorkLede: "Work you asked the agents for: its progress, what waits for your approval, and what you decided.",
     workItems: "Work items",
+    sandboxes: "Sandboxes",
     agents: "Agents",
     people: "People & access",
     activity: "Activity",

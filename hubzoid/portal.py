@@ -1389,6 +1389,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                               lambda actor, hub: deployment.hub_path(hub_dir, hub))
     work_item_routes.register_stations(router, require_person,
                                        lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Sandboxes: metadata for viewers, controls for managers.
+    from .sandbox import routes as sandbox_routes
+    sandbox_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
     return router
 
 

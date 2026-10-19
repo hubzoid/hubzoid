@@ -18,25 +18,58 @@ def hub_registry(hub_dir: Path) -> dict:
     return hub_tool_registry(Path(hub_dir))
 
 
-def for_station(hub_dir: Path, names) -> dict:
-    """{name: FunctionTool} with exactly `names`, in order."""
+def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str | None = None) -> dict:
+    """{name: FunctionTool} with exactly `names`, in order. With a sandbox,
+    the sandbox tools (`exec_command`, `read_file`, ...) are available and the
+    hub's own `read_file` and `list_files` are listed as `read_hub_file` and
+    `list_hub_files`. `sandbox_id` binds them to a live sandbox; without it
+    they are the same tools, refusing to run (for checks and digests)."""
+    from .. import tool_classes
+    from ..sandbox import tools as sandbox_tools
+    from ..work_items.errors import WorkItemError
+
     names = list(names or ())
     if not names:
         return {}
-    wanted_hub = [n for n in names if n not in STATION_TOOLS]
-    registry = hub_registry(hub_dir) if wanted_hub else {}
+    boxed = sandbox_names(hub_dir, names, sandbox=sandbox)
+    if boxed and not sandbox:
+        raise WorkItemError("sandbox_tool_without_sandbox", f"{', '.join(boxed)} need a sandbox profile "
+                            "(sandbox: in the agent's frontmatter).", status=422)
+    wanted_hub = [n for n in names if n not in STATION_TOOLS and n not in boxed]
+    registry = hub_registry(hub_dir) if wanted_hub or any(n in sandbox_tools.HUB_ALIASES for n in boxed) else {}
+    box = sandbox_tools.make(hub_dir, sandbox_id) if any(n in sandbox_tools.NAMES for n in boxed) else {}
     out = {}
     for name in names:
         if name == "save_handoff":
             out[name] = _save_handoff_tool()
         elif name == "read_handoff":
             out[name] = _read_handoff_tool()
+        elif name in box:
+            out[name] = box[name]
+        elif name in sandbox_tools.HUB_ALIASES and sandbox_tools.HUB_ALIASES[name] in registry:
+            # The alias keeps the original's class (a built-in is classed by its own
+            # name, which the alias does not have) and its source, for the digest.
+            original = registry[sandbox_tools.HUB_ALIASES[name]]
+            out[name] = tool_classes.declare(tool_classes.copy_tool(original, name=name),
+                                             tool_classes.classify(original),
+                                             action=tool_classes.action_of(original))
         elif name in registry:
             out[name] = registry[name]
         else:
-            from ..work_items.errors import WorkItemError
             raise WorkItemError("unknown_tool", f"Unknown tool {name!r} for this station.", status=422)
     return out
+
+
+def sandbox_names(hub_dir: Path, names, *, sandbox: bool) -> list[str]:
+    """The names in `names` that mean a sandbox tool. Without a sandbox, a
+    name the hub also has (`read_file`) keeps meaning the hub's own tool."""
+    from ..sandbox import tools as sandbox_tools
+
+    boxed = [n for n in names if n in sandbox_tools.NAMES or n in sandbox_tools.HUB_ALIASES]
+    if sandbox or not boxed:
+        return boxed
+    hub_names = set(hub_registry(hub_dir))
+    return [n for n in boxed if n not in hub_names]
 
 
 def _save_handoff_tool():
