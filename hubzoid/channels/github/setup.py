@@ -96,8 +96,8 @@ def start(conn, *, owner: str, owner_type: str, name: str, actor: str) -> dict:
             "expires_in_seconds": SETUP_SECONDS}
 
 
-def _setup(conn, state: str | None, *, want: tuple[str, ...]) -> dict:
-    setup = (conn.state or {}).get("github_setup") or {}
+def _setup(conn, state: str | None, *, want: tuple[str, ...], current: dict | None = None) -> dict:
+    setup = current if current is not None else ((conn.state or {}).get("github_setup") or {})
     if not setup or not state or not secrets.compare_digest(setup.get("state_hash", ""), _hash(state)):
         raise ChannelError("setup_state_invalid", "This setup link is not valid. Start a new setup.", status=400)
     if time.time() > float(setup.get("expires") or 0):
@@ -139,8 +139,14 @@ straight to this hub's secret store. Nobody sees them here.</p>
 def callback(conn, code: str, state: str) -> str:
     """GitHub returned with a temporary code. Convert it, check the owner,
     store the secrets. Returns where to send the browser next."""
-    setup = _setup(conn, state, want=("awaiting_registration",))
-    store.set_connection_state(conn.hub_dir, conn.hub, conn.id, github_setup={**setup, "status": "converting"})
+    def take(current: dict):
+        # Check and mark the attempt in one locked step, so two callbacks for
+        # the same link cannot both convert, and a late duplicate cannot move
+        # a finished setup back.
+        found = _setup(conn, state, want=("awaiting_registration",), current=current.get("github_setup") or {})
+        return {"github_setup": {**found, "status": "converting"}}, found
+
+    setup = store.swap_connection_state(conn.hub_dir, conn.hub, conn.id, take)
     try:
         resp = gh._gh(None, writes=True).request("POST", f"/app-manifests/{code}/conversions")
         data = resp.json()

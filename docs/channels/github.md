@@ -109,10 +109,17 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
   only its own repository.
 - Writes run only inside channel work, as recorded writes that are never
   repeated on their own. Unattended work writes only on the issue or pull
-  request it came from.
+  request it came from, and never opens a new issue or pull request.
 - A new pull request is always a draft.
 - Updating a pull request waits for a person's approval of the exact change,
   which arrives with the shared approvals service. Until then it is refused.
+  This includes `updateIssue` and `closeIssue` on a number that is a pull
+  request.
+- Commit SHAs, branch names and file paths are checked before they go into a
+  URL, so no argument can reach another repository.
+- The repository is looked up by its id before each call. A renamed
+  repository keeps working; one moved to another owner is refused until the
+  file is updated.
 
 ## Troubleshooting
 

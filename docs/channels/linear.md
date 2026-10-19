@@ -67,11 +67,17 @@ hubzoid channels doctor ./company-hub linear-main
 - Only a verified delegation or mention, in an allowed team, by a linked
   person, starts work. The issue's own text is context, never the request.
 - Every reply is an activity in the session it came from: a thought to
-  acknowledge, then the response, or an error.
+  acknowledge, then the response, or an error. Each activity gets an id made
+  from the reply, so an answer whose outcome was lost is looked up by that id
+  (never by matching text) and is never posted twice. Linear's own create
+  inputs accept a client id; this is not yet checked against a live
+  workspace.
+- Stop in Linear cancels the person's running work in that session.
 - The plan is posted as a response. Linear's native plan checklist is a
   technology preview and is not used.
 - The app token renews itself before it expires, one worker at a time. If
-  Linear refuses the renewal, the connection asks to be reconnected.
+  Linear refuses the renewal, the connection asks to be reconnected. `doctor`
+  never renews it: it reports an expired token instead.
 - No Linear tool is offered to agents, so unattended work never reads or
   writes Linear.
 

@@ -35,6 +35,8 @@ class FakeGitHub:
         self.owner = {"login": "example-co", "id": 101, "type": "Organization"}
         self.fail_comment: int | None = None
         self.next_id = 5000
+        self.full_name = "example-co/widget"
+        self.role = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
@@ -54,9 +56,13 @@ class FakeGitHub:
                                              "permissions": dict(setup.PERMISSIONS)})
         if path == "/installation/repositories":
             return httpx.Response(200, json={"repositories": [{"id": 2001, "full_name": "example-co/widget"}]})
+        m = re.fullmatch(r"/repositories/(\d+)", path)
+        if m:
+            return httpx.Response(200, json={"id": int(m.group(1)), "full_name": self.full_name,
+                                             "owner": {"login": self.full_name.split("/")[0]}})
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/collaborators/([^/]+)/permission", path)
         if m:
-            return httpx.Response(200, json={"permission": self.permission})
+            return httpx.Response(200, json={"permission": self.permission, "role_name": self.role or self.permission})
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/(issues|pulls)/(\d+)/comments", path)
         if m:
             key = f"{m.group(2)}:{m.group(3)}"
@@ -68,7 +74,9 @@ class FakeGitHub:
                 c = {"id": self.next_id, "body": body["body"], "html_url": f"https://github.com/c/{self.next_id}"}
                 self.comments.setdefault(key, []).append(c)
                 return httpx.Response(201, json=c)
-            return httpx.Response(200, json=self.comments.get(key, []))
+            items = self.comments.get(key, [])
+            size, page = int(request.url.params.get("per_page", 30)), int(request.url.params.get("page", 1))
+            return httpx.Response(200, json=items[(page - 1) * size:page * size])
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/pulls/(\d+)/comments/(\d+)/replies", path)
         if m:
             self.next_id += 1
@@ -79,11 +87,17 @@ class FakeGitHub:
             return httpx.Response(201, json={"content": "eyes"})
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/issues/(\d+)", path)
         if m and method == "GET":
-            return httpx.Response(200, json={"number": int(m.group(2)), "title": "Bug", "body": "x" * 9000,
-                                             "html_url": "https://github.com/i"})
+            n = int(m.group(2))
+            out = {"number": n, "title": "Bug", "body": "x" * 9000, "html_url": "https://github.com/i",
+                   "comments": len(self.comments.get(f"issues:{n}", []))}
+            if n == 7:
+                out["pull_request"] = {"url": "https://api.github.com/pulls/7"}
+            return httpx.Response(200, json=out)
         m = re.fullmatch(r"/repos/([^/]+/[^/]+)/pulls", path)
         if m and method == "POST":
             return httpx.Response(201, json={"number": 7, "draft": body.get("draft"), "html_url": "https://pr"})
+        if "/git/trees/" in request.url.raw_path.decode():
+            return httpx.Response(200, json={"sha": "abc1234", "tree": [], "truncated": False})
         if path == "/user":
             return httpx.Response(200, json={"login": "dev", "id": 77})
         return httpx.Response(404, json={"message": f"not faked: {method} {path}"})
@@ -493,3 +507,100 @@ def test_label_trigger_starts_unattended_work(hub_dir, api, monkeypatch):
 
     item = wstore.get_item(hub_dir, row["route_json"]["work_item_id"])
     assert item["route"] == "triage" and item["origin_json"]["requested_by"]["display"] == "ana"
+
+
+# -- review fixes -------------------------------------------------------------------------
+
+def _attended(monkeypatch, number=12, unattended=False):
+    monkeypatch.setattr(operations, "_bound_origin", lambda: {"item": {}, "coords": {"repository_id": 2001,
+                                                                                     "number": number},
+                                                              "unattended": unattended})
+
+
+def test_refs_stay_inside_the_repository(hub_dir, api):
+    conn = app_conn(hub_dir)
+    for name, args in [("getCommit", {"sha": "../../../acme/private/issues"}),
+                       ("getRepositoryTree", {"ref": "main/../../../acme/private"}),
+                       ("compareCommits", {"base": "main", "head": "x/../../y"}),
+                       ("getFileContent", {"ref": "main", "path": "a/./../../b"})]:
+        with pytest.raises(ChannelError) as exc:
+            operations.call(conn, name, {"repository_id": 2001, **args})
+        assert exc.value.code == "validation_failed", name
+    assert not any("acme/private" in p for _, p, _ in api.calls)
+    operations.call(conn, "getRepositoryTree", {"repository_id": 2001, "ref": "feature/x"})
+    assert any(p.endswith("/git/trees/feature/x") for _, p, _ in api.calls)    # one encoded segment on the wire
+
+
+def test_issue_edits_on_a_pull_request_need_approval(hub_dir, api, monkeypatch):
+    conn = app_conn(hub_dir)
+    _attended(monkeypatch, number=7)
+    for name, args in [("updateIssue", {"title": "x"}), ("closeIssue", {})]:
+        with pytest.raises(ChannelError) as exc:
+            operations.call(conn, name, {"repository_id": 2001, "number": 7, **args})
+        assert exc.value.code == "pr_update_requires_approval"
+    assert not any(m == "PATCH" for m, _, _ in api.calls)
+
+
+def test_unattended_work_cannot_open_new_objects(hub_dir, api, monkeypatch):
+    conn = app_conn(hub_dir)
+    _attended(monkeypatch, unattended=True)
+    for name, args in [("createIssue", {"title": "x"}),
+                       ("createPullRequest", {"title": "x", "base": "main", "head": "hub/x"})]:
+        with pytest.raises(ChannelError) as exc:
+            operations.call(conn, name, {"repository_id": 2001, **args})
+        assert exc.value.code == "out_of_scope"
+
+
+def test_renamed_repository_is_used_by_its_current_name(hub_dir, api):
+    from types import SimpleNamespace
+
+    from hubzoid.work_items.errors import Rejected
+
+    gh._NAMES.clear()
+    conn = app_conn(hub_dir)
+    api.full_name = "example-co/widget-renamed"
+    origin = gha.Origin("github", "101", "repo:2001:issue:12", {"repository_id": 2001,
+                                                                 "full_name": "example-co/widget", "number": 12})
+    conn.adapter.reply(conn, origin, SimpleNamespace(text="hi", marker="m1"))
+    assert any(p == "/repos/example-co/widget-renamed/issues/12/comments" for m, p, _ in api.calls if m == "POST")
+    gh._NAMES.clear()
+    api.full_name = "someone-else/widget"
+    with pytest.raises(Rejected):
+        conn.adapter.reply(conn, origin, SimpleNamespace(text="hi", marker="m2"))
+    gh._NAMES.clear()
+
+
+def test_triage_labeler_is_trusted(hub_dir, api):
+    conn = app_conn(hub_dir)
+    out = deliver(conn, "issues", _label("factory"))
+    ev = admission.event_of(hub_dir, store.get_delivery(hub_dir, out.events[0]["id"]))
+    api.permission, api.role = "read", "triage"
+    assert conn.adapter.authorize(conn, ev) is None
+
+
+def test_ci_failure_from_a_bot_is_admitted_but_bot_comments_are_not(hub_dir):
+    conn = app_conn(hub_dir)
+    suite = {"action": "completed", "repository": REPO, "installation": INSTALL,
+             "sender": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"},
+             "check_suite": {"id": 88, "conclusion": "failure", "head_sha": "abc1234", "head_branch": "hub/fix-1",
+                             "pull_requests": [{"number": 7}]}}
+    assert deliver(conn, "check_suite", suite).events[0]["status"] == "accepted"
+    bot = deliver(conn, "issue_comment", comment("@acme-factory hi", sender_type="Bot", login="x[bot]"), "d2")
+    assert bot.events[0]["reason"] == "bot_author"
+
+
+def test_issue_context_is_the_newest_comments(hub_dir, api):
+    conn = app_conn(hub_dir)
+    api.comments["issues:12"] = [{"id": n, "body": f"c{n}"} for n in range(1, 121)]
+    data = operations.call(conn, "getIssueContext", {"repository_id": 2001, "number": 12})["data"]
+    assert [c["id"] for c in data["comments"]] == list(range(71, 121)) and data["omitted_count"] == 70
+
+
+def test_public_installation_return_needs_its_state(hub_dir, api):
+    conn = pending_conn(hub_dir)
+    out = setup.start(conn, owner="example-co", owner_type="organization", name="A", actor="admin")
+    state = re.search(r"state=([^&]+)$", out["registration_url"]).group(1)
+    setup.callback(config.active(hub_dir, "github"), "c", state)
+    with pytest.raises(ChannelError) as exc:
+        setup.installed(config.active(hub_dir, "github"), 7001, "")
+    assert exc.value.code == "setup_state_invalid"

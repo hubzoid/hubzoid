@@ -303,7 +303,7 @@ class GitHubAdapter(Adapter):
                 origin=self._origin(conn, body, number), actor=actor,
                 text=f"Checks failed on {suite.get('head_branch')} at {suite.get('head_sha')}.", trigger=True,
                 message_id=f"suite:{suite.get('id')}",
-                data={"route": "revise", "unattended": True, "head_sha": suite.get("head_sha"),
+                data={"route": "revise", "unattended": True, "bot_allowed": True, "head_sha": suite.get("head_sha"),
                       "head_branch": suite.get("head_branch"), "check_suite_id": suite.get("id"),
                       "pull_requests": [p.get("number") for p in prs]})
         return None
@@ -318,6 +318,7 @@ class GitHubAdapter(Adapter):
         return InboundEvent(semantic_key=f"hook:{hook.id}:{verified.delivery_id}", kind=f"hook:{event}",
                             origin=origin, actor=actor, text="", trigger=True, message_id=verified.delivery_id,
                             data={"hook": hook.id, "hook_workflow": hook.workflow, "unattended": True,
+                                  "bot_allowed": event in ("check_suite", "check_run", "workflow_run"),
                                   "action": body.get("action"), "event": event})
 
     def authorize(self, conn, event: InboundEvent) -> str | None:
@@ -326,12 +327,19 @@ class GitHubAdapter(Adapter):
         coords = event.origin.coordinates
         try:
             web = gh.for_repo(conn, coords["repository_id"], {"metadata": "read"})
-            resp = web.request("GET", f"/repos/{coords['full_name']}/collaborators/{event.actor.display}/permission")
-            permission = (resp.json() or {}).get("permission")
+            from urllib.parse import quote
+
+            full = gh.current_name(conn, web, coords["repository_id"])
+            resp = web.request("GET", f"/repos/{full}/collaborators/{quote(event.actor.display, safe='')}/permission")
+            data = resp.json() or {}
+        except ChannelError:
+            raise
         except Exception as exc:  # noqa: BLE001 - a failed lookup waits; it never admits
             raise ChannelError("provider_unavailable", "Could not check the labeler's permission.", status=503) \
                 from exc
-        return None if permission in TRUSTED_LABELERS else "labeler_not_trusted"
+        # GitHub reports triage as permission "read" with role_name "triage".
+        roles = {data.get("permission"), data.get("role_name")}
+        return None if roles & TRUSTED_LABELERS else "labeler_not_trusted"
 
     # -- replies --------------------------------------------------------------------
     def render(self, text: str) -> str:
@@ -342,9 +350,12 @@ class GitHubAdapter(Adapter):
         from ...work_items.errors import Rejected
 
         c = origin.coordinates
-        full = self._full_name(conn, c)
         body = f"{outbound.text}\n\n<!-- hubzoid:{outbound.marker} -->"
         web = gh.for_repo(conn, c["repository_id"], gh.WRITE_ISSUES, writes=True)
+        try:
+            full = self._full_name(conn, c, web)
+        except ChannelError as exc:
+            raise Rejected(f"blocked_destination: {exc.message}") from None
         try:
             if c.get("review_root"):
                 resp = web.request("POST", f"/repos/{full}/pulls/{c['number']}/comments/{c['review_root']}/replies",
@@ -361,10 +372,10 @@ class GitHubAdapter(Adapter):
 
     def find(self, conn, origin: Origin, marker: str):
         c = origin.coordinates
-        full = self._full_name(conn, c)
         try:
             web = gh.for_repo(conn, c["repository_id"], {"metadata": "read", "issues": "read",
                                                          "pull_requests": "read"})
+            full = self._full_name(conn, c, web)
             path = f"/repos/{full}/pulls/{c['number']}/comments" if c.get("review_root") else \
                 f"/repos/{full}/issues/{c['number']}/comments"
             for page in range(1, 11):
@@ -378,9 +389,8 @@ class GitHubAdapter(Adapter):
             return None
         return None
 
-    def _full_name(self, conn, coords: dict) -> str:
-        repo = conn.settings.repo(coords["repository_id"])
-        return repo.full_name if repo else coords["full_name"]
+    def _full_name(self, conn, coords: dict, web) -> str:
+        return gh.current_name(conn, web, coords["repository_id"])
 
     def acknowledge(self, conn, thread: dict, event: InboundEvent, row: dict) -> None:
         from .. import replies
@@ -391,7 +401,7 @@ class GitHubAdapter(Adapter):
             try:
                 web = gh.for_repo(conn, c["repository_id"], gh.WRITE_ISSUES, writes=True)
                 kind = "pulls/comments" if c.get("review_root") else "issues/comments"
-                web.request("POST", f"/repos/{self._full_name(conn, c)}/{kind}/{cid}/reactions",
+                web.request("POST", f"/repos/{self._full_name(conn, c, web)}/{kind}/{cid}/reactions",
                             json={"content": "eyes"})
             except Exception:  # noqa: BLE001 - a reaction is a courtesy
                 pass

@@ -30,6 +30,7 @@ class FakeLinear:
         self.activities: list[dict] = []
         self.token_calls = 0
         self.fail_activity = None
+        self.partial_error = False
 
     def post(self, url, *, json=None, data=None, headers=None, **kw):
         self.calls.append((url, json or data or {}))
@@ -46,12 +47,25 @@ class FakeLinear:
                 exc, self.fail_activity = self.fail_activity, None
                 raise exc
             body = json["variables"]["input"]
+            if any(a["id"] == body["id"] for a in self.activities):
+                return httpx.Response(200, json={"data": None, "errors": [
+                    {"message": "duplicate id", "extensions": {"code": "INVALID_INPUT"}}]})
+            if self.partial_error:
+                self.activities.append(body)
+                return httpx.Response(200, json={"data": {"agentActivityCreate": {"success": True, "agentActivity":
+                                                                                  None}},
+                                                 "errors": [{"message": "resolver failed"}]})
             self.activities.append(body)
             return httpx.Response(200, json={"data": {"agentActivityCreate": {
-                "success": True, "agentActivity": {"id": f"act-{len(self.activities)}"}}}})
-        if "agentSession(" in q:
-            return httpx.Response(200, json={"data": {"agentSession": {"activities": {"nodes": [
-                {"id": f"act-{n}", "content": {"body": a["content"]["body"]}} for n, a in enumerate(self.activities, 1)]}}}})
+                "success": True, "agentActivity": {"id": body["id"]}}}})
+        if "agentActivity(" in q:
+            aid = json["variables"]["id"]
+            hit = next((a for a in self.activities if a["id"] == aid), None)
+            if hit is None:
+                return httpx.Response(200, json={"data": None, "errors": [
+                    {"message": "Entity not found: AgentActivity", "extensions": {"code": "INVALID_INPUT"}}]})
+            return httpx.Response(200, json={"data": {"agentActivity": {"id": aid, "agentSession": {
+                "id": hit["agentSessionId"]}}}})
         if "viewer" in q:
             return httpx.Response(200, json={"data": {"viewer": {"id": "app-user-1", "name": "Hubzoid"},
                                                       "organization": {"id": self.org, "name": "Example"},
@@ -259,8 +273,14 @@ def test_two_processes_rotate_once(hub_dir, api):
     oauth.callback(config.active(hub_dir, conn.id), code="c", state=q["state"][0])
     store.set_connection_state(hub_dir, "eng", conn.id, linear_expires_at=time.time() + 10)
     a, b = config.active(hub_dir, conn.id), config.active(hub_dir, conn.id)
-    assert oauth._take_lease(a) is True
-    assert oauth._take_lease(b) is False      # the second worker waits for the first one's token
+    owner = oauth._take_lease(a)
+    assert owner and oauth._take_lease(b) is None      # the second worker waits for the first one's token
+    store.set_connection_state(hub_dir, "eng", conn.id, linear_scopes=["read"])   # other bookkeeping keeps the lease
+    assert oauth._take_lease(b) is None
+    oauth._release_lease(b, "someone-else")             # only the owner releases it
+    assert oauth._take_lease(b) is None
+    oauth._release_lease(a, owner)
+    assert oauth._take_lease(b)
 
 
 # -- activities ----------------------------------------------------------------------------------
@@ -302,3 +322,38 @@ def test_doctor_reads_only(hub_dir, api):
     checks = {c["id"]: c for c in doctor.run(conn)["checks"]}
     assert checks["linear:workspace"]["status"] == "ok" and checks[f"linear:team:{TEAM}"]["status"] == "ok"
     assert len(api.activities) == before
+
+
+def test_uncertain_reply_is_found_by_its_own_id_not_by_matching_text(hub_dir, api):
+    conn = _connected(hub_dir, api)
+    out = deliver(conn, session_event())
+    thread = store.get_thread(hub_dir, out.events[0]["thread_id"])
+    replies.post(conn, thread, kind="result", text="Done", key="r1")
+    api.fail_activity = httpx.ReadTimeout("timed out")
+    res = replies.post(conn, thread, kind="result", text="Done", key="r2")      # the same text, lost
+    check = replies.resolve(config.active(hub_dir, conn.id), res[0]["operation_id"], decision="check",
+                            actor="admin@example.org")
+    assert check["found"] is False                     # the older "Done" does not count
+
+
+def test_partial_graphql_error_on_a_write_stays_uncertain(hub_dir, api):
+    conn = _connected(hub_dir, api)
+    out = deliver(conn, session_event())
+    thread = store.get_thread(hub_dir, out.events[0]["thread_id"])
+    api.partial_error = True
+    res = replies.post(conn, thread, kind="result", text="Answer", key="r1")
+    assert res[0]["state"] == "ambiguous"
+    api.partial_error = False
+    check = replies.resolve(config.active(hub_dir, conn.id), res[0]["operation_id"], decision="check",
+                            actor="admin@example.org")
+    assert check["found"] is True                      # it had been created
+
+
+def test_doctor_never_renews_the_token(hub_dir, api):
+    from hubzoid.channels import doctor
+
+    conn = _connected(hub_dir, api)
+    store.set_connection_state(hub_dir, "eng", conn.id, linear_expires_at=time.time() - 5)
+    calls = api.token_calls
+    checks = {c["id"]: c for c in doctor.run(config.active(hub_dir, conn.id))["checks"]}
+    assert checks["linear:token"]["code"] == "token_expired" and api.token_calls == calls

@@ -111,7 +111,9 @@ def mount(router, hub_dir: Path) -> None:
 
         try:
             conn = await asyncio.to_thread(config.active, hub_dir, cid)
-            await asyncio.to_thread(s.installed, conn, installation_id, state or None)
+            # The public return from GitHub must carry this setup's one-time state.
+            # Without it, a signed-in admin verifies the installation in the Console.
+            await asyncio.to_thread(s.installed, conn, installation_id, state)
         except ChannelError as exc:
             return page("GitHub setup", exc.message, exc.status)
         public = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")

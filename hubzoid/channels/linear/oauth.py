@@ -117,14 +117,19 @@ def _token_post(form: dict) -> dict:
 def callback(conn, *, code: str, state: str) -> dict:
     from ... import secretbox
 
-    attempt = (conn.state or {}).get("linear_attempt") or {}
-    if not attempt or not state or not secrets.compare_digest(attempt.get("state_hash", ""), _hash(state)) \
-            or attempt.get("used"):
-        raise ChannelError("oauth_state_invalid", "This sign-in link is not valid any more. Run connect again.",
-                           status=400)
-    if time.time() > float(attempt["expires"]):
-        raise ChannelError("oauth_state_invalid", "This sign-in link expired. Run connect again.", status=400)
-    store.set_connection_state(conn.hub_dir, conn.hub, conn.id, linear_attempt={**attempt, "used": True})
+    def take(current: dict):
+        # Check and spend the one-time state in one locked step: two callbacks
+        # for the same link cannot both exchange a code.
+        attempt = current.get("linear_attempt") or {}
+        if not attempt or not state or not secrets.compare_digest(attempt.get("state_hash", ""), _hash(state)) \
+                or attempt.get("used"):
+            raise ChannelError("oauth_state_invalid", "This sign-in link is not valid any more. Run connect again.",
+                               status=400)
+        if time.time() > float(attempt["expires"]):
+            raise ChannelError("oauth_state_invalid", "This sign-in link expired. Run connect again.", status=400)
+        return {"linear_attempt": {**attempt, "used": True}}, attempt
+
+    attempt = store.swap_connection_state(conn.hub_dir, conn.hub, conn.id, take)
     verifier = secretbox.decrypt(conn.hub_dir, attempt["verifier_enc"]).decode()
     tokens = _token_post({"grant_type": "authorization_code", "code": code, "redirect_uri": urls(conn)["callback_url"],
                           "client_id": conn.settings.oauth_client_id, "client_secret": conn.secret("client_secret_ref"),
@@ -181,25 +186,40 @@ def _save_tokens(conn, tokens: dict, *, actor: str) -> None:
                                linear_scopes=scopes, linear_credential_revision=rev)
 
 
-def _take_lease(conn) -> bool:
-    """A short write transaction: become the one worker refreshing, unless
-    another holds a live lease."""
-    import json
+def _take_lease(conn) -> str | None:
+    """Become the one worker refreshing, unless another holds a live lease or
+    already refreshed. Uses the same lock as every other connection-state
+    write, so no bookkeeping update can erase the lease. Returns the lease's
+    owner token, or None."""
+    owner = secrets.token_hex(8)
 
-    from sqlalchemy import text
-
-    with store.locked(conn.hub_dir, f"linear-refresh:{conn.hub}:{conn.id}") as c:
-        row = c.execute(text("SELECT state_json FROM hz_channel_connections WHERE hub=:h AND id=:i"),
-                        {"h": conn.hub, "i": conn.id}).first()
-        state = json.loads(row[0] or "{}") if row else {}
+    def take(state: dict):
         if float(state.get("linear_expires_at") or 0) > time.time() + REFRESH_EARLY:
-            return False                       # someone already refreshed
-        if float(state.get("linear_refresh_lease") or 0) > time.time():
-            return False                       # someone is refreshing now
-        state["linear_refresh_lease"] = time.time() + 30
-        c.execute(text("UPDATE hz_channel_connections SET state_json=:s WHERE hub=:h AND id=:i"),
-                  {"s": store.dumps(state), "h": conn.hub, "i": conn.id})
-    return True
+            return None, None                  # someone already refreshed
+        lease = state.get("linear_refresh_lease") or {}
+        if isinstance(lease, dict) and float(lease.get("until") or 0) > time.time():
+            return None, None                  # someone is refreshing now
+        return {"linear_refresh_lease": {"owner": owner, "until": time.time() + 30}}, owner
+
+    return store.swap_connection_state(conn.hub_dir, conn.hub, conn.id, take)
+
+
+def _release_lease(conn, owner: str) -> None:
+    def release(state: dict):
+        lease = state.get("linear_refresh_lease") or {}
+        return ({"linear_refresh_lease": {}} if isinstance(lease, dict) and lease.get("owner") == owner
+                else None), None
+
+    store.swap_connection_state(conn.hub_dir, conn.hub, conn.id, release)
+
+
+def current_token(conn) -> str | None:
+    """The stored access token while it is still valid, without renewing it
+    (for doctor, which must not change credentials)."""
+    expires = float((conn.state or {}).get("linear_expires_at") or 0)
+    if expires and time.time() >= expires:
+        return None
+    return _secret_get(conn, "access-token")
 
 
 def access_token(conn) -> str:
@@ -216,7 +236,8 @@ def access_token(conn) -> str:
     expires = float(state.get("linear_expires_at") or 0)
     if not expires or time.time() < expires - REFRESH_EARLY:
         return token
-    if not _take_lease(conn):
+    lease = _take_lease(conn)
+    if not lease:
         for _ in range(20):                    # another worker refreshes: use its token
             current = config_lib.active(conn.hub_dir, conn.id)
             if float((current.state or {}).get("linear_expires_at") or 0) > time.time() + REFRESH_EARLY:
@@ -240,7 +261,7 @@ def access_token(conn) -> str:
             raise
         _save_tokens(conn, tokens, actor="linear-refresh")
     finally:
-        store.set_connection_state(conn.hub_dir, conn.hub, conn.id, linear_refresh_lease=0)
+        _release_lease(conn, lease)
     conn.state = config_lib.active(conn.hub_dir, conn.id).state
     return tokens["access_token"]
 

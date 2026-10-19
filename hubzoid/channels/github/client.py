@@ -11,6 +11,7 @@ behind the record's back.
 from __future__ import annotations
 
 import os
+import time
 
 #: tests inject an httpx transport here
 transport = None
@@ -85,3 +86,32 @@ def pat_client_raw(token: str):
 def status_of(exc) -> int | None:
     resp = getattr(exc, "response", None)
     return getattr(resp, "status_code", None)
+
+
+_NAMES: dict[tuple, tuple[float, str]] = {}
+NAME_SECONDS = 300
+
+
+def current_name(conn, web, repository_id: int) -> str:
+    """The repository's name now, read by its id. A renamed repository keeps
+    its id; its old name can be reused by someone else, so a name from the
+    file is never trusted for a call. Refuses a repository that moved to
+    another owner."""
+    key = (str(conn.hub_dir), conn.id, int(repository_id))
+    hit = _NAMES.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    from ..errors import ChannelError
+
+    try:
+        data = web.request("GET", f"/repositories/{int(repository_id)}").json() or {}
+    except Exception as exc:  # noqa: BLE001
+        if status_of(exc) in (403, 404):
+            raise ChannelError("out_of_scope", "The repository is not reachable any more.", status=403) from None
+        raise ChannelError("provider_unavailable", "Could not read the repository from GitHub.", status=503) from exc
+    owner = ((data.get("owner") or {}).get("login") or "").lower()
+    if owner != conn.settings.owner.login.lower():
+        raise ChannelError("repository_moved", f"The repository now belongs to {owner or 'someone else'}, not "
+                           f"{conn.settings.owner.login}. Update the channel file.", status=409)
+    _NAMES[key] = (time.time() + NAME_SECONDS, data["full_name"])
+    return data["full_name"]

@@ -86,33 +86,51 @@ def web_url() -> str:
     return (os.environ.get("HUBZOID_LINEAR_WEB_URL") or "https://linear.app").rstrip("/")
 
 
-def graphql(conn, query: str, variables: dict | None = None, *, write: bool = False) -> dict:
+def graphql(conn, query: str, variables: dict | None = None, *, write: bool = False,
+            refresh: bool = True) -> dict:
     """One GraphQL call with the installation's current token. GraphQL errors
-    are failures even with HTTP 200."""
+    are failures even with HTTP 200. A write is called refused only when
+    Linear clearly did not run it; anything else stays uncertain."""
     import httpx
 
     from . import oauth
 
-    token = oauth.access_token(conn)
-    try:
-        resp = httpx.post(f"{api_url()}/graphql", json={"query": query, "variables": variables or {}},
-                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                          timeout=15, follow_redirects=False)
-    except httpx.HTTPError:
-        raise
+    token = oauth.access_token(conn) if refresh else oauth.current_token(conn)
+    if not token:
+        raise ChannelError("auth_required", "The Linear token expired; it renews on the next use.", status=503)
+    resp = httpx.post(f"{api_url()}/graphql", json={"query": query, "variables": variables or {}},
+                      headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                      timeout=15, follow_redirects=False)
     if resp.status_code in (401, 403):
         from ...work_items.errors import Rejected
 
         raise Rejected(f"Linear refused the app's token ({resp.status_code}).")
     data = resp.json() if resp.content else {}
-    if resp.status_code >= 400 or data.get("errors"):
-        msg = "; ".join(e.get("message", "") for e in data.get("errors") or [])[:300]
-        if write and resp.status_code < 500 and resp.status_code != 429:
+    errors = data.get("errors") or []
+    if resp.status_code >= 400 or errors:
+        msg = "; ".join(e.get("message", "") for e in errors)[:300]
+        if write and _refused(resp.status_code, data, errors):
             from ...work_items.errors import Rejected
 
             raise Rejected(f"Linear refused the activity: {msg or resp.status_code}")
         raise RuntimeError(f"Linear GraphQL error {resp.status_code}: {msg}")
     return data.get("data") or {}
+
+
+#: error codes that mean the request was checked and not run
+REFUSED_CODES = {"INVALID_INPUT", "BAD_USER_INPUT", "GRAPHQL_VALIDATION_FAILED", "GRAPHQL_PARSE_FAILED",
+                 "FORBIDDEN", "AUTHENTICATION_ERROR", "UNAUTHENTICATED"}
+
+
+def _refused(status: int, data: dict, errors: list) -> bool:
+    if status >= 500 or status == 429:
+        return False
+    if 400 <= status < 500:
+        return True                      # the request was refused before it ran
+    if any(v is not None for v in (data.get("data") or {}).values()):
+        return False                     # partial data: the mutation may have run
+    codes = {str((e.get("extensions") or {}).get("code") or "").upper() for e in errors}
+    return bool(codes) and codes <= REFUSED_CODES
 
 
 class LinearAdapter(Adapter):
@@ -213,11 +231,14 @@ class LinearAdapter(Adapter):
 
     # -- replies ----------------------------------------------------------------------
     def reply(self, conn, origin: Origin, outbound) -> Receipt:
+        """Each activity gets an id made from the reply's marker, so `find` can
+        look it up exactly and a repeated send of the same part is refused by
+        Linear instead of posting twice."""
         kind = KINDS.get(outbound.kind, "response")
-        pending_body(conn, outbound.marker, outbound.text)
         data = graphql(conn, "mutation AgentActivityCreate($input: AgentActivityCreateInput!) { "
                              "agentActivityCreate(input: $input) { success agentActivity { id } } }",
-                       {"input": {"agentSessionId": origin.coordinates["agent_session_id"],
+                       {"input": {"id": activity_id(conn, outbound.marker),
+                                  "agentSessionId": origin.coordinates["agent_session_id"],
                                   "content": {"type": kind, "body": outbound.text}}}, write=True)
         result = data.get("agentActivityCreate") or {}
         if not result.get("success"):
@@ -227,26 +248,21 @@ class LinearAdapter(Adapter):
         return Receipt(str((result.get("agentActivity") or {}).get("id") or ""), {"type": kind})
 
     def find(self, conn, origin: Origin, marker: str):
-        """Linear has no hidden field on an activity, so an uncertain post is
-        looked for by its exact body among the app's activities in the
-        session. The body carries the request's short reference, so it is
-        unique to this post."""
-        from .. import replies  # noqa: F401 - the body is what replies rendered
-
-        text = (conn.state or {}).get("linear_pending_bodies", {}).get(marker)
-        if not text:
-            return None
+        """Look the activity up by the id `reply` gave it, in this session."""
+        aid = activity_id(conn, marker)
         try:
-            data = graphql(conn, "query($id: String!) { agentSession(id: $id) { activities(last: 100) { nodes { id "
-                                 "content { ... on AgentActivityResponseContent { body } ... on "
-                                 "AgentActivityThoughtContent { body } ... on AgentActivityErrorContent { body } } } } } }",
-                           {"id": origin.coordinates["agent_session_id"]})
+            data = graphql(conn, "query($id: String!) { agentActivity(id: $id) { id agentSession { id } } }",
+                           {"id": aid})
+        except RuntimeError as exc:
+            return False if "not found" in str(exc).lower() else None
         except Exception:  # noqa: BLE001 - cannot look
             return None
-        for node in ((data.get("agentSession") or {}).get("activities") or {}).get("nodes") or []:
-            if ((node.get("content") or {}).get("body") or "") == text:
-                return Receipt(str(node.get("id")))
-        return False
+        node = data.get("agentActivity") or {}
+        if not node:
+            return False
+        if (node.get("agentSession") or {}).get("id") != origin.coordinates["agent_session_id"]:
+            return None                  # not where it belongs: a person decides
+        return Receipt(str(node.get("id")))
 
     def acknowledge(self, conn, thread: dict, event: InboundEvent, row: dict) -> None:
         from .. import replies
@@ -306,8 +322,12 @@ class LinearAdapter(Adapter):
         if not state.get("linear_app_user_id"):
             return [Check("linear:install", "warn", "The app is not installed in Linear yet.", "reauth_required",
                           "Run hubzoid channels linear connect and have a workspace admin approve it.")]
+        if oauth.current_token(conn) is None:
+            return [Check("linear:token", "warn", "The access token has expired. It renews on the next use; doctor "
+                          "does not renew it.", "token_expired", "Send the app a request, then run doctor again.")]
         try:
-            data = graphql(conn, "query { viewer { id name } organization { id name } teams { nodes { id key } } }")
+            data = graphql(conn, "query { viewer { id name } organization { id name } teams { nodes { id key } } }",
+                           refresh=False)
         except Exception as exc:  # noqa: BLE001
             code = "reauth_required" if "refused" in str(exc) else "provider_unavailable"
             return [Check("linear:token", "fail", "Linear refused the app's token, or is unreachable.", code,
@@ -341,14 +361,8 @@ class LinearAdapter(Adapter):
         return f"Linear user {actor.external_id if actor else ''}"
 
 
-def pending_body(conn, marker: str, text: str) -> None:
-    """Remember a part's exact body until it is confirmed, for `find`."""
-    from .. import store
+def activity_id(conn, marker: str) -> str:
+    """A stable UUID for one reply part, from its marker."""
+    import uuid
 
-    bodies = dict((conn.state or {}).get("linear_pending_bodies") or {})
-    bodies[marker] = text
-    if len(bodies) > 500:
-        bodies = dict(list(bodies.items())[-500:])
-    store.set_connection_state(conn.hub_dir, conn.hub, conn.id, linear_pending_bodies=bodies)
-    conn.state = {**(conn.state or {}), "linear_pending_bodies": bodies}
-
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"hubzoid:{conn.hub}:{conn.id}:{marker}"))
