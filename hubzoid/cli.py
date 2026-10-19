@@ -747,8 +747,8 @@ def _warn_retired(hub: Path) -> None:
 
     for r in appmode.retired_settings(hub):
         if not r.fatal:
-            console.print(f"[yellow]{escape(r.name)} is an Open WebUI setting Hubzoid 2.0 no longer "
-                          f"uses. {escape(r.advice)}[/yellow]")
+            console.print(f"[yellow]{escape(Path(hub).name)}: {escape(r.name)} is an Open WebUI setting "
+                          f"Hubzoid 2.0 no longer uses. {escape(r.advice)}[/yellow]")
 
 
 def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None:
@@ -974,6 +974,13 @@ def gateway(
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
+
+    dev_keys = [b.hub_dir.name for b in gp.backends if b.api_key == "dev"]
+    if dev_keys:
+        console.print(f"[yellow]→ bridge keys[/yellow]  {', '.join(dev_keys)} use the public bridge key 'dev'. "
+                      "Bridges listen on this machine only and never carry identity, so this matters only if "
+                      "other people or programs here are not trusted: then set a random BRIDGE_API_KEYS in "
+                      "each hub's .env.")
 
     # All bridges use deployment-wide storage. plan() loads
     # individual hub .env files; the last hub must not redirect the shared DB.
