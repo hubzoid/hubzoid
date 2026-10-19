@@ -258,3 +258,28 @@ def test_restart_recovers_files_left_validating_and_syncs_left_running(client):
     assert client.app.state.chat.retrieval.recover() == 1
     with svc.engine.connect() as conn:
         assert conn.execute(jobs.select().where(jobs.c.id == "j-stuck")).first().error_code == "interrupted"
+
+
+def test_someone_elses_reuse_never_locks_the_owner_out(client, monkeypatch):
+    cid, _ = new_conv(client)
+    d = upload(client, b"secret,1\n", conversation=cid)
+    conv = client.app.state.chat.store.get_conversation(cid)
+    sharing = client.app.state.chat.sharing
+    sharing.set_collaborators(conv, conv["owner_id"], [{"email": "ana@example.org", "role": "viewer"}], 0)
+    as_people(monkeypatch)
+    ana = who("ana")
+    mine, _ = new_conv(client, ana)
+    assert client.post(f"/api/conversations/{mine}/files/reuse", headers=h(ana),
+                       json={"file_id": d["file_id"]}).status_code == 201
+    sharing.set_collaborators(conv, conv["owner_id"], [], 1)  # Ana removed from the chat
+    assert client.get(f"/api/chat/files/{d['file_id']}", headers=ana).status_code == 200  # via her reuse
+    monkeypatch.undo()
+    refs = client.get(f"/api/chat/files/{d['file_id']}/references").json()["items"]
+    assert [r.get("elsewhere") for r in refs].count(True) == 1  # the owner sees it, not where
+    assert all(r["conversation_id"] in (cid, None) for r in refs)
+    own = next(r for r in refs if r["conversation_id"] == cid)
+    client.delete(f"/api/chat/files/{d['file_id']}/references/{own['reference_id']}", headers=ORIGIN)
+    gone = client.request("DELETE", f"/api/chat/files/{d['file_id']}", headers=ORIGIN, json={})
+    assert gone.status_code == 202, gone.text
+    as_people(monkeypatch)
+    assert client.get(f"/api/chat/files/{d['file_id']}", headers=ana).status_code == 404
