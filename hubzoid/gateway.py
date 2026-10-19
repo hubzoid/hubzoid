@@ -75,7 +75,9 @@ class GatewayPlan:
 
             routes.append({"prefix": f"/api/hubs/{hub_key(b.hub_dir)}",
                            "upstream": f"http://127.0.0.1:{b.bridge_port}"})
-            for part in ("/api", "/branding"):
+            # The OpenAI-compatible chat API of this agent, for personal API
+            # keys (the edge refuses every other credential there).
+            for part in ("/api", "/branding", "/v1"):
                 routes.append({
                     "prefix": base + part,
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",

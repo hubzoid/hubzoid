@@ -48,6 +48,12 @@ function registerWorker() {
 /** Sign-out: drop the cached shell so the next person starts clean. */
 export function clearDeviceCache() {
   navigator.serviceWorker?.controller?.postMessage("hz:logout");
+  // Unsent chat text kept for a sign-in that ended (Thread's draft) goes too.
+  try {
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith("hz.draft:")) sessionStorage.removeItem(k);
+  } catch {
+    /* no storage */
+  }
 }
 
 export const isTouchOnly = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia?.("(pointer: fine)").matches;

@@ -344,6 +344,10 @@ once; Hubzoid keeps only its digest. Send it as `Authorization: Bearer hzp_...`.
   removing someone's access applies to their keys at once.
 - A key limited to some agents can only chat, only with those agents, and only
   through the OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`).
+- Behind a gateway (several agents on one address), each agent has its own API
+  base: `https://<host>/b/<agent>/v1`. The bare `/v1` is the first agent, and a
+  `model` naming another agent is refused with 404, never answered by the
+  first. Without a personal key, `/v1` answers 401.
 - A `chat` key writes only your own chats, files and organizing, never the
   workspace's chat settings. On the bridge, file and upload routes take only
   the bridge's own keys.

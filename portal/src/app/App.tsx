@@ -97,7 +97,7 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setSession((s) => (s ? { ...s, authenticated: false, user: null } : s));
-      if (!location.path.startsWith("/auth")) navigate(signInHref(), { replace: true });
+      if (!location.path.startsWith("/auth")) navigate(signInHref(undefined, "ended"), { replace: true });
     });
     return () => setUnauthorizedHandler(null);
   }, [location.path]);

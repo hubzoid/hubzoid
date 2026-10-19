@@ -57,7 +57,7 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
                      for part in ("/artifacts", "/portal/api")]
         expected.append({"prefix": f"/api/hubs/{slug}", "upstream": up})
         expected += [{"prefix": f"/b/{slug}{part}", "upstream": up, "strip_prefix": f"/b/{slug}"}
-                     for part in ("/api", "/branding")]
+                     for part in ("/api", "/branding", "/v1")]
     assert routes == expected
 
 

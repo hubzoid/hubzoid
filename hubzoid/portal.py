@@ -299,10 +299,13 @@ def _account_flags(gs, subject: str) -> dict:
     with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
         suspended = gs._meta_get(conn, "suspended:" + subject) == "1"
         unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"
+    from .access.service import directory_disabled
+
     return dict(
         suspended=suspended,
         account_unavailable=unavailable,
         blocked=suspended or unavailable,
+        directory_disabled=directory_disabled(gs._engine, subject),  # noqa: SLF001
     )
 
 
@@ -313,6 +316,8 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
     reported as `blocked` with `account_unavailable=true` alongside."""
     if flags["suspended"]:
         return "blocked"
+    if flags.get("directory_disabled"):
+        return "disabled"
     if subject == "*":
         return "everyone"
     if subject.startswith("workflow:"):

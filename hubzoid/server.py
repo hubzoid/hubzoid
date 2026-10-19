@@ -311,6 +311,14 @@ def build_app() -> FastAPI:
         chat_id = _derive_chat_id(body, request, messages)
         key_user = getattr(request.state, "hz_key_user", None)
         if key_user is not None:
+            asked = str(body.get("model") or "").strip()
+            if asked and asked not in (model_label, hub_dir.name if hub_dir else ""):
+                # Behind a gateway each agent has its own API base; a model
+                # name for another agent is never answered by this one.
+                raise HTTPException(status_code=404, detail={
+                    "code": "model_not_found",
+                    "message": f"This API base serves {model_label!r}. For another agent use "
+                               "/b/<agent>/v1 (see /b/<agent>/v1/models)."})
             # The client's chat id is only a label within the key owner's own
             # space: it can't select another person's (or chat's) files.
             chat_id = _personal_chat_id(key_user.id, chat_id)

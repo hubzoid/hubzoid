@@ -150,7 +150,12 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
 
 /** The sign-in URL that brings the person back here afterwards, fragment
  *  included: Settings sections (#/confirm/<id>, #/people) live there. */
-export function signInHref(current = location.pathname + location.search + location.hash): string {
+export function signInHref(current = location.pathname + location.search + location.hash,
+                           reason?: "ended"): string {
   const redirect = safeRedirect(current);
-  return redirect === "/" ? "/auth" : `/auth?redirect=${encodeURIComponent(redirect)}`;
+  const params = new URLSearchParams();
+  if (redirect !== "/") params.set("redirect", redirect);
+  if (reason) params.set("error", "session_ended");
+  const q = params.toString();
+  return q ? `/auth?${q}` : "/auth";
 }

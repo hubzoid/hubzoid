@@ -32,7 +32,7 @@ import httpx
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 log = logging.getLogger("hubzoid.edge")
@@ -182,10 +182,16 @@ def _is_bridge_internal(path: str) -> bool:
 _PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
 
 
-def _personal_key_call(request, path: str) -> bool:
+def _personal_key(request) -> bool:
     auth = (request.headers.get("authorization") or "").strip()
-    return (_clean_path(path) in _PERSONAL_KEY_PATHS
-            and auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_"))
+    return auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_")
+
+
+def _personal_key_call(request, path: str | None = None) -> bool:
+    """A person's API key on the chat API: bare ``/v1/...`` (the first agent)
+    or, behind a gateway, ``/b/<agent>/v1/...`` after its prefix is removed."""
+    return (_clean_path(request.url.path if path is None else path) in _PERSONAL_KEY_PATHS
+            and _personal_key(request))
 
 
 def _has_dot_segment(path: str) -> bool:
@@ -385,15 +391,21 @@ def build_edge_app(
                     continue
             return JSONResponse({'status': 'ok' if ok else 'unavailable'}, status_code=200 if ok else 503)
         if path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
-            from starlette.responses import JSONResponse
             states = getattr(request.app.state, 'workflow_health', {})
             healthy = bool(states) and all(states.values())
             return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
         if _has_dot_segment(path):
             return Response("Bad request", status_code=400)
-        if _is_bridge_internal(path) and not _personal_key_call(request, path):
-            return Response("Not found", status_code=404)
         upstream, fwd_path = _forward_target(path, norm_routes, default_base)
+        # The bridge's internal routes stay internal however they're spelled:
+        # as sent, and after a /b/<agent> prefix is removed.
+        for checked in {path, fwd_path}:
+            if _is_bridge_internal(checked) and not _personal_key_call(request, checked):
+                if _clean_path(checked) in _PERSONAL_KEY_PATHS:
+                    return JSONResponse({"error": {"message": "Send your personal API key: "
+                                                   "Authorization: Bearer hzp_...", "type": "auth"}},
+                                        status_code=401)
+                return Response("Not found", status_code=404)
         matched = _match(path, norm_routes)
         bases = matched.upstreams() if matched is not None else default_bases
         # Tell a bridge which /b/<slug> prefix was stripped (and never pass a
