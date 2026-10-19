@@ -167,7 +167,7 @@ export function RequestCard({ requestId, toolName, args }: { requestId: string; 
                 aria-label={t.requests.typeAnswer}
                 data-testid="request-answer"
               />
-              <Button type="submit" size="sm" loading={busy === "answer"} disabled={!answer.trim() || !!busy} data-testid="request-answer-send">
+              <Button type="submit" variant="neutral" size="sm" loading={busy === "answer"} disabled={!answer.trim() || !!busy} data-testid="request-answer-send">
                 {t.requests.send}
               </Button>
             </form>

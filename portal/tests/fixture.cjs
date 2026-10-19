@@ -717,7 +717,7 @@ function createFixture() {
           itops: { chats: 0, messages: 0, active_users: 0, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, last_activity: null, denials: 0 },
         };
         const hubs = allowedHubs(a).map((h) => {
-          const u = usage[h.key];
+          const u = usage[h.key] || {chats: 0, messages: 0, active_users: 0, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, last_activity: null, denials: 0};
           const flows = state.workflows[h.key] || [];
           const subjects = new Set(state.grants.filter(([s, hub]) => hub === h.key && !s.startsWith("workflow:")).map(([s]) => s));
           return {

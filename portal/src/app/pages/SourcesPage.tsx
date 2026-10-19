@@ -1,6 +1,7 @@
 // Sources: collections of your own material the agent can search and cite
 // (files, notes, public web pages), who can read each one, syncing, and a
 // place to try a question and see the passages it would cite.
+import { Select } from "../components/Select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, FileText, Globe, Link2, Plus, RefreshCw, Search, StickyNote, Trash2, Upload, X } from "lucide-react";
 import { ApiError, del, get, post, put } from "../lib/api";
@@ -254,12 +255,10 @@ function CollectionCard({ c, onChanged }: { c: Collection; onChanged: () => Prom
           {c.owned && (
             <label className="flex items-center gap-1.5 text-[12px] text-mute">
               {t.sources.readers}
-              <select className="hz-select-sm" value={everyone ? "everyone" : c.manifest.readers.length ? "people" : "me"}
-                onChange={(e) => void setReaders(e.target.value)}>
-                <option value="me">{t.sources.onlyMe}</option>
-                <option value="everyone">{t.sources.everyone}</option>
-                {c.manifest.readers.length > 0 && !everyone && <option value="people">{t.sources.people(c.manifest.readers.length)}</option>}
-              </select>
+              <Select className="hz-select-sm" aria-label={t.sources.readers} value={everyone ? "everyone" : c.manifest.readers.length ? "people" : "me"} onValueChange={value => void setReaders(value)} options={[
+                {value: "me", label: t.sources.onlyMe}, {value: "everyone", label: t.sources.everyone},
+                ...(c.manifest.readers.length > 0 && !everyone ? [{value: "people", label: t.sources.people(c.manifest.readers.length)}] : []),
+              ]} />
             </label>
           )}
         </div>
