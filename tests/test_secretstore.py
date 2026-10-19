@@ -222,6 +222,14 @@ def test_an_azure_key_is_not_sent_to_a_changed_endpoint(hub, monkeypatch):
     assert VALUE not in exc.value.message
 
 
+def test_a_stored_endpoint_never_redirects_an_operators_azure_key(hub, monkeypatch):
+    monkeypatch.setenv("AZURE_API_KEY", "operator-key")
+    put(hub, "AZURE_API_BASE", "https://elsewhere.example")
+    cs.clear_cache()
+    start_bridge(hub)
+    assert os.environ.get("AZURE_API_BASE") != "https://elsewhere.example"
+
+
 def test_references_resolve_only_this_hubs_secrets(hub):
     put(hub, "ZOHO_TOKEN")
     assert resolve("secret:hub/deskhub/ZOHO_TOKEN", hub) == VALUE

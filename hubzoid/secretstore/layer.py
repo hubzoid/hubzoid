@@ -55,6 +55,9 @@ def _read(hub_dir: Path, env: Mapping[str, str], operator: frozenset) -> Snapsho
     key = hub_key(hub_dir)
     rows = [*store.values(hub_dir, scope="deployment", eng=eng),
             *store.values(hub_dir, scope="hub", target=key, eng=eng)]
+    # Where an operator's key is sent stays the operator's: a stored endpoint
+    # for it (AZURE_API_BASE) would redirect a key it never stored.
+    operator_bound = {e for k, ends in names.BINDINGS.items() if k in operator for e in ends}
     for item in rows:
         meta = item.meta
         status_key = (meta.scope, meta.name)
@@ -64,9 +67,10 @@ def _read(hub_dir: Path, env: Mapping[str, str], operator: frozenset) -> Snapsho
         if meta.name in operator:
             snap.status[status_key] = OVERRIDDEN
             continue
-        if names.operator_only(meta.name):
+        if names.operator_only(meta.name) or meta.name in operator_bound:
             # Stored before the name became operator-only (or restored from
-            # an older backup): it never joins the environment.
+            # an older backup), or an endpoint for an operator's key: it
+            # never joins the environment.
             snap.status[status_key] = OVERRIDDEN
             log.warning("hub %s: the stored secret %s is set by the operator only; it is not used.",
                         hub_dir.name, meta.name)
