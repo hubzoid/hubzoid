@@ -74,7 +74,7 @@ export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: bool
     <>
       <PageHeader
         title="Schedules & reports"
-        description={embedded ? "Recurring requests and reports created from chat. To manage authored workflows and their schedules, open an agent’s Runs & schedules tab." : undefined}
+        description={embedded ? "Recurring work from chat. For workflows, open an agent’s Runs & schedules." : undefined}
         extra={admin && (
           <Segmented
             value={everyone ? "everyone" : "mine"}
