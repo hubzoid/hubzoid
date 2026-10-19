@@ -299,6 +299,14 @@ class Hub:
         return WorkItem()
 
     @property
+    def thread(self):
+        """The channel thread this work came from (`hubzoid.channels`):
+        `post(text, key=...)` replies in that thread and nowhere else."""
+        from ..channels.thread import for_current_run
+
+        return for_current_run()
+
+    @property
     def operation(self):
         """`hub.operation.run(...)`: one recorded, recoverable external write
         with its write mode and exact approval (`hubzoid.work_items`)."""
