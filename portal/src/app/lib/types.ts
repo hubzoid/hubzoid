@@ -11,6 +11,8 @@ export type SessionUser = {
   role: Role | string;
   /** True when the Console opens for this person (Manage access on an agent or more). */
   console?: boolean;
+  /** May read this hub's proposed changes (curators as well as managers). */
+  hub_changes?: boolean;
   /** The Hubzoid version; sent only to people the Console opens for. */
   version?: string;
 };

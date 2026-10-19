@@ -322,10 +322,13 @@ boot.OWNER_RETRY_SECONDS = 0.2
 
 async def main():
     if mode == 'broken':
-        assert await boot.start(hub) is None
+        # Hubzoid's built-in workflows still run; the hub's broken module is reported.
+        supervisor = await boot.start(hub)
         health = store_for(hub).runtime_health(hub.name)
-        print('HEALTH', health['enabled'], health['error'], flush=True)
+        print('HEALTH', health['error'], flush=True)
         print('MONITOR', monitor.inspect(hub), flush=True)
+        if supervisor is not None:
+            await supervisor.stop()
         return
     cli = Owner(hub, hub.name).acquire()          # `hubzoid schedule run` owns the hub
     waiting = await boot.start(hub)
@@ -366,5 +369,5 @@ def test_engine_waits_for_a_temporary_owner_and_reports_broken_modules(tmp_path)
     proc = subprocess.run([sys.executable, "-c", _BOOT_SCRIPT, str(tmp_path), "broken"], env=env,
                           text=True, capture_output=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr[-3000:]
-    assert "HEALTH False" in proc.stdout and "SyntaxError" in proc.stdout
+    assert "HEALTH" in proc.stdout and "SyntaxError" in proc.stdout
     assert "MONITOR False" in proc.stdout
