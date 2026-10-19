@@ -679,6 +679,51 @@ class _StderrTail:
         return "\n".join(self._lines)
 
 
+def _guarded(options, guard):
+    """A PreToolUse hook that refuses a tool step once the chat run was stopped
+    or lost its branch lease (``SessionSlot.guard``)."""
+    import asyncio
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    async def admit(_input, _tool_use_id, _context):
+        try:
+            ok = await asyncio.to_thread(guard)
+        except Exception:  # noqa: BLE001 - fail closed: no step without a known owner
+            ok = False
+        if ok:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "This reply was stopped."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
+def _only_tools(options, allowed: list[str]):
+    """A PreToolUse hook that refuses every tool outside ``allowed`` (hub tool
+    names; the SDK prefixes them with their MCP namespace)."""
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    # Only Hubzoid's own tools, by their full identity: an outside MCP server's
+    # tool that merely shares a name is not on the list.
+    names = {f"mcp__{_MCP_NAMESPACE}__{n}" for n in allowed}
+
+    async def admit(tool_input, _tool_use_id, _context):
+        if str((tool_input or {}).get("tool_name") or "") in names:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "A comparison answer may only read."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 async def _query_with_failover(*, prompt, options, hub_dir=None):
     """Rotate explicit credentials only on confirmed model-account failure.
 
@@ -947,6 +992,7 @@ class ClaudeRuntime:
 
         self.last_error = None
         streamed_any = False
+        stepped = False
         final_result: str | None = None
         shown: list[str] = []
         # Surface Claude's thinking as an Open WebUI <think> panel. 'off' never
@@ -967,6 +1013,15 @@ class ClaudeRuntime:
         # *is* that account holder. We prepend the resolved caller
         # (current_identity()) to the USER turn — not the cached system prompt —
         # so the model serves the OWUI user while prompt caching still hits.
+        # A chat branch bound to a Claude session resumes it with only the new
+        # turn (``_request_ctx.SessionSlot``); the full prompt is the fallback.
+        slot = _request_ctx.native_session()
+        full_prompt = prompt
+        resuming = bool(slot is not None and slot.resume_id and slot.delta_prompt)
+        if slot is not None:
+            slot.runtime = "claude"
+        if resuming:
+            prompt = slot.delta_prompt
         prompt = _identity_preamble() + prompt
         qprompt = prompt
         if self._hub_dir is not None:
@@ -982,7 +1037,28 @@ class ClaudeRuntime:
         stderr = _StderrTail()
         error_status: int | None = None
         try:
-            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(self._options_for_turn()),
+            turn_options = self._options_for_turn()
+            if resuming:
+                import dataclasses as _dc
+
+                turn_options = _dc.replace(turn_options, resume=slot.resume_id)
+            if slot is not None and slot.guard is not None:
+                turn_options = _guarded(turn_options, slot.guard)
+            if slot is not None and slot.tool_allowlist is not None:
+                turn_options = _only_tools(turn_options, slot.tool_allowlist)
+            if slot is not None and (slot.web_search or slot.model):
+                import dataclasses as _dc
+
+                changes = {}
+                if slot.web_search:
+                    # Claude's own server-side search only. WebFetch is not
+                    # enabled: it would fetch from this machine's network.
+                    changes["tools"] = [*(turn_options.tools or []), "WebSearch"]
+                    changes["allowed_tools"] = [*(turn_options.allowed_tools or []), "WebSearch"]
+                if slot.model:
+                    changes["model"] = slot.model
+                turn_options = _dc.replace(turn_options, **changes)
+            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
                                             hub_dir=self._hub_dir)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
@@ -1034,6 +1110,7 @@ class ClaudeRuntime:
                                 if closing:
                                     yield run_events.ReasoningEnd(legacy=closing)
                             reasoning_signalled = False
+                            stepped = True  # a step ran: never replay this turn
                             yield run_events.ToolCall(id=tid, name=short, args=args, legacy=line)
                     continue
 
@@ -1063,6 +1140,9 @@ class ClaudeRuntime:
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
                     _record_claude_usage(message, answered_by)
+                    if slot is not None and not getattr(message, "is_error", False):
+                        slot.session_id = getattr(message, "session_id", None)
+                        slot.resumed = resuming
                     if getattr(message, "is_error", False):
                         detail = (getattr(message, "errors", None) or [final_result or ""])[0]
                         self.last_error = RuntimeError(
@@ -1071,6 +1151,13 @@ class ClaudeRuntime:
                         )
                         error_status = getattr(message, "api_error_status", None)
         except Exception as exc:  # noqa: BLE001
+            if resuming and not streamed_any and not stepped:
+                # The bound session is gone or refused: run the turn in full instead.
+                log.warning("claude: resuming session failed (%s); sending the full history", exc)
+                slot.resume_id = None
+                async for item in self.stream_events(full_prompt):
+                    yield item
+                return
             log.exception("claude stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error")
@@ -1090,6 +1177,12 @@ class ClaudeRuntime:
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.
+        if self.last_error is not None and resuming and not streamed_any and not stepped:
+            log.warning("claude: resumed session ended with an error; sending the full history")
+            slot.resume_id = None
+            async for item in self.stream_events(full_prompt):
+                yield item
+            return
         if self.last_error is not None:
             closing = tw.close()
             if closing:
@@ -1123,19 +1216,28 @@ class ClaudeRuntime:
 
 
 async def claude_complete(prompt: str, *, system: str | None = None,
-                          model_setting: str | None = None, hub_dir: Path | None = None) -> tuple[str, dict]:
+                          model_setting: str | None = None, hub_dir: Path | None = None,
+                          output_schema: dict | None = None) -> tuple[str, dict]:
     """One tool-free, single-turn Claude call for `hub.call_llm` on claude-local.
 
     No tools, no MCP servers (strictly: not even the host account's), no
     skills and no hub instructions: a plain model call through the Claude Agent
     SDK (claude-local has no API key, so this is the direct route). Returns the
-    text and a usage dict. Raises when the SDK reports the run failed."""
+    text and a usage dict. With ``output_schema`` the SDK's native structured
+    output (``output_format``) is requested; the structured object is returned
+    as JSON text and usage carries ``structured: "native"``. Raises when the SDK
+    reports the run failed."""
     from claude_agent_sdk import AssistantMessage, ResultMessage
     from claude_agent_sdk.types import TextBlock
 
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
     options = tool_free_options(
         system or "You are a precise assistant. Answer the request directly.", pin)
+    if output_schema is not None:
+        import dataclasses
+
+        options = dataclasses.replace(options, output_format={"type": "json_schema", "schema": output_schema})
+    structured_out = None
     parts: list[str] = []
     final: str | None = None
     usage: dict = {}
@@ -1149,6 +1251,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                 parts += [b.text for b in message.content if isinstance(b, TextBlock)]
             elif isinstance(message, ResultMessage):
                 final = getattr(message, "result", None)
+                structured_out = getattr(message, "structured_output", None)
                 raw = getattr(message, "usage", None) or {}
                 get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
                 usage = {
@@ -1163,4 +1266,9 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                     raise RuntimeError(
                         f"claude run ended with {getattr(message, 'subtype', 'error')}"
                     )
+    if output_schema is not None and structured_out is not None:
+        import json as _json
+
+        usage["structured"] = "native"
+        return _json.dumps(structured_out), usage
     return ("".join(parts) or final or ""), usage

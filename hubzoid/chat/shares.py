@@ -100,15 +100,3 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
         conv = await ctx.owned(user, conv_id)
         await db(store.delete_shares, conv["id"])
         return Response(status_code=204)
-
-    @app.get("/api/shares/{share_id}")
-    async def read_share(share_id: str, request: Request):
-        await ctx.user(request)
-        share = await db(store.get_share, share_id) if 8 <= len(share_id) <= 64 else None
-        if (share is None or _disabled_import(share)
-                or await db(users.get, ctx.hub_dir, share["owner_id"]) is None):
-            raise not_found("shared conversation")
-        snap = share.get("snapshot") or {}
-        return {"title": snap.get("title"), "agent": snap.get("agent"),
-                "owner_name": snap.get("owner_name"), "created_at": snap.get("created_at"),
-                "messages": snap.get("messages") or []}

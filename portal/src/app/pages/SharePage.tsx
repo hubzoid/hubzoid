@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AssistantRuntimeProvider, useExternalStoreRuntime, type ThreadMessage } from "@assistant-ui/react";
 import { Link2Off, WifiOff } from "lucide-react";
 import { t } from "../i18n/en";
-import { ApiError, enc, get } from "../lib/api";
+import { ApiError, enc, get, post } from "../lib/api";
 import { agentById, useApp } from "../lib/app-context";
 import { describeError } from "../lib/errors";
 import { displayName, formatDate, pageTitle } from "../lib/format";
@@ -31,6 +31,20 @@ export default function SharePage({ shareId }: { shareId: string }) {
   const [share, setShare] = useState<SharedConversation | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [attempt, setAttempt] = useState(0);
+  const [copying, setCopying] = useState(false);
+  const copy = async () => {
+    setCopying(true);
+    try {
+      const pv = await post<{ digest: string }>(`/api/shares/${enc(shareId)}/copies/previews`, {});
+      const made = await post<{ new_conversation_id: string }>(`/api/shares/${enc(shareId)}/copies`, { digest: pv.digest },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } });
+      navigate(`/c/${encodeURIComponent(made.new_conversation_id)}`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setCopying(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +80,7 @@ export default function SharePage({ shareId }: { shareId: string }) {
   }, [share, title, app.brandName]);
 
   const header = (
-    <header className="flex h-14 flex-none items-center justify-between border-b border-line px-4 sm:px-6">
+    <header className="flex h-12 flex-none items-center justify-between border-b border-line px-4 sm:px-6">
       <a href="/" onClick={(e) => linkClick(e, "/")} className="flex min-w-0 items-center gap-2.5 no-underline">
         <BrandMark logoUrl={app.branding.logo_url} darkLogoUrl={app.branding.logo_dark_url} name={app.brandName} />
       </a>
@@ -114,11 +128,11 @@ export default function SharePage({ shareId }: { shareId: string }) {
                   <AgentAvatar name={agent.name} src={agent.avatar_url} size={22} />
                   <span>{displayName(agent.name)}</span>
                 </div>
-                <h1 className="m-0 mt-3 text-[26px] font-semibold leading-tight tracking-tight text-ink sm:text-[30px]">
+                <h1 className="m-0 mt-3 text-[20px] font-semibold leading-tight tracking-tight text-ink sm:text-[24px]">
                   {title}
                 </h1>
                 <p className="m-0 mt-2 text-[14px] text-mute" data-testid="share-byline">
-                  {t.share.byline(share.owner_name || t.agents.unknown, date)}
+                  {share.kind === "snapshot" ? t.share.snapshotBanner(date) : t.share.byline(share.owner_name || t.agents.unknown, date)}
                 </p>
               </div>
               <div className="flex min-h-0 flex-col [&_[data-testid=thread-viewport]]:overflow-visible">
@@ -126,14 +140,20 @@ export default function SharePage({ shareId }: { shareId: string }) {
               </div>
               <footer className="mx-auto w-full max-w-[780px] px-4 pb-12 sm:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-canvas px-4 py-3.5">
-                  <p className="m-0 text-[13.5px] text-mute">{t.share.readOnly}</p>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => (app.session.authenticated ? app.newChat() : navigate("/auth"))}
-                  >
-                    {t.share.startOwn}
-                  </Button>
+                  <p className="m-0 text-[13px] text-mute">{share.allow_copy ? t.share.copyNote : t.share.readOnly}</p>
+                  {share.allow_copy && app.session.authenticated ? (
+                    <Button size="sm" variant="primary" loading={copying} onClick={() => void copy()} data-testid="share-copy">
+                      {t.share.continueCopy}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => (app.session.authenticated ? app.newChat() : navigate(signInHref(`/s/${encodeURIComponent(shareId)}`)))}
+                    >
+                      {app.session.authenticated ? t.share.startOwn : t.share.signInToCopy}
+                    </Button>
+                  )}
                 </div>
               </footer>
             </div>

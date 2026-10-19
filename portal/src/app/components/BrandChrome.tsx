@@ -87,7 +87,7 @@ export function AnnouncementBanner({
     }
   };
   return (
-    <div role="status" className="flex items-start gap-2 border-b border-line bg-info-soft px-4 py-2 text-[13.5px] text-body">
+    <div role="status" className="flex items-start gap-2 border-b border-line bg-info-soft px-4 py-2 text-[13px] text-body">
       <Megaphone size={15} aria-hidden className="mt-0.5 flex-none text-info" />
       <p className="m-0 flex-1 whitespace-pre-line">{a.text_by_locale.en}</p>
       {a.dismissible && (
@@ -140,7 +140,7 @@ export function TermsGate({ manifest, policyHash, onAccepted }: {
     <main id="main" className="flex min-h-dvh items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-[460px] rounded-2xl border border-line bg-raised p-6">
         <h1 className="m-0 text-[20px] font-semibold text-ink">{t.brand.termsTitle(manifest.identity.name)}</h1>
-        <p className="m-0 mt-2 text-[15px] text-body">{t.brand.termsBody(manifest.legal.version || "")}</p>
+        <p className="m-0 mt-2 text-[14px] text-body">{t.brand.termsBody(manifest.legal.version || "")}</p>
         {manifest.links.terms && (
           <p className="m-0 mt-3">
             <a href={manifest.links.terms} target="_blank" rel="noopener noreferrer" className="text-accent-text">

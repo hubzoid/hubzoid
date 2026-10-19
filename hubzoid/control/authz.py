@@ -41,6 +41,11 @@ CAPABILITIES: dict[str, str] = {
     "parity.read": "deployment",
     "parity.write": "deployment",
     "parity.review": "deployment",
+    "chat.feedback.read": "hub",
+    "chat.notifications.manage": "hub",
+    "chat.share.manage": "hub",
+    "authoring.draft": "hub",
+    "authoring.publish": "hub",
 }
 
 

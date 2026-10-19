@@ -42,40 +42,43 @@ TOKENS = (
 )
 
 _LIGHT = {
-    "canvas": "#FFFFFF", "surface": "#FAFAF8", "elevated": "#FFFFFF", "sunken": "#F4F3EF",
-    "hover": "#F1F0EC", "pressed": "#EBE9E3",
-    "text": "#0B0B0C", "bodyText": "#1F1F22", "mutedText": "#6B6B70",
-    "border": "#E7E6E2", "borderSoft": "#EDECE8", "input": "#8A8A8F",
-    "action": "#B5471F", "actionText": "#FFFFFF", "actionHover": "#9A3B18",
-    "actionActive": "#86331A", "actionSoft": "#FBEDE7", "link": "#B5471F",
-    "focus": "#B5471F", "selection": "#FBEDE7", "selectionText": "#0B0B0C",
-    "danger": "#A3322A", "dangerText": "#FFFFFF",
-    "successText": "#276444", "successBackground": "#EAF4ED", "successBorder": "#C9E2D1",
-    "warningText": "#805500", "warningBackground": "#FFF5DA", "warningBorder": "#EFDCA6",
-    "errorText": "#A3322A", "errorBackground": "#FBEDEA", "errorBorder": "#F0CBC5",
+    # Warm paper: a quiet page, a slightly deeper sidebar, white raised surfaces.
+    "canvas": "#FAFAF8", "surface": "#F3F2EF", "elevated": "#FFFFFF", "sunken": "#EEECE7",
+    "hover": "#ECEBE7", "pressed": "#E3E1DB",
+    "text": "#242421", "bodyText": "#2B2B27", "mutedText": "#69665E",
+    "border": "#DEDCD4", "borderSoft": "#E8E6E0", "input": "#898479",
+    "action": "#A94224", "actionText": "#FFFFFF", "actionHover": "#90361C",
+    "actionActive": "#7D2E18", "actionSoft": "#F8E8DF", "link": "#A94224",
+    "focus": "#A94224", "selection": "#F8E8DF", "selectionText": "#242421",
+    "danger": "#B3312C", "dangerText": "#FFFFFF",
+    "successText": "#286841", "successBackground": "#EAF4EC", "successBorder": "#C9E2D1",
+    "warningText": "#795416", "warningBackground": "#FAF0DB", "warningBorder": "#EFDCA6",
+    "errorText": "#B3312C", "errorBackground": "#FBEAE7", "errorBorder": "#F0CBC5",
     "infoText": "#345E91", "infoBackground": "#EEF3FA", "infoBorder": "#C9D9EE",
 }
 
 _DARK = {
-    "canvas": "#151516", "surface": "#1B1B1D", "elevated": "#222224", "sunken": "#26262A",
-    "hover": "#2A2A2E", "pressed": "#333338",
-    "text": "#FAFAF8", "bodyText": "#E9E9E6", "mutedText": "#B5B5BC",
-    "border": "#3C3C40", "borderSoft": "#2E2E32", "input": "#76767E",
-    "action": "#E5572A", "actionText": "#0B0B0C", "actionHover": "#F26B40",
-    "actionActive": "#D64C20", "actionSoft": "#2A160F", "link": "#F28B66",
-    "focus": "#F28B66", "selection": "#2A160F", "selectionText": "#FAFAF8",
-    "danger": "#E0605A", "dangerText": "#0B0B0C",
-    "successText": "#A1D8B6", "successBackground": "#183328", "successBorder": "#315B43",
-    "warningText": "#E6BF72", "warningBackground": "#352B19", "warningBorder": "#67512C",
-    "errorText": "#FFB4B4", "errorBackground": "#3C2023", "errorBorder": "#754049",
-    "infoText": "#ADCCF0", "infoBackground": "#1C2D43", "infoBorder": "#395477",
+    # Neutral near-black, as in the desktop chat tools: the page, a darker
+    # sidebar, raised menus and composer, quiet hairlines, a soft coral.
+    "canvas": "#151515", "surface": "#111111", "elevated": "#1F1F1F", "sunken": "#232323",
+    "hover": "#1E1E1E", "pressed": "#252525",
+    "text": "#ECECEC", "bodyText": "#E2E2E2", "mutedText": "#9B9B9B",
+    "border": "#2A2A2A", "borderSoft": "#222222", "input": "#666666",
+    "action": "#D97757", "actionText": "#111111", "actionHover": "#E48A6B",
+    "actionActive": "#C96A4B", "actionSoft": "#2B1F1A", "link": "#E39274",
+    "focus": "#E48A6B", "selection": "#3A2A22", "selectionText": "#ECECEC",
+    "danger": "#E0716A", "dangerText": "#111111",
+    "successText": "#9FD0AE", "successBackground": "#17261C", "successBorder": "#2D4A39",
+    "warningText": "#E6C283", "warningBackground": "#2B2518", "warningBorder": "#5A4826",
+    "errorText": "#F0A09A", "errorBackground": "#2E1C1B", "errorBorder": "#633838",
+    "infoText": "#A9C6EA", "infoBackground": "#16212F", "infoBorder": "#32496A",
 }
 
-# OLED: true black surfaces for OLED screens, otherwise the dark palette.
+# Black: true black surfaces for OLED screens, otherwise the dark palette.
 _OLED = dict(_DARK, **{
-    "canvas": "#000000", "surface": "#000000", "elevated": "#0E0E10", "sunken": "#0A0A0B",
-    "hover": "#18181B", "pressed": "#222226", "border": "#2E2E33", "borderSoft": "#1C1C20",
-    "actionSoft": "#1E0F09", "selection": "#1E0F09",
+    "canvas": "#000000", "surface": "#000000", "elevated": "#141414", "sunken": "#1C1C1C",
+    "hover": "#191919", "pressed": "#222222", "border": "#262626", "borderSoft": "#1A1A1A",
+    "actionSoft": "#2B1F1A", "selection": "#2B1F1A",
 })
 
 BUILTIN = {"light": _LIGHT, "dark": _DARK, "oled": _OLED}
@@ -92,9 +95,9 @@ MONO_FONTS = {
     "jetbrains-mono": '"JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
     "system-mono": 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
 }
-TYPOGRAPHY_DEFAULTS = {"fontFamily": "inter", "monoFamily": "jetbrains-mono", "baseSize": 16,
-                       "lineHeight": 1.5}
-SHAPE_DEFAULTS = {"controlRadius": 8, "cardRadius": 14}
+TYPOGRAPHY_DEFAULTS = {"fontFamily": "inter", "monoFamily": "jetbrains-mono", "baseSize": 14,
+                       "lineHeight": 1.55}
+SHAPE_DEFAULTS = {"controlRadius": 8, "cardRadius": 12}
 
 # (foreground, background, minimum ratio, what it is)
 PAIRS = (

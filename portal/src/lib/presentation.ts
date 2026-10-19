@@ -266,6 +266,16 @@ async function saveAccount(values: Values, retry = true): Promise<void> {
   }
 }
 
+/** A feature's own account preference ("notifications.desktop"), merged into
+ *  the same preference document as appearance. */
+export function setAccountPreference(key: string, value: unknown) {
+  if (state.account) void saveAccount({ ...state.account.values, [key]: value } as Values);
+}
+
+export function accountPreference(key: string): unknown {
+  return (state.account?.values as Record<string, unknown> | undefined)?.[key];
+}
+
 function change(key: "mode" | "density" | "text_scale", value: unknown) {
   const device = { ...state.device, [key]: value } as Values;
   writeDevice(device);
@@ -340,6 +350,11 @@ export function antdTokens(view: PresentationView): Record<string, string | numb
     borderRadiusLG: shape.cardRadius,
     fontFamily: view.theme!.fonts.sans,
     fontFamilyCode: view.theme!.fonts.mono,
-    fontSize: Math.round(14 * view.textScale),
+    // Compact by default: desktop-tool density for the Console too.
+    fontSize: Math.round((view.density === "compact" ? 13 : 14) * view.textScale),
+    controlHeight: view.density === "compact" ? 30 : 34,
+    controlHeightSM: view.density === "compact" ? 24 : 28,
+    controlHeightLG: view.density === "compact" ? 36 : 40,
+    lineHeight: 1.5,
   };
 }

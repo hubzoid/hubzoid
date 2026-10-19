@@ -57,9 +57,9 @@ class LocaleSettings(_Strict):
 
 
 class AppearanceSettings(_Strict):
-    default_mode: Mode = "system"
+    default_mode: Mode = "dark"
     allowed_modes: list[Mode] = Field(default_factory=lambda: ["light", "dark", "oled", "system"])
-    default_density: Density = "comfortable"
+    default_density: Density = "compact"
     allowed_densities: list[Density] = Field(default_factory=lambda: ["comfortable", "compact"])
     default_text_scale: float = 1
     allowed_text_scales: list[float] = Field(default_factory=lambda: [1, 1.125, 1.25, 1.5])
@@ -155,7 +155,7 @@ PLANNED = {
     "runtime": "HUB-72", "organization": "HUB-73", "search": "HUB-73", "files": "HUB-74",
     "retrieval": "HUB-75", "feedback": "HUB-76", "helpers": "HUB-76",
     "notifications": "HUB-76", "voice": "HUB-77", "models": "HUB-78", "comparison": "HUB-78",
-    "sharing": "HUB-79", "spaces": "HUB-80",
+    "sharing": "HUB-79",
 }
 
 
@@ -167,6 +167,26 @@ def register_namespace(name: str, model: type[BaseModel], *, owner: str,
         if existing is not None and existing.installed and existing.model is not model:
             raise ValueError(f"chat config namespace {name!r} is already registered")
         _REGISTRY[name] = Namespace(name, owner, model, True, personal_keys, applies)
+
+
+#: namespace -> check(key inside the namespace, value, active document) -> clean value.
+#: Raises ConfigError (``policy_locked`` when the administrator manages it).
+_PERSONAL: dict[str, Any] = {}
+
+
+#: top-level personal key -> check(value, active document) -> clean value.
+_PERSONAL_KEYS: dict[str, Any] = {}
+
+
+def register_personal_key(key: str, check) -> None:
+    """A feature's own top-level personal setting (``send_key``)."""
+    _PERSONAL_KEYS[key] = check
+
+
+def register_personal(namespace: str, check) -> None:
+    """Let people keep their own value for some keys of a namespace, in the
+    same account preference document as appearance."""
+    _PERSONAL[namespace] = check
 
 
 def _bootstrap_registry() -> None:
@@ -536,7 +556,28 @@ class ChatConfigService:
             raise ConfigError(422, "validation_failed", "values must be an object.")
         pres = Presentation.model_validate(self.active().document["presentation"])
         clean: dict = {}
+        document = None
         for key, value in values.items():
+            if "." in key:
+                # A feature's own personal setting ("notifications.desktop"),
+                # checked by the namespace that registered it.
+                ns, rest = key.split(".", 1)
+                check = _PERSONAL.get(ns)
+                if check is None:
+                    raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",
+                                      pointer=f"/values/{_escape(key)}")
+                if value is None:
+                    continue
+                document = document or self.active().document
+                clean[key] = check(rest, value, document)
+                continue
+            if key in _PERSONAL_KEYS:
+                # A top-level personal key another feature registered ("send_key").
+                if value is None:
+                    continue
+                document = document or self.active().document
+                clean[key] = _PERSONAL_KEYS[key](value, document)
+                continue
             if key not in ("mode", "density", "text_scale", "timezone"):
                 raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",
                                   pointer=f"/values/{_escape(key)}",

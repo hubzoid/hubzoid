@@ -139,6 +139,11 @@ export function useThemeMode(): {
         Card: { ...(base.components?.Card ?? {}), colorBgContainer: palette.elevated },
       }
     : base.components;
-  const config: ThemeConfig = tokens ? { ...base, token: { ...base.token, ...tokens }, components } : base;
+  const algorithm = view.density === "compact"
+    ? [view.dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm, antdTheme.compactAlgorithm]
+    : base.algorithm;
+  const config: ThemeConfig = tokens
+    ? { ...base, algorithm, token: { ...base.token, ...tokens }, components }
+    : { ...base, algorithm };
   return { mode: view.mode, setMode, isDark: view.dark, config };
 }

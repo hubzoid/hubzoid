@@ -11,6 +11,8 @@ export type SessionUser = {
   role: Role | string;
   /** True when the Console opens for this person (Manage access on an agent or more). */
   console?: boolean;
+  /** The Hubzoid version; sent only to people the Console opens for. */
+  version?: string;
 };
 
 export type Provider = { id: string; name: string };
@@ -138,6 +140,11 @@ export type SharedConversation = {
   agent?: string | null;
   owner_name?: string | null;
   created_at?: Timestamp;
+  /** "snapshot" (2.0 link) or "legacy" (pre-2.0 link). */
+  kind?: "snapshot" | "legacy";
+  audience?: "named" | "deployment" | "public";
+  allow_copy?: boolean;
+  omissions?: string[];
   messages: ServerMessage[];
 };
 

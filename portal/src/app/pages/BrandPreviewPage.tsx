@@ -60,7 +60,7 @@ export default function BrandPreviewPage({ draftId }: { draftId: string }) {
 
   return (
     <div className="min-h-dvh bg-bg">
-      <div role="status" className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-line bg-warning-soft px-4 py-2 text-[13.5px] text-ink">
+      <div role="status" className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-line bg-warning-soft px-4 py-2 text-[13px] text-ink">
         <Eye size={15} aria-hidden />
         <strong>{t.brand.previewOnly}</strong>
         <span className="text-mute">
@@ -82,7 +82,7 @@ export default function BrandPreviewPage({ draftId }: { draftId: string }) {
         </span>
       </div>
       {!data.validation.valid && (
-        <ul className="m-0 list-none border-b border-line bg-danger-soft px-4 py-2 text-[13.5px] text-danger">
+        <ul className="m-0 list-none border-b border-line bg-danger-soft px-4 py-2 text-[13px] text-danger">
           {data.validation.problems.map((p) => (
             <li key={p.code + p.message}>{p.message}</li>
           ))}
@@ -102,7 +102,7 @@ export default function BrandPreviewPage({ draftId }: { draftId: string }) {
             <Logo logo={logo} name={name} />
             <div className="mt-4 rounded-xl border border-line bg-raised p-5">
               <h3 className="m-0 text-[18px] font-semibold text-ink">{copy.signin_title || `Sign in to ${name}`}</h3>
-              <p className="m-0 mt-1 text-[13.5px] text-mute">{copy.signin_body || "Use your work account."}</p>
+              <p className="m-0 mt-1 text-[13px] text-mute">{copy.signin_body || "Use your work account."}</p>
               <button type="button" disabled className="hz-btn hz-btn-primary mt-4 w-full">Continue</button>
             </div>
             <Footer data={data} />
@@ -114,7 +114,7 @@ export default function BrandPreviewPage({ draftId }: { draftId: string }) {
             {(copy.welcome_title || copy.welcome_body) && (
               <div data-brand-slot="brand.welcome" className="mt-3">
                 <p className="m-0 font-medium text-ink">{copy.welcome_title}</p>
-                <p className="m-0 text-[13.5px] text-mute">{copy.welcome_body}</p>
+                <p className="m-0 text-[13px] text-mute">{copy.welcome_body}</p>
               </div>
             )}
             <div className="mt-4 ml-auto w-fit max-w-[80%] rounded-2xl bg-sunken px-3 py-2 text-[14px] text-body">
@@ -128,7 +128,7 @@ export default function BrandPreviewPage({ draftId }: { draftId: string }) {
             )}
             {/* Protected: decision cards never take brand styling. */}
             <div className="mt-3 rounded-xl border border-line bg-raised p-3" data-protected="approval">
-              <p className="m-0 flex items-center gap-1.5 text-[13.5px] font-medium text-ink">
+              <p className="m-0 flex items-center gap-1.5 text-[13px] font-medium text-ink">
                 <ShieldCheck size={15} aria-hidden /> Approval needed: send the summary to the team
               </p>
               <div className="mt-2 flex gap-2">
@@ -188,7 +188,7 @@ function Logo({ logo, name }: { logo?: string; name: string }) {
   return (
     <span data-brand-slot="brand.logoFrame" className="inline-flex items-center gap-2">
       {logo && <img src={logo} alt="" className="h-7 w-7 rounded-md object-contain" />}
-      <span className="text-[15px] font-semibold text-ink">{name}</span>
+      <span className="text-[14px] font-semibold text-ink">{name}</span>
     </span>
   );
 }
