@@ -54,20 +54,28 @@ function SearchBody() {
   const [hits, setHits] = useState<Hit[]>([]);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(0);
+  const [failed, setFailed] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const generation = useRef(0);
 
   useEffect(() => {
     const query = q.trim();
     const timer = setTimeout(() => {
+      const mine = ++generation.current;
+      const current = () => mine === generation.current;
       setBusy(true);
       const params = new URLSearchParams({ archived: "0", limit: "20" });
       if (query) params.set("q", query);
-      const a = get<ConversationPage>(`/api/conversations?${params}`, { quiet401: true }).then((p) => setTitles(p.items ?? []));
+      const a = get<ConversationPage>(`/api/conversations?${params}`, { quiet401: true }).then((p) => current() && setTitles(p.items ?? []));
       const b = query.length >= 2
         ? get<{ items: Hit[] }>(`/api/chat/search?q=${encodeURIComponent(query)}&types=message&limit=20`, { quiet401: true })
-            .then((r) => setHits(r.items))
+            .then((r) => current() && setHits(r.items))
         : Promise.resolve(setHits([]));
-      void Promise.allSettled([a, b]).then(() => setBusy(false));
+      void Promise.allSettled([a, b]).then((out) => {
+        if (!current()) return;
+        setBusy(false);
+        setFailed(out.some((o) => o.status === "rejected"));
+      });
     }, query ? 180 : 0);
     return () => clearTimeout(timer);
   }, [q]);
@@ -93,6 +101,7 @@ function SearchBody() {
   }, [titles, hits]);
 
   useEffect(() => setActive(0), [q]);
+  useEffect(() => setActive((i) => Math.min(i, Math.max(0, rows.length - 1))), [rows.length]);
   useEffect(() => {
     listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
@@ -132,7 +141,8 @@ function SearchBody() {
         {busy && <span className="hz-spin-dot" aria-hidden />}
       </div>
       <div className="hz-search-results" id="hz-search-results" role="listbox" ref={listRef} aria-label={t.sidebar.search}>
-        {!rows.length && !busy && <p className="m-0 px-3 py-6 text-center text-[13px] text-mute">{q.trim() ? t.sidebar.emptySearch(q.trim()) : t.sidebar.empty}</p>}
+        {failed && <p className="m-0 px-3 pt-3 text-[12.5px] text-danger">{t.sidebar.loadError}</p>}
+        {!rows.length && !busy && !failed && <p className="m-0 px-3 py-6 text-center text-[13px] text-mute">{q.trim() ? t.sidebar.emptySearch(q.trim()) : t.sidebar.empty}</p>}
         {!q.trim() && rows.length > 0 && <div className="hz-search-label">{t.sidebar.recent}</div>}
         {rows.map((r, i) => {
           const agent = r.agent ? agentById(app.agents.list, r.agent) : undefined;

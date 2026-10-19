@@ -218,12 +218,10 @@ function EmptyThread(props: ThreadProps) {
           {t.agents.requestedUnavailable(name)}
         </Notice>
       )}
-      <h1 className="hz-empty-title">{brandCopy?.welcome_title || t.agents.greeting(name)}</h1>
-      {(brandCopy?.welcome_body || agent.description) && (
-        <p className="hz-empty-sub" data-brand-slot="brand.welcome">
-          {brandCopy?.welcome_body || agent.description}
-        </p>
-      )}
+      <h1 className="hz-empty-title">{brandCopy?.welcome_title || t.agents.welcome}</h1>
+      <p className="hz-empty-sub" data-brand-slot="brand.welcome">
+        {brandCopy?.welcome_body || t.agents.welcomeSub(name)}
+      </p>
       <div className="w-full max-w-[768px]">
         {props.notice}
         <Composer {...props} />
@@ -413,7 +411,11 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
             Empty: Working,
           }}
         />
-        {running && hasContent && <span className="hz-caret" aria-hidden data-testid="streaming" />}
+        {running && hasContent && (
+          <span className="hz-streaming" aria-hidden data-testid="streaming">
+            <span className="hz-spin-dot" />
+          </span>
+        )}
         <MessageStatusNote readOnly={readOnly} />
         <ContextNote />
         {!readOnly && isLast && !running && <FollowUps />}
@@ -668,7 +670,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
   const name = displayName(agent.name);
   const disabled = !!composerDisabledReason;
-  const [web, setWeb] = useState(false);
+  const [web, setWeb] = useState(() => !!value?.feed.webSearch);
   const webAllowed = !!value?.features?.web_search;
   const setWebSearch = (on: boolean) => {
     setWeb(on);
@@ -680,10 +682,30 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
     else aui.thread().cancelRun();
   };
   const queue = () => aui.composer().send({ steer: false });
-  const interrupt = () => {
+  const interrupt = async () => {
+    if (!value) return;
+    const feed = value.feed;
+    const before = new Set(feed.myQueue.map((q) => q.id));
     aui.composer().send({ steer: true });
-    // The steered message goes next; stopping the reply lets it go now.
-    setTimeout(() => void value?.feed.cancel(false).catch(value.onError), 0);
+    // Stop the reply only once the server has the message as next in line;
+    // if it never arrives, the reply carries on and the draft error shows.
+    const accepted = await new Promise<boolean>((resolve) => {
+      let unsubscribe = () => {};
+      const timer = setTimeout(() => {
+        unsubscribe();
+        resolve(false);
+      }, 8000);
+      const check = () => {
+        if (feed.myQueue.some((q) => q.lane === "steer" && !before.has(q.id))) {
+          clearTimeout(timer);
+          unsubscribe();
+          resolve(true);
+        }
+      };
+      unsubscribe = feed.subscribe(check);
+      check();
+    });
+    if (accepted && feed.activeRun) await feed.cancel(false).catch(value.onError);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // While a reply streams, Enter does what the visible button says: queue.
@@ -694,7 +716,10 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
   };
 
   return (
-    <ComposerPrimitive.Root className={cx("hz-composer", disabled && "is-disabled")} data-testid="composer">
+    <ComposerPrimitive.Root
+      className={cx("hz-composer", disabled && "is-disabled", running && hasDraft && "is-queueing")}
+      data-testid="composer"
+    >
       <ComposerPrimitive.Quote className="hz-composer-quote">
         <Quote size={13} aria-hidden className="flex-none text-mute" />
         <ComposerPrimitive.QuoteText className="min-w-0 flex-1 truncate" />
@@ -762,7 +787,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
                         <small>{t.chat.queueAfterHelp}</small>
                       </span>
                     </Menu.Item>
-                    <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={interrupt} data-testid="interrupt">
+                    <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={() => void interrupt()} data-testid="interrupt">
                       <CornerDownRight size={15} aria-hidden className="mt-0.5" />
                       <span>
                         {t.chat.interrupt}
@@ -795,7 +820,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
 /** Follow-ups queued on this branch, in the order the server will send them. */
 function QueueList() {
   const value = useFeed();
-  const aui = useAui();
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   if (!value) return null;
   const { feed, onError } = value;
   const items = [...feed.myQueue].sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "steer" ? -1 : 1));
@@ -846,7 +871,37 @@ function QueueList() {
       </div>
       <ol className="m-0 list-none p-0">
         {items.map((item, i) => {
-          const body = text(item.content as { type: string; text?: string }[]);
+          const parts = (item.content ?? []) as { type: string; text?: string }[];
+          const body = text(parts);
+          const save = (next: string) => {
+            setEditing(null);
+            if (!next.trim() || next === body) return;
+            const content = [...parts.filter((p) => p.type !== "text"), { type: "text", text: next }];
+            void feed.patchQueue(item, { action: "edit", content } as never).catch(onError);
+          };
+          if (editing?.id === item.id)
+            return (
+              <li key={item.id} className="hz-queue-row is-editing" data-testid="queue-item" data-state={item.state}>
+                <span className="w-4 flex-none text-[11.5px] tabular-nums text-mute">{i + 1}</span>
+                <input
+                  autoFocus
+                  className="hz-queue-input"
+                  value={editing.text}
+                  aria-label={t.chat.queueEdit}
+                  onChange={(e) => setEditing({ id: item.id, text: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      save(editing.text);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditing(null);
+                    }
+                  }}
+                  onBlur={() => save(editing.text)}
+                />
+              </li>
+            );
           return (
             <li key={item.id} className="hz-queue-row" data-testid="queue-item" data-state={item.state}>
               <span className="w-4 flex-none text-[11.5px] tabular-nums text-mute">{i + 1}</span>
@@ -856,16 +911,7 @@ function QueueList() {
                 <span className="text-[11.5px] text-mute">{t.chat.queueBlocked(item.reason || item.state)}</span>
               )}
               <span className="hz-queue-acts">
-                <IconButton
-                  label={t.chat.queueEdit}
-                  className="!h-6 !w-6"
-                  onClick={() =>
-                    void feed
-                      .patchQueue(item, { action: "remove" })
-                      .then(() => aui.composer().setText(body))
-                      .catch(onError)
-                  }
-                >
+                <IconButton label={t.chat.queueEdit} className="!h-6 !w-6" onClick={() => setEditing({ id: item.id, text: body })}>
                   <Pencil size={12} aria-hidden />
                 </IconButton>
                 {feed.activeRun && item.lane !== "steer" && (

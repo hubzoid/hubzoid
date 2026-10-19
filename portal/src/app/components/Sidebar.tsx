@@ -94,7 +94,9 @@ export function Sidebar({
 
   return (
     <>
-      {!collapsed && (
+      {collapsed ? (
+        <Rail route={route} />
+      ) : (
         <aside className="hz-sidebar hidden lg:flex" data-testid="sidebar">
           <SidebarBody activeId={activeId} route={route} />
         </aside>
@@ -112,17 +114,44 @@ export function Sidebar({
   );
 }
 
-/** Shows the sidebar again after it was hidden on a wide screen. */
-export function SidebarToggle() {
-  const { collapsed } = useSidebarState();
-  if (!collapsed) return null;
+/** The hidden sidebar's narrow rail: the main destinations stay one click away. */
+function Rail({ route }: { route: Route["name"] }) {
+  const app = useApp();
+  const go = (href: string) => () => navigate(href);
   return (
-    <div className="hidden lg:block">
-      <IconButton label={t.sidebar.expand} onClick={sidebarState.toggleCollapsed}>
-        <PanelLeft size={18} aria-hidden />
+    <aside className="hz-rail hidden lg:flex" aria-label={t.sidebar.label}>
+      <IconButton label={t.sidebar.expand} onClick={sidebarState.toggleCollapsed} data-testid="sidebar-expand">
+        <PanelLeft size={17} aria-hidden />
       </IconButton>
-    </div>
+      <IconButton label={t.sidebar.newChat} onClick={() => app.newChat()} aria-current={route === "new" ? "page" : undefined}>
+        <SquarePen size={17} aria-hidden />
+      </IconButton>
+      <IconButton label={t.sidebar.search} onClick={sidebarState.openSearch}>
+        <Search size={17} aria-hidden />
+      </IconButton>
+      <IconButton label={t.sources.nav} onClick={go("/sources")} aria-current={route === "sources" ? "page" : undefined}>
+        <BookOpen size={17} aria-hidden />
+      </IconButton>
+      <IconButton label={t.spaces.nav} onClick={go("/spaces")} aria-current={route === "spaces" ? "page" : undefined}>
+        <UsersRound size={17} aria-hidden />
+      </IconButton>
+      {app.isAdmin && (
+        <IconButton label={t.workspace.nav} onClick={go("/workspace")} aria-current={route === "workspace" ? "page" : undefined}>
+          <PencilRuler size={17} aria-hidden />
+        </IconButton>
+      )}
+      <span className="flex-1" />
+      <NotificationsButton />
+      <IconButton label={t.account.settings} onClick={go("/settings")} aria-current={route === "settings" ? "page" : undefined}>
+        <Settings size={17} aria-hidden />
+      </IconButton>
+    </aside>
   );
+}
+
+/** Kept for headers that used to show it; the rail does this now. */
+export function SidebarToggle() {
+  return null;
 }
 
 function Brand() {

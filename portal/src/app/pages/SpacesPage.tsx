@@ -55,13 +55,13 @@ function Channels({ spaceId }: { spaceId: string | null }) {
     <div className="grid min-h-[520px] gap-4 md:grid-cols-[220px_1fr]">
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-mute">{t.spaces.channels}</span>
+          <span className="text-[12px] font-medium text-mute">{t.spaces.channels}</span>
           <button type="button" className="hz-icon-link" aria-label={t.spaces.newChannel} title={t.spaces.newChannel} onClick={() => setCreating("channel")}>
             <Plus size={14} aria-hidden /></button>
         </div>
         {spaces?.filter((s) => s.kind === "channel").map((s) => <SpaceRow key={s.id} s={s} on={s.id === spaceId} />)}
         <div className="mb-1 mt-4 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-mute">{t.spaces.direct}</span>
+          <span className="text-[12px] font-medium text-mute">{t.spaces.direct}</span>
           <button type="button" className="hz-icon-link" aria-label={t.spaces.newDm} title={t.spaces.newDm} onClick={() => setCreating("dm")}>
             <Plus size={14} aria-hidden /></button>
         </div>
@@ -353,7 +353,7 @@ function NoteEditor({ note, onSaved }: { note: Note; onSaved: (n: Note) => void 
       )}
       {revs.length > 1 && (
         <div className="pt-1">
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-mute">{t.spaces.revisions}</div>
+          <div className="mb-1 text-[12px] font-medium text-mute">{t.spaces.revisions}</div>
           {revs.map((r) => (
             <div key={r.revision} className="hz-source-row">
               <span className="text-[12px] text-ink">{t.spaces.revisionOf(r.revision)}</span>

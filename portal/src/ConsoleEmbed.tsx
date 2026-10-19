@@ -1,11 +1,12 @@
 // The Console's screens inside the chat app's Settings page: the same screens,
 // data and checks as the standalone Console, chosen by the URL hash, without
 // the Console's own navigation (Settings has its own).
-import { Suspense, useCallback } from "react";
+import { Suspense, useCallback, useEffect } from "react";
 import { Alert, App, Button, ConfigProvider, Spin } from "antd";
 import type { Hub, Me } from "./api";
 import { useData } from "./hooks/useData";
-import { useRoute } from "./hooks/useRoute";
+import { hasPendingChanges, useRoute } from "./hooks/useRoute";
+import { setLeaveGuard } from "./app/lib/router";
 import { useThemeMode } from "./lib/theme";
 import { displayName } from "./app/lib/format";
 import { consoleScreen, SchedulesScreen } from "./consoleScreens";
@@ -13,6 +14,11 @@ import "./portal.css";
 
 export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
   const { config } = useThemeMode();
+  // Leaving Settings for another page asks first when a screen has unsaved changes.
+  useEffect(() => {
+    setLeaveGuard(() => !hasPendingChanges() || window.confirm("Leave without saving? Your changes here are discarded."));
+    return () => setLeaveGuard(null);
+  }, []);
   return (
     <ConfigProvider theme={config}>
       <App>

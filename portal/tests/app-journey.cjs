@@ -212,8 +212,8 @@ function chartPng(width = 160, height = 100) {
       await page.goto(`${BASE}/?agent=nobody`);
       // The last agent used (IT Ops, just above) takes its place.
       await page.getByText("The agent in that link isn't available to you, so this chat uses IT Ops.").waitFor();
-      // "Change agent" under the greeting opens the same menu.
-      await page.getByRole("button", { name: "Change agent", exact: true }).click();
+      // The agent's name in the header opens the menu.
+      await page.getByTestId("agent-switcher").click();
       await menu.getByRole("option", { name: /Hubzoid Guide/ }).click();
       await menu.waitFor({ state: "hidden" });
       await page.getByRole("heading", { name: "What can Hubzoid Guide help with?" }).waitFor();

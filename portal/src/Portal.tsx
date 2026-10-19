@@ -94,7 +94,8 @@ function Router({
   // With the web app, everything here lives in its Settings page.
   if (me.data?.web_app === true) {
     const hash = location.hash && location.hash !== "#/" && location.hash !== "#/home" ? location.hash : "";
-    location.replace(`/settings${hash || "#/agents"}`);
+    const area = route.parts[0];
+    location.replace(area === "connections" ? "/settings#/me/connections" : `/settings${hash || "#/agents"}`);
     return loading;
   }
   if (notAdmin && my.data?.web_app === true) {

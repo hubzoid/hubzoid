@@ -73,7 +73,7 @@ const ITEMS: Item[] = [
 
 /** Which section a hash shows. */
 function keyFor(hash: string): Key | null {
-  const path = hash.replace(/^#/, "");
+  const path = hash.replace(/^#/, "").split("?")[0];
   const [a, b] = path.split("/").filter(Boolean);
   if (a === "me") return (ITEMS.find((i) => i.hash === `/me/${b}`)?.key as Key) ?? "profile";
   if (a === "agents" || a === "home") return "agents";

@@ -60,7 +60,14 @@ export function isAppPath(path: string): boolean {
   return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$)/.test(path);
 }
 
+let leaveGuard: (() => boolean) | null = null;
+/** A page with unsaved changes can ask before the app moves elsewhere. */
+export function setLeaveGuard(fn: (() => boolean) | null) {
+  leaveGuard = fn;
+}
+
 export function navigate(to: string, options: { replace?: boolean } = {}) {
+  if (leaveGuard && !leaveGuard()) return;
   if (!isAppPath(to.split("?")[0])) {
     if (options.replace) location.replace(to);
     else location.assign(to);

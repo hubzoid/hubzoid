@@ -355,10 +355,24 @@ function ChatView({
   const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError, ...speechAdapters });
 
-  const noticeCount = useNotices().length;
+  const unreadHere = useNotices()
+    .filter((n) => n.state === "unread" && n.conversation_id === conversation?.id)
+    .map((n) => n.id)
+    .join(",");
   useEffect(() => {
-    if (conversation?.id) readConversation(conversation.id);
-  }, [conversation?.id, noticeCount]);
+    const id = conversation?.id;
+    if (!id) return;
+    const read = () => {
+      if (!document.hidden && document.hasFocus()) readConversation(id);
+    };
+    read();
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", read);
+    return () => {
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", read);
+    };
+  }, [conversation?.id, unreadHere]);
 
   // Tell the server this person is looking at this chat (no notice for it then).
   useEffect(() => {

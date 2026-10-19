@@ -290,6 +290,20 @@ export function Appearance() {
             <Paragraph type="secondary" style={{ margin: 0 }}>
               Approving covers exactly these changes. Editing again needs a new approval.
             </Paragraph>
+            {diff.draft.validation.problems.length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                title={diff.draft.validation.problems.length === 1 ? "1 issue to fix before review" : `${diff.draft.validation.problems.length} issues to fix before review`}
+                description={
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {diff.draft.validation.problems.map((p, i) => (
+                      <li key={i}>{p.message}</li>
+                    ))}
+                  </ul>
+                }
+              />
+            )}
             <Table<Change>
               size="small"
               rowKey="pointer"
@@ -325,7 +339,7 @@ export function Appearance() {
           onClose={() => setEditing(false)}
           onCreated={async () => {
             setEditing(false);
-            message.success("Draft created. Preview it, approve the digest, then activate.");
+            message.success("Draft created. Preview it, approve it, then publish it.");
             await load();
           }}
         />

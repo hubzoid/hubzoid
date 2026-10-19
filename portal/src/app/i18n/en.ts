@@ -326,6 +326,7 @@ export const en = {
     loadError: "Couldn't load your agents.",
     greeting: (name: string) => `What can ${name} help with?`,
     welcome: "What would you like to work on?",
+    welcomeSub: (name: string) => `Ask ${name} anything it knows about, or try one of these.`,
     suggestions: "Suggestions",
     unknown: "Unknown agent",
     unavailable:

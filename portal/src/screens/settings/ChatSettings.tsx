@@ -231,7 +231,9 @@ export function ChatSettings() {
         </Space>
       </Card>
 
-      <Space>
+      {dirty && (
+      <Space className="save-bar">
+        <Text>Unsaved changes</Text>
         <Button onClick={() => void review()} disabled={!dirty} loading={busy && !changes}>
           Review changes
         </Button>
@@ -242,6 +244,7 @@ export function ChatSettings() {
           Discard
         </Button>
       </Space>
+      )}
       {changes && (
         <Table<Change>
           size="small"

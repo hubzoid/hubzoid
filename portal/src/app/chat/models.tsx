@@ -20,10 +20,13 @@ export type ModelsInfo = {
 
 export function ModelPicker() {
   const value = useFeed();
-  const [ref, setRef] = useState("default");
+  const [, rerender] = useState(0);
   const info = value?.models;
   if (!info?.can_choose) return null;
-  const current = info.catalog.find((c) => c.ref === ref) ?? info.catalog[0];
+  // The feed keeps the choice, so it survives the composer moving on the first send.
+  const chosen = value!.feed.model ?? null;
+  const current = info.catalog.find((c) => (c.model ?? null) === chosen) ?? info.catalog[0];
+  const ref = current?.ref ?? "default";
   return (
     <Menu.Root modal={false}>
       <Menu.Trigger asChild>
@@ -38,8 +41,8 @@ export function ModelPicker() {
           <Menu.RadioGroup
             value={ref}
             onValueChange={(next) => {
-              setRef(next);
               value!.feed.model = info.catalog.find((c) => c.ref === next)?.model ?? null;
+              rerender((n) => n + 1);
             }}
           >
             {info.catalog.map((c) => (

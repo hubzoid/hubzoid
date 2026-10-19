@@ -156,7 +156,7 @@
     color: var(--hz-ink);
     font-family: var(--font-sans);
     /* rem, so the person's text size (the root font size) scales it */
-    font-size: 0.8125rem;
+    font-size: 0.9286rem; /* 13px at the default 14px root */
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -555,7 +555,7 @@
     padding: 8px 14px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    font-size: 14px;
+    font-size: 1rem;
     line-height: 1.5;
   }
   .hz-actions {
@@ -616,7 +616,7 @@
   /* Markdown answer text. */
   .hz-md {
     color: var(--hz-body);
-    font-size: 14px;
+    font-size: 1rem;
     line-height: 1.55;
     overflow-wrap: anywhere;
   }
@@ -1157,10 +1157,10 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 30px;
+    min-height: 30px;
     padding: 0 8px;
     border-radius: 8px;
-    font-size: 13.5px;
+    font-size: 0.9643rem;
     color: var(--hz-ink);
     text-decoration: none;
     text-align: left;
@@ -1182,7 +1182,7 @@
     background: var(--hz-active);
   }
   .hz-nav-hint {
-    font-size: 11px;
+    font-size: 0.7857rem;
     color: var(--hz-mute);
     opacity: 0;
     transition: opacity 120ms var(--hz-ease);
@@ -1209,7 +1209,7 @@
   .hz-side-head h2 {
     flex: 1;
     margin: 0;
-    font-size: 12px;
+    font-size: 0.8571rem;
     font-weight: 500;
     color: var(--hz-mute);
   }
@@ -1230,7 +1230,7 @@
     height: 22px;
     padding: 0 6px;
     border-radius: 6px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-side-view:hover,
@@ -1241,7 +1241,7 @@
   .hz-side-group {
     margin: 0;
     padding: 8px 8px 2px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     font-weight: 400;
     color: var(--hz-mute);
   }
@@ -1266,7 +1266,7 @@
     padding: 0 8px;
     border-radius: 8px;
     text-align: left;
-    font-size: 12px;
+    font-size: 0.8571rem;
     color: var(--hz-mute);
   }
   .hz-side-more.is-nested {
@@ -1295,9 +1295,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 30px;
+    min-height: 30px;
     padding: 0 4px 0 6px;
-    font-size: 13.5px;
+    font-size: 0.9643rem;
     font-weight: 500;
     color: var(--hz-ink);
     text-align: left;
@@ -1317,10 +1317,10 @@
     width: 100%;
     align-items: center;
     gap: 9px;
-    height: 30px;
+    min-height: 30px;
     border-radius: 8px;
     padding: 0 8px;
-    font-size: 13.5px;
+    font-size: 0.9643rem;
     color: var(--hz-secondary);
     text-align: left;
   }
@@ -1357,7 +1357,7 @@
     box-shadow: 0 0 0 2px var(--hz-canvas);
   }
   .hz-link-btn {
-    font-size: 12px;
+    font-size: 0.8571rem;
     color: var(--hz-secondary);
     border-radius: 6px;
     padding: 2px 6px;
@@ -1396,7 +1396,7 @@
     border: 0;
     outline: 0;
     background: transparent;
-    font-size: 14px;
+    font-size: 1rem;
     color: var(--hz-ink);
   }
   .hz-search-results {
@@ -1406,7 +1406,7 @@
   }
   .hz-search-label {
     padding: 6px 9px 4px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-search-row {
@@ -1427,7 +1427,7 @@
     align-items: center;
     padding: 0 14px;
     border-top: 1px solid var(--hz-line);
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-spin-dot {
@@ -1450,7 +1450,7 @@
     justify-content: space-between;
     height: 42px;
     padding: 0 10px 0 14px;
-    font-size: 13px;
+    font-size: 0.9286rem;
     font-weight: 600;
     border-bottom: 1px solid var(--hz-line);
   }
@@ -1520,7 +1520,7 @@
     border: 1px solid var(--hz-line);
     background: var(--hz-raised);
     box-shadow: var(--hz-shadow-pop);
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-ink);
     animation: hz-menu-in 160ms var(--hz-ease-out);
   }
@@ -1563,7 +1563,7 @@
     height: 30px;
     padding: 0 7px 0 6px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 0.9286rem;
     color: var(--hz-secondary);
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
@@ -1574,7 +1574,7 @@
   }
   .hz-crumb-sep {
     color: var(--hz-line);
-    font-size: 15px;
+    font-size: 1.0714rem;
     padding: 0 2px;
   }
   .hz-chat-title {
@@ -1584,7 +1584,7 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 13.5px;
+    font-size: 0.9643rem;
     font-weight: 500;
     color: var(--hz-ink);
   }
@@ -1618,7 +1618,7 @@
     padding-left: 9px;
     border-left: 2px solid var(--hz-input);
     color: var(--hz-secondary);
-    font-size: 13px;
+    font-size: 0.9286rem;
   }
   .hz-assistant {
     position: relative;
@@ -1663,7 +1663,7 @@
     align-items: center;
     gap: 1px;
     margin-right: 8px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-caret {
@@ -1698,7 +1698,7 @@
     margin-left: -6px;
     padding: 0 7px 0 6px;
     border-radius: 7px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     text-align: left;
     transition: background-color 120ms var(--hz-ease);
   }
@@ -1728,7 +1728,7 @@
     padding: 2px 0 2px 12px;
     border-left: 1px solid var(--hz-line);
     white-space: pre-wrap;
-    font-size: 13px;
+    font-size: 0.9286rem;
     line-height: 1.55;
     color: var(--hz-secondary);
   }
@@ -1741,7 +1741,7 @@
     background: var(--hz-canvas);
     border: 1px solid var(--hz-line-soft);
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-word;
@@ -1753,7 +1753,7 @@
     height: 18px;
     padding: 0 6px;
     border-radius: 5px;
-    font-size: 11px;
+    font-size: 0.7857rem;
     font-weight: 500;
     background: var(--hz-accent-soft);
     color: var(--hz-accent-text);
@@ -1806,7 +1806,7 @@
     outline: 0;
     background: transparent;
     padding: 4px 6px 2px;
-    font-size: 14px;
+    font-size: 1rem;
     line-height: 1.5;
     color: var(--hz-ink);
   }
@@ -1832,7 +1832,7 @@
     padding: 4px 4px 4px 9px;
     border-radius: 10px;
     background: var(--hz-sunken);
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-secondary);
   }
   .hz-model {
@@ -1843,7 +1843,7 @@
     height: 30px;
     padding: 0 8px 0 9px;
     border-radius: 8px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-secondary);
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
@@ -1881,7 +1881,7 @@
     height: 30px;
     padding: 0 10px;
     border-radius: 999px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     font-weight: 500;
     color: var(--hz-secondary);
   }
@@ -1896,7 +1896,7 @@
     overflow: hidden;
     background: var(--hz-ink);
     color: var(--hz-bg);
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     font-weight: 500;
   }
   .hz-split > button {
@@ -1925,7 +1925,7 @@
     padding: 0 4px 0 8px;
     border-radius: 999px;
     background: var(--hz-sunken);
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-secondary);
   }
   .hz-status-chip button {
@@ -1971,7 +1971,7 @@
   .hz-disclaimer {
     margin: 6px 0 0;
     text-align: center;
-    font-size: 11px;
+    font-size: 0.7857rem;
     color: var(--hz-mute);
   }
   .hz-latest {
@@ -1988,7 +1988,7 @@
     border: 1px solid var(--hz-line);
     background: var(--hz-raised);
     box-shadow: var(--hz-shadow-pop);
-    font-size: 12px;
+    font-size: 0.8571rem;
     color: var(--hz-secondary);
   }
   .hz-latest:hover {
@@ -2001,7 +2001,7 @@
   /* Queue: a flat extension above the composer */
   .hz-queue {
     margin: 0 10px 6px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     animation: hz-menu-in-up 160ms var(--hz-ease-out);
   }
   .hz-queue-head {
@@ -2010,7 +2010,7 @@
     gap: 6px;
     height: 26px;
     padding: 0 2px 0 4px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-queue-row {
@@ -2053,7 +2053,7 @@
   }
   .hz-empty-title {
     margin: 0 0 6px;
-    font-size: 24px;
+    font-size: 1.7143rem;
     line-height: 1.3;
     font-weight: 600;
     letter-spacing: -0.02em;
@@ -2064,7 +2064,7 @@
     margin: 0 0 22px;
     max-width: 560px;
     text-align: center;
-    font-size: 13.5px;
+    font-size: 0.9643rem;
     line-height: 1.5;
     color: var(--hz-secondary);
     display: -webkit-box;
@@ -2086,7 +2086,7 @@
     padding: 0 12px;
     border-radius: 999px;
     border: 1px solid var(--hz-line);
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-secondary);
     overflow: hidden;
     white-space: nowrap;
@@ -2114,7 +2114,7 @@
     height: 28px;
     padding: 0 9px;
     border-radius: 7px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-ink);
   }
   .hz-selection-quote:hover {
@@ -2134,7 +2134,7 @@
       display: none;
     }
     .hz-empty-title {
-      font-size: 21px;
+      font-size: 1.5rem;
     }
     .hz-composer-bar .hz-icon-btn[data-size="lg"],
     .hz-send,
@@ -2170,10 +2170,10 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 30px;
+    min-height: 30px;
     padding: 0 8px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 0.9286rem;
     color: var(--hz-ink);
     text-decoration: none;
     transition: background-color 120ms var(--hz-ease);
@@ -2197,12 +2197,12 @@
     border: 0;
     outline: 0;
     background: transparent;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-ink);
   }
   .hz-set-group {
     padding: 12px 8px 4px;
-    font-size: 11.5px;
+    font-size: 0.8214rem;
     color: var(--hz-mute);
   }
   .hz-set-group:first-of-type {
@@ -2219,7 +2219,7 @@
     margin: 0 0 8px -4px;
     padding: 0 8px 0 4px;
     border-radius: 7px;
-    font-size: 12.5px;
+    font-size: 0.8929rem;
     color: var(--hz-secondary);
   }
   .hz-set-head {
@@ -2227,7 +2227,7 @@
   }
   .hz-set-head h2 {
     margin: 0;
-    font-size: 19px;
+    font-size: 1.3571rem;
     font-weight: 600;
     letter-spacing: -0.015em;
     color: var(--hz-ink);
@@ -2235,18 +2235,18 @@
   .hz-set-head p {
     margin: 4px 0 0;
     max-width: 60ch;
-    font-size: 13px;
+    font-size: 0.9286rem;
     color: var(--hz-secondary);
   }
   .hz-set-main section {
     border-color: var(--hz-line-soft);
   }
   .hz-set-main section h2 {
-    font-size: 13px !important;
+    font-size: 0.9286rem !important;
     font-weight: 500 !important;
   }
   .hz-set-main section p {
-    font-size: 12.5px;
+    font-size: 0.8929rem;
   }
   @media (max-width: 767px) {
     .hz-set {
@@ -2273,7 +2273,7 @@
 
 /* The management screens inside Settings: same tokens, quieter type and chrome. */
 .console-embed {
-  font-size: 13px;
+  font-size: 0.9286rem;
   color: var(--hz-ink);
 }
 .console-embed .screen {
@@ -2282,23 +2282,23 @@
 }
 .console-embed h1.ant-typography,
 .console-embed h2.ant-typography {
-  font-size: 19px !important;
+  font-size: 1.3571rem !important;
   font-weight: 600 !important;
   letter-spacing: -0.015em;
   margin: 0 0 4px !important;
 }
 .console-embed h3.ant-typography,
 .console-embed h4.ant-typography {
-  font-size: 14px !important;
+  font-size: 1rem !important;
   font-weight: 600 !important;
 }
 .console-embed h5.ant-typography {
-  font-size: 13px !important;
+  font-size: 0.9286rem !important;
 }
 .console-embed .ant-typography-secondary,
 .console-embed .ant-typography.ant-typography-secondary {
   color: var(--hz-secondary) !important;
-  font-size: 13px;
+  font-size: 0.9286rem;
 }
 .console-embed .ant-card {
   background: transparent !important;
@@ -2307,19 +2307,19 @@
 }
 .console-embed .ant-table {
   background: transparent !important;
-  font-size: 13px;
+  font-size: 0.9286rem;
 }
 .console-embed .ant-table-thead > tr > th {
   background: transparent !important;
   font-weight: 500 !important;
-  font-size: 12px;
+  font-size: 0.8571rem;
   color: var(--hz-mute) !important;
 }
 .console-embed .ant-table-tbody > tr > td {
   border-color: var(--hz-line-soft) !important;
 }
 .console-embed .ant-statistic-content {
-  font-size: 20px !important;
+  font-size: 1.4286rem !important;
 }
 .console-embed .ant-tabs-nav::before {
   border-color: var(--hz-line) !important;
@@ -2341,21 +2341,21 @@
 }
 .console-embed .identity {
   font-family: inherit !important;
-  font-size: 12.5px !important;
+  font-size: 0.8929rem !important;
   color: var(--hz-mute);
 }
 .console-embed .ant-tag {
-  font-size: 11.5px !important;
+  font-size: 0.8214rem !important;
   line-height: 20px !important;
   border-radius: 6px !important;
   border: 0 !important;
 }
 .console-embed .ant-btn {
-  font-size: 12.5px;
+  font-size: 0.8929rem;
   box-shadow: none !important;
 }
 .console-embed .eyebrow {
-  font-size: 11.5px;
+  font-size: 0.8214rem;
   letter-spacing: 0;
   text-transform: none;
   font-weight: 500;
@@ -2377,16 +2377,112 @@
   padding: 4px 16px 4px 0 !important;
 }
 .console-embed .stat-label {
-  font-size: 12px !important;
+  font-size: 0.8571rem !important;
   color: var(--hz-mute) !important;
 }
 .console-embed .stat-value {
-  font-size: 20px !important;
+  font-size: 1.4286rem !important;
   line-height: 1.3 !important;
   font-weight: 600;
   margin: 2px 0 !important;
 }
 .console-embed .stat-sub {
-  font-size: 11.5px !important;
+  font-size: 0.8214rem !important;
   color: var(--hz-mute) !important;
+}
+
+@layer components {
+  .hz-streaming {
+    display: flex;
+    height: 22px;
+    align-items: center;
+  }
+  .hz-streaming .hz-spin-dot {
+    width: 11px;
+    height: 11px;
+  }
+}
+@media (hover: none) {
+  .hz-conv .hz-conv-state {
+    position: static;
+    transform: none;
+    margin-right: 2px;
+  }
+  .hz-conv:hover .hz-conv-state {
+    opacity: 1;
+  }
+}
+@layer components {
+  .hz-space-label {
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+  }
+}
+
+@layer components {
+  .hz-rail {
+    width: 52px;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 0;
+    background: var(--hz-canvas);
+  }
+  .hz-rail .hz-icon-btn[aria-current="page"] {
+    background: var(--hz-active);
+    color: var(--hz-ink);
+  }
+  .hz-queue-row.is-editing {
+    background: var(--hz-hover);
+  }
+  .hz-queue-input {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font-size: inherit;
+    color: var(--hz-ink);
+  }
+  /* Keyboard focus on wrapped text fields shows on their wrapper. */
+  .hz-search-input:has(input:focus-visible),
+  .hz-set-find:has(input:focus-visible) {
+    outline: 2px solid var(--hz-focus);
+    outline-offset: -2px;
+  }
+  .hz-composer:has(textarea:focus-visible) {
+    outline: 3px solid color-mix(in srgb, var(--hz-ink) 9%, transparent);
+    outline-offset: 0;
+  }
+  @media (max-width: 640px) {
+    .hz-composer.is-queueing .hz-model,
+    .hz-composer.is-queueing [data-testid="dictate"],
+    .hz-composer.is-queueing [data-testid="composer-add"] {
+      display: none;
+    }
+    .hz-split {
+      flex: none;
+    }
+    .hz-split .hz-split-more {
+      min-width: 40px;
+      justify-content: center;
+    }
+  }
+}
+
+.console-embed .save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  width: 100%;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--hz-line);
+  background: var(--hz-raised);
+  box-shadow: var(--hz-shadow-pop);
+}
+.console-embed .save-bar > .ant-space-item:first-child {
+  flex: 1;
 }
