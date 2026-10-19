@@ -164,7 +164,7 @@ def test_own_chat_app_message_is_not_posted_to_the_thread(hub, fake, monkeypatch
     something there: that answer stays in the chat app."""
     import uuid
 
-    from chat_helpers import as_people, who
+    from tests.chat_helpers import as_people, who
 
     as_people(monkeypatch)
     with TestClient(build_app()) as client:
