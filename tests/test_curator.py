@@ -69,7 +69,11 @@ def test_remember_then_read_knowledge_sees_it(tmp_path):
     ktools = {t.name: t for t in knowledge_mod.make(ctx)}
     access.store_for(tmp_path).grant("u", tmp_path.name, "manage_access", actor="t")
     with identity_scope(Identity.make("u", [], surface="owui")):
-        _invoke(_remember(tmp_path), topic="new fact", text="the sky is blue")
+        out = json.loads(_invoke(_remember(tmp_path), topic="new fact", text="the sky is blue"))
+    assert "learned/new-fact" not in _invoke(ktools["list_knowledge"])   # a proposal until a person applies it
+    from hubzoid.hub_changes import service as hc
+
+    hc.decide(tmp_path, out["hub_change"]["id"], actor="u", decision="approve")
     assert "learned/new-fact" in _invoke(ktools["list_knowledge"])
     assert _invoke(ktools["read_knowledge"], name="learned/new-fact").strip() == "the sky is blue"
 
