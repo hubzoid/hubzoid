@@ -348,7 +348,7 @@ def test_branding_is_the_gateways_and_each_hubs_under_its_prefix(deployment_hubs
     c = TestClient(app)
     assert c.get("/api/branding").json() == {
         "name": "Acme", "logo_url": "/branding/logo.svg", "favicon_url": "/branding/logo.svg",
-        "custom_css_url": None}
+        "custom_css_url": None, "manifest": None}
     assert c.get("/branding/logo.svg").content == b"<svg/>"
     assert c.get("/branding/.secret").status_code == 404
     assert c.get("/branding/..%2F..%2Fdeployment.json").status_code == 404

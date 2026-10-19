@@ -217,9 +217,20 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
         finally:
             await form.close()
         stored = await db(_save, ctx.hub_dir, chat_key(conv), name, payload, mime)
-        return JSONResponse(status_code=201, content={
-            "file_id": stored, "name": stored, "size": len(payload), "mime": mime,
-            "kind": kind_of(mime)})
+        out = {"file_id": stored, "name": stored, "size": len(payload), "mime": mime, "kind": kind_of(mime)}
+        svc = getattr(ctx, "files", None)
+        if svc is not None:
+            # The same bytes as a file with lasting identity, referenced by this
+            # conversation (its working copy above is what the agent reads).
+            try:
+                desc = await db(svc.register_bytes, user.id, stored, mime, payload, conversation_id=conv_id,
+                                local_name=stored, check_type=False)
+                out.update(id=desc["file_id"], content_sha256=desc["content_sha256"])
+            except Exception:  # noqa: BLE001 - the attachment works without it; reuse won't
+                import logging
+
+                logging.getLogger("hubzoid.chat.files").warning("files: could not register %s", stored, exc_info=True)
+        return JSONResponse(status_code=201, content=out)
 
     @app.get("/api/conversations/{conv_id}/files/{file_id}")
     async def download_file(conv_id: str, file_id: str, request: Request):

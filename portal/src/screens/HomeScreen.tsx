@@ -38,7 +38,7 @@ function Stat({ label, value, hint, sub }: {
   );
 }
 
-export function HomeScreen({ hubs, reloadHubs }: { hubs: Hub[]; reloadHubs: () => void }) {
+export function HomeScreen({ hubs, reloadHubs, embedded = false }: { hubs: Hub[]; reloadHubs: () => void; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
   const period = PERIODS.some((p) => p.value === q.period) ? q.period : "7d";
   const summary = useData<Summary>(`/summary?period=${period}`, { keepStale: true });
@@ -50,9 +50,7 @@ export function HomeScreen({ hubs, reloadHubs }: { hubs: Hub[]; reloadHubs: () =
     reloadHubs();
   }
 
-  return (
-    <>
-      <PageHeader title="Agents" extra={
+  const controls = (
         <div className="workspace-controls">
           <Segmented aria-label="Period" value={period}
             onChange={(v) => setQ({ period: v === "7d" ? undefined : String(v) })}
@@ -64,7 +62,8 @@ export function HomeScreen({ hubs, reloadHubs }: { hubs: Hub[]; reloadHubs: () =
             <Button aria-label="Refresh" onClick={refresh} loading={summary.refreshing || workflows.refreshing}>Refresh</Button>
           </div>
         </div>
-      } />
+  );
+  const overview = <>
       {!s ? <LoadState error={summary.error} retry={summary.reload} rows={2} /> : <>
         {summary.error && <Alert type="warning" showIcon className="home-note"
           title="Couldn’t refresh totals" description="Showing the last available numbers. Try refreshing again." />}
@@ -83,6 +82,15 @@ export function HomeScreen({ hubs, reloadHubs }: { hubs: Hub[]; reloadHubs: () =
             sub="USD" hint="Estimated from model token prices, including cached usage where available. Subscription-backed calls can have an estimate without an extra per-call charge. Missing prices are excluded. Your provider’s bill is authoritative." />
         </div>
       </>}
+  </>;
+  return (
+    <>
+      <PageHeader title="Agents" description={embedded ? "Manage access, connectors and workflows for each agent." : undefined} extra={embedded ? undefined : controls} />
+      {embedded ? <details className="hz-usage-details">
+        <summary>Usage overview</summary>
+        {controls}
+        {overview}
+      </details> : overview}
       {workflows.error && <Alert type="warning" showIcon className="home-note"
         title="Couldn’t refresh workflow status" description="Open an agent to check its workflows, or try refreshing again." />}
       <AgentCards hubs={hubs} workflows={workflows.data?.workflows} usage={s?.hubs} />

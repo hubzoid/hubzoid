@@ -288,7 +288,8 @@ function step(name) {
     // stretched over it, and the status tags open their own tab.
     const card = page.locator(".agent-card").first();
     assert.equal(await page.locator(".agent-card .ant-btn").count(), 0, "Agent cards carry no buttons");
-    const key = await card.locator(".identity").textContent();
+    // The card shows names only; its link carries the agent's key.
+    const key = decodeURIComponent((await card.locator(".agent-card-link").getAttribute("href")).split("#/agents/")[1].split("/")[0]);
     const restBorder = await card.evaluate(el => getComputedStyle(el).borderColor);
     const nameColor = () => card.locator(".agent-name").evaluate(el => getComputedStyle(el).color);
     const restName = await nameColor();
