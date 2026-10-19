@@ -2,6 +2,7 @@
 // knowledge. Reviewers read the exact diff and apply or reject it; an applied
 // change can be undone by a new proposal that needs its own review. The same
 // API as `hubzoid hub-changes`.
+import { Select } from "../components/Select";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, get, hubUrl, post } from "../lib/api";
 import { useApp } from "../lib/app-context";
@@ -60,13 +61,7 @@ export default function HubChangesPage() {
         {agents.length > 1 && (
           <label className="flex items-center gap-2 text-[13px] text-secondary">
             {H.agent}
-            <select className="hz-input !w-auto" value={agent?.id ?? ""} onChange={(e) => setAgentId(e.target.value)}>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+            <Select className="!w-auto" aria-label={H.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: a.name}))} />
           </label>
         )}
         {open ? (

@@ -1,5 +1,6 @@
 // Settings > Preferences > Security: two-step sign-in, where you're signed in,
 // personal API keys, sign-in methods, and "sign out everywhere".
+import { Select } from "../components/Select";
 import { useEffect, useState, type FormEvent } from "react";
 import { Copy, KeyRound, LogOut, MonitorSmartphone, ShieldCheck } from "lucide-react";
 import { t } from "../i18n/en";
@@ -363,11 +364,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
           )}
           <label className="block">
             <span className="hz-label">{S.expires}</span>
-            <select className="hz-input" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {[30, 90, 365].map((d) => (
-                <option key={d} value={d}>{S.days(d)}</option>
-              ))}
-            </select>
+            <Select value={String(days)} onValueChange={value => setDays(Number(value))} aria-label={S.expires} options={[30, 90, 365].map(d => ({value: String(d), label: S.days(d)}))} />
           </label>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>{t.cancel}</Button>

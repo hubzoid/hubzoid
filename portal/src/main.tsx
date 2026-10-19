@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 // /settings, ...) and for /portal/, the old Console address, which only sends
 // people on to the same section in Settings.
 const isConsole = /^\/portal(\/|$)/.test(location.pathname);
+document.documentElement.dataset.app = isConsole ? "console" : "chat";
 
 const Root = isConsole
   ? lazy(() => import("./Portal.tsx"))

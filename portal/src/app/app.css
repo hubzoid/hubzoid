@@ -3,6 +3,7 @@
    <html data-theme>, the same attribute the Console uses. Tailwind scans only
    this folder, so the Console's markup never adds utilities here. */
 @import "tailwindcss" source(none);
+@import "./controls.css";
 @source "./";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -30,25 +31,27 @@
 }
 
 :root {
-  --hz-bg: #fafaf8;
-  --hz-canvas: #f3f2ef;
+  --hz-bg: #ffffff;
+  --hz-canvas: #fafaf8;
   --hz-raised: #ffffff;
-  --hz-sunken: #eeece7;
-  --hz-hover: #ecebe7;
-  --hz-active: #e3e1db;
-  --hz-ink: #242421;
-  --hz-body: #2b2b27;
-  --hz-mute: #69665e;
-  --hz-line: #dedcd4;
-  --hz-line-soft: #e8e6e0;
-  --hz-input: #898479;
-  --hz-accent: #a94224;
-  --hz-accent-hover: #90361c;
+  --hz-sunken: #f2f2f0;
+  --hz-hover: #e7e6e2;
+  --hz-active: #dddcda;
+  --hz-ink: #0b0b0c;
+  --hz-body: #242426;
+  --hz-mute: #5e5e65;
+  --hz-line: #e7e6e2;
+  --hz-line-soft: #efefec;
+  --hz-input: #89898f;
+  --hz-accent: #b5471f;
+  --hz-accent-active: #7d2e18;
+  --hz-accent-hover: #913617;
   --hz-accent-ink: #ffffff;
   --hz-accent-soft: #f8e8df;
-  --hz-accent-text: #a94224;
+  --hz-accent-text: #b5471f;
   --hz-brand: #e5572a;
   --hz-danger: #b3312c;
+  --hz-danger-ink: #ffffff;
   --hz-danger-solid: #b3312c;
   --hz-danger-soft: #fbeae7;
   --hz-success: #286841;
@@ -59,7 +62,7 @@
   --hz-info-soft: #eef3fa;
   --hz-code-bg: #f3f2ef;
   --hz-overlay: rgb(24 24 19 / 0.25);
-  --hz-focus: #a94224;
+  --hz-focus: #6b6b70;
   --hz-shadow-pop: 0 8px 28px rgb(36 36 33 / 0.1);
   --hz-shadow-composer: 0 2px 12px rgb(36 36 33 / 0.04);
   --hz-shadow-dialog: 0 20px 64px rgb(36 36 33 / 0.15);
@@ -67,25 +70,27 @@
 
 :root[data-theme="dark"] {
   /* first paint before the server's tokens arrive; matches the built-in dark palette */
-  --hz-bg: #151515;
-  --hz-canvas: #111111;
-  --hz-raised: #1f1f1f;
-  --hz-sunken: #232323;
-  --hz-hover: #1e1e1e;
-  --hz-active: #252525;
-  --hz-ink: #ececec;
-  --hz-body: #e2e2e2;
-  --hz-mute: #9b9b9b;
-  --hz-line: #2a2a2a;
-  --hz-line-soft: #222222;
-  --hz-input: #666666;
-  --hz-accent: #d97757;
-  --hz-accent-hover: #e48a6b;
-  --hz-accent-ink: #111111;
+  --hz-bg: #111113;
+  --hz-canvas: #151516;
+  --hz-raised: #222224;
+  --hz-sunken: #222224;
+  --hz-hover: #222224;
+  --hz-active: #2c2c30;
+  --hz-ink: #fafaf8;
+  --hz-body: #ebebe9;
+  --hz-mute: #b5b5bc;
+  --hz-line: #29292e;
+  --hz-line-soft: #232327;
+  --hz-input: #6b6b70;
+  --hz-accent: #e5572a;
+  --hz-accent-active: #de5126;
+  --hz-accent-hover: #f06a40;
+  --hz-accent-ink: #0b0b0c;
   --hz-accent-soft: #2b1f1a;
-  --hz-accent-text: #e39274;
-  --hz-brand: #d97757;
+  --hz-accent-text: #f28b66;
+  --hz-brand: #e5572a;
   --hz-danger: #f0a09a;
+  --hz-danger-ink: #0b0b0c;
   --hz-danger-solid: #e0716a;
   --hz-danger-soft: #2e1c1b;
   --hz-success: #9fd0ae;
@@ -96,7 +101,7 @@
   --hz-info-soft: #16212f;
   --hz-code-bg: #111111;
   --hz-overlay: rgb(0 0 0 / 0.55);
-  --hz-focus: #e48a6b;
+  --hz-focus: #b5b5bc;
   --hz-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.35);
   --hz-shadow-composer: 0 2px 12px rgb(0 0 0 / 0.2);
   --hz-shadow-dialog: 0 20px 64px rgb(0 0 0 / 0.5);
@@ -209,7 +214,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 32px;
+    min-height: 36px;
     padding: 0 12px;
     border-radius: 8px;
     border: 1px solid transparent;
@@ -224,11 +229,35 @@
     opacity: 0.55;
   }
   .hz-btn-primary {
-    background: var(--hz-ink);
-    color: var(--hz-bg);
+    background: var(--hz-accent);
+    color: var(--hz-accent-ink);
+    border-color: var(--hz-accent);
   }
   .hz-btn-primary:hover:not(:disabled) {
-    background: var(--hz-secondary);
+    background: var(--hz-accent-hover);
+    border-color: var(--hz-accent-hover);
+    color: var(--hz-accent-ink);
+  }
+  .hz-btn-primary:active:not(:disabled) {
+    background: var(--hz-accent-active);
+    border-color: var(--hz-accent-active);
+    color: var(--hz-accent-ink);
+  }
+  .hz-btn-neutral {
+    background: var(--hz-ink);
+    color: var(--hz-bg);
+    border-color: var(--hz-ink);
+  }
+  .hz-btn-neutral:hover:not(:disabled), .hz-btn-neutral:active:not(:disabled) {
+    background: color-mix(in srgb, var(--hz-ink) 88%, var(--hz-bg));
+    color: var(--hz-bg);
+    border-color: transparent;
+  }
+  .hz-btn-primary:disabled, .hz-btn-neutral:disabled {
+    background: var(--hz-hover);
+    color: var(--hz-mute);
+    border-color: var(--hz-line);
+    opacity: 1;
   }
   .hz-btn-secondary {
     background: transparent;
@@ -247,10 +276,7 @@
   }
   .hz-btn-danger {
     background: var(--hz-danger-solid);
-    color: #fff;
-  }
-  :root[data-theme="dark"] .hz-btn-danger {
-    color: #0b0b0c;
+    color: var(--hz-danger-ink);
   }
   .hz-btn-danger:hover:not(:disabled) {
     filter: brightness(0.94);
@@ -261,7 +287,7 @@
     padding: 0 16px;
   }
   .hz-btn-sm {
-    min-height: 28px;
+    min-height: 32px;
     padding: 0 10px;
     font-size: 12.5px;
     border-radius: 7px;
@@ -976,22 +1002,22 @@
 }
 .hz-tabs {
   display: inline-flex;
-  gap: 2px;
-  border: 1px solid var(--hz-line);
-  border-radius: 8px;
-  padding: 2px;
+  border-bottom: 1px solid var(--hz-line);
+  gap: 20px;
 }
 .hz-tabs > button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 6px;
-  padding: 4px 10px;
+  border-radius: 0;
+  min-height: 36px;
+  border-bottom: 2px solid transparent;
+  padding: 8px 0;
   font-size: 13px;
   color: var(--hz-mute);
 }
 .hz-tabs > button[aria-selected="true"] {
-  background: var(--hz-hover);
+  border-bottom-color: var(--hz-ink);
   color: var(--hz-ink);
 }
 .hz-queue {
@@ -1968,7 +1994,7 @@
     flex-direction: column;
     gap: 4px;
     padding: 10px;
-    border-radius: 22px;
+    border-radius: 20px;
     background: var(--hz-raised);
     border: 1px solid var(--hz-line);
     box-shadow: var(--hz-shadow-composer);
@@ -2372,12 +2398,7 @@
 .hz-auth .hz-signin { padding: 0; }
 .hz-auth .hz-input { min-height: 42px; background: var(--hz-bg); }
 .hz-auth .hz-btn-lg { min-height: 42px; font-size: .9286rem; }
-.hz-auth .hz-btn-primary {
-  background: var(--hz-ink);
-  color: var(--hz-bg);
-}
-.hz-auth .hz-btn-primary:hover:not(:disabled) { opacity: .9; background: var(--hz-ink); }
-.hz-auth .hz-btn-lg { border-radius: 999px; font-weight: 500; }
+.hz-auth .hz-btn-lg { border-radius: 8px; font-weight: 500; }
 .hz-auth .hz-input { border-color: transparent; background: var(--hz-raised); padding-inline: 12px; }
 .hz-auth .hz-input:focus { border-color: var(--hz-mute); box-shadow: 0 0 0 1px var(--hz-mute); }
 .hz-auth .hz-label { font-weight: 400; }
@@ -2982,7 +3003,7 @@
   background: transparent !important;
   border-color: var(--hz-line) !important;
 }
-.console-embed .ant-btn-default:hover {
+.console-embed .ant-btn-default:hover:not(:disabled) {
   background: var(--hz-hover) !important;
   color: var(--hz-ink) !important;
 }

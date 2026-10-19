@@ -231,3 +231,38 @@ Source changes on main after fast-forwarding to 89e5a163. No push. Production bu
 TypeScript checks pass. Focused browser checks cover running/completed activity, 20-call grouping, text boundaries, results, failures/cancellation, approval visibility, reduced motion, 390px touch layout, sharing help and focus after embedded Console styles load. Tests use synthetic data and a graph-response adapter because the general chat fixture predates the current engine. Stream, image and runtime unit checks pass.
 
 The older settings browser suite stops at its removed Profile & security label. The router unit suite expects a sign-in route without the new step field. These pre-existing expectations are not passing checks. No real-provider, OAuth or complete release validation is claimed. Use APP_DEV=1 node tests/app-tool-activity.cjs to verify source without rebuilding bundles.
+
+
+## 2026-10-20: approved Studio controls in the app
+
+The native app now uses the approved Studio control hierarchy: orange principal
+actions, neutral filled chat actions, outlined alternatives and ghost row
+actions. Hover, pressed and disabled states specify readable foregrounds.
+Underline tabs retain transparent hover backgrounds. Shared Radix selects
+replace native selects, with neutral highlighting and a selection checkmark.
+Embedded management controls and their portalled dialogs use the same tokens.
+Control heights, corner radii and phone targets are aligned with the reference.
+Custom palette overrides and existing OLED appearance remain supported. No new
+dependencies, API or permission changes are included.
+
+### Validation for this PR
+
+- TypeScript and lint completed; lint reports existing warnings, no errors.
+- Focused theme/branding Python checks: 22 passed. Built-in primary, hover and
+  pressed color contrast was checked in light, dark and OLED modes.
+- Stream, router, image and runtime unit checks passed. The existing Settings
+  browser suite passed in source mode, including profile save, mobile layout,
+  focus after embedded management loads and fixture sign-in.
+- The new five-hub browser audit passed its light, dark and OLED sections:
+  action hover, transparent tab hover, agent list hover, management dropdowns
+  and drawers, Radix selection, keyboard focus and popup Axe checks. Its custom
+  token assertion then ran before the button color transition settled. The
+  assertion now waits for the enabled control to settle; this final adjustment
+  has not been rerun. Later tablet/member sections of this new audit were not
+  reached. This is partial coverage, not a complete pass of the new audit.
+- A broader backend run was stopped at the founder's request to free RAM. Its
+  partial output included a failure without a completed failure report; it is
+  not counted as passing. No additional heavy tests or build were run after
+  that instruction. Generated bundles are unchanged.
+- Real Google sign-in, customer connectors and production bundles were not
+  validated in this pass. Source preview fixtures use fictional data only.
