@@ -35,6 +35,8 @@ from .identity import current_identity
 from .loader import load_restricted
 from .policy import DEFAULT_RESTRICTED_SURFACES, is_allowed
 
+from ..tool_classes import copy_tool
+
 log = logging.getLogger("hubzoid.access")
 
 
@@ -138,7 +140,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     # Tools sharing a permission and surface rule share one decision per turn
     # (`visible_map`).
     _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
-    return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
+    return copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
 
 
 def visible(ft) -> bool:
@@ -245,7 +247,7 @@ def run_checked(ft: FunctionTool, hub_dir: Path) -> FunctionTool:
         return await original_invoke(ctx, input_str)
 
     _checked_invoke.hubzoid_run_checked = True
-    return dataclasses.replace(ft, on_invoke_tool=_checked_invoke)
+    return copy_tool(ft, on_invoke_tool=_checked_invoke)
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

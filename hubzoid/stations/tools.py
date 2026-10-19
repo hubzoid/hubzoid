@@ -118,7 +118,7 @@ def digest(registry: dict) -> str:
 def guarded(registry: dict, ctx, work: dict) -> dict:
     """The same tools, each refusing to run once the work is cancelled, the
     hub is lost or the account can no longer act."""
-    import dataclasses
+    from .. import tool_classes
 
     from . import service
     from ..workflows import context
@@ -140,6 +140,6 @@ def guarded(registry: dict, ctx, work: dict) -> dict:
                                              "message": "This tool can no longer run for this work. Stop now."}})
             return await inner(run_ctx, args_json)
 
-        return dataclasses.replace(tool, on_invoke_tool=invoke)
+        return tool_classes.copy_tool(tool, on_invoke_tool=invoke)
 
     return {name: wrap(tool) for name, tool in registry.items()}
