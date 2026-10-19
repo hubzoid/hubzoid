@@ -80,6 +80,9 @@ def make(hub_dir) -> list[FunctionTool]:
         actor, via, present, conv = _caller()
         if not actor:
             return "[not available: nobody is signed in]"
+        if not present:
+            return ("Nothing was proposed: an unattended run never changes the hub. Put the suggested change "
+                    "in your answer instead, for a person to propose.")
         try:
             ch = await asyncio.to_thread(service.propose, hub_dir, title=args.get("title"), edits=args.get("edits"),
                                          reason=args.get("reason") or "", actor=actor, via=via, present=present,
@@ -100,6 +103,9 @@ def make(hub_dir) -> list[FunctionTool]:
         actor, via, present, conv = _caller()
         if not actor:
             return "[not available: nobody is signed in]"
+        if not present:
+            return ("Nothing was proposed: an unattended run never changes the hub. Put the suggested change "
+                    "in your answer instead, for a person to propose.")
         topic = " ".join(str(args.get("topic") or "").split())
         slug, text = _slug(topic), str(args.get("text") or "").strip()
         if not slug or not text:

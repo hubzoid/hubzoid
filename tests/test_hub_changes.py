@@ -176,3 +176,19 @@ def test_deleted_notes_keep_their_revision_so_a_stale_editor_fails(hub):
     assert again["revision"] == 3
     with pytest.raises(pm.MemoryError_):
         pm.put(hub, "acct-ana", ANA, "stale", expected_revision=first["revision"])
+
+
+def test_unattended_runs_only_suggest(hub):
+    from hubzoid.hitl import gate
+    from hubzoid.hitl.service import Caller
+    from hubzoid.hub_changes.tools import make
+
+    tools = {t.name: t for t in make(hub)}
+    unattended = Caller(account_id=OWNER, email=OWNER, present=False, origin="workflow")
+    gate_caller = gate.caller
+    try:
+        gate.caller = lambda: unattended
+        out = asyncio.run(tools["remember"].on_invoke_tool(None, json.dumps({"topic": "t", "text": "x"})))
+    finally:
+        gate.caller = gate_caller
+    assert out.startswith("Nothing was proposed") and hc.list_(hub) == []
