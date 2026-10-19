@@ -197,8 +197,8 @@ def _admit_one(c, conn: Connection, verified: Verified, event: InboundEvent, ind
 def _disposition(conn: Connection, event: InboundEvent, thread: dict, backlog: int, c) -> tuple[str, str | None]:
     if event.ignore_reason:
         return "ignored", event.ignore_reason
-    if event.actor is not None and event.actor.is_bot:
-        return "ignored", "bot_author"
+    if event.actor is not None and event.actor.is_bot and not event.data.get("bot_allowed"):
+        return "ignored", "bot_author"      # an adapter allows bots only for event types it names (CI results)
     addressed = event.trigger or bool(thread.get("subscribed"))
     if not addressed:
         return "ignored", "not_addressed"
