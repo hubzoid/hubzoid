@@ -650,7 +650,8 @@ def test_a_hub_admin_cannot_point_github_at_another_secret_through_configure(hub
     conn = app_conn(hub_dir)
     with pytest.raises(ChannelError) as exc:
         setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
-                        sets={"provider_config.webhook_secret_ref": "env:HUBZOID_SECRET_KEY"}, any_secret=False)
+                        sets={"provider_config.webhook_secret_ref": "env:HUBZOID_SECRET_KEY"},  # gitleaks:allow
+                        any_secret=False)
     assert exc.value.status == 403
     # Its own settings, with its own secrets, still change.
     out = setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
