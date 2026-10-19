@@ -342,6 +342,11 @@ def _connection(hub_dir: Path, row: dict) -> Connection:
     cfg = ChannelConfig.model_validate(data)
     adapter = registry.get(cfg.provider)
     settings = adapter.validate(cfg.provider_config, hub_dir=hub_dir, connection_id=cfg.id)
+    if getattr(adapter, "draft", None) is None:
+        # A provider with no real draft (a chat message): draft mode is refused for it.
+        from ..work_items import config as work_config
+
+        work_config.NO_DRAFT_CHANNELS.add(cfg.id)
     return Connection(hub_dir=Path(hub_dir), hub=row["hub"], config=cfg, settings=settings,
                       revision=row["revision"], status=row["status"], digest=row["digest"],
                       state=row.get("state_json") or {})
