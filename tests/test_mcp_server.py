@@ -23,17 +23,6 @@ RPC_HEADERS = {
     "Content-Type": "application/json",
 }
 
-
-@pytest.fixture(autouse=True)
-def _legacy_ui(monkeypatch):
-    """The hosted MCP surface here authenticates Open WebUI accounts: Open WebUI
-    mode. Access comes from the Console's grants."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _mk_owui_db(path: Path, *, email="alice@example.com", key="sk-test",
                 groups=()) -> Path:
     con = sqlite3.connect(path)
@@ -123,7 +112,6 @@ def _clean_mcp_env(monkeypatch):
     monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
     monkeypatch.setenv("MCP_PUBLIC_URL", "https://hub.example/mcp")
     # MCP OAuth grants here belong to Open WebUI accounts: the legacy UI mode.
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @pytest.fixture
@@ -502,8 +490,8 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
     from hubzoid import mcp_server
 
     from tests.mcp_credentials import seed
-    seed(hub, token="oauth-alice", email="alice@x.io", account_id="u1")
-    seed(hub, token="oauth-bob", email="bob@x.io", account_id="u2")
+    seed(hub, token="oauth-alice", email="alice@x.io", account_id="ua")
+    seed(hub, token="oauth-bob", email="bob@x.io", account_id="ub")
     from hubzoid.access import store_for
     for who in ("alice@x.io", "bob@x.io"):
         store_for(hub).grant(who, hub.name, "use_hub", actor="test")

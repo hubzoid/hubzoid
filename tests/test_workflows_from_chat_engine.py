@@ -119,7 +119,7 @@ def test_team_and_personal_runs_of_one_workflow(tmp_path):
                         "HUBZOID_SMTP_HOST", "HUBZOID_GATEWAY_ADMIN_EMAIL")}
     env.update(HUBZOID_OPERATIONAL_DB=f"sqlite:///{tmp_path / 'ops.db'}",
                HUBZOID_DBOS_DB=f"sqlite:///{tmp_path / 'dbos.db'}",
-               WEBUI_AUTH="true", HUBZOID_EMAIL_DELIVERY="preview")
+               HUBZOID_AUTH="true", HUBZOID_EMAIL_DELIVERY="preview")
     subprocess.run([sys.executable, "-c", _SETUP, str(hub)], env=env, check=True,
                    capture_output=True, text=True)
     proc = subprocess.run([sys.executable, "-c", _RUN, str(hub)], env=env, capture_output=True,

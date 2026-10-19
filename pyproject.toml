@@ -37,8 +37,8 @@ classifiers = [
 ]
 
 # Everything needed to run `hubzoid run <hub>`, web app included, is a required
-# dependency: `pip install hubzoid` is enough. The Open WebUI chat app is an
-# optional extra (Open WebUI mode, HUBZOID_UI=openwebui): pip install "hubzoid[openwebui]".
+# dependency: `pip install hubzoid` is enough. Hubzoid 2.0 has no Open WebUI
+# chat; deployments that still need it stay on 1.x.
 dependencies = [
   # Bounds: lower = the version this release was tested with; upper = the next
   # release line that may break us (next minor for 0.x packages, next major
@@ -48,7 +48,7 @@ dependencies = [
   "claude-agent-sdk>=0.2.159,<0.3",
   "fastmcp>=3.4.7,<4",    # mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.47,<2",     # edge.py reverse-proxy app
-  "websockets>=15,<18",     # edge.py websocket passthrough (Open WebUI mode)
+  "websockets>=15,<18",     # uvicorn's websocket support; was the 1.x edge's Open WebUI relay
   "PyYAML>=6.0.3,<7",
   "python-dotenv>=1.2,<2",
   "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42 (connected_accounts / auth_configs / link)
@@ -62,15 +62,11 @@ dependencies = [
   "pwdlib[argon2,bcrypt]>=0.3.1,<0.4",  # hubzoid.auth: argon2 password hashes; verifies bcrypt hashes moved from Open WebUI
   "python-multipart>=0.0.32,<0.1",  # FastAPI form and file uploads (chat attachments, sign-in forms)
 
-  # Open WebUI caps: the shared dependencies the `openwebui` extra needs.
-  # open-webui 0.11.4 pins these shared dependencies exactly. While it was a
-  # required dependency, every install got those versions, and they are the set
-  # Hubzoid is tested with. The core install keeps their release lines for this
-  # release, so `pip install hubzoid` resolves to the tested set with or without
-  # the extra. Without them a fresh install drifts: openai 2.54 breaks
+  # Shared dependency caps. They came from open-webui 0.11.4's exact pins (1.x)
+  # and remain the set Hubzoid is tested with; each is reviewed on its own merits
+  # before it moves. Without them a fresh install drifts: openai 2.54 breaks
   # openai-agents 0.17's usage accounting on every run and tool call.
-  # One exception: aiohttp (pinned 3.13.5 by open-webui) is left to litellm.
-  # Capping it forces litellm 1.95.0, which has no macOS wheels and compiles
+  # aiohttp is left to litellm: capping it forces litellm 1.95.0, which has no macOS wheels and compiles
   # Rust for minutes on every Mac install; 1.95.1 ships wheels and needs 3.14.
   "openai>=2.29.0,<2.30",   # via openai-agents, litellm and composio
   "mcp>=1.27.2,<1.28",      # via fastmcp, claude-agent-sdk and openai-agents
@@ -79,28 +75,34 @@ dependencies = [
   "uvicorn[standard]>=0.51,<0.52",
   "httpx>=0.28.1,<0.29",
   "pydantic>=2.13.4,<2.14",
-  "cryptography>=48,<49",   # secretbox.py deployment key (Fernet); access/owui_oauth_tokens.py decrypts OWUI's per-user tool tokens (same scheme)
-  "rich>=13.9,<14",         # httpx[cli] (via open-webui) caps rich below 14
+  "cryptography>=48,<49",   # secretbox.py deployment key (Fernet)
+  "rich>=13.9,<14",         # the CLI's console output; the tested line
   "pypdf>=6.7.5,<6.8",
   "Pillow>=12.2,<12.3",     # vision_inject.py resizes uploaded images before sending them to the model
   "openapi-spec-validator>=0.7.2,<0.8",  # chat/authoring.py: validate imported OpenAPI documents (Apache-2.0)
   "defusedxml>=0.7.1,<0.8",  # ui/branding_assets.py: parse uploaded SVG logos without entity expansion (PSF licence)
+  "markdown>=3.10.2,<3.11", # email_delivery.py: formatted email bodies (Markdown to sanitized HTML)
   "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL
   "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
   "githubkit[auth-app]>=0.16.1,<0.17",  # hubzoid.channels.github: App tokens narrowed to one repository (MIT)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
+  "qrcode>=8.2,<9",          # auth/mfa.py: the authenticator set-up QR code, drawn as SVG (BSD)
 ]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.3,<4"]  # only when DATABASE_URL points at Postgres
-# Permanently supported optional chat interface (HUBZOID_UI=openwebui), with
-# the same support and release-testing requirements as the default native chat.
-# No removal is planned. PINNED: integration and branding patches couple to Open WebUI
-# internals, so upgrades are deliberate. Re-run tests/ and HubzoidTests before
-# bumping. Its own dependencies (PyTorch, PyAV and many more) make it large.
-openwebui = ["open-webui==0.11.4"]
+# Local Docker sandboxes for agents (sandbox.yaml). The Agents SDK's sandbox
+# layer drives the container; this is the Docker engine client it uses.
+sandbox = ["docker>=7.1,<8"]
+# Company directories (auth/directory/): SAML sign-in and SCIM provisioning.
+# SAML also needs the xmlsec1 program (brew install libxmlsec1, apt-get install xmlsec1).
+saml = [
+  "pysaml2>=7.5.5,<7.6",     # Apache-2.0
+  "pyopenssl>=26.2,<26.3",   # pysaml2's; this line accepts cryptography 48
+  "scim2-models>=0.12.2,<0.13",  # Apache-2.0: SCIM resources, filters and PATCH
+]
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
@@ -110,6 +112,7 @@ dev = [
   "build>=1.2",
   "twine>=5.0",
   "reportlab>=4.0",
+  "scim2-tester>=0.5.2,<0.6",  # tests/test_auth_directory.py: SCIM conformance checks
 ]
 
 [project.scripts]
@@ -135,7 +138,7 @@ include = ["hubzoid", "hubzoid.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*", "migrations/*/versions/*.py", "migrations/*/script.py.mako"]
+hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*", "migrations/*/versions/*.py", "migrations/*/script.py.mako", "sandbox/images/**/*", "apps/builtin/*", "apps/sandbox_frame.html"]
 
 # Bytecode that tests or a local run leave next to a template's tools never ships.
 [tool.setuptools.exclude-package-data]
@@ -154,6 +157,5 @@ markers = [
   "slow: starts DBOS, Postgres, the gateway or another process (seconds per test)",
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
-  "e2e_ui: end-to-end test that drives Open WebUI in a real browser via Playwright",
   "e2e_browser: end-to-end test that spawns the shared playwright-mcp sidecar and drives a real browser (needs Node/npx; pooled-mode cases also need Docker)",
 ]

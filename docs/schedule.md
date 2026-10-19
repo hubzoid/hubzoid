@@ -215,7 +215,7 @@ Prereqs on the box, once: the hub's repo has a remote + tracking branch,
   *future* cron match (use `hubzoid schedule run` to test immediately).
 * One markdown run at a time per hub, across processes (the engine's queue),
   so two tasks never commit or push over each other.
-* Each run is durable and appears in the Console's run history (named
+* Each run is durable and appears in the run history in Settings (named
   `md:<task>`) next to code workflows.
 * A run interrupted by a restart or crash is not repeated: its work step
   reports the interruption and the task runs again at its next slot. A run that
@@ -245,7 +245,7 @@ already has it) — it's runtime state, not content.
 
 ## Pausing, resuming and cancelling
 
-Run controls are on the server command line only. The Console shows paused
+Run controls are on the server command line only. Settings shows paused
 tasks and every control in Activity, but has no buttons for them.
 
 ```bash

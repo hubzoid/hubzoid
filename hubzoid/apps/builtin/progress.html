@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Progress</title>
+<style>/*HZ_CARD_CSS*/</style>
+</head>
+<body>
+<main id="card" aria-live="polite"></main>
+<script>
+/*HZ_CARD_JS*/
+(function () {
+  "use strict";
+  var el = HZ.el;
+  var TERMINAL = { completed: 1, failed: 1, cancelled: 1, stopped: 1 };
+  var TONE = { completed: "ok", failed: "bad", cancelled: "bad", stopped: "warn", waiting: "warn", needs_input: "warn" };
+  var data = null;
+  var timer = null;
+
+  function render(st, error) {
+    var label = st ? st.label : "checking…";
+    var parts = [
+      el("h2", { text: "Work in progress" }),
+      el("p", {}, [el("span", { "class": "state " + (st ? TONE[st.state] || "" : ""), text: label })]),
+      data.summary ? el("p", { text: data.summary }) : null,
+      st && st.summary ? el("p", { "class": "muted", text: st.summary }) : null,
+      st && st.facts ? el("dl", {}, [
+        el("dt", { text: "Work" }), el("dd", { text: st.facts.workflow || "" }),
+        el("dt", { text: "Item" }), el("dd", { text: data.work_item_id }),
+        el("dt", { text: "Asked by" }), el("dd", { text: st.facts.requester || "" })
+      ]) : null,
+      error ? el("p", { "class": "note error", role: "alert", text: error }) : null,
+      el("div", { "class": "bar" }, [
+        el("button", { type: "button", "class": "btn", text: "Refresh", onclick: function () { refresh(); } }),
+        st && /^https:\/\//.test(st.link || "") ? el("button", { type: "button", "class": "btn primary",
+          text: "Open in Hub", onclick: function () { HZ.openLink(st.link); } }) : null
+      ])
+    ];
+    HZ.mount(el("div", {}, parts));
+  }
+
+  function refresh() {
+    var id = HZ.state.meta && HZ.state.meta.instance_id;
+    if (!id) { render(null, "This card has no live state here."); return; }
+    // A status read: refreshing never starts the work again.
+    HZ.call("hub_app_status", { instance_id: id }).then(function (r) {
+      var st = r.structuredContent && r.structuredContent.status;
+      render(st, null);
+      schedule(st);
+    }).catch(function (e) { render(null, e.message); });
+  }
+
+  function schedule(st) {
+    clearTimeout(timer);
+    if (!st || TERMINAL[st.state]) return;
+    timer = setTimeout(function () { if (!document.hidden) refresh(); else schedule(st); }, 5000);
+  }
+
+  HZ.start({ name: "progress", label: "progress", onResult: function (d) {
+    data = d;
+    render(null, null);
+    refresh();
+  } });
+})();
+</script>
+</body>
+</html>

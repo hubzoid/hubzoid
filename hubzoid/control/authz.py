@@ -50,6 +50,8 @@ CAPABILITIES: dict[str, str] = {
     "channels.inspect": "hub",
     "intake.read": "hub",
     "intake.manage": "hub",
+    "hitl.manage": "hub",
+    "hitl.inspect": "hub",
 }
 
 

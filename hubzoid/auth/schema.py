@@ -1,4 +1,4 @@
-"""The account tables (created by migration ``op_0009``), for SQLAlchemy Core.
+"""The account tables (created by migrations ``op_0009`` and ``op_0032``), for SQLAlchemy Core.
 
 These definitions only describe the tables so queries are portable between
 SQLite and PostgreSQL. The migration creates them; nothing here does.
@@ -25,6 +25,9 @@ users = sa.Table(
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
     sa.Column("last_login_at", sa.Float),
+    sa.Column("auth_epoch", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("deleted_at", sa.Float),
+    sa.Column("managed_by", sa.String(32)),
 )
 
 identities = sa.Table(
@@ -50,6 +53,7 @@ sessions = sa.Table(
     sa.Column("ip", sa.String(64)),
     sa.Column("method", sa.String(16)),
     sa.Column("revoked_at", sa.Float),
+    sa.Column("mfa_at", sa.Float),
 )
 
 links = sa.Table(
@@ -69,6 +73,60 @@ attempts = sa.Table(
     sa.Column("window_start", sa.Float, nullable=False),
     sa.Column("failures", sa.Integer, nullable=False),
     sa.Column("locked_until", sa.Float),
+)
+
+
+mfa_factors = sa.Table(
+    "hz_mfa_factors", metadata,
+    sa.Column("user_id", sa.String(64), primary_key=True),
+    sa.Column("secret", sa.Text, nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("last_step", sa.BigInteger, nullable=False, server_default="0"),
+)
+
+mfa_recovery = sa.Table(
+    "hz_mfa_recovery", metadata,
+    sa.Column("code_hash", sa.String(64), primary_key=True),
+    sa.Column("user_id", sa.String(64), nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("used_at", sa.Float),
+)
+
+challenges = sa.Table(
+    "hz_auth_challenges", metadata,
+    sa.Column("token_hash", sa.String(64), primary_key=True),
+    sa.Column("user_id", sa.String(64), nullable=False),
+    sa.Column("purpose", sa.String(24), nullable=False),
+    sa.Column("auth_epoch", sa.Integer, nullable=False),
+    sa.Column("data", sa.Text),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("expires_at", sa.Float, nullable=False),
+    sa.Column("attempts", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("used_at", sa.Float),
+)
+
+api_keys = sa.Table(
+    "hz_api_keys", metadata,
+    sa.Column("id", sa.String(32), primary_key=True),
+    sa.Column("user_id", sa.String(64), nullable=False),
+    sa.Column("name", sa.String(120), nullable=False),
+    sa.Column("prefix", sa.String(24), nullable=False),
+    sa.Column("token_hash", sa.String(64), nullable=False, unique=True),
+    sa.Column("scopes", sa.Text, nullable=False),
+    sa.Column("hubs", sa.Text),
+    sa.Column("auth_epoch", sa.Integer, nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("expires_at", sa.Float),
+    sa.Column("last_used_at", sa.Float),
+    sa.Column("revoked_at", sa.Float),
+)
+
+settings = sa.Table(
+    "hz_auth_settings", metadata,
+    sa.Column("key", sa.String(64), primary_key=True),
+    sa.Column("value", sa.Text, nullable=False),
+    sa.Column("updated_at", sa.Float, nullable=False),
+    sa.Column("updated_by", sa.String(320)),
 )
 
 

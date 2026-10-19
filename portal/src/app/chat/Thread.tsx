@@ -52,6 +52,7 @@ import {
   ThumbsUp,
   Trash2,
   Upload,
+  UserRoundSearch,
   Volume2,
   VolumeX,
   X,
@@ -61,7 +62,7 @@ import { displayName, formatBytes } from "../lib/format";
 import type { Agent, FileRef } from "../lib/types";
 import { attachmentFromFile } from "./convert";
 import { announce, toast } from "../components/toast";
-import { AgentAvatar, Button, ConfirmDialog, IconButton, Notice, cx } from "../components/ui";
+import { AgentAvatar, Button, ConfirmDialog, IconButton, Modal, Notice, cx } from "../components/ui";
 import { useFeed } from "./feed-context";
 import { useSubmitMode } from "../lib/devices";
 import type { DeletionPreview } from "./runtime";
@@ -389,6 +390,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const speaking = useAuiState((s) => s.message.speech != null);
   const value = useFeed();
   const del = useDelete();
+  const who = useWhoRanThis(value?.apiBase ?? "");
   const watermark = useApp().branding.manifest?.presentation.response_watermark;
   const canRead = !!value?.features?.chat_read_aloud;
   return (
@@ -472,6 +474,12 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
                       {t.chat.exportMarkdown}
                     </Menu.Item>
                   </ActionBarPrimitive.ExportMarkdown>
+                  {!readOnly && (
+                    <Menu.Item className="hz-menu-item" onSelect={() => who.show()} data-testid="who-ran-this">
+                      <UserRoundSearch size={15} aria-hidden />
+                      {t.runIdentity.menu}
+                    </Menu.Item>
+                  )}
                   {!readOnly && del.available && (
                     <>
                       <Menu.Separator className="hz-menu-sep" />
@@ -494,8 +502,60 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
         </div>
       </div>
       {del.dialog}
+      {who.dialog}
     </MessagePrimitive.Root>
   );
+}
+
+type RunIdentityView = {
+  identity: { acts_as_email?: string; requested_by?: string; started_from?: string; person_present?: boolean;
+              credential_kind?: string; created_at?: number } | null;
+  summary: string;
+};
+
+/** "Who ran this": the reply's run identity record, in plain words. */
+function useWhoRanThis(apiBase: string) {
+  const id = useAuiState((s) => s.message.id);
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<RunIdentityView | null>(null);
+  const show = () => {
+    setOpen(true);
+    setView(null);
+    const ask = (kind: string) =>
+      get<RunIdentityView>(hubUrl(apiBase, `/api/run-identity?kind=${kind}&id=${enc(id)}`), { quiet401: true });
+    void ask("chat")
+      .then((r) => (r.identity ? r : ask("api")))
+      .then(setView)
+      .catch(() => setView({ identity: null, summary: t.runIdentity.none }));
+  };
+  const R = t.runIdentity;
+  const row = (label: string, value?: string | null) =>
+    value ? (
+      <div className="flex justify-between gap-4 py-1.5 text-[13px]">
+        <span className="text-mute">{label}</span>
+        <span className="text-ink">{value}</span>
+      </div>
+    ) : null;
+  const dialog = (
+    <Modal open={open} onOpenChange={setOpen} title={R.title}>
+      {!view ? (
+        <p className="m-0 text-mute">{t.loading}</p>
+      ) : (
+        <div data-testid="run-identity">
+          <p className="m-0 mb-3 text-[14px] text-ink">{view.summary}</p>
+          {view.identity && (
+            <div className="divide-y divide-line-soft">
+              {row(R.requested, view.identity.requested_by)}
+              {row(R.runsAs, view.identity.acts_as_email)}
+              {row(R.from, view.identity.started_from)}
+              {row(R.present, view.identity.person_present ? R.yes : R.no)}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+  return { show, dialog };
 }
 
 /** Files on the message being edited go with the new version unless removed. */

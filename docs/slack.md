@@ -14,7 +14,7 @@ hubzoid slack run <hub>  ─── HTTP ──►  bridge on 127.0.0.1:8000
 ```
 
 The adapter is a thin client of the existing OpenAI-compatible bridge.
-Anything that works in Open WebUI works here.
+Anything that works in the web app's chat works here.
 
 ---
 
@@ -78,7 +78,7 @@ auto-detects JSON vs YAML; the JSON tab is selected by default. Click **Next**
 |---|---|
 | Thread-aware chat | The adapter reads the whole Slack thread via `conversations.replies` and passes user/assistant turns to the bridge as messages. |
 | Streaming responses | The adapter streams from `/v1/chat/completions` and edits the placeholder Slack message in place every ~0.75s (well inside Slack's 1/sec/channel cap). |
-| Suggested prompts | Pulled from your `AGENTS.md` frontmatter `suggestions:` field — the same field that drives Open WebUI's empty-chat buttons. |
+| Suggested prompts | Pulled from your `AGENTS.md` frontmatter `suggestions:` field — the same field that drives the web app's empty-chat suggestions. |
 | All hub features | Skills, knowledge, sub-agents, `tools_local`, MCP/Composio — all happen inside the bridge. The Slack adapter is just a chat surface; it doesn't know about tools. |
 | `claude-local` and portable keys | Works identically. The bridge speaks one wire format; the adapter doesn't care which model is below. |
 
@@ -88,7 +88,7 @@ auto-detects JSON vs YAML; the JSON tab is selected by default. Click **Next**
 
 Slack is your trust boundary. Anyone in the workspace who can see the bot's
 channel or DM the bot can talk to the agent. There is no per-user mapping
-between Slack users and Open WebUI users; they are independent surfaces.
+between Slack users and Hubzoid accounts; they are independent surfaces.
 
 Restrict scope by:
 - Inviting the bot only to specific channels.
@@ -182,6 +182,6 @@ and recreate. Tokens survive the update.
   (`MODEL=anthropic/...` or `openrouter/...`) if you need many concurrent
   Slack users.
 - **One Slack app per hub.** Each agent has its own Slack workspace install,
-  same as it has its own Open WebUI user DB.
+  separate from the web app's accounts.
 - **No file uploads from Slack into the agent yet.** Text-chat only.
   Tracked as a v0.5+ item.

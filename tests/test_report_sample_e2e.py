@@ -54,7 +54,7 @@ def hub(tmp_path, monkeypatch):
     env = {k: v for k, v in os.environ.items()
            if k not in ("HUBZOID_DEPLOYMENT", "DATABASE_URL", "HUBZOID_SMTP_HOST")}
     env.update(HUBZOID_OPERATIONAL_DB=f"sqlite:///{tmp_path / 'ops.db'}",
-               HUBZOID_DBOS_DB=f"sqlite:///{tmp_path / 'dbos.db'}", WEBUI_AUTH="true",
+               HUBZOID_DBOS_DB=f"sqlite:///{tmp_path / 'dbos.db'}", HUBZOID_AUTH="true",
                HUBZOID_WORKFLOW_USER=ALICE, HUBZOID_EMAIL_DELIVERY="preview",
                HUBZOID_PUBLIC_URL="https://hub.example.com")
     for k, v in env.items():

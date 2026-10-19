@@ -74,7 +74,7 @@ export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: bool
     <>
       <PageHeader
         title="Schedules & reports"
-        description={embedded ? "Recurring requests and reports created from chat. To manage authored workflows and their schedules, open an agent’s Runs & schedules tab." : undefined}
+        description={embedded ? "Recurring work from chat. For workflows, open an agent’s Runs & schedules." : undefined}
         extra={admin && (
           <Segmented
             value={everyone ? "everyone" : "mine"}
@@ -114,7 +114,7 @@ function Mine() {
         <Text type="secondary">Results appear here and in chat. Email is sent only when enabled by the hub.</Text></Space>
       <ReportCatalog catalog={data.data.catalog ?? []} agents={agents} />
       <RecentRuns agents={agents} />
-      <Section title="Schedules" help="Reports the agent runs for you, as you. Make new ones in chat.">
+      <Section title="Schedules" help="Reports and repeated requests the agent runs for you, as you. Make new ones in chat, for example: repeat this every Monday at 9.">
         <SchedulesTable
           rows={schedules}
           mine
@@ -470,29 +470,6 @@ function LiveReports({ hub }: { hub: Hub }) {
     </Section>
   );
 }
-
-// ---- the agents a person can use ------------------------------------------------
-
-export function MyAgents({ agents }: { agents: MyAgent[] }) {
-  const usable = agents.filter((a) => a.chat);
-  return (
-    <>
-      <PageHeader title="Agents" description="The agents you can use. Each opens in chat." />
-      <div className="panel">
-        <List
-          dataSource={usable}
-          locale={{ emptyText: <Empty description="You don't have an agent yet. Ask an administrator for access." /> }}
-          renderItem={(a) => (
-            <List.Item actions={[<Button key="open" href={a.chat ?? "/"}>Open chat ↗</Button>]}>
-              <List.Item.Meta title={a.name} />
-            </List.Item>
-          )}
-        />
-      </div>
-    </>
-  );
-}
-
 
 function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catalog"]>; agents: MyAgent[] }) {
   if (!catalog.length) return null;

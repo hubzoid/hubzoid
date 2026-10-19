@@ -32,7 +32,7 @@ import os
 import socket
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +106,10 @@ class Actor:
     email: str
     groups: frozenset[str] = frozenset()
     name: str = ""
+    #: the session or API key that made the request (``access.run_identity``):
+    #: a reply checks it on every tool call, so revoking it stops the run
+    credential: str = "session"
+    credential_id: str = ""
 
 
 @dataclass
@@ -126,6 +130,8 @@ class RunPlan:
     fence: int = 0
     #: per-turn choices the runtime honours: {"web_search": bool, "model": str | None}
     options: dict = field(default_factory=dict)
+    credential: str = "session"
+    credential_id: str = ""
 
 
 Err = g.GraphError
@@ -218,7 +224,9 @@ class ChatEngine:
     def actor(self, user) -> Actor:
         email = (getattr(user, "email", "") or "").lower()
         return Actor(id=user.id, email=email, groups=frozenset(self.groups_for(email)),
-                     name=getattr(user, "name", "") or "")
+                     name=getattr(user, "name", "") or "",
+                     credential=getattr(user, "credential", "session") or "session",
+                     credential_id=getattr(user, "credential_id", "") or "")
 
     def _conv(self, conn, conversation_id: str) -> dict | None:
         row = conn.execute(sa.select(conversations).where(conversations.c.id == conversation_id)).first()
@@ -599,7 +607,8 @@ class ChatEngine:
         return RunPlan(run_id=run_id, conversation_id=conv["id"], branch_id=branch_id, message_id=aid,
                        actor_id=actor.id, actor_email=actor.email, kind=kind, prompt_message_id=prompt_mid,
                        extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence,
-                       options=options or {})
+                       options=options or {}, credential=getattr(actor, "credential", "session") or "session",
+                       credential_id=getattr(actor, "credential_id", "") or "")
 
     @staticmethod
     def _options(op: dict) -> dict:
@@ -1099,7 +1108,7 @@ class ChatEngine:
     def enqueue(self, conversation_id: str, actor: Actor, body: dict, *, key: str | None
                 ) -> tuple[idempotency.Outcome, RunPlan | None]:
         """Queue a follow-up on a branch. On an idle branch with nothing
-        queued it is sent at once."""
+        queued it is sent at once, even after Stop parked the (now empty) queue."""
         lane = body.get("lane", "queue")
         if lane not in QUEUE_LANES:
             raise Err(400, "invalid_operation", "lane is steer or queue.")
@@ -1116,7 +1125,13 @@ class ChatEngine:
                 g.queue.c.branch_id == b.id, g.queue.c.state.in_(g.QUEUE_LIVE + ("dispatching",)))).scalar() or 0
             busy = conn.execute(sa.select(g.leases.c.run_id).where(g.leases.c.branch_id == b.id,
                                                                    g.leases.c.expires_at > _now())).first()
-            if not busy and not live and not b.queue_paused and lane == "queue":
+            if not busy and not live and lane == "queue":
+                if b.queue_paused:
+                    # Stop parked the queue to hold what was waiting. Nothing is
+                    # waiting now, so a new message is sent and the queue reopens.
+                    conn.execute(g.branches.update().where(g.branches.c.id == b.id)
+                                 .values(queue_paused=0, queue_revision=b.queue_revision + 1))
+                    g.emit(conn, conversation_id, "queue.updated", b.id, {"paused": False})
                 status, out, plan = self._op_send(conn, conv_, actor, {
                     "branch_id": b.id, "parent_id": b.head_id, "expected_revision": b.revision,
                     "model_selection": body.get("model_selection"), "web_search": body.get("web_search") is True},
@@ -1141,7 +1156,9 @@ class ChatEngine:
                 rank=top + 1, revision=1, state="paused" if b.queue_paused else "queued",
                 content_json=json.dumps({"content": parts, "model_selection": body.get("model_selection"),
                                          "web_search": body.get("web_search") is True,
-                                         "branch_revision": b.revision, "parent_id": b.head_id}),
+                                         "branch_revision": b.revision, "parent_id": b.head_id,
+                                         # the credential that queued it is checked when it runs
+                                         "credential": actor.credential, "credential_id": actor.credential_id}),
                 predecessor_id=pred, reason="queue paused" if b.queue_paused else None, dispatched_run_id=None,
                 created_at=t, updated_at=t))
             g.emit(conn, conversation_id, "queue.updated", b.id, {"item": iid, "action": "added"})
@@ -1301,6 +1318,9 @@ class ChatEngine:
                         raise Err(409, "context_changed", "The conversation changed while this message waited. "
                                                           "Review it, then send it again.")
                 actor = self._author(conv, it.author_id)
+                if frozen.get("credential"):
+                    actor = replace(actor, credential=frozen["credential"],
+                                    credential_id=frozen.get("credential_id") or "")
                 if self.admission is not None:
                     self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,
@@ -1344,6 +1364,75 @@ class ChatEngine:
 
             email = ((users.get(self.hub_dir, author_id) or {}).get("email") or "").lower()
         return Actor(id=author_id, email=email, groups=frozenset(self.groups_for(email)))
+
+    # -- results of personal workflows -----------------------------------------------------
+    def deliver(self, actor: Actor, *, agent: str, title: str, prompt: str, answer: str,
+                conversation_id: str | None = None) -> str:
+        """A new private conversation for ``actor`` holding a request and the
+        answer a workflow run produced. Returns its id. With a fixed
+        ``conversation_id`` (from the run), delivering again is a no-op."""
+        if conversation_id:
+            with self.engine.connect() as conn:
+                row = conn.execute(sa.select(conversations.c.head_id).where(
+                    conversations.c.id == conversation_id)).first()
+            if row is not None and row.head_id is not None:
+                return conversation_id  # already delivered
+        if not conversation_id or row is None:
+            conv = self.create_conversation(actor, agent=agent, conversation_id=conversation_id)
+            cid = conv["conversation_id"]
+        else:
+            cid = conversation_id
+        with self.engine.begin() as conn:
+            c = self._conv(conn, cid)
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.conversation_id == cid)
+                             .with_for_update()).first()
+            uid = self._insert(conn, conv_id=cid, mid=None, parent_id=None, role="user",
+                               content=[{"type": "text", "text": prompt}], branch_id=b.id, actor=actor)
+            aid = self._insert(conn, conv_id=cid, mid=None, parent_id=uid, role="assistant",
+                               content=[{"type": "text", "text": answer}], branch_id=b.id, actor=actor)
+            g.move_head(conn, b.id, b.revision, aid)
+            self._touch(conn, cid, aid)
+            g.set_view(conn, cid, actor.id, b.id, aid)
+            conn.execute(conversations.update().where(conversations.c.id == cid)
+                         .values(title=title[:200], title_source="manual"))
+            del c
+        self.notify(cid)
+        return cid
+
+    # -- approvals and questions (hubzoid.hitl) ---------------------------------------------
+    class Busy(Exception):
+        """The reply that asked is still being written: continue when it ends."""
+
+    def continue_after_request(self, conversation_id: str, *, actor_id: str, branch_id: str,
+                               after_message_id: str, parts: list) -> RunPlan | None:
+        """The person answered a request the agent made in this branch: add
+        their answer as their next message and start the agent's reply to it,
+        on the same branch, after the message that asked. None when the branch
+        moved on (they wrote something else, or it was edited away)."""
+        with self.engine.begin() as conn:
+            conv = self._conv(conn, conversation_id)
+            if conv is None or conv.get("deleted_at"):
+                return None
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == branch_id).with_for_update()).first()
+            if b is None or b.conversation_id != conversation_id or b.head_id != after_message_id \
+                    or b.writer_actor_id != actor_id:
+                return None
+            head = self._message_in(conn, conversation_id, after_message_id)
+            if head["status"] == "running":
+                raise self.Busy()
+            actor = self._author(conv, actor_id)
+            uid = self._insert(conn, conv_id=conversation_id, mid=None, parent_id=after_message_id, role="user",
+                               content=parts, branch_id=b.id, actor=actor)
+            run_id, aid, fence = self._admit(conn, conv=conv, actor=actor, branch_id=b.id, parent_id=uid,
+                                             kind="respond", operation_id=str(uuid.uuid4()),
+                                             snapshot={"kind": "respond", "target": uid, "after_request": True})
+            g.move_head(conn, b.id, b.revision, aid)
+            self._touch(conn, conversation_id, aid)
+            g.set_view(conn, conversation_id, actor.id, b.id, aid)
+            plan = self._plan(run_id=run_id, conv=conv, branch_id=b.id, aid=aid, actor=actor, kind="respond",
+                              prompt_mid=uid, fence=fence)
+        self.notify(conversation_id)
+        return plan
 
     # -- native runtime sessions ----------------------------------------------------------
     def binding_for(self, plan: RunPlan, config_digest: str) -> str | None:

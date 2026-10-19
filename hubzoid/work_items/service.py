@@ -321,14 +321,16 @@ def show(hub_dir, item_id: str, viewer: str) -> dict:
 
 
 def list_items(hub_dir, viewer: str, *, state: str | None = None, workflow: str | None = None,
-               before: float | None = None, limit: int = 50) -> dict:
+               before: float | None = None, limit: int = 50, mine: bool = False) -> dict:
+    """Work this viewer may see; ``mine``: only the work they asked for, even
+    when they manage the hub."""
     hub = _hub(hub_dir)
     if state and state not in store.ITEM_STATES:
         raise WorkItemError("invalid_request", f"state is one of {', '.join(store.ITEM_STATES)}.")
     manager = viewer.startswith("cli:") or _can(hub_dir, viewer, "workflows_view") \
         or _can(hub_dir, viewer, "workflows_manage")
     rows = store.list_items(hub_dir, hub, state=state, workflow=workflow, before=before, limit=limit,
-                            requester=None if manager else _norm(viewer))
+                            requester=None if manager and not mine else _norm(viewer))
     items = [_view(r, full=viewer.startswith("cli:") or _is_requester(r, viewer)) for r in rows]
     nxt = rows[-1]["created"] if len(rows) == max(1, min(int(limit), 100)) else None
     return {"items": items, "next_cursor": nxt}
