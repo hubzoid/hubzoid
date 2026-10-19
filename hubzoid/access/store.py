@@ -1265,8 +1265,11 @@ class GrantStore:
                                           "until": time.time() + seconds})
 
     def clear_schedule_hold(self) -> None:
+        self.clear_metadata(self.HOLD_KEY)
+
+    def clear_metadata(self, key: str) -> None:
         with self._engine.begin() as c:
-            c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": self.HOLD_KEY})
+            c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": key})
 
     def metadata(self, key: str, default=None):
         import json

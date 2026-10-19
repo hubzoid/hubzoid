@@ -628,7 +628,7 @@ class Hub:
 
                 time.sleep(1.0)
             req = read(str(ctx.hub_dir), ctx.hub, req["id"])
-        _wait_out_hold(ctx.hub_dir)
+        _wait_out_hold(ctx.hub_dir, ctx.run_id or "")
         return req
 
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
@@ -684,21 +684,44 @@ def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
     return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
 
 
-def _wait_out_hold(hub_dir) -> None:
+# The hz_meta key a run waiting out a backup's hold leaves, so the backup
+# does not wait for it in turn (``backup._waiting_for_people``).
+HOLD_WAITING = "hold-waiting:"
+HOLD_WAIT_LIMIT = 1800
+
+
+def _wait_out_hold(hub_dir, run_id: str = "") -> None:
     """A backup copies the hub's state without waiting for runs parked on a
     person (``backup.running_runs``): one woken by a decision meanwhile waits
-    until the backup's hold ends (a hold expires on its own)."""
+    until the backup's hold ends, marked so the backup knows it is waiting
+    too. If the hold cannot be read it keeps looking, for at most
+    ``HOLD_WAIT_LIMIT`` seconds (a hold expires on its own)."""
     import time
 
     from ..access import store_for
 
-    while True:
-        try:
-            if not store_for(Path(hub_dir)).schedule_hold():
-                return
-        except Exception:  # noqa: BLE001 - cannot tell: carry on
-            return
-        time.sleep(5.0)
+    key = f"{HOLD_WAITING}{run_id}" if run_id else None
+    marked = None
+    give_up = time.monotonic() + HOLD_WAIT_LIMIT
+    try:
+        while time.monotonic() < give_up:
+            try:
+                st = store_for(Path(hub_dir))
+                if not st.schedule_hold():
+                    return
+                if key and marked is None:
+                    st.set_metadata(key, {"at": time.time()})
+                    marked = st
+            except Exception:  # noqa: BLE001 - cannot tell: look again shortly
+                log.warning("workflows: could not read the backup hold; waiting", exc_info=True)
+            time.sleep(5.0)
+        log.warning("workflows: %s waited %d s for a backup hold; carrying on", run_id or "a run", HOLD_WAIT_LIMIT)
+    finally:
+        if marked is not None:
+            try:
+                marked.clear_metadata(key)
+            except Exception:  # noqa: BLE001 - a stale mark only spares this run a backup's wait
+                log.warning("workflows: could not clear %s", key, exc_info=True)
 
 
 def _hitl_receive(request_id: str) -> bool:

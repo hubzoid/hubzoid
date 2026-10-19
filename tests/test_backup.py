@@ -560,22 +560,34 @@ def test_a_run_waiting_for_a_person_does_not_hold_a_backup(tmp_path, monkeypatch
 
 
 def test_a_decision_during_a_backup_waits_out_its_hold(tmp_path, monkeypatch):
+    # The woken run waits, marked so the backup does not wait for it in turn,
+    # and keeps waiting through a store it cannot read for a moment.
     import time
 
+    from hubzoid import access
     from hubzoid.access import store_for
     from hubzoid.workflows import context
 
     hub = _hub(tmp_path)
     store_for(hub).set_schedule_hold("backup", 600, actor="test")
-    slept = []
+    real_store_for, steps = access.store_for, []
+
+    def flaky_store_for(hub_dir):
+        if len(steps) == 1:
+            raise OSError("database is locked")
+        return real_store_for(hub_dir)
 
     def sleep(seconds):
-        slept.append(seconds)
-        store_for(hub).clear_schedule_hold()  # the backup finished
+        steps.append(seconds)
+        if len(steps) == 1:
+            assert bk._waiting_for_people(hub) >= {"wf-1"}  # the backup sees it waits
+        if len(steps) == 2:
+            real_store_for(hub).clear_schedule_hold()  # the backup finished
 
+    monkeypatch.setattr(access, "store_for", flaky_store_for)
     monkeypatch.setattr(time, "sleep", sleep)
-    context._wait_out_hold(hub)
-    assert slept and store_for(hub).schedule_hold() is None
+    context._wait_out_hold(hub, "wf-1")
+    assert len(steps) == 2 and "wf-1" not in bk._waiting_for_people(hub)
 
 
 def test_backing_up_an_older_release_changes_no_schema(tmp_path):

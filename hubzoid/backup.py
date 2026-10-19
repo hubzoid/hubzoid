@@ -319,7 +319,8 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
                 has_meta = target.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hz_meta'").fetchone()
                 if has_meta:
-                    target.execute("DELETE FROM hz_meta WHERE k='maintenance:hold'")
+                    target.execute("DELETE FROM hz_meta WHERE k='maintenance:hold' OR k LIKE ?",
+                                   (_HOLD_WAITING + "%",))
                     target.commit()
         finally:
             target.close()
@@ -330,6 +331,7 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
 # A run that just asked still posts its card and emails the person: it counts
 # as running until this long after it asked.
 PARKED_SETTLE_SECONDS = 300
+_HOLD_WAITING = "hold-waiting:"  # workflows.context.HOLD_WAITING
 
 
 def _waiting_for_people(hub_dir: Path) -> set[str]:
@@ -351,9 +353,12 @@ def _waiting_for_people(hub_dir: Path) -> set[str]:
         with engine.connect() as conn:
             for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending' AND created_at <= :c",
                         "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input') "
-                        "AND updated <= :c"):
+                        "AND updated <= :c",
+                        # woken by a decision, waiting out this backup's hold
+                        "SELECT substr(k, :n) FROM hz_meta WHERE k LIKE :p"):
                 try:
-                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff}) if r[0]}
+                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff, "n": len(_HOLD_WAITING) + 1,
+                                                                       "p": _HOLD_WAITING + "%"}) if r[0]}
                 except Exception:  # noqa: BLE001 - an older store without the table
                     conn.rollback()
     except Exception:  # noqa: BLE001 - unknown: the backup waits for every run
