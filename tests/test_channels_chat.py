@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 from hubzoid.channels import admission, config, links, registry, store
 
-from channel_fake import FakeAdapter, delivery, headers
-from chat_helpers import build_app, make_hub
+from tests.channel_fake import FakeAdapter, delivery, headers
+from tests.chat_helpers import build_app, make_hub
 
 SECRET = "fake-signing-value"   # gitleaks:allow (a test value)
 
@@ -35,7 +35,7 @@ def hub(tmp_path, monkeypatch, fake):
                                                  ",ben@example.org,support\n")
     from hubzoid.auth import users
 
-    from chat_helpers import PEOPLE
+    from tests.chat_helpers import PEOPLE
 
     for person in PEOPLE.values():   # the same ids the chat app's test sign-in uses
         if users.find_by_email(hub, person.email) is None:
