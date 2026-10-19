@@ -1,4 +1,4 @@
-"""Budget reservations. Revision op_0033.
+"""Budget reservations. Revision op_0053.
 
 ``hz_budget_reservations``: what a model call holds against the hub's limits
 (budgets.yaml) while it runs. Recorded usage stays in ``hz_usage``; a
@@ -12,8 +12,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "op_0033"
-down_revision = "op_0032"
+revision = "op_0053"
+down_revision = "op_0052"
 branch_labels = None
 depends_on = None
 
