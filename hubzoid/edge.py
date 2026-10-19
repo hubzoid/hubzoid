@@ -145,6 +145,15 @@ def _upstream_path(path: str) -> str:
     return quote(path, safe=_PATH_SAFE)
 
 
+def _path_and_query(conn: Request | WebSocket) -> tuple[str, str]:
+    """The decoded path and the `?query` suffix as the server split them.
+    `conn.url.path` is not that path: Starlette 1.9 re-escapes `?`, `#` and `\\`
+    in it, so `/a%3Fb` was encoded again and forwarded as `/a%253Fb`, and
+    earlier releases cut it at a decoded `?`."""
+    query = conn.scope.get("query_string", b"").decode()
+    return conn.scope["path"], "?" + query if query else ""
+
+
 async def _retry_body(request: Request):
     """(content, retryable) for a request that may be retried on a fallback.
 
@@ -443,17 +452,18 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
-        if request.url.path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
+        path, query = _path_and_query(request)
+        if path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
             from starlette.responses import JSONResponse
             states = getattr(request.app.state, 'workflow_health', {})
             healthy = bool(states) and all(states.values())
             return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
-        if _has_dot_segment(request.url.path):
+        if _has_dot_segment(path):
             return Response("Bad request", status_code=400)
-        if web_app and _is_bridge_internal(request.url.path):
+        if web_app and _is_bridge_internal(path):
             return Response("Not found", status_code=404)
         portal_enabled = owui_rewrites and any(r.prefix == '/portal' for r in norm_routes)
-        if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
+        if portal_enabled and path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import script
             return Response(script(hide_users=hide_users),
                             media_type='application/javascript',
@@ -461,23 +471,23 @@ def build_edge_app(
         # People and access are managed in the Console: Open WebUI's Users
         # section (Groups too) opens Settings, and browser writes to its
         # account-admin API are refused.
-        if owui_rewrites and _match(request.url.path, norm_routes) is None and (
-                _is_tool_server_write(request.method, request.url.path)
+        if owui_rewrites and _match(path, norm_routes) is None and (
+                _is_tool_server_write(request.method, path)
                 or (request.method == "POST"
-                    and _clean_path(request.url.path) == "/api/v1/configs/import"
+                    and _clean_path(path) == "/api/v1/configs/import"
                     and b"tool_server" in await request.body())):
             # A configuration import carrying tool servers is the same save.
             from starlette.responses import JSONResponse
 
             return JSONResponse({"detail": TOOL_SERVERS_MOVED}, status_code=403)
-        if hide_users and _match(request.url.path, norm_routes) is None:
-            if request.method in ("GET", "HEAD") and _is_users_section(request.url.path):
+        if hide_users and _match(path, norm_routes) is None:
+            if request.method in ("GET", "HEAD") and _is_users_section(path):
                 return Response(status_code=302, headers={"location": SETTINGS_LANDING})
-            if _is_account_write(request.method, request.url.path):
+            if _is_account_write(request.method, path):
                 return Response("Manage accounts in the Console (People).", status_code=403)
         # Agent model ACLs are Hubzoid's (the visibility mirror): browser edits
         # to a registered hub's model access are refused.
-        if owui_rewrites and os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
+        if owui_rewrites and os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and path.startswith('/api/v1/models/'):
             from . import deployment
             try:
                 cfg = deployment.read(Path('.'), require_hub=False)
@@ -486,7 +496,7 @@ def build_edge_app(
                 model_id = payload.get('id') or request.query_params.get('id')
                 for h in cfg['hubs']:
                     if h['model_id'] == model_id:
-                        if payload.get('access_grants') is not None or 'delete' in request.url.path or request.method == 'DELETE':
+                        if payload.get('access_grants') is not None or 'delete' in path or request.method == 'DELETE':
                             return Response('Agent access is managed at /portal/.', status_code=403)
             except Exception:
                 log.exception('Cannot verify managed model access')
@@ -498,9 +508,9 @@ def build_edge_app(
         if (
             locked_prefixes
             and request.method in ("POST", "PUT", "PATCH", "DELETE")
-            and _match(request.url.path, norm_routes) is None
+            and _match(path, norm_routes) is None
             and any(
-                request.url.path == p or request.url.path.startswith(p + "/")
+                path == p or path.startswith(p + "/")
                 for p in locked_prefixes
             )
         ):
@@ -508,10 +518,9 @@ def build_edge_app(
                 "Access management is locked; manage it in the Hubzoid portal.",
                 status_code=403,
             )
-        upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
-        matched = _match(request.url.path, norm_routes)
+        upstream, fwd_path = _forward_target(path, norm_routes, default_base)
+        matched = _match(path, norm_routes)
         bases = matched.upstreams() if matched is not None else default_bases
-        query = "?" + request.url.query if request.url.query else ""
         # Web app mode: tell a bridge which /b/<slug> prefix was stripped (and
         # never pass a client's own claim on). Legacy: headers as in 1.0.x.
         prefix = None
@@ -544,7 +553,7 @@ def build_edge_app(
         # OWUI administrators bypass its own model ACL. Apply Hubzoid's entry
         # decision to the picker for every verified viewer; execution is still
         # checked by each bridge. Do not fall back to an unfiltered list on error.
-        if portal_enabled and request.method == "GET" and request.url.path.rstrip("/") == "/api/models" and resp.status_code == 200:
+        if portal_enabled and request.method == "GET" and path.rstrip("/") == "/api/models" and resp.status_code == 200:
             body = await resp.aread()
             await resp.aclose()
             route = _match("/portal", norm_routes)
@@ -575,7 +584,7 @@ def build_edge_app(
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 return Response("Agent access is unavailable. Try again.", status_code=503)
 
-        if portal_enabled and 'text/html' in resp.headers.get('content-type','') and _match(request.url.path, norm_routes) is None:
+        if portal_enabled and 'text/html' in resp.headers.get('content-type','') and _match(path, norm_routes) is None:
             from .portal_navigation import inject
             body = await resp.aread()
             await resp.aclose()
@@ -603,12 +612,11 @@ def build_edge_app(
     async def ws_handler(websocket: WebSocket) -> None:
         # Only Open WebUI uses websockets (socket.io); bridges don't. Relay
         # every websocket to OWUI verbatim.
-        if _has_dot_segment(websocket.url.path):
+        path, query = _path_and_query(websocket)
+        if _has_dot_segment(path):
             await websocket.close(code=1008)
             return
-        target = owui_ws_base + _upstream_path(websocket.url.path)
-        if websocket.url.query:
-            target += "?" + websocket.url.query
+        target = owui_ws_base + _upstream_path(path) + query
         await websocket.accept()
         try:
             upstream = await websockets.connect(
