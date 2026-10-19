@@ -237,7 +237,7 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
         if refusal:
             _finish(hub_dir, row["id"], "denied", refusal)    # silently: nothing private is disclosed
             return "denied", None
-        if conn.config.agent:
+        if conn.config.agent and not event.data.get("hook_workflow"):
             return _route_chat(hub_dir, conn, row, thread, event, app)
         return _route_workflow(hub_dir, conn, row, thread, event)
     except ChannelError as exc:
@@ -310,7 +310,8 @@ def _notice(conn, thread: dict, event: InboundEvent, reason: str) -> None:
 
 
 def _deny(hub_dir, conn, row, thread, event, reason: str) -> tuple[str, None]:
-    _notice(conn, thread, event, reason)
+    if event.trigger:     # someone asked directly: tell them, once. A passing remark gets nothing.
+        _notice(conn, thread, event, reason)
     _finish(hub_dir, row["id"], "denied", reason)
     return "denied", None
 
@@ -515,10 +516,18 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     payload = {"channel": conn.id, "thread_id": thread["id"], "delivery_id": row["id"], "kind": event.kind,
                "text": event.text, "files": event.files, "data": event.data,
                "actor": event.actor.to_json() if event.actor else None, "origin": event.origin.to_json()}
+    workflow = event.data.get("hook_workflow") or conn.config.workflow
+    route = event.data.get("route")
+    if route:
+        try:
+            if route not in wi._definition(hub_dir, workflow)[1]:
+                route = None      # the workflow does not declare this route: its first route applies
+        except WorkItemError:
+            route = None
     try:
         item, created = wi.admit_and_start(
-            hub_dir, workflow=conn.config.workflow, key=f"channel:{conn.id}:{event.semantic_key}",
-            route=event.data.get("route"), input=payload, requester=requester, origin=origin,
+            hub_dir, workflow=workflow, key=f"channel:{conn.id}:{event.semantic_key}",
+            route=route, input=payload, requester=requester, origin=origin,
             actor=person.email if (person is not None and not unattended) else None)
     except WorkItemError as exc:
         if exc.status == 403:
