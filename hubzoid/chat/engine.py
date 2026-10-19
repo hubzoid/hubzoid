@@ -32,7 +32,7 @@ import os
 import socket
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +106,10 @@ class Actor:
     email: str
     groups: frozenset[str] = frozenset()
     name: str = ""
+    #: the session or API key that made the request (``access.run_identity``):
+    #: a reply checks it on every tool call, so revoking it stops the run
+    credential: str = "session"
+    credential_id: str = ""
 
 
 @dataclass
@@ -126,6 +130,8 @@ class RunPlan:
     fence: int = 0
     #: per-turn choices the runtime honours: {"web_search": bool, "model": str | None}
     options: dict = field(default_factory=dict)
+    credential: str = "session"
+    credential_id: str = ""
 
 
 Err = g.GraphError
@@ -218,7 +224,9 @@ class ChatEngine:
     def actor(self, user) -> Actor:
         email = (getattr(user, "email", "") or "").lower()
         return Actor(id=user.id, email=email, groups=frozenset(self.groups_for(email)),
-                     name=getattr(user, "name", "") or "")
+                     name=getattr(user, "name", "") or "",
+                     credential=getattr(user, "credential", "session") or "session",
+                     credential_id=getattr(user, "credential_id", "") or "")
 
     def _conv(self, conn, conversation_id: str) -> dict | None:
         row = conn.execute(sa.select(conversations).where(conversations.c.id == conversation_id)).first()
@@ -599,7 +607,8 @@ class ChatEngine:
         return RunPlan(run_id=run_id, conversation_id=conv["id"], branch_id=branch_id, message_id=aid,
                        actor_id=actor.id, actor_email=actor.email, kind=kind, prompt_message_id=prompt_mid,
                        extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence,
-                       options=options or {})
+                       options=options or {}, credential=getattr(actor, "credential", "session") or "session",
+                       credential_id=getattr(actor, "credential_id", "") or "")
 
     @staticmethod
     def _options(op: dict) -> dict:
@@ -1147,7 +1156,9 @@ class ChatEngine:
                 rank=top + 1, revision=1, state="paused" if b.queue_paused else "queued",
                 content_json=json.dumps({"content": parts, "model_selection": body.get("model_selection"),
                                          "web_search": body.get("web_search") is True,
-                                         "branch_revision": b.revision, "parent_id": b.head_id}),
+                                         "branch_revision": b.revision, "parent_id": b.head_id,
+                                         # the credential that queued it is checked when it runs
+                                         "credential": actor.credential, "credential_id": actor.credential_id}),
                 predecessor_id=pred, reason="queue paused" if b.queue_paused else None, dispatched_run_id=None,
                 created_at=t, updated_at=t))
             g.emit(conn, conversation_id, "queue.updated", b.id, {"item": iid, "action": "added"})
@@ -1307,6 +1318,9 @@ class ChatEngine:
                         raise Err(409, "context_changed", "The conversation changed while this message waited. "
                                                           "Review it, then send it again.")
                 actor = self._author(conv, it.author_id)
+                if frozen.get("credential"):
+                    actor = replace(actor, credential=frozen["credential"],
+                                    credential_id=frozen.get("credential_id") or "")
                 if self.admission is not None:
                     self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,

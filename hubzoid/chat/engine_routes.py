@@ -180,7 +180,10 @@ class Orchestrator:
                 from .. import server
 
                 turns_prompt = "\n\n".join(x for x in (turns_prompt, server._flatten_messages(plan.extra_turns)) if x)
-            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email)
+            # The credential that started the reply goes with it: B's per-call check
+            # stops the run when that session or key is revoked.
+            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email,
+                                   credential=plan.credential, credential_id=plan.credential_id)
             from .. import _request_ctx
             from .history import user_text
 

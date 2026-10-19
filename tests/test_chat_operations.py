@@ -498,3 +498,29 @@ def test_queued_message_whose_context_changed_needs_review(client):
     q = {i["id"]: i for i in client.get(f"/api/conversations/{cid}/queue").json()["items"]}
     assert q[item["id"]]["state"] == "needs_review"
     assert not snap(client, cid)["runs"]
+
+
+def test_a_reply_records_the_session_that_started_it(hub, monkeypatch):
+    # B's per-call check stops a run whose credential is revoked; it can only
+    # do that when the reply's run record names the session (or key) it ran on.
+    from hubzoid.access import run_identity
+    from hubzoid.auth import AuthUser, sessions
+
+    me = AuthUser(id="u_ana", email="ana@example.org", name="Ana", credential="session", credential_id="sess_ana_1")
+    monkeypatch.setattr(sessions, "resolve", lambda request, hub_dir: me)
+    with TestClient(build_app()) as c:
+        cid, b = new_conv(c)
+        sent = send(c, cid, "hello", b)
+        wait_run(c, sent["run_id"])
+        # and a message queued behind a running reply keeps the same credential
+        slow = send(c, cid, "slow first", branch_of(c, cid, b["id"]), parent=sent["assistant_message_id"])
+        q = c.post(f"/api/conversations/{cid}/queue", headers=h(), json={"branch_id": b["id"], "content": "next"})
+        assert q.status_code == 201, q.text
+        wait_run(c, slow["run_id"])
+        end = time.time() + 15
+        while time.time() < end and len([m for m in snap(c, cid)["messages"] if m["role"] == "assistant"]) < 3:
+            time.sleep(0.1)
+        replies = [m["id"] for m in snap(c, cid)["messages"] if m["role"] == "assistant"]
+    for mid in replies:
+        record = run_identity.for_run(hub, "chat", mid)
+        assert record and (record["credential_kind"], record["credential_id"]) == ("session", "sess_ana_1"), record

@@ -52,7 +52,8 @@ def _manage(hub, *people):
 
 def test_local_quickstart_runs_as_admin_localhost(hub):
     ident = idlib.resolve(hub, legacy_subject="workflow:w")
-    assert (ident.subject, ident.source, ident.account_id) == ("admin@localhost", "local", None)
+    assert (ident.subject, ident.source) == ("admin@localhost", "local")
+    assert ident.account_id  # the local owner's own account, for delivering its answers
     assert configured_owner(hub) == "admin@localhost"
 
 
@@ -62,6 +63,8 @@ def test_a_local_run_before_any_bridge_start_gives_the_local_owner_the_hub(hub):
     assert not store_for(hub).can("admin@localhost", hub.name, "use_hub")
     assert idlib.configured(hub) == ("admin@localhost", "local")
     assert store_for(hub).can("admin@localhost", hub.name, "use_hub")
+    # ...and the account its answers go to (a private chat needs an account).
+    assert idlib.resolve(hub, legacy_subject="workflow:w").account_id
 
 
 def test_setup_records_the_configured_owner_once(shared):
