@@ -123,9 +123,9 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
 
   return (
     <AuthLayout title={mode === "signin" ? t.auth.signIn : t.auth.signupSubmit}>
-      <div className="hz-card px-6 py-7 sm:px-8 sm:py-8">
-        <h1 className="m-0 text-[22px] font-semibold tracking-tight text-ink">{heading}</h1>
-        <p className="m-0 mt-1.5 whitespace-pre-line text-[14px] text-mute">{subtitle}</p>
+      <div className="hz-signin">
+        <h1 className="m-0 text-[1.7143rem] font-medium tracking-tight text-center text-ink">{heading}</h1>
+        <p className="m-0 mt-2 whitespace-pre-line text-center text-[0.9286rem] leading-relaxed text-mute">{subtitle}</p>
 
         {message && (
           <Notice tone={message.tone} className="mt-5">
@@ -139,31 +139,8 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
           </Notice>
         )}
 
-        {mode === "signin" && providers.length > 0 && (
-          <div className="mt-6 space-y-2.5">
-            {providers.map((p) => (
-              <a
-                key={p.id}
-                href={`/oauth/${encodeURIComponent(p.id)}/login?redirect=${encodeURIComponent(redirect)}`}
-                className="hz-btn hz-btn-secondary hz-btn-lg w-full no-underline"
-              >
-                <ProviderIcon id={p.id} />
-                {t.auth.continueWith(p.name || p.id)}
-              </a>
-            ))}
-          </div>
-        )}
-
-        {mode === "signin" && providers.length > 0 && passwordOn && (
-          <div className="my-6 flex items-center gap-3 text-xs text-mute" aria-hidden>
-            <span className="h-px flex-1 bg-line" />
-            {t.auth.or}
-            <span className="h-px flex-1 bg-line" />
-          </div>
-        )}
-
         {passwordOn && (
-          <form onSubmit={submit} noValidate className={providers.length > 0 && mode === "signin" ? "space-y-4" : "mt-6 space-y-4"}>
+          <form onSubmit={submit} noValidate className="mt-7 space-y-4">
             {mode === "signup" && (
               <Field
                 label={t.auth.name}
@@ -207,6 +184,29 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
             </Button>
           </form>
         )}
+        {mode === "signin" && providers.length > 0 && passwordOn && (
+          <div className="my-6 flex items-center gap-3 text-xs text-mute" aria-hidden>
+            <span className="h-px flex-1 bg-line" />
+            {t.auth.or}
+            <span className="h-px flex-1 bg-line" />
+          </div>
+        )}
+
+        {mode === "signin" && providers.length > 0 && (
+          <div className="hz-auth-providers space-y-2.5">
+            {providers.map((p) => (
+              <a
+                key={p.id}
+                href={`/oauth/${encodeURIComponent(p.id)}/login?redirect=${encodeURIComponent(redirect)}`}
+                className="hz-btn hz-btn-secondary hz-btn-lg w-full no-underline"
+              >
+                <ProviderIcon id={p.id} />
+                {t.auth.continueWith(p.name || p.id)}
+              </a>
+            ))}
+          </div>
+        )}
+
       </div>
 
       {session.signup && passwordOn && (

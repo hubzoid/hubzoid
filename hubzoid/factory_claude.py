@@ -702,6 +702,28 @@ def _guarded(options, guard):
     return dataclasses.replace(options, hooks=hooks)
 
 
+def _only_tools(options, allowed: list[str]):
+    """A PreToolUse hook that refuses every tool outside ``allowed`` (hub tool
+    names; the SDK prefixes them with their MCP namespace)."""
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    # Only Hubzoid's own tools, by their full identity: an outside MCP server's
+    # tool that merely shares a name is not on the list.
+    names = {f"mcp__{_MCP_NAMESPACE}__{n}" for n in allowed}
+
+    async def admit(tool_input, _tool_use_id, _context):
+        if str((tool_input or {}).get("tool_name") or "") in names:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "A comparison answer may only read."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 async def _query_with_failover(*, prompt, options, hub_dir=None):
     """Rotate explicit credentials only on confirmed model-account failure.
 
@@ -1022,6 +1044,20 @@ class ClaudeRuntime:
                 turn_options = _dc.replace(turn_options, resume=slot.resume_id)
             if slot is not None and slot.guard is not None:
                 turn_options = _guarded(turn_options, slot.guard)
+            if slot is not None and slot.tool_allowlist is not None:
+                turn_options = _only_tools(turn_options, slot.tool_allowlist)
+            if slot is not None and (slot.web_search or slot.model):
+                import dataclasses as _dc
+
+                changes = {}
+                if slot.web_search:
+                    # Claude's own server-side search only. WebFetch is not
+                    # enabled: it would fetch from this machine's network.
+                    changes["tools"] = [*(turn_options.tools or []), "WebSearch"]
+                    changes["allowed_tools"] = [*(turn_options.allowed_tools or []), "WebSearch"]
+                if slot.model:
+                    changes["model"] = slot.model
+                turn_options = _dc.replace(turn_options, **changes)
             messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
                                             hub_dir=self._hub_dir)
             async for message in messages:

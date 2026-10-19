@@ -47,8 +47,8 @@ from .store import (_dumps, _loads, _message, chat_key, conversations, messages,
 log = logging.getLogger("hubzoid.chat.engine")
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
-KINDS = ("send", "respond", "revise", "regenerate", "continue", "delete", "fork", "synthesize")
-RUN_KINDS = ("send", "respond", "revise", "regenerate", "continue", "synthesize")
+KINDS = ("send", "respond", "revise", "regenerate", "continue", "delete", "fork", "synthesize", "compare")
+RUN_KINDS = ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare")
 TEMPORARY_SECONDS = 24 * 3600
 MAX_SYNTH_SOURCES = 8
 MAX_COPY_MESSAGES = 10_000
@@ -124,6 +124,8 @@ class RunPlan:
     prefix: list[dict] = field(default_factory=list)
     title_from: str | None = None
     fence: int = 0
+    #: per-turn choices the runtime honours: {"web_search": bool, "model": str | None}
+    options: dict = field(default_factory=dict)
 
 
 Err = g.GraphError
@@ -199,6 +201,8 @@ class ChatEngine:
         #: (actor) -> None, raising GraphError when this person may not start a
         #: reply now (hub use, current terms). Checked again when queued work leaves.
         self.admission = None
+        #: models.ModelService: the catalog and comparison policy (set by the routes)
+        self.models = None
 
     # -- settings ---------------------------------------------------------------------
     def limits(self) -> dict:
@@ -405,7 +409,8 @@ class ChatEngine:
                "created_at": m.get("created_at"), "updated_at": m.get("updated_at"),
                "branch_id": m.get("branch_id"), "revises_id": m.get("revises_id"),
                "author_id": m.get("author_id"), "editor_id": m.get("editor_id"), "run_id": m.get("run_id"),
-               "model": m.get("model"), "context_changed": bool(m.get("context_changed"))}
+               "model": m.get("model"), "requested_model": m.get("requested_model"),
+               "context_changed": bool(m.get("context_changed"))}
         usage = m.get("usage")
         if isinstance(usage, dict):
             out["usage"] = {k: usage[k] for k in ("input_tokens", "output_tokens", "cost_usd", "duration_ms")
@@ -500,7 +505,9 @@ class ChatEngine:
             body = {"operation_id": operation_id, "kind": kind, "conversation_id": conversation_id, **body,
                     "graph_revision": conn.execute(sa.select(conversations.c.graph_revision).where(
                         conversations.c.id == conversation_id)).scalar() or 0}
-            if plan is not None:
+            if isinstance(plan, list):
+                plan_box.extend(plan)
+            elif plan is not None:
                 plan_box.append(plan)
             return status, body
 
@@ -509,7 +516,9 @@ class ChatEngine:
                               body=op, change=change, hub_id=self.hub, kind=f"chat.{kind}",
                               operation_id=operation_id)
         self.notify(conversation_id)
-        return out, (plan_box[0] if plan_box and not out.replayed else None)
+        if out.replayed or not plan_box:
+            return out, None
+        return out, (plan_box[0] if len(plan_box) == 1 else plan_box)
 
     def operation(self, operation_id: str, actor: Actor) -> dict:
         got = idempotency.receipt(self.engine, deployment_id=self.deployment_id, actor_id=actor.id,
@@ -586,10 +595,17 @@ class ChatEngine:
         return run_id, aid, fence
 
     def _plan(self, *, run_id, conv, branch_id, aid, actor, kind, prompt_mid, fence, extra=None, prefix=None,
-              title_from=None) -> RunPlan:
+              title_from=None, options=None) -> RunPlan:
         return RunPlan(run_id=run_id, conversation_id=conv["id"], branch_id=branch_id, message_id=aid,
                        actor_id=actor.id, actor_email=actor.email, kind=kind, prompt_message_id=prompt_mid,
-                       extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence)
+                       extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence,
+                       options=options or {})
+
+    @staticmethod
+    def _options(op: dict) -> dict:
+        sel = op.get("model_selection") or {}
+        return {"web_search": op.get("web_search") is True,
+                "model": sel.get("model") if isinstance(sel, dict) and sel.get("mode") == "model" else None}
 
     def _title_due(self, conn, conv: dict, parts: list) -> str | None:
         if conv.get("title_source") != "pending" or conv.get("title"):
@@ -614,7 +630,7 @@ class ChatEngine:
             if p["status"] == "running":
                 raise Err(409, "branch_conflict", "Wait for the reply to finish, or queue your message.")
         snapshot = {"kind": "send", "model_selection": op.get("model_selection") or {"mode": "agent_default"},
-                    "attachment_ids": op.get("attachment_ids") or []}
+                    "attachment_ids": op.get("attachment_ids") or [], "web_search": op.get("web_search") is True}
         uid = self._insert(conn, conv_id=conv["id"], mid=op.get("message_id"), parent_id=parent, role="user",
                            content=parts, branch_id=b.id, actor=actor)
         title_from = self._title_due(conn, conv, parts)
@@ -627,7 +643,7 @@ class ChatEngine:
         return 202, {"branch_id": b.id, "branch_revision": rev, "user_message_id": uid,
                      "assistant_message_id": aid, "run_id": run_id}, \
             self._plan(run_id=run_id, conv=conv, branch_id=b.id, aid=aid, actor=actor, kind="send", prompt_mid=uid,
-                       fence=fence, title_from=title_from)
+                       fence=fence, title_from=title_from, options=self._options(op))
 
     def _op_respond(self, conn, conv, actor, op, _parts, operation_id):
         b = self._branch_for_extend(conn, conv, actor, op)
@@ -715,6 +731,34 @@ class ChatEngine:
                      "run_id": run_id}, \
             self._plan(run_id=run_id, conv=conv, branch_id=branch["id"], aid=aid, actor=actor, kind="regenerate",
                        prompt_mid=target["id"], fence=fence, extra=extra)
+
+    def _op_compare(self, conn, conv, actor, op, _parts, operation_id):
+        """Answer one user message with 2 or 3 models at once, each on a branch of
+        its own; the candidates may only read (``comparison.candidate_tools``)."""
+        if self.models is None:
+            raise Err(503, "unavailable", "Comparing models isn't available here.")
+        target = self._message_in(conn, conv["id"], op.get("target_message_id"))
+        if target["role"] != "user":
+            raise Err(400, "invalid_operation", "compare targets the user message to answer.")
+        candidates = self.models.compare_plan(actor.email, op.get("model_refs"))
+        tools = self.models.candidate_tools()
+        out, plans = [], []
+        for c in candidates:
+            branch = g.create_branch(conn, conv["id"], actor.id, target["id"])
+            sel = {"mode": "model", "model": c["model"]} if c["model"] else {"mode": "agent_default"}
+            run_id, aid, fence = self._admit(conn, conv=conv, actor=actor, branch_id=branch["id"],
+                                             parent_id=target["id"], kind="compare", operation_id=operation_id,
+                                             snapshot={"kind": "compare", "target": target["id"],
+                                                       "model_selection": sel, "ref": c["ref"]})
+            rev = g.move_head(conn, branch["id"], branch["revision"], aid)
+            out.append({"model_ref": c["ref"], "label": c["label"], "branch_id": branch["id"],
+                        "branch_revision": rev, "assistant_message_id": aid, "run_id": run_id})
+            plans.append(self._plan(run_id=run_id, conv=conv, branch_id=branch["id"], aid=aid, actor=actor,
+                                    kind="compare", prompt_mid=target["id"], fence=fence,
+                                    options={"model": c["model"], "tool_allowlist": tools}))
+        g.set_view(conn, conv["id"], actor.id, out[0]["branch_id"], out[0]["assistant_message_id"])
+        self._touch(conn, conv["id"], out[0]["assistant_message_id"])
+        return 202, {"candidates": out}, plans
 
     def _op_continue(self, conn, conv, actor, op, _parts, operation_id):
         target = self._message_in(conn, conv["id"], op.get("target_message_id"))
@@ -1075,7 +1119,8 @@ class ChatEngine:
             if not busy and not live and not b.queue_paused and lane == "queue":
                 status, out, plan = self._op_send(conn, conv_, actor, {
                     "branch_id": b.id, "parent_id": b.head_id, "expected_revision": b.revision,
-                    "model_selection": body.get("model_selection")}, parts, operation_id)
+                    "model_selection": body.get("model_selection"), "web_search": body.get("web_search") is True},
+                    parts, operation_id)
                 plan_box.append(plan)
                 return 202, {"dispatched": True, "operation_id": operation_id, **out}
             if live >= self.limits()["queue"]["max_items_per_branch"]:
@@ -1095,6 +1140,7 @@ class ChatEngine:
                 id=iid, conversation_id=conversation_id, branch_id=b.id, author_id=actor.id, lane=lane,
                 rank=top + 1, revision=1, state="paused" if b.queue_paused else "queued",
                 content_json=json.dumps({"content": parts, "model_selection": body.get("model_selection"),
+                                         "web_search": body.get("web_search") is True,
                                          "branch_revision": b.revision, "parent_id": b.head_id}),
                 predecessor_id=pred, reason="queue paused" if b.queue_paused else None, dispatched_run_id=None,
                 created_at=t, updated_at=t))
@@ -1258,7 +1304,7 @@ class ChatEngine:
                 if self.admission is not None:
                     self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,
-                      "model_selection": frozen.get("model_selection")}
+                      "model_selection": frozen.get("model_selection"), "web_search": frozen.get("web_search") is True}
                 out, plan = self.submit(it.conversation_id, actor, {"kind": "send", "content": frozen["content"],
                                                                     **op}, key=f"queue:{it.id}")
                 with self.engine.begin() as conn:
@@ -1306,7 +1352,7 @@ class ChatEngine:
         ended, under the same runtime configuration. Anything else (an edit,
         a regeneration, a continuation, a deleted or moved head, a changed
         agent or model) starts from the full history."""
-        if plan.kind not in ("send", "respond") or plan.extra_turns:
+        if plan.kind not in ("send", "respond") or plan.extra_turns or (plan.options or {}).get("model"):
             return None
         with self.engine.connect() as conn:
             b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()

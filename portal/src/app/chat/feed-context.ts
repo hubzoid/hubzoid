@@ -3,10 +3,17 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
 import type { ConversationFeed, DeletionPreview } from "./runtime";
 
+export type Features = { chat_dictation?: boolean; chat_read_aloud?: boolean; chat_web_search?: boolean; chat_model_compare?: boolean; helper_followups?: boolean; web_search?: boolean };
+
 export type FeedValue = {
   feed: ConversationFeed;
+  features?: Features;
   confirmedDeletes: Map<string, DeletionPreview>;
   onError: (error: unknown) => void;
+  /** The conversation's id, creating it first when this is a new chat. */
+  ensureConversation?: () => Promise<string>;
+  apiBase?: string;
+  models?: import("./models").ModelsInfo;
 };
 
 export const FeedContext = createContext<FeedValue | null>(null);

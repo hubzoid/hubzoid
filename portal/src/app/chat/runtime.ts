@@ -75,12 +75,16 @@ function newKey() {
 }
 
 /** A message's typed text and attachment parts as server content. */
-export function contentOf(message: Pick<AppendMessage, "content" | "attachments">): ServerPart[] {
+export function contentOf(message: Pick<AppendMessage, "content" | "attachments"> & { metadata?: unknown }): ServerPart[] {
   const parts: ServerPart[] = [];
-  const text = message.content
+  const body = message.content
     .filter((p) => p.type === "text")
     .map((p) => (p as { text: string }).text)
     .join("\n\n");
+  // A passage quoted from an answer (assistant-ui's selection toolbar) leads
+  // the message as a Markdown quote, so the agent sees what it refers to.
+  const quote = (message.metadata as { custom?: { quote?: { text?: string } } } | undefined)?.custom?.quote?.text?.trim();
+  const text = quote ? `${quote.split("\n").map((l) => `> ${l}`).join("\n")}\n\n${body}` : body;
   if (text) parts.push({ type: "text", text });
   for (const attachment of message.attachments ?? []) {
     const ref = fileRefOf(attachment);
@@ -300,6 +304,10 @@ export class ConversationFeed {
   }
 
   /** Send now on an idle branch, or queue behind the running reply. */
+  /** This person's choices for their next messages: the runtime's own web search, a model. */
+  webSearch = false;
+  model: string | null = null;
+
   async submit(parts: ServerPart[], text: string, lane: "queue" | "steer" = "queue") {
     const branch = await this.writableBranch();
     const busy = !!this.activeRun || this.myQueue.length > 0 || branch.queue_paused;
@@ -308,7 +316,11 @@ export class ConversationFeed {
       this.emit();
     }
     try {
-      await post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), { branch_id: branch.id, content: parts, lane }, {
+      await post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), {
+        branch_id: branch.id, content: parts, lane,
+        ...(this.webSearch ? { web_search: true } : {}),
+        ...(this.model ? { model_selection: { mode: "model", model: this.model } } : {}),
+      }, {
         headers: { "Idempotency-Key": newKey() },
       });
     } catch (error) {
@@ -384,6 +396,8 @@ export function useHubzoidRuntime({
   attachments,
   confirmedDeletes,
   onError,
+  speech,
+  dictation,
 }: {
   feed: ConversationFeed;
   ctx: ConvertContext;
@@ -393,6 +407,9 @@ export function useHubzoidRuntime({
   /** Previews the person confirmed in the deletion dialog, by message id. */
   confirmedDeletes: Map<string, DeletionPreview>;
   onError: (error: unknown) => void;
+  /** Browser speech, only when the person has the grant (HUB-77). */
+  speech?: NonNullable<ExternalStoreAdapter["adapters"]>["speech"];
+  dictation?: NonNullable<ExternalStoreAdapter["adapters"]>["dictation"];
 }) {
   const version = useSyncExternalStore(feed.subscribe, feed.getVersion);
   useEffect(() => {
@@ -515,7 +532,7 @@ export function useHubzoidRuntime({
     // Branch switching needs it; the graph itself is never written from here.
     setMessages: (_messages: readonly ThreadMessage[]) => {},
     onRefetchThread: () => latest.current.load(),
-    adapters: attachments ? { attachments } : undefined,
+    adapters: { attachments, speech, dictation },
   };
   return useExternalStoreRuntime(adapter);
 }

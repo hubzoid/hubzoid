@@ -140,9 +140,12 @@ class Orchestrator:
         self._seq: dict[str, int] = {}
         self._beat: asyncio.Task | None = None
 
-    async def launch(self, plan: RunPlan | None):
+    async def launch(self, plan: RunPlan | list | None):
         if plan is None:
             return None
+        if isinstance(plan, list):  # a comparison: one reply per model, at once
+            runs = [await self.launch(p) for p in plan]
+            return runs[0] if runs else None
         from . import titles
         from .history import build_prompt
 
@@ -165,6 +168,15 @@ class Orchestrator:
                 if resume and path else None)
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
+            opts = plan.options or {}
+            if opts.get("web_search"):
+                slot.web_search = await db(self._web_allowed, plan.actor_email)
+            if opts.get("model"):
+                models = getattr(self.ctx, "models", None)
+                if models is not None and await db(models.allowed, opts["model"], plan.actor_email):
+                    slot.model = opts["model"]
+            if opts.get("tool_allowlist") is not None:
+                slot.tool_allowlist = list(opts["tool_allowlist"])
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
@@ -187,6 +199,19 @@ class Orchestrator:
                                                                {"type": "conversation.titled", "title": title})))
         self._ensure_heartbeat()
         return run
+
+    def _web_allowed(self, email: str) -> bool:
+        """The runtime's own web search, this turn: the deployment allows it and
+        the person holds the chat_web_search grant."""
+        from . import features
+        from .config import service_for
+
+        try:
+            web = service_for(self.ctx.hub_dir).active().document["retrieval"]["web"]
+            return bool(web["enabled"] and web["search"] == "native"
+                        and features.for_person(self.ctx.hub_dir, email).get("chat_web_search"))
+        except Exception:  # noqa: BLE001 - unknown policy: no search
+            return False
 
     def config_digest(self, actor_id: str = "") -> str:
         """What a native session depends on: the acting person, the agent, its
@@ -234,6 +259,14 @@ class Orchestrator:
                      ok=status == "complete")
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
+        files = getattr(self.ctx, "files", None)
+        if files is not None and not run.fenced_out:
+            try:  # documents the run wrote become artifact versions
+                await db(files.capture_artifacts, conversation_id=run.conversation_id, branch_id=run.branch_id,
+                         actor_id=run.owner_id, run_id=run.run_id, message_id=run.message_id,
+                         since=time.time() - (time.monotonic() - run.started))
+            except Exception:  # noqa: BLE001 - the reply stands; its files stay in the folder
+                log.warning("chat: could not record the artifacts of %s", run.run_id, exc_info=True)
         try:
             nxt = await db(self.engine.run_finished, run.run_id, status, error_text)
         except Exception:  # noqa: BLE001
@@ -344,7 +377,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         key = key_of(request)
         if not key:
             raise error(400, "invalid_request", "Send an Idempotency-Key header with every operation.")
-        if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize"):
+        if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare"):
             await call(admission, actor)
         out, plan = await call(engine.submit, cid, actor, body, key=key)
         await orch.launch(plan)

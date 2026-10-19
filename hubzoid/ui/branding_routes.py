@@ -242,16 +242,31 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
 
             manifest = svc().active_manifest()
             got = svc().active_theme()
-            light = (got[1] if got else theme_mod.resolve())["palettes"]["light"]
+            from ..chat import devices  # noqa: F401 - registers the devices namespace
+            from ..chat.config import service_for as config_service
+
+            palettes = (got[1] if got else theme_mod.resolve())["palettes"]
+            dev = config_service(hub_dir).active().document["devices"]
+            light = palettes["dark"] if config_service(hub_dir).active().document["presentation"]["appearance"][
+                "default_mode"] in ("dark", "oled") else palettes["light"]
             identity = (manifest or {}).get("identity") or {}
             assets = (manifest or {}).get("assets") or {}
             icons = [{"src": assets[k], "sizes": size, "type": "image/png"}
                      for k, size in (("icon_192", "192x192"), ("icon_512", "512x512")) if assets.get(k)]
-            return {"name": identity.get("name") or "Hubzoid", "short_name": identity.get("short_name") or "Hubzoid",
-                    "description": identity.get("description") or "", "start_url": "/", "scope": "/",
-                    "display": "standalone", "theme_color": light["canvas"], "background_color": light["canvas"],
-                    "icons": icons}
+            out = {"name": identity.get("name") or "Hubzoid", "short_name": identity.get("short_name") or "Hubzoid",
+                   "description": identity.get("description") or "", "start_url": dev["install"]["start_path"],
+                   "scope": "/", "display": dev["install"]["display"], "theme_color": light["canvas"],
+                   "background_color": light["canvas"], "icons": icons}
+            if dev["install"]["share_target"] and dev["offline"]["shell_cache"]:
+                out["share_target"] = {"action": "/", "method": "GET",
+                                       "params": {"title": "share_title", "text": "share_text", "url": "share_url"}}
+            return out
 
+        from ..chat import devices  # noqa: F401
+        from ..chat.config import service_for as config_service
+
+        if not config_service(hub_dir).active().document["devices"]["install"]["enabled"]:
+            raise hz.error(404, "not_found", "Installing this app is turned off for this deployment.")
         return Response(content=json.dumps(await asyncio.to_thread(build)),
                         media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 

@@ -155,7 +155,7 @@ PLANNED = {
     "runtime": "HUB-72", "organization": "HUB-73", "search": "HUB-73", "files": "HUB-74",
     "retrieval": "HUB-75", "feedback": "HUB-76", "helpers": "HUB-76",
     "notifications": "HUB-76", "voice": "HUB-77", "models": "HUB-78", "comparison": "HUB-78",
-    "sharing": "HUB-79", "spaces": "HUB-80",
+    "sharing": "HUB-79",
 }
 
 
@@ -172,6 +172,15 @@ def register_namespace(name: str, model: type[BaseModel], *, owner: str,
 #: namespace -> check(key inside the namespace, value, active document) -> clean value.
 #: Raises ConfigError (``policy_locked`` when the administrator manages it).
 _PERSONAL: dict[str, Any] = {}
+
+
+#: top-level personal key -> check(value, active document) -> clean value.
+_PERSONAL_KEYS: dict[str, Any] = {}
+
+
+def register_personal_key(key: str, check) -> None:
+    """A feature's own top-level personal setting (``send_key``)."""
+    _PERSONAL_KEYS[key] = check
 
 
 def register_personal(namespace: str, check) -> None:
@@ -561,6 +570,13 @@ class ChatConfigService:
                     continue
                 document = document or self.active().document
                 clean[key] = check(rest, value, document)
+                continue
+            if key in _PERSONAL_KEYS:
+                # A top-level personal key another feature registered ("send_key").
+                if value is None:
+                    continue
+                document = document or self.active().document
+                clean[key] = _PERSONAL_KEYS[key](value, document)
                 continue
             if key not in ("mode", "density", "text_scale", "timezone"):
                 raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",

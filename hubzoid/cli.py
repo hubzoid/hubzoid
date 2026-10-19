@@ -3035,12 +3035,18 @@ _chat_sharing_cli.register(chat_app)
 from .chat import organization_cli as _chat_organization_cli  # noqa: E402
 
 _chat_organization_cli.register(chat_app)
+from .chat import devices_cli as _chat_devices_cli  # noqa: E402
+
+_chat_devices_cli.register(chat_app)
 from .ui.branding_cli import branding_app  # noqa: E402
 from .admin.cli import register as _register_admin_cli  # noqa: E402
 from .parity.cli import parity_app  # noqa: E402
 
 _register_admin_cli(admin_app)
 from .migrate_openwebui import migrate_app  # noqa: E402
+from .migration_readiness import register as _register_readiness  # noqa: E402
+
+_register_readiness(migrate_app)
 
 app.add_typer(
     parity_app,
@@ -3060,6 +3066,23 @@ app.add_typer(
     help="Chat settings, theme and personal preferences.",
     rich_help_panel="Commands",
 )
+from .chat.files_cli import artifacts_app as _artifacts_app, files_app as _files_app  # noqa: E402
+
+app.add_typer(_files_app, name="files", help="Chat files: upload, reuse, download, delete, storage doctor.",
+              rich_help_panel="Commands")
+app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversations and their versions.",
+              rich_help_panel="Commands")
+from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
+from .chat.models_cli import models_app as _models_app  # noqa: E402
+from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
+
+app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
+              rich_help_panel="Commands")
+
+app.add_typer(_models_app, name="models", help="Models people may pick, and presets.", rich_help_panel="Commands")
+
+app.add_typer(_knowledge_app, name="knowledge", help="Your sources: collections, sync, query, citations, safe fetch.",
+              rich_help_panel="Commands")
 app.add_typer(
     admin_app,
     name="admin",

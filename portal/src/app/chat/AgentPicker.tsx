@@ -42,11 +42,11 @@ export function AgentSwitcher({ agent, agents, open, onOpenChange, onPick, child
         <button
           type="button"
           aria-label={t.agents.switchLabel(displayName(agent.name))}
-          className="-ml-1.5 flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
+          className="hz-hubpick"
           data-testid="agent-switcher"
         >
           {children}
-          <ChevronDown size={16} aria-hidden className="flex-none text-mute" />
+          <ChevronDown size={14} aria-hidden className="flex-none text-mute" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -54,7 +54,7 @@ export function AgentSwitcher({ agent, agents, open, onOpenChange, onPick, child
           align="start"
           sideOffset={6}
           collisionPadding={8}
-          className="hz-menu z-[60] w-[min(400px,calc(100vw-16px))] !p-0 shadow-lg"
+          className="hz-menu z-[60] w-[min(340px,calc(100vw-16px))] !p-0"
           onOpenAutoFocus={(e) => {
             // The search box takes focus, not the first row.
             e.preventDefault();
@@ -160,10 +160,10 @@ function AgentMenu({ agent, agents, onPick }: { agent: Agent; agents: Agent[]; o
                       onClick={() => onPick(a)}
                       className={cx("flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5", i === active && "bg-hover")}
                     >
-                      <AgentAvatar name={a.name} src={a.avatar_url} size={26} />
+                      <AgentAvatar name={a.name} src={a.avatar_url} size={22} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[14px] font-medium text-ink">{displayName(a.name)}</span>
-                        {a.description && <span className="block truncate text-[12.5px] leading-snug text-mute">{a.description}</span>}
+                        <span className="block truncate text-[13px] font-medium text-ink">{displayName(a.name)}</span>
+                        {a.description && <span className="block truncate text-[11.5px] leading-snug text-mute">{a.description}</span>}
                       </span>
                       {selected && <Check size={15} aria-hidden className="flex-none text-accent-text" />}
                     </li>
