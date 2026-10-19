@@ -1,4 +1,4 @@
-"""Sandboxes and their read stamps. Revision op_0032.
+"""Sandboxes and their read stamps. Revision op_0052.
 
 * ``hz_sandboxes``: one row per sandbox Hubzoid created, so it can be found
   again after a restart, reported lost when it disappeared, and deleted once.
@@ -16,8 +16,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "op_0032"
-down_revision = "op_0031"
+revision = "op_0052"
+down_revision = "op_0051"
 branch_labels = None
 depends_on = None
 
