@@ -155,7 +155,7 @@ def _post_part(conn: Connection, thread: dict, origin: Origin, out: Outbound, ke
 
     recovery = "reconcile" if adapter.recovery == "reconcile" else "escalate"
     arguments = {"kind": out.kind, "text": out.text, "part": out.part, "parts": out.parts,
-                 "marker": out.marker, "key": key, "ref": ref}
+                 "marker": out.marker, "op_key": f"{key}:{out.part}"}
     target = {"channel": conn.id, "thread": thread["id"], **({"ref": ref} if ref else {})}
     inside = _in_workflow()
     kwargs = dict(name=f"channel.{out.kind}", target=target, arguments=arguments, recovery=recovery,
@@ -223,42 +223,76 @@ def outbox(hub_dir, hub: str, cid: str, *, state: str | None = None, thread: str
 
 def resolve(conn: Connection, op_id: str, *, decision: str, actor: str, evidence=None,
             acknowledge_duplicate_risk: bool = False) -> dict:
-    """An administrator settles an uncertain reply: `check` asks the provider
-    for the part's marker (read-only), `done` records evidence that it was
-    posted, `retry` posts it again accepting a possible duplicate, `abandon`
-    gives up. Only a positive find or a person's evidence settles it as
-    posted."""
+    """Settle an uncertain reply. `check` asks the provider for the part's
+    marker (read-only), `done` records evidence that it was posted, `retry`
+    posts it again accepting a possible duplicate, `abandon` gives up. Only a
+    positive find or a person's evidence settles it as posted.
+
+    A reply the channel itself sent (an acknowledgement, a chat answer) is
+    settled by a channel administrator, who already holds channels.manage.
+    A reply a workflow sent belongs to its work item: only the person who
+    asked for that work decides, as for any of its operations, and a retry
+    resumes the workflow, which sends it under its own write mode."""
     from ..work_items import operations as ops
     from ..work_items import service as wi
     from ..work_items import store as wstore
+    from ..workflows.context import run_scope
+    from . import store as channel_store
 
     row = wstore.get_op(conn.hub_dir, op_id)
     target = (row or {}).get("target_json") or {}
     if row is None or row["hub"] != conn.hub or target.get("channel") != conn.id or \
             not str(row.get("name", "")).startswith("channel."):
         raise ChannelError("not_found", "No reply with that ID on this channel.", status=404)
-    args = ops.row_arguments(conn.hub_dir, row)
-    thread = __import__("hubzoid.channels.store", fromlist=["x"]).get_thread(conn.hub_dir, target.get("thread"))
+    thread = channel_store.get_thread(conn.hub_dir, target.get("thread"))
+    if thread is None:
+        raise ChannelError("not_found", "The thread of this reply is gone.", status=404)
     origin = Origin.from_json(thread["origin_json"])
-    # Replies outside a work item are requested by the connection itself, and
-    # the caller already holds channels.manage. The person is in the audit log.
-    who = row.get("requester") or f"channel:{conn.id}"
+    args = ops.row_arguments(conn.hub_dir, row)
+    channel_owned = not row.get("item_id")
     if decision == "check":
         if row["state"] not in ("ambiguous", "sending"):
             return {"id": op_id, "state": row["state"], "found": None}
         found = conn.adapter.find(conn, origin, args.get("marker") or "")
         if isinstance(found, Receipt):
             if row["state"] == "ambiguous":
+                who = row.get("requester") if channel_owned else actor
                 wi.resolve(conn.hub_dir, op_id, who, decision="done",
-                           evidence={"found_marker": args.get("marker"), "message_id": found.message_id})
+                           evidence={"found_marker": args.get("marker"), "message_id": found.message_id,
+                                     "checked_by": actor})
             return {"id": op_id, "state": "resolved_done", "found": True}
         return {"id": op_id, "state": row["state"], "found": False if found is False else None,
                 "message": "Not found. That does not prove it was not posted, so it stays uncertain."}
-    out = wi.resolve(conn.hub_dir, op_id, who, decision=decision, evidence=evidence,
+    if not channel_owned:
+        out = wi.resolve(conn.hub_dir, op_id, actor, decision=decision, evidence=evidence,
+                         acknowledge_duplicate_risk=acknowledge_duplicate_risk)
+        return {"id": op_id, "state": (out.get("operation") or {}).get("state"), "work_item": True}
+    out = wi.resolve(conn.hub_dir, op_id, row.get("requester") or f"channel:{conn.id}", decision=decision,
+                     evidence={**(evidence or {}), "decided_by": actor} if decision == "done" else evidence,
                      acknowledge_duplicate_risk=acknowledge_duplicate_risk)
-    if decision == "retry":
-        part = Outbound(kind=args["kind"], text=args["text"], part=int(args["part"]), parts=int(args["parts"]),
-                        marker=args["marker"])
-        result = _post_part(conn, thread, origin, part, args["key"], args.get("ref"))
-        return {"id": op_id, "state": result["state"], "retried": True}
-    return {"id": op_id, "state": out.get("state") if isinstance(out, dict) else decision}
+    if decision != "retry":
+        return {"id": op_id, "state": (out.get("operation") or {}).get("state")}
+    # Send it again as the same recorded operation: same name, target and key.
+    part = Outbound(kind=args["kind"], text=args["text"], part=int(args["part"]), parts=int(args["parts"]),
+                    marker=args["marker"])
+
+    def dispatch(a: dict) -> dict:
+        receipt = conn.adapter.reply(conn, origin, part)
+        return {"message_id": receipt.message_id, **(receipt.data or {})}
+
+    with run_scope(hub=conn.hub, workflow=f"channel:{conn.id}", hub_dir=conn.hub_dir, engine=None,
+                   subject=f"channel:{conn.id}", event={"id": f"thread:{thread['id']}"}):
+        try:
+            def reconcile(a: dict):
+                found = conn.adapter.find(conn, origin, part.marker)
+                if isinstance(found, Receipt):
+                    return ops.Reconciled(ops.APPLIED, result={"message_id": found.message_id})
+                return ops.Reconciled(ops.UNKNOWN)
+
+            ops.run(name=row["name"], target=target, arguments=args, recovery=row["recovery"], dispatch=dispatch,
+                    reconcile=reconcile if row["recovery"] == "reconcile" else None, key=args["op_key"],
+                    channel=conn.id)
+            state = "succeeded"
+        except ops.OperationFailed as exc:
+            state = "ambiguous" if exc.code == "operation_ambiguous" else "failed"
+    return {"id": op_id, "state": state, "retried": True}

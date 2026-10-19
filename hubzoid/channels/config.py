@@ -78,7 +78,7 @@ class Validation:
     def to_json(self) -> dict:
         out: dict[str, Any] = {"valid": self.valid, "errors": self.errors, "warnings": self.warnings,
                                "network_writes": False}
-        if self.config is not None:
+        if self.config is not None and self.settings is not None:
             adapter = registry.get(self.config.provider)
             out["normalized"] = normalized(self.config, self.settings)
             out["capabilities"] = {"provider": adapter.provider, "title": adapter.title or adapter.provider,

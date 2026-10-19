@@ -105,6 +105,19 @@ def admit(conn: Connection, verified: Verified, events: list[InboundEvent], *, r
                     duplicate = True
                     rows.append(existing)
                 dups.append(existing is not None)
+            prior = c.execute(text("SELECT body_digest FROM hz_channel_deliveries WHERE hub=:h AND connection_id=:c "
+                                   "AND delivery_id=:d LIMIT 1"),
+                              {"h": hub, "c": conn.id, "d": verified.delivery_id}).first()
+            if prior is not None and prior[0] != body_digest:
+                # The same delivery id with different bytes: keep the evidence once, run none of it.
+                n = c.execute(text("SELECT COUNT(*) FROM hz_channel_deliveries WHERE hub=:h AND connection_id=:c "
+                                   "AND delivery_id LIKE :d"),
+                              {"h": hub, "c": conn.id, "d": f"{verified.delivery_id}#conflict-%"}).scalar() or 0
+                row = store.insert_delivery(
+                    c, hub=hub, connection_id=conn.id, delivery_id=f"{verified.delivery_id}#conflict-{n + 1}",
+                    event_index=0, body_digest=body_digest, kind="conflict", status="quarantined",
+                    reason="delivery_conflict", verification=verified.method)
+                return Admitted(verified.delivery_id, "quarantined", [row], False)
             backlog = _backlog(c, hub, conn.id)
             for index, event in enumerate(events):
                 row, dup = _admit_one(c, conn, verified, event, index, body_digest, backlog)

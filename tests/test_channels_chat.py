@@ -35,9 +35,11 @@ def hub(tmp_path, monkeypatch, fake):
                                                  ",ben@example.org,support\n")
     from hubzoid.auth import users
 
-    for email in ("ana@example.org", "ben@example.org"):
-        if users.find_by_email(hub, email) is None:
-            users.create(hub, email=email, name=email.split("@")[0])
+    from chat_helpers import PEOPLE
+
+    for person in PEOPLE.values():   # the same ids the chat app's test sign-in uses
+        if users.find_by_email(hub, person.email) is None:
+            users.create(hub, email=person.email, name=person.name, id=person.id)
     data = config.load_text(hub, config.render({
         "version": 1, "id": "team", "provider": "fake", "enabled": True, "agent": "main",
         "allowed_groups": ["support"], "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}})).data
@@ -153,5 +155,32 @@ def test_finished_reply_not_posted_before_a_restart_is_posted_once(hub, fake, mo
     with TestClient(build_app()):
         wait_for(lambda: results(fake))
     with TestClient(build_app()):
+        time.sleep(2.0)
+    assert len(results(fake)) == 1
+
+
+def test_own_chat_app_message_is_not_posted_to_the_thread(hub, fake, monkeypatch):
+    """The person opens the thread's conversation in the chat app and asks
+    something there: that answer stays in the chat app."""
+    import uuid
+
+    from chat_helpers import as_people, who
+
+    as_people(monkeypatch)
+    with TestClient(build_app()) as client:
+        post(client, hub, {"id": "e1", "thread": "t1", "user": "U1", "text": "From Slack"})
+        wait_for(lambda: len(results(fake)) == 1)
+        row = store.list_deliveries(hub, config.hub_of(hub), "team")["items"][0]
+        conv = row["route_json"]["conversation_id"]
+        branches = client.get(f"/api/conversations/{conv}/branches", headers=who("ana")).json()["items"]
+        b = branches[0]
+        r = client.post(f"/api/conversations/{conv}/operations",
+                        headers={**who("ana"), "Idempotency-Key": str(uuid.uuid4())},
+                        json={"kind": "send", "branch_id": b["id"], "expected_revision": b["revision"],
+                              "parent_id": b["head_id"], "content": [{"type": "text", "text": "Private question"}]})
+        assert r.status_code == 202, r.text
+        run_id = r.json()["run_id"]
+        wait_for(lambda: client.get(f"/api/chat/runs/{run_id}", headers=who("ana")).json()["status"]
+                 in ("complete", "failed", "stopped"))
         time.sleep(2.0)
     assert len(results(fake)) == 1

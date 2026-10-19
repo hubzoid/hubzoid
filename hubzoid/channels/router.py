@@ -12,11 +12,17 @@ claimed (``accepted`` to ``routing``), checked and handed to exactly one place:
 * **Workflow connections** start a durable work item keyed by the triggering
   event, or pass a follow-up to the thread's active item.
 
-Finished work comes back the same way: when a chat run ends, its reply is
-posted to the origin under a key derived from the message, and when a work
-item ends, its result or failure is. Both are recorded outside writes
-(``replies``), so a crash between "done" and "posted" is found by the sweep
-on the next start and posted once.
+Finished work comes back the same way, driven by the deliveries themselves:
+a routed delivery stays "owed a reply" until the run or work item it started
+has finished and its answer is posted. Only runs a channel delivery started
+are posted, so a person's own branch in the chat app stays private. Each
+post is a recorded outside write (``replies``) under a key derived from the
+run or work item, so the pass can repeat after a crash or a rate limit and
+posts each part once. It stops at a part whose outcome is unknown.
+
+One person's request is active in a thread at a time, across workers: a
+claim on the thread row, taken in one statement and released when their
+request finishes.
 
 The identity rules: a person must have an account link set by an
 administrator, an active account with access to this hub, and, when the
@@ -87,14 +93,6 @@ def kick(hub_dir=None) -> None:
         pass
 
 
-def run_ended(**kw) -> None:
-    """The chat engine's run-end hook (called in its thread). Records that a
-    reply may be due and wakes the loop. Never raises into the engine."""
-    with _state.lock:
-        _state.results.append(kw)
-    kick()
-
-
 async def start(app, hub_dir) -> None:
     """Start routing for this bridge: the loop and each enabled connection's
     long-lived transport. Called from the bridge lifespan."""
@@ -111,14 +109,9 @@ async def start(app, hub_dir) -> None:
                     previous(**kw)
                 except Exception:  # noqa: BLE001 - another feature's hook never blocks ours
                     log.warning("channels: an earlier run-end hook failed", exc_info=True)
-            run_ended(**kw)
+            kick()
 
         chat.engine.on_terminal = on_terminal
-    await asyncio.to_thread(_recover_stale, _state.hub_dir)
-    try:
-        await asyncio.to_thread(sweep_chat_results, _state.hub_dir)
-    except Exception:  # noqa: BLE001 - a sweep failure is retried on the next start
-        log.warning("channels: the reply sweep failed", exc_info=True)
     await reload_transports()
     _state.task = asyncio.create_task(_run())
     _state.event.set()
@@ -180,8 +173,10 @@ async def _run() -> None:
             pass
         _state.event.clear()
         try:
+            await asyncio.to_thread(_recover_stale, _state.hub_dir)
             await route_pending(_state.hub_dir, _state.app)
-            await deliver_results(_state.hub_dir, _state.app)
+            if await deliver_results(_state.hub_dir, _state.app):
+                kick()    # a finished request may free a waiting thread
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop keeps going
@@ -339,11 +334,10 @@ def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEven
                      "terms_required" if code == "terms_required" else "hub_access_denied")
     convs = dict(thread.get("conversations_json") or {})
     mine = convs.get(person.id)
-    for account, cid in convs.items():
-        if account != person.id and conversation_busy(engine, cid):
-            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting",
-                                  reason="thread_busy")
-            return "waiting", None
+    others_busy = any(account != person.id and conversation_busy(engine, cid) for account, cid in convs.items())
+    if others_busy or not store.claim_thread(hub_dir, thread["id"], person.email):
+        store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting", reason="thread_busy")
+        return "waiting", None
     first = mine is None
     if first:
         mine = _open_conversation(hub_dir, conn, thread, actor, chat)
@@ -353,7 +347,8 @@ def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEven
                                key=f"channel:{row['id']}")
     body = out.body if isinstance(out.body, dict) else {}
     _finish(hub_dir, row["id"], "routed", None, target="chat", conversation_id=mine, account=person.email,
-            dispatched=bool(body.get("dispatched")), operation_id=body.get("operation_id"))
+            dispatched=bool(body.get("dispatched")), run_id=body.get("run_id"),
+            queue_item=(body.get("item") or {}).get("id"))
     if event.trigger and conn.config.subscriptions == "on_accept" and not thread.get("subscribed"):
         store.update_thread(hub_dir, thread["id"], subscribed=1, requester=thread.get("requester") or person.email)
     if not out.replayed:
@@ -479,6 +474,13 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
         return _deny(hub_dir, conn, row, thread, event, reason)
     if person is not None and not unattended and not _groups_ok(conn, person.email):
         return _deny(hub_dir, conn, row, thread, event, "group_not_allowed")
+    if person is not None and not unattended:
+        denied = _hub_access(hub_dir, person.email)
+        if denied == "hub_access_denied":
+            return _deny(hub_dir, conn, row, thread, event, denied)
+        if denied:
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
     requester = person.email if person is not None and not unattended else f"workflow:{conn.config.workflow}"
     active = thread.get("work_item_id")
     if active:
@@ -488,11 +490,14 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
                 wi.message(hub_dir, active, person.email, event.text or "(no text)",
                            client_message_id=row["id"])
                 _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=active,
-                        follow_up=True)
+                        follow_up=True, replied="follow_up")
                 return "routed", None
             store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting",
                                   reason="thread_busy")
             return "waiting", None
+    if not store.claim_thread(hub_dir, thread["id"], requester):
+        store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting", reason="thread_busy")
+        return "waiting", None
     origin = {"surface": "channel", "channel": conn.id, "provider": conn.provider, "thread_id": thread["id"],
               "acts_as": requester,
               "requested_by": event.actor.to_json() if event.actor else None}
@@ -514,7 +519,7 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     store.update_thread(hub_dir, thread["id"], work_item_id=item["id"],
                         subscribed=1 if conn.config.subscriptions == "on_accept" else thread.get("subscribed", 0),
                         requester=thread.get("requester") or requester)
-    _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=item["id"])
+    _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=item["id"], account=requester)
     if created:
         _acknowledge(conn, thread, event, row)
     return "routed", None
@@ -522,95 +527,143 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
 
 # -- results back to the origin ---------------------------------------------------------------
 
+#: how long a routed delivery is watched for its reply
+REPLY_WINDOW_SECONDS = 7 * 24 * 3600
+
+
 async def deliver_results(hub_dir, app=None) -> int:
-    """Post replies that are due: chat runs that ended, and channel work items
-    that finished. Each post is keyed, so doing this twice posts once."""
+    """Post the replies routed deliveries still owe. Returns how many
+    deliveries finished (posted, or settled as failed or uncertain)."""
     hub_dir = Path(hub_dir)
-    with _state.lock:
-        ended, _state.results = _state.results, []
-    n = 0
-    for kw in ended:
+    rows = await asyncio.to_thread(store.unreplied, hub_dir, config_lib.hub_of(hub_dir),
+                                   since=time.time() - REPLY_WINDOW_SECONDS)
+    done = 0
+    for row in rows:
         try:
-            if await asyncio.to_thread(_post_chat_result, hub_dir, app, kw["conversation_id"],
-                                       kw["message_id"], kw.get("status")):
-                n += 1
-        except Exception:  # noqa: BLE001
-            log.exception("channels: posting a reply failed")
-    n += await asyncio.to_thread(_post_work_item_results, hub_dir)
-    if ended:
-        kick()   # a finished reply may free a waiting thread
-    return n
+            if await asyncio.to_thread(_reply_for, hub_dir, app, row):
+                done += 1
+        except Exception:  # noqa: BLE001 - the next pass tries again
+            log.exception("channels: posting the reply for delivery %s failed", row["id"])
+    return done
 
 
-def _post_chat_result(hub_dir: Path, app, conversation_id: str, message_id: str, status: str | None) -> bool:
-    thread = store.thread_by_conversation(hub_dir, config_lib.hub_of(hub_dir), conversation_id)
+def _settle_reply(hub_dir: Path, row: dict, outcome: str, thread: dict | None, account: str | None) -> bool:
+    _finish(hub_dir, row["id"], "routed", None, replied=outcome)
+    if thread is not None and account:
+        store.release_thread(hub_dir, thread["id"], account)
+    return True
+
+
+def _outcome(results: list[dict]) -> str | None:
+    """`posted`, `failed` or `uncertain` once the reply is settled; None to try
+    again on the next pass (a rate limit, a refusal before sending)."""
+    if not results:
+        return "posted"
+    last = results[-1]
+    if replies.delivered(results):
+        return "posted"
+    if last["state"] == "ambiguous":
+        return "uncertain"
+    if last["state"] == "failed" and last.get("code") in ("not_sent", "operation_failed_before_send"):
+        return None
+    if last["state"] == "waiting":
+        return None
+    return "failed"
+
+
+def _run_of(engine_db, row: dict) -> dict | None:
+    """The chat run a delivery started: directly, or once its queued message
+    was dispatched."""
+    import sqlalchemy as sa
+
+    from ..chat import graph as g
+
+    route = row.get("route_json") or {}
+    run_id = route.get("run_id")
+    with engine_db.connect() as c:
+        if not run_id and route.get("queue_item"):
+            run_id = c.execute(sa.select(g.queue.c.dispatched_run_id).where(
+                g.queue.c.id == route["queue_item"])).scalar()
+        if not run_id:
+            return None
+        r = c.execute(sa.select(g.runs.c.id, g.runs.c.message_id, g.runs.c.status).where(
+            g.runs.c.id == run_id)).first()
+    return {"id": r[0], "message_id": r[1], "status": r[2]} if r else None
+
+
+TERMINAL_RUNS = {"complete": "complete", "stopped": "stopped", "interrupted": "error", "failed": "error",
+                 "error": "error"}
+
+
+def _reply_for(hub_dir: Path, app, row: dict) -> bool:
+    route = row.get("route_json") or {}
+    thread = store.get_thread(hub_dir, row["thread_id"]) if row.get("thread_id") else None
     if thread is None:
+        return _settle_reply(hub_dir, row, "no_thread", None, None)
+    try:
+        conn = config_lib.active(hub_dir, thread["connection_id"])
+    except ChannelError:
         return False
-    conn = config_lib.active(hub_dir, thread["connection_id"])
-    chat = getattr(getattr(app, "state", None), "chat", None) if app is not None else None
-    msg = chat.store.get_message(message_id) if chat is not None else _message(hub_dir, message_id)
-    if msg is None:
-        return False
-    text_out = (msg.get("text") or "").strip()
-    state = status or msg.get("status")
-    if state == "complete" and text_out:
-        results = replies.post(conn, thread, kind="result", text=text_out, key=f"result:{message_id}",
-                               ref=message_id)
-    elif state in ("stopped",):
-        results = replies.post(conn, thread, kind="notice", text="Stopped before finishing.",
-                               key=f"result:{message_id}", ref=message_id)
-    else:
-        short = message_id[-8:]
-        results = replies.post(conn, thread, kind="error",
-                               text=f"I could not finish this request (reply {short}). Try again, or ask an "
-                                    "administrator to check the run in Hubzoid.", key=f"result:{message_id}",
-                               ref=message_id)
-    return replies.delivered(results)
+    if route.get("target") == "chat":
+        return _chat_reply(hub_dir, app, conn, thread, row)
+    if route.get("target") == "work_item":
+        return _work_item_reply(hub_dir, conn, thread, row)
+    return _settle_reply(hub_dir, row, "none", thread, route.get("account"))
 
 
-def _message(hub_dir: Path, message_id: str) -> dict | None:
+def _chat_reply(hub_dir: Path, app, conn, thread: dict, row: dict) -> bool:
     import sqlalchemy as sa
 
     from ..chat.store import messages
 
-    with store.engine(hub_dir).connect() as c:
-        row = c.execute(sa.select(messages.c.text, messages.c.status).where(messages.c.id == message_id)).first()
-    return {"text": row[0], "status": row[1]} if row else None
+    chat = getattr(getattr(app, "state", None), "chat", None) if app is not None else None
+    db = chat.engine.engine if chat is not None else store.engine(hub_dir)
+    run = _run_of(db, row)
+    if run is None or run["status"] not in TERMINAL_RUNS:
+        return False      # queued or still running
+    with db.connect() as c:
+        msg = c.execute(sa.select(messages.c.text, messages.c.status).where(messages.c.id == run["message_id"])).first()
+    text_out = ((msg[0] if msg else "") or "").strip()
+    state = TERMINAL_RUNS[run["status"]]
+    ref = f"run:{run['id']}"
+    if state == "complete" and text_out:
+        results = replies.post(conn, thread, kind="result", text=text_out, key=f"result:{run['id']}", ref=ref)
+    elif state == "stopped":
+        results = replies.post(conn, thread, kind="notice", text="Stopped before finishing.",
+                               key=f"result:{run['id']}", ref=ref)
+    else:
+        results = replies.post(conn, thread, kind="error",
+                               text=f"I could not finish this request (reply {run['message_id'][-8:]}). Try again, "
+                                    "or ask an administrator to check the run in Hubzoid.",
+                               key=f"result:{run['id']}", ref=ref)
+    outcome = _outcome(results)
+    if outcome is None:
+        return False
+    account = (row.get("route_json") or {}).get("account")
+    convs = thread.get("conversations_json") or {}
+    busy = chat is not None and any(conversation_busy(chat.engine, cid) for cid in convs.values())
+    return _settle_reply(hub_dir, row, outcome, thread if not busy else None, account)
 
 
-def _post_work_item_results(hub_dir: Path) -> int:
-    """Threads whose work item finished and whose final reply is not recorded."""
-    import json
+def _work_item_reply(hub_dir: Path, conn, thread: dict, row: dict) -> bool:
+    from ..work_items import store as wstore
 
-    hub = config_lib.hub_of(hub_dir)
-    with store.engine(hub_dir).connect() as c:
-        rows = c.execute(text(
-            "SELECT t.id AS tid, w.id AS wid, w.state AS state, w.result_json AS result_json, w.error AS error "
-            "FROM hz_channel_threads t JOIN hz_work_items w ON w.id = t.work_item_id WHERE t.hub=:h AND "
-            "w.state IN ('completed','stopped','failed','cancelled')"), {"h": hub}).mappings().all()
-        posted = {json.loads(r[0]).get("ref") for r in c.execute(text(
-            "SELECT target_json FROM hz_operations WHERE hub=:h AND name LIKE 'channel.%' AND "
-            "target_json LIKE '%item:%'"), {"h": hub}).all()}
-    n = 0
-    for r in rows:
-        ref = f"item:{r['wid']}"
-        if ref in posted:
-            continue
-        thread = store.get_thread(hub_dir, r["tid"])
-        try:
-            conn = config_lib.active(hub_dir, thread["connection_id"])
-        except ChannelError:
-            continue
-        result = json.loads(r["result_json"]) if r["result_json"] else None
-        body = _final_text(r["state"], result, r["error"], r["wid"])
-        if body is None:
-            _record_final(hub_dir, conn, thread, ref)
-            continue
-        res = replies.post(conn, thread, kind="result" if r["state"] == "completed" else "error",
-                           text=body, key=f"final:{ref}", ref=ref)
-        if replies.delivered(res):
-            n += 1
-    return n
+    route = row.get("route_json") or {}
+    item = wstore.get_item(hub_dir, route.get("work_item_id")) if route.get("work_item_id") else None
+    if item is None:
+        return _settle_reply(hub_dir, row, "no_item", thread, route.get("account"))
+    if item["state"] not in wstore.TERMINAL:
+        return False
+    result = (item.get("result_json") or {}).get("result") if isinstance(item.get("result_json"), dict) else None
+    body = _final_text(item["state"], result, item.get("error"), item["id"])
+    if body is None:
+        return _settle_reply(hub_dir, row, "posted_by_workflow", thread, route.get("account"))
+    results = replies.post(conn, thread, kind="result" if item["state"] == "completed" else "error", text=body,
+                           key=f"final:item:{item['id']}", ref=f"item:{item['id']}")
+    outcome = _outcome(results)
+    if outcome is None:
+        return False
+    return _settle_reply(hub_dir, row, outcome, thread, route.get("account"))
 
 
 def _final_text(state: str, result, error: str | None, item_id: str) -> str | None:
@@ -632,20 +685,6 @@ def _final_text(state: str, result, error: str | None, item_id: str) -> str | No
     return f"This work could not finish (work {short}). An administrator can see why in Hubzoid."
 
 
-def _record_final(hub_dir: Path, conn, thread: dict, ref: str) -> None:
-    """The workflow already answered: record that, so the sweep stops."""
-    from ..work_items import operations as ops
-    from ..workflows.context import run_scope
-
-    with run_scope(hub=conn.hub, workflow=f"channel:{conn.id}", hub_dir=hub_dir, engine=None,
-                   subject=f"channel:{conn.id}", event={"id": f"thread:{thread['id']}"}):
-        try:
-            ops.run(name="channel.final", target={"channel": conn.id, "thread": thread["id"], "ref": ref},
-                    arguments={"recorded": True}, recovery="idempotent", dispatch=lambda a: {"recorded": True})
-        except Exception:  # noqa: BLE001
-            log.warning("channels: could not record the final reply of %s", ref, exc_info=True)
-
-
 # -- recovery ----------------------------------------------------------------------------------
 
 def _recover_stale(hub_dir: Path) -> int:
@@ -654,39 +693,3 @@ def _recover_stale(hub_dir: Path) -> int:
     with store.engine(hub_dir).begin() as c:
         return c.execute(text("UPDATE hz_channel_deliveries SET status='accepted', updated=:t WHERE "
                               "status='routing' AND updated < :c"), {"t": time.time(), "c": cutoff}).rowcount
-
-
-def sweep_chat_results(hub_dir, *, since_seconds: float = 7 * 24 * 3600) -> int:
-    """After a restart: replies in channel conversations that finished but were
-    never posted. Queued as if their run had just ended."""
-    import json
-
-    import sqlalchemy as sa
-
-    from ..chat.store import messages
-
-    hub_dir = Path(hub_dir)
-    hub = config_lib.hub_of(hub_dir)
-    since = time.time() - since_seconds
-    with store.engine(hub_dir).connect() as c:
-        threads = c.execute(text("SELECT conversations_json FROM hz_channel_threads WHERE hub=:h AND updated > :s "
-                                 "AND conversations_json != '{}'"), {"h": hub, "s": since}).all()
-        convs = [cid for (cj,) in threads for cid in json.loads(cj).values()]
-        if not convs:
-            return 0
-        msgs = c.execute(sa.select(messages.c.id, messages.c.conversation_id, messages.c.status).where(
-            messages.c.role == "assistant", messages.c.status.in_(("complete", "error", "stopped")),
-            messages.c.updated_at > since, messages.c.conversation_id.in_(convs))).all()
-        posted = {json.loads(r[0]).get("ref") for r in c.execute(text(
-            "SELECT target_json FROM hz_operations WHERE hub=:h AND name LIKE 'channel.%' AND "
-            "target_json LIKE '%\"ref\"%'"), {"h": hub}).all()}
-    n = 0
-    for mid, cid, status in msgs:
-        if mid in posted:
-            continue
-        with _state.lock:
-            _state.results.append({"conversation_id": cid, "message_id": mid, "status": status})
-        n += 1
-    if n:
-        kick()
-    return n

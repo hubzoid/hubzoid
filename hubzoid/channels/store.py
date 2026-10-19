@@ -183,6 +183,27 @@ def list_threads(hub_dir, hub: str, cid: str, *, limit: int = 50, cursor: str | 
     return {"items": items, "next_cursor": nxt}
 
 
+#: a claim not renewed for this long is taken to be from a worker that stopped
+CLAIM_SECONDS = 30 * 60
+
+
+def claim_thread(hub_dir, tid: str, account: str) -> bool:
+    """Make `account` the thread's active person, unless someone else holds a
+    live claim. One statement, so two workers cannot both win."""
+    t = now()
+    with engine(hub_dir).begin() as c:
+        n = c.execute(text("UPDATE hz_channel_threads SET active_account=:a, active_until=:u, updated=:t WHERE id=:i "
+                           "AND (active_account IS NULL OR active_account=:a OR active_until < :t)"),
+                      {"a": account, "u": t + CLAIM_SECONDS, "t": t, "i": tid}).rowcount
+    return n > 0
+
+
+def release_thread(hub_dir, tid: str, account: str) -> None:
+    with engine(hub_dir).begin() as c:
+        c.execute(text("UPDATE hz_channel_threads SET active_account=NULL, active_until=NULL WHERE id=:i AND "
+                       "active_account=:a"), {"i": tid, "a": account})
+
+
 def thread_by_conversation(hub_dir, hub: str, conversation_id: str) -> dict | None:
     """The thread a native conversation mirrors, if any."""
     like = f'%"{conversation_id}"%'
@@ -290,6 +311,15 @@ def list_deliveries(hub_dir, hub: str, cid: str, *, status: str | None = None, t
     items = [_row(r, _DELIVERY_JSON) for r in rows[:limit]]
     nxt = f"{items[-1]['created']}|{items[-1]['id']}" if len(rows) > limit and items else None
     return {"items": items, "next_cursor": nxt}
+
+
+def unreplied(hub_dir, hub: str, *, since: float, limit: int = 200) -> list[dict]:
+    """Routed deliveries whose work may still owe the thread a reply."""
+    with engine(hub_dir).connect() as c:
+        rows = c.execute(text("SELECT * FROM hz_channel_deliveries WHERE hub=:h AND status='routed' AND created > :s "
+                              "AND route_json NOT LIKE '%\"replied\"%' ORDER BY created LIMIT :n"),
+                         {"h": hub, "s": since, "n": limit}).mappings().all()
+    return [_row(r, _DELIVERY_JSON) for r in rows]
 
 
 def open_deliveries(hub_dir, hub: str, *, cid: str | None = None, thread: str | None = None,

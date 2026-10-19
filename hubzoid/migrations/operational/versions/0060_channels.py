@@ -9,7 +9,9 @@ what those do not:
   ``channels/<id>.yaml`` file, with its digest and status.
 * ``hz_channel_threads``: one row per provider thread (a Slack thread, a GitHub
   issue, a Linear agent session, an email thread, a WhatsApp chat), with its
-  immutable origin coordinates and the work it is bound to.
+  immutable origin coordinates, the work it is bound to, and which person's
+  request is active in it (a claim with an expiry, so two workers never run
+  two people's requests in one thread at once).
 * ``hz_channel_deliveries``: one row per verified provider delivery and event,
   unique by the provider's delivery id and by the event's own key, so a repeat
   is recognised and a reused id with different bytes is quarantined.
@@ -58,6 +60,8 @@ def upgrade() -> None:
         sa.Column("conversations_json", sa.Text, nullable=False, server_default="{}"),
         sa.Column("work_item_id", sa.String(36)),
         sa.Column("requester", sa.String(320), nullable=False, server_default=""),
+        sa.Column("active_account", sa.String(320)),
+        sa.Column("active_until", sa.Float),
         sa.Column("last_event_at", sa.Float),
         sa.Column("revision", sa.Integer, nullable=False, server_default="1"),
         sa.Column("created", sa.Float, nullable=False),

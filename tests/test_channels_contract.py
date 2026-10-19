@@ -388,3 +388,46 @@ def test_mention_upgrades_an_earlier_unaddressed_copy_once(hub_dir):
     again = send(conn, ev(kind="mention"), delivery_id="d3")    # a retry of the mention
     assert again.events[0]["status"] == "duplicate"
     assert len(store.open_deliveries(hub_dir, "desk")) == 1
+
+
+def test_conflicting_delivery_admits_none_of_its_events(hub_dir):
+    conn = applied(hub_dir)
+    send(conn, ev(), delivery_id="d1")
+    out = send(conn, ev(), ev(eid="e2", thread="t2"), delivery_id="d1")   # same id, different bytes, an extra event
+    assert out.status == "quarantined"
+    assert [r["thread_id"] for r in store.open_deliveries(hub_dir, "desk")] != [] and \
+        len(store.open_deliveries(hub_dir, "desk")) == 1
+
+
+def test_validation_of_an_unknown_provider_returns_errors(hub_dir):
+    v = config.load_text(hub_dir, yaml_for(provider="nope"))
+    out = v.to_json()
+    assert out["valid"] is False and out["errors"][0]["code"] == "unknown_provider"
+
+
+def test_thread_claim_is_exclusive(hub_dir):
+    conn = applied(hub_dir)
+    thread = _thread(hub_dir, conn)
+    assert store.claim_thread(hub_dir, thread["id"], "ana@example.org")
+    assert store.claim_thread(hub_dir, thread["id"], "ana@example.org")     # the same person renews
+    assert not store.claim_thread(hub_dir, thread["id"], "ben@example.org")
+    store.release_thread(hub_dir, thread["id"], "ana@example.org")
+    assert store.claim_thread(hub_dir, thread["id"], "ben@example.org")
+
+
+def test_work_item_reply_cannot_be_settled_by_a_channel_admin(hub_dir, fake):
+    """A reply a workflow sent belongs to its work item's requester."""
+    from hubzoid.work_items import store as wstore
+
+    conn = applied(hub_dir)
+    thread = _thread(hub_dir, conn)
+    fake.lose_next = True
+    out = replies.post(conn, thread, kind="result", text="x", key="r1")
+    op = out[0]["operation_id"]
+    wstore.update_op(hub_dir, op, expected_revision=wstore.get_op(hub_dir, op)["revision"], item_id="item-1",
+                     requester="someone@example.org")
+    from hubzoid.work_items.errors import WorkItemError
+
+    with pytest.raises(WorkItemError) as exc:
+        replies.resolve(conn, op, decision="abandon", actor="admin@example.org")
+    assert exc.value.code == "resolver_not_allowed"
