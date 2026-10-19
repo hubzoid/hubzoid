@@ -191,3 +191,54 @@ def test_broken_frontmatter_is_explained_in_plain_words():
     problems = validate("AGENTS.md", "---\nname: a\ndescription: x\nbad line: : here\n  oops\n---\nBody.\n")
     assert problems and "settings block" in problems[0]["message"]
     assert "while scanning" not in problems[0]["message"] and "unicode string" not in problems[0]["message"]
+
+
+def test_a_rebuilt_runtime_opens_and_closes_in_the_lifespan_task(monkeypatch, tmp_path):
+    """Publishing rebuilds the chat runtime in one long-lived task; a replaced
+    runtime is closed there once nothing runs, and the original never is."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from hubzoid import runtime as runtime_lib
+    from hubzoid.chat import authoring_routes as ar
+
+    events = []
+
+    class Fake:
+        def __init__(self, n):
+            self.n = n
+
+        async def aopen(self):
+            events.append(("open", self.n, asyncio.current_task()))
+
+        async def aclose(self):
+            events.append(("close", self.n, asyncio.current_task()))
+
+    made = iter(range(1, 10))
+    monkeypatch.setattr(runtime_lib, "build", lambda hub: Fake(next(made)))
+    original = Fake(0)
+    ctx = SimpleNamespace(runtime=original, models=None)
+    running = {"busy": True}
+
+    async def main():
+        loop = asyncio.create_task(ar.runtime_reloader(ctx, tmp_path, original, lambda: running["busy"],
+                                                       idle_check=0.01))
+        await asyncio.sleep(0)
+        assert await ar._reload_runtime(ctx) is True and ctx.runtime.n == 1
+        assert await ar._reload_runtime(ctx) is True and ctx.runtime.n == 2
+        await asyncio.sleep(0.05)
+        assert not [e for e in events if e[0] == "close"]  # a reply is still running
+        running["busy"] = False
+        await asyncio.sleep(0.05)
+        assert [e[1] for e in events if e[0] == "close"] == [1]
+        loop.cancel()
+        try:
+            await loop
+        except asyncio.CancelledError:
+            pass
+        return loop
+
+    task = asyncio.run(main())
+    assert [e[1] for e in events if e[0] == "close"] == [1, 2]  # never the original
+    assert {e[2] for e in events} == {task}
+    assert ar._reload_runtime.__doc__ and asyncio.run(ar._reload_runtime(SimpleNamespace())) is False
