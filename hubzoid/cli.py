@@ -2081,6 +2081,7 @@ def test_hub(
         help="Attach a local file (repeatable). Staged into the 'cli-test' chat so "
              "the agent can read it with read_upload, or see it directly if it's an image.",
     ),
+    as_json: bool = typer.Option(False, "--json", help="Print the reply, tool calls and errors as JSON."),
 ) -> None:
     """Send one prompt to the hub's agent and print the response.
 
@@ -2131,6 +2132,40 @@ def test_hub(
     # ContextVars set here are visible inside asyncio.run(): the task it
     # creates copies the context at creation time, i.e. inside this block.
     scope = _request_ctx.chat_scope(_TEST_CHAT_ID) if files else nullcontext()
+    if as_json:
+        from . import run_events
+
+        async def _events() -> dict:
+            await rt.aopen()
+            out: dict = {"prompt": prompt, "reply": "", "tool_calls": [], "errors": []}
+            try:
+                stream = run_events.stream_items(rt, prompt)
+                try:
+                    async for item in stream:
+                        if isinstance(item, str):
+                            out["reply"] += item
+                        elif isinstance(item, run_events.ToolCall):
+                            out["tool_calls"].append({"id": item.id, "name": item.name, "ok": None})
+                        elif isinstance(item, run_events.ToolResult):
+                            for call in out["tool_calls"]:
+                                if call["id"] == getattr(item, "id", None):
+                                    call["ok"] = getattr(item, "ok", None)
+                        elif isinstance(item, run_events.Notice) and item.kind == "error":
+                            out["errors"].append(item.text)
+                finally:
+                    await run_events.aclose(stream)
+            except Exception as exc:  # noqa: BLE001
+                out["errors"].append(f"{type(exc).__name__}: {exc}")
+            finally:
+                await rt.aclose()
+            return out
+
+        with scope:
+            result = asyncio.run(_events())
+        print(json.dumps(result, indent=2, default=str))
+        if result["errors"]:
+            raise typer.Exit(1)
+        return
     with scope:
         text = asyncio.run(_go())
     console.print(f"[green]←[/green] {text}")
@@ -2300,6 +2335,7 @@ schedule_app = typer.Typer(
 @schedule_app.command("list")
 def schedule_list(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Print the list as JSON."),
 ) -> None:
     """List the hub's scheduled tasks, their cadence and next fire time."""
     from datetime import datetime
@@ -2312,6 +2348,20 @@ def schedule_list(
     now = datetime.now()
     from .workflows.observe import catalog
     workflows = catalog(hub)
+    if as_json:
+        out = {"workflows": workflows, "tasks": [], "problems": [str(p) for p in problems]}
+        for t in tasks:
+            nxt = None if t.is_webhook or not t.enabled else sch.next_fire_for(t, state, now)
+            entry = state.get(t.name)
+            out["tasks"].append({"name": t.name, "enabled": t.enabled, "schedule": t.schedule,
+                                 "on_webhook": t.on_webhook if t.is_webhook else None,
+                                 "next_fire": nxt.isoformat() if nxt else None,
+                                 "last_result": entry.get("last_result"), "last_fired": entry.get("last_fired_iso"),
+                                 "script": t.is_script, "model": t.model})
+        print(json.dumps(out, indent=2, default=str))
+        if problems:
+            raise typer.Exit(1)
+        return
     for w in workflows:
         ra = w["runs_as"]
         if ra["error"]:
@@ -2674,6 +2724,7 @@ def schedule_cancel(
 @schedule_app.command("status")
 def schedule_status(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Print the status as JSON."),
 ) -> None:
     """Show each task's recorded fire history (anchors, last result, last log)."""
     from . import scheduling as sch
@@ -2683,6 +2734,15 @@ def schedule_status(
     state = sch.ScheduleState(hub)
     from .workflows.observe import catalog, runs
     workflows = catalog(hub)
+    if as_json:
+        try:
+            recent, history_error = runs(hub, limit=20, trusted=True), None
+        except Exception as exc:  # noqa: BLE001
+            recent, history_error = None, str(exc)
+        print(json.dumps({"workflows": workflows, "runs": recent, "history_error": history_error,
+                          "tasks": {t.name: {"enabled": t.enabled, **state.get(t.name)} for t in tasks}},
+                         indent=2, default=str))
+        return
     for w in workflows:
         console.print(f"workflow {w['name']} · {w['state']} · next {w['next_run']} · missed {w['missed']}")
         if w['error']:
@@ -2726,16 +2786,23 @@ def schedule_redrive(
 
 
 @schedule_app.command("deliveries")
-def schedule_deliveries(hub: Path = typer.Argument(Path("."))) -> None:
+def schedule_deliveries(hub: Path = typer.Argument(Path(".")),
+                        as_json: bool = typer.Option(False, "--json", help="Print the deliveries as JSON.")) -> None:
     """Inspect event and alert delivery metadata without private payloads."""
     from sqlalchemy import text
     from .workflows.events import _engine
     hub = hub.resolve()
+    out: dict = {}
     with _engine(hub).connect() as conn:
         for table in ('hz_workflow_events', 'hz_workflow_alerts'):
             rows = conn.execute(text(f'SELECT id,state,attempt,error FROM {table} WHERE hub=:h ORDER BY created DESC LIMIT 50'), {'h':hub.name}).mappings()
-            for row in rows:
-                console.print(f"{row['id']} · {row['state']} · attempt {row['attempt']} · {row['error'] or ''}")
+            out[table.removeprefix("hz_workflow_")] = [dict(r) for r in rows]
+    if as_json:
+        print(json.dumps(out, indent=2, default=str))
+        return
+    for items in out.values():
+        for row in items:
+            console.print(f"{row['id']} · {row['state']} · attempt {row['attempt']} · {row['error'] or ''}")
 
 
 app.add_typer(
@@ -2823,12 +2890,16 @@ def access_check(
     subject: str = typer.Argument(..., help="Who to check."),
     hub: str = typer.Option(None, "--hub", help="Hub (Casbin domain). Default: the hub dir's name."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as JSON."),
 ) -> None:
     """Show every permission a subject effectively holds in a hub."""
     from .access import store_for
 
     domain = hub or hub_dir.resolve().name
     perms = sorted(store_for(hub_dir).permissions_for(subject, domain))
+    if as_json:
+        print(json.dumps({"subject": subject, "hub": domain, "permissions": perms}, indent=2))
+        return
     if not perms:
         console.print(f"[dim]{subject} has no access in {domain}[/dim]")
         return
@@ -2839,11 +2910,16 @@ def access_check(
 def access_list(
     hub: str = typer.Option(None, "--hub", help="Only this hub (Casbin domain)."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Print the grants as JSON."),
 ) -> None:
     """List all grants (subject · permission · hub)."""
     from .access import store_for
 
     rows = store_for(hub_dir).list_grants(hub)
+    if as_json:
+        print(json.dumps({"grants": [{"subject": s_, "hub": d_, "permission": p_} for s_, d_, p_ in rows]},
+                         indent=2))
+        return
     if not rows:
         console.print("[dim]no grants[/dim]")
         return
@@ -2946,10 +3022,69 @@ app.add_typer(
 # Accounts for the Hubzoid web app (hubzoid/auth/cli.py) and the move from an
 # Open WebUI install (hubzoid/migrate_openwebui.py). Each lives in its own module.
 from .auth.cli import admin_app  # noqa: E402
-from .migrate_openwebui import migrate_app  # noqa: E402
+from .chat.config_cli import chat_app  # noqa: E402
+from .chat import engine_cli as _chat_engine_cli  # noqa: E402
 from .secretstore.cli import secrets_app  # noqa: E402
 from .hubs.cli import hub_app  # noqa: E402
 
+_chat_engine_cli.register(chat_app)
+from .chat import feedback_cli as _chat_feedback_cli  # noqa: E402
+
+_chat_feedback_cli.register(chat_app)
+from .chat import sharing_cli as _chat_sharing_cli  # noqa: E402
+
+_chat_sharing_cli.register(chat_app)
+from .chat import organization_cli as _chat_organization_cli  # noqa: E402
+
+_chat_organization_cli.register(chat_app)
+from .chat import devices_cli as _chat_devices_cli  # noqa: E402
+
+_chat_devices_cli.register(chat_app)
+from .ui.branding_cli import branding_app  # noqa: E402
+from .admin.cli import register as _register_admin_cli  # noqa: E402
+from .parity.cli import parity_app  # noqa: E402
+
+_register_admin_cli(admin_app)
+from .migrate_openwebui import migrate_app  # noqa: E402
+from .migration_readiness import register as _register_readiness  # noqa: E402
+
+_register_readiness(migrate_app)
+
+app.add_typer(
+    parity_app,
+    name="parity",
+    help="The chat parity ledger: validate, coverage, candidate, review, freeze.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    branding_app,
+    name="branding",
+    help="Deployment branding: draft, preview, review, activate, roll back.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    chat_app,
+    name="chat",
+    help="Chat settings, theme and personal preferences.",
+    rich_help_panel="Commands",
+)
+from .chat.files_cli import artifacts_app as _artifacts_app, files_app as _files_app  # noqa: E402
+
+app.add_typer(_files_app, name="files", help="Chat files: upload, reuse, download, delete, storage doctor.",
+              rich_help_panel="Commands")
+app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversations and their versions.",
+              rich_help_panel="Commands")
+from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
+from .chat.models_cli import models_app as _models_app  # noqa: E402
+from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
+
+app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
+              rich_help_panel="Commands")
+
+app.add_typer(_models_app, name="models", help="Models people may pick, and presets.", rich_help_panel="Commands")
+
+app.add_typer(_knowledge_app, name="knowledge", help="Your sources: collections, sync, query, citations, safe fetch.",
+              rich_help_panel="Commands")
 app.add_typer(
     admin_app,
     name="admin",

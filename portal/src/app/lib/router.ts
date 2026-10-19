@@ -57,11 +57,18 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|auth(?:\/|$)|account(?:\/|$))/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$)/.test(path);
+}
+
+let leaveGuard: (() => boolean) | null = null;
+/** A page with unsaved changes can ask before the app moves elsewhere. */
+export function setLeaveGuard(fn: (() => boolean) | null) {
+  leaveGuard = fn;
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
-  if (!isAppPath(to.split("?")[0])) {
+  if (leaveGuard && !leaveGuard()) return;
+  if (!isAppPath(to.split(/[?#]/)[0])) {
     if (options.replace) location.replace(to);
     else location.assign(to);
     return;
@@ -93,9 +100,13 @@ export type Route =
   | { name: "new"; agent: string | null }
   | { name: "conversation"; id: string }
   | { name: "share"; id: string }
+  | { name: "brand-preview"; id: string }
   | { name: "signin"; redirect: string; error: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
+  | { name: "sources" }
+  | { name: "workspace" }
+  | { name: "settings"; section: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
 
@@ -111,12 +122,16 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
     return { name: "new", agent: search.get("agent") || search.get("models") || parts[1] || null };
   if (parts[0] === "c" && parts[1] && parts.length === 2) return { name: "conversation", id: parts[1] };
   if (parts[0] === "s" && parts[1] && parts.length === 2) return { name: "share", id: parts[1] };
+  if (parts[0] === "branding-preview" && parts[1] && parts.length === 2) return { name: "brand-preview", id: parts[1] };
   if (parts[0] === "auth") {
     if (parts.length === 1)
       return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error") };
     if (parts[1] === "set-password" || parts[1] === "reset-password")
       return { name: "set-password", token: search.get("token") };
   }
+  if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
+  if (parts[0] === "workspace" && parts.length === 1) return { name: "workspace" };
+  if (parts[0] === "settings" && parts.length === 1) return { name: "settings", section: search.get("section") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
     if (parts[1] === "connections" && parts.length === 2)

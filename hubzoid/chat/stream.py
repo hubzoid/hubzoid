@@ -104,6 +104,17 @@ class MessageBuilder:
         self._runtime_ids: dict[str, str] = {}          # runtime call id -> stream id
         self._used_ids: set[str] = set()
 
+    def seed(self, parts: list[dict]) -> None:
+        """Start from saved parts (continuing a stopped reply): they are kept
+        once, and new text goes into a new part after them."""
+        self.parts = copy.deepcopy(parts)
+        for part in self.parts:
+            pid = str(part.get("id") or "")
+            if pid[:1] in self._counts and pid[1:].isdigit():
+                self._counts[pid[:1]] = max(self._counts[pid[:1]], int(pid[1:]))
+            if pid:
+                self._used_ids.add(pid)
+
     # -- lifecycle ---------------------------------------------------------------
     def start(self) -> list[dict]:
         return [

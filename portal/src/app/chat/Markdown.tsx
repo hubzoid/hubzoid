@@ -1,8 +1,10 @@
 // Answer text: GitHub-flavoured markdown (tables, task lists, strikethrough),
-// Shiki-highlighted code with a copy button, download links for files the
-// agent wrote (/artifacts/<conversation>/<file>), and images: this site's own
-// at once, any other only when the person asks (images.ts).
-import { memo, useEffect, useState, type ComponentPropsWithoutRef } from "react";
+// maths (KaTeX), Mermaid diagrams once their block stops changing, Shiki-
+// highlighted code with copy and collapse, tables with Copy CSV, download links
+// for files the agent wrote (/artifacts/<conversation>/<file>), and images: this
+// site's own at once, any other only when the person asks (images.ts). Every
+// renderer is bundled here; nothing is fetched from another site.
+import { memo, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import {
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeComponents,
@@ -10,12 +12,16 @@ import {
   type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, Download, FileText, ImageIcon } from "lucide-react";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { Check, ChevronDown, Copy, Download, FileText, ImageIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { fileNameFromUrl } from "../lib/format";
 import { isAppPath } from "../lib/router";
 import { copyText } from "../components/ShareDialog";
 import { highlight, resolveLanguage } from "./highlight";
+import { CitationLink, remarkCitations } from "./citations";
 import { imageSource } from "./images";
 
 const ARTIFACT = /^(?:\/b\/[^/]+)?\/artifacts\/[^?#]+/;
@@ -30,7 +36,7 @@ export function isArtifactHref(href: string | undefined): boolean {
   }
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string | (() => string); label: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -42,7 +48,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       type="button"
       className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 font-sans text-xs text-mute hover:bg-hover hover:text-ink"
       onClick={async () => {
-        if (await copyText(text)) setCopied(true);
+        if (await copyText(typeof text === "function" ? text() : text)) setCopied(true);
       }}
       aria-label={copied ? t.copied : label}
     >
@@ -61,7 +67,66 @@ function CodeHeader({ language, code }: CodeHeaderProps) {
   );
 }
 
-function SyntaxHighlighter({ code, language }: SyntaxHighlighterProps) {
+const COLLAPSE_LINES = 40;
+const MERMAID_MAX = 100_000;
+
+/** A Mermaid diagram, drawn once its source has stopped changing (a block still
+ * streaming is shown as source), with strict security and no network loaders. */
+function Mermaid({ code }: { code: string }) {
+  const [svg, setSvg] = useState<{ code: string; svg: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (code.length > MERMAID_MAX) return;
+    let cancelled = false;
+    setFailed(false);
+    const timer = setTimeout(async () => {
+      try {
+        const { default: mermaid } = await import("mermaid");
+        const dark = document.documentElement.dataset.theme !== "light";
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default",
+          maxTextSize: MERMAID_MAX, maxEdges: 1000,
+          // The dark theme's edge labels sit below 4.5:1 contrast; a darker label background fixes it.
+          ...(dark ? { themeVariables: { edgeLabelBackground: "#262625" } } : {}) });
+        const id = `hz-mmd-${Math.random().toString(36).slice(2)}`;
+        const out = await mermaid.render(id, code);
+        if (!cancelled) setSvg({ code, svg: out.svg });
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [code]);
+  if (svg && svg.code === code)
+    return <div className="hz-diagram" role="img" aria-label={t.chat.diagram} dangerouslySetInnerHTML={{ __html: svg.svg }} />;
+  return (
+    <div className="hz-code-body">
+      {failed && <div className="hz-render-note">{t.chat.diagramFailed}</div>}
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+function SyntaxHighlighter(props: SyntaxHighlighterProps) {
+  const lines = props.code.split("\n").length;
+  const [open, setOpen] = useState(false);
+  if (props.language === "mermaid") return <Mermaid code={props.code} />;
+  if (lines <= COLLAPSE_LINES || open) return <Highlighted {...props} />;
+  return (
+    <div className="hz-code-collapsed">
+      <Highlighted {...props} />
+      <button type="button" className="hz-code-more" onClick={() => setOpen(true)}>
+        <ChevronDown size={13} aria-hidden /> {t.chat.moreLines(lines - COLLAPSE_LINES)}
+      </button>
+    </div>
+  );
+}
+
+function Highlighted({ code, language }: SyntaxHighlighterProps) {
   const [html, setHtml] = useState<{ code: string; html: string } | null>(null);
   const highlightable = !!resolveLanguage(language);
   useEffect(() => {
@@ -94,6 +159,7 @@ function SyntaxHighlighter({ code, language }: SyntaxHighlighterProps) {
 
 function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   delete (rest as { node?: unknown }).node;
+  if (href?.startsWith("#cite-")) return <CitationLink id={href.slice(6)} label={String(children)} />;
   if (isArtifactHref(href)) {
     const name = fileNameFromUrl(href!);
     // The agent's download footer reads "Download <file>"; the chip already says
@@ -129,12 +195,31 @@ function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { nod
   );
 }
 
+/** A spreadsheet-safe CSV of a rendered table: quoted cells, and a cell that
+ * starts like a formula (= + - @) is prefixed so it stays text. */
+export function tableCsv(rows: string[][]): string {
+  const cell = (v: string) => {
+    const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  return rows.map((r) => r.map(cell).join(",")).join("\r\n");
+}
+
 function Table(props: ComponentPropsWithoutRef<"table"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   void _node;
+  const ref = useRef<HTMLTableElement>(null);
+  const csv = () =>
+    tableCsv(Array.from(ref.current?.querySelectorAll("tr") ?? []).map((tr) =>
+      Array.from(tr.querySelectorAll("th,td")).map((c) => (c.textContent ?? "").trim())));
   return (
-    <div className="hz-table-wrap" tabIndex={0} role="region" aria-label={t.chat.table}>
-      <table {...rest} />
+    <div className="hz-table">
+      <div className="hz-table-tools">
+        <CopyButton text={csv} label={t.chat.copyCsv} />
+      </div>
+      <div className="hz-table-wrap" tabIndex={0} role="region" aria-label={t.chat.table}>
+        <table ref={ref} {...rest} />
+      </div>
     </div>
   );
 }
@@ -176,8 +261,20 @@ const components = memoizeComponents({
   SyntaxHighlighter,
 });
 
-const remarkPlugins = [remarkGfm];
+const remarkPlugins = [remarkGfm, remarkMath, remarkCitations];
+// KaTeX never runs commands that fetch or link (trust off), and shows a bad
+// formula as its source instead of failing the message.
+const rehypePlugins: NonNullable<ComponentPropsWithoutRef<typeof MarkdownTextPrimitive>["rehypePlugins"]> = [
+  [rehypeKatex, { throwOnError: false, strict: "ignore", trust: false, output: "htmlAndMathml" }],
+];
 
 export const MarkdownText = memo(function MarkdownText() {
-  return <MarkdownTextPrimitive className="hz-md" remarkPlugins={remarkPlugins} components={components} />;
+  return (
+    <MarkdownTextPrimitive
+      className="hz-md"
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      components={components}
+    />
+  );
 });

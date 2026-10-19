@@ -151,6 +151,12 @@ const step = (name) => {
     // The list reloads after each change, so look for the last write.
     const last = () => [...fx.state.calls].reverse().find((c) => c.method !== "GET");
 
+    step("With the web app on, the Console opens the same screen in the chat app's Settings");
+    await page.goto(`${ORIGIN}/portal/#/agents/sales/access`);
+    await page.waitForURL(/\/settings#\/agents\/sales\/access$/);
+    // The rest checks the screens themselves, as the standalone Console shows them.
+    fx.state.webApp = false;
+
     step("Organization administrators find Connectors in each agent");
     await page.goto(`${ORIGIN}/portal/#/agents/sales/access`);
     await page.locator(".ant-tabs").getByRole("link", { name: "Connectors", exact: true }).click();
