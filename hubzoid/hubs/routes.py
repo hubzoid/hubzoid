@@ -105,7 +105,9 @@ def build_router(hub_dir: Path):
         document, _ = await _document(request)
         values = candidate(document)
         _, problems = problems_of(values)
-        return JSONResponse({"valid": not problems, "problems": [p.public() for p in problems],
+        errors = [p for p in problems if p.blocking]
+        return JSONResponse({"valid": not errors, "problems": [p.public() for p in errors],
+                             "still_needed": [p.public() for p in problems if not p.blocking],
                              "changed_keys": changed(values), "base_revision": hs.revision(hub_dir)},
                             headers=_NO_STORE)
 
@@ -123,9 +125,10 @@ def build_router(hub_dir: Path):
             raise error(403, "permission_denied",
                         "Only organization administrators change which secret a setting uses.")
         _, problems = problems_of(values)
-        if problems:
+        errors = [p for p in problems if p.blocking]
+        if errors:
             raise error(422, "validation_failed", "The settings are not valid.",
-                        fields=[p.public() for p in problems])
+                        fields=[p.public() for p in errors])
         if expected not in (None, "absent") and not isinstance(expected, int):
             raise error(422, "validation_failed", 'expected_revision is a number or "absent".')
         keys = changed(values)
@@ -142,7 +145,8 @@ def build_router(hub_dir: Path):
         store_for(hub_dir).audit_event(who.email, "settings_apply", subject=",".join(keys)[:300],
                                        hub=hub_key(hub_dir), permission="settings.manage",
                                        surface="console", request_id=hub_access.request_id(request))
-        return JSONResponse({"revision": revision, "changed_keys": keys, "restart_required": True},
+        return JSONResponse({"revision": revision, "changed_keys": keys, "restart_required": True,
+                             "still_needed": [p.public() for p in problems if not p.blocking]},
                             headers=_NO_STORE)
 
     @router.post("/doctor")

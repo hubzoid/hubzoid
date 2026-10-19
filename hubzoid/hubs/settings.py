@@ -97,6 +97,11 @@ class ValuesFile(BaseModel):
     secrets: dict[str, str] = Field(default_factory=dict)
 
 
+# Problems that only say something is still needed. They never block saving
+# other values (setup happens in steps), but doctor fails until they are fixed.
+MISSING = ("setting_required", "secret_unavailable")
+
+
 @dataclass
 class Problem:
     """One validation error, safe to show: never a secret value."""
@@ -105,6 +110,11 @@ class Problem:
     message: str
     file: str | None = None
     line: int | None = None
+
+    @property
+    def blocking(self) -> bool:
+        """Whether this problem stops a values file from being saved."""
+        return self.code not in MISSING
 
     def public(self) -> dict:
         return {k: v for k, v in {"key": self.key, "code": self.code, "message": self.message,
@@ -130,7 +140,8 @@ class Resolved:
         out = {"name": d.name, "type": d.type, "required": d.required, "secret": d.secret,
                "description": d.description, "example": d.example if not d.secret else None,
                "enum": d.enum, "source": self.source,
-               "status": "invalid" if self.problems else ("set" if self.is_set else "missing"),
+               "status": ("invalid" if any(p.blocking for p in self.problems)
+                          else "set" if self.is_set and not self.problems else "missing"),
                "problems": [p.public() for p in self.problems]}
         if d.secret:
             out.update(ref=self.ref, available=bool(self.available))

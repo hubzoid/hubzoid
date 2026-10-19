@@ -417,3 +417,16 @@ def test_concurrent_writers_cannot_both_win(hub):
     for t in threads:
         t.join()
     assert sorted(outcomes) == ["conflict", "ok"]
+
+
+def test_values_can_be_saved_before_every_required_setting_is_set(hub, tmp_path):
+    from hubzoid.cli import app
+
+    candidate = tmp_path / "c.yaml"
+    candidate.write_text("version: 1\nvalues:\n  FACTORY_LABEL: triage\n")
+    r = CliRunner().invoke(app, ["hub", "configure", str(hub), "--file", str(candidate), "--apply",
+                                 "--expected-revision", "absent", "--json"], env={})
+    body = json.loads(r.output)
+    assert r.exit_code == 0 and body["applied"] and {p["key"] for p in body["still_needed"]} == {"FACTORY_REPO", "GITHUB_TOKEN"}
+    rows = {s["name"]: s for s in client(hub).get("/api/hubs/factory/settings").json()["settings"]}
+    assert rows["FACTORY_REPO"]["status"] == "missing" and rows["FACTORY_LABEL"]["status"] == "set"

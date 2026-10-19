@@ -124,14 +124,17 @@ def configure_cmd(
     before = {**(current.values if current else {}), **(current.secrets if current else {})}
     after = {**candidate.values, **candidate.secrets}
     changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
-    result = {"valid": not problems, "base_revision": rev, "changed_keys": changed,
-              "problems": [p.public() for p in problems], "applied": False}
-    if problems:
+    errors = [p for p in problems if p.blocking]
+    needed = [p for p in problems if not p.blocking]
+    result = {"valid": not errors, "base_revision": rev, "changed_keys": changed,
+              "problems": [p.public() for p in errors], "still_needed": [p.public() for p in needed],
+              "applied": False}
+    if errors:
         if as_json:
             print(json.dumps({"detail": {"code": "validation_failed", "message": "The settings are not valid.",
                                          "fields": result["problems"]}, **result}, default=str))
         else:
-            for p in problems:
+            for p in errors:
                 console.print(f"[red]•[/red] {escape(p.message)}")
         raise typer.Exit(2)
     if apply:
@@ -157,6 +160,8 @@ def configure_cmd(
         console.print("[green]Valid.[/green] Nothing changes.")
     else:
         console.print(f"[green]Valid.[/green] Changes: {', '.join(changed)}.")
+    for p in needed:
+        console.print(f"[yellow]Still needed:[/yellow] {escape(p.message)}")
     if apply:
         console.print(f"Applied as revision {result['revision']}. It takes effect after the hub restarts.")
     elif changed:
