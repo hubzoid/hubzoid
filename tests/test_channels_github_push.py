@@ -94,6 +94,23 @@ def remote(tmp_path, monkeypatch):
     return r
 
 
+def _forget_tokens():
+    """githubkit keeps installation tokens in a process-wide memory cache:
+    start and end each test without them, so no other test sees ours."""
+    from githubkit.cache import DEFAULT_CACHE_STRATEGY
+
+    cache = getattr(DEFAULT_CACHE_STRATEGY, "_cache", None)
+    if cache is not None:
+        cache._cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_tokens():
+    _forget_tokens()
+    yield
+    _forget_tokens()
+
+
 @pytest.fixture
 def api(remote, monkeypatch):
     fake = PushGitHub(remote)
@@ -370,3 +387,42 @@ def test_draft_mode_is_refused_for_pr_updates():
 
     with pytest.raises(Exception):
         config.parse("version: 1\nwrite_modes:\n  github.pr_update: draft\n")
+
+
+def test_a_hub_sets_the_route_each_trigger_asks_for(hub_dir, api, monkeypatch):
+    import textwrap
+
+    from hubzoid.channels import router, store
+    from hubzoid.work_items import service as wi
+
+    from .test_channels_github import _label, comment, deliver
+
+    (hub_dir / "workflows" / "factory" / "main.py").write_text(textwrap.dedent('''
+        from hubzoid import hub, workflow
+        from hubzoid.work_items import Route
+
+        @workflow(work_items={"request": Route(), "implement": Route(), "triage": Route()})
+        def factory():
+            return {"reply": "done"}
+    '''))
+    monkeypatch.setattr(wi, "start", lambda hub_dir, item: item)
+    conn = app_conn(hub_dir, rules={"label": "factory", "routes": {"label": "implement", "mention": "request"}})
+    deliver(conn, "issues", _label("factory"))
+    deliver(conn, "issue_comment", comment("@acme-factory please fix this", number=13), delivery="d2")
+    for row in store.open_deliveries(hub_dir, "factory"):
+        router._route_one(hub_dir, row, None)
+    routes = {}
+    for row in store.list_deliveries(hub_dir, "factory", "github")["items"]:
+        item = wstore.get_item(hub_dir, row["route_json"]["work_item_id"])
+        routes[item["input_json"]["input"]["kind"]] = item["route"]
+    assert routes == {"label": "implement", "mention": "request"}
+
+
+def test_route_names_are_checked():
+    from hubzoid.channels.github.adapter import Rules
+
+    assert Rules().route("label") == "triage"          # the default, unchanged for other hubs
+    with pytest.raises(Exception):
+        Rules(routes={"label": "Not A Route"})
+    with pytest.raises(Exception):
+        Rules(routes={"schedule": "implement"})
