@@ -379,7 +379,11 @@ class Orchestrator:
             if ticks % int(HEARTBEAT_SECONDS / CANCEL_POLL_SECONDS):
                 continue
             for r in runs:
-                ok = await db(g.renew_lease, self.engine.engine, r.branch_id, r.run_id, r.fence)
+                try:
+                    ok = await db(g.renew_lease, self.engine.engine, r.branch_id, r.run_id, r.fence)
+                except Exception:  # noqa: BLE001 - tried again next beat; an expired lease stops the run
+                    log.warning("chat: could not renew the lease of run %s", r.run_id, exc_info=True)
+                    continue
                 if not ok:
                     log.warning("chat: run %s lost its branch lease; stopping it", r.run_id)
                     r.fenced_out = True
@@ -390,8 +394,11 @@ class Orchestrator:
                     await db(self.ctx.runs.sweep)
             except Exception:  # noqa: BLE001
                 log.warning("chat: maintenance sweep failed", exc_info=True)
-            if not runs and not await db(self.engine.has_active_runs):
-                return
+            try:
+                if not runs and not await db(self.engine.has_active_runs):
+                    return
+            except Exception:  # noqa: BLE001 - keep beating until the store answers
+                log.warning("chat: could not check for running replies", exc_info=True)
 
 
 def mount(app: FastAPI, ctx) -> Orchestrator:
