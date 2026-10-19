@@ -1,12 +1,10 @@
 # Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """The one authorization service for people, accounts and access changes.
 
-Every Console route, every `/portal/api` caller holding an Open WebUI API key
-and every agent tool goes through `AccessService`. Route handlers and tools
+Every Console route, every `/portal/api` caller and every agent tool goes
+through `AccessService`. Route handlers and tools
 never decide authority themselves: they build an `Actor` from a verified
-identity and call a method here. A different chat frontend would reuse this
-module and replace only the identity check (`access.session`) and the account
-directory (`access.accounts`).
+identity and call a method here.
 
 Rules (checked on every write, from the store, never from the caller):
   * Organization administrators (org-wide `manage_access`) keep their scope:
@@ -104,7 +102,7 @@ _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 UNAVAILABLE_MSG = (
     "This account is unavailable in the chat app (awaiting approval or removed). "
-    "Approve or restore it in Open WebUI, then refresh accounts."
+    "Approve or restore it in People, then refresh accounts."
 )
 EXISTS_MSG = (
     "A user with this email already exists. Nothing was changed: edit that user's "
@@ -121,8 +119,8 @@ ROLES = ("user", "admin")
 
 @dataclass(frozen=True)
 class Actor:
-    """Who is acting. Built only from a verified identity: an Open WebUI session,
-    an Open WebUI API key, or the bridge's trusted request identity. Never from
+    """Who is acting. Built only from a verified identity: a Hubzoid session, an
+    API key, or the bridge's trusted request identity. Never from
     a request body or a model argument."""
 
     subject: str  # normalized
@@ -222,8 +220,7 @@ class AccessService:
                          "Access data is unavailable. Try again shortly.")
 
     def accounts(self):
-        """The account directory: Hubzoid's own accounts in default mode, the
-        Open WebUI admin API as the service account in Open WebUI mode."""
+        """The account directory: Hubzoid's own accounts."""
         if self._accounts_override is not None:
             return self._accounts_override
         from . import accounts as accountlib
@@ -236,14 +233,9 @@ class AccessService:
     def links_mode(self) -> bool:
         """True when new accounts and password resets get a one-time sign-in
         link instead of a password typed in the Console: the directory in use
-        says so (``HubzoidAccounts``, the default mode). Open WebUI's directory
-        (Open WebUI mode) takes passwords."""
+        says so (``HubzoidAccounts``)."""
         if self._accounts_override is not None:
             return bool(getattr(self._accounts_override, "links", False))
-        from .. import appmode
-
-        if appmode.is_openwebui(self.hub_dir):
-            return False
         try:
             return bool(getattr(self.accounts(), "links", False))
         except Denied:
@@ -626,7 +618,6 @@ class AccessService:
                     expected_revision=revision,
                     actor=actor.subject, surface=actor.surface, request_id=request_id,
                 )
-                self._project_visibility()
                 return applied
             except RevisionConflict as exc:
                 if expected_revision is not None:
@@ -654,7 +645,6 @@ class AccessService:
                            surface=actor.surface, in_transaction=end_sessions)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
-            self._project_visibility()
         return changed
 
     def _session_ender(self, subject: str):
@@ -665,11 +655,7 @@ class AccessService:
         starts no session or has the one it started revoked, and lifting the
         block never brings an old sign-in (or a stolen cookie) back. Without
         the account store nothing is blocked (fail closed: the administrator
-        retries). Open WebUI keeps its own sessions in Open WebUI mode: None."""
-        from .. import appmode
-
-        if appmode.is_openwebui(self.hub_dir):
-            return None
+        retries)."""
         try:
             from ..auth import users
 
@@ -680,57 +666,21 @@ class AccessService:
                          "Accounts are unavailable right now. Try again shortly.")
         return lambda conn: accounts.end_sessions_in(conn, subject)
 
-    def _project_visibility(self) -> None:
-        """Mirror access to the chat app's agent picker now, not at the next
-        30-second sync, so a person given access sees the agent on their very
-        first sign-in. Best effort: the periodic sync is still the recovery
-        path, and entry is enforced by the bridge either way."""
-        try:
-            from .. import deployment
-            from . import owui as owui_lib
-            from .reconcile import sync_owui
-
-            if deployment.read(self.hub_dir) and owui_lib.configured(self.hub_dir):
-                sync_owui(self.hub_dir)
-        except Exception:  # noqa: BLE001 — never fail the change that was saved
-            log.warning("access: immediate visibility sync failed; the periodic sync will retry",
-                        exc_info=True)
-
     def refresh_accounts(self, actor: Actor) -> int:
-        """Re-read the chat app's account directory (organization administrators)."""
+        """Re-read the account directory (organization administrators)."""
         self.require_org_admin(actor)
-        if self.links_mode():
-            directory_rows = getattr(self.accounts(), "directory", None)
-            try:
-                rows = directory_rows() if callable(directory_rows) else []
-                self.store.reconcile_accounts(
-                    [dict(id=r["owui_id"], email=r["email"], name=r["display"], role=r["role"])
-                     for r in rows]
-                )
-            except Exception:  # noqa: BLE001
-                log.exception("account directory refresh failed")
-                raise Denied(503, "accounts_unavailable",
-                             "Account refresh failed. Try again shortly.")
-            return len(rows)
-        from .owui import directory
-
+        directory_rows = getattr(self.accounts(), "directory", None)
         try:
-            rows = directory(self.hub_dir)
+            rows = directory_rows() if callable(directory_rows) else []
             self.store.reconcile_accounts(
                 [dict(id=r["owui_id"], email=r["email"], name=r["display"], role=r["role"])
                  for r in rows]
             )
         except Exception:  # noqa: BLE001
-            log.exception("OWUI directory refresh failed")
+            log.exception("account directory refresh failed")
             raise Denied(503, "accounts_unavailable",
-                         "Account refresh failed. Check OWUI service credentials and logs.")
+                         "Account refresh failed. Try again shortly.")
         return len(rows)
-
-    def sync_visibility(self, actor: Actor) -> dict:
-        self.require_org_admin(actor)
-        from .reconcile import sync_owui
-
-        return sync_owui(self.hub_dir)
 
     # ---- accounts ---------------------------------------------------------------
 
@@ -744,11 +694,6 @@ class AccessService:
         if subject == normalize(actor.subject):
             raise Denied(409, "self_change",
                          "Change your own account in the chat app's settings.")
-        from .accounts import service_account_email
-
-        if subject == service_account_email(self.hub_dir):
-            raise Denied(409, "service_account",
-                         "This is the Console's service account. Change it on the server.")
         identity = self.store.identity(subject) or {}
         if not identity.get("owui_id"):
             raise Denied(409, "no_account",
@@ -897,7 +842,6 @@ class AccessService:
                 extra=dict(account=account, access_granted=False, recorded=bound, reason=reason,
                            **link),
             )
-        self._project_visibility()
         link = self._sign_in_link(directory, created, actor) if wants_link else {}
         return dict(
             subject=email, owui_id=created["id"], name=name, role="user", sign_in=sign_in,
@@ -1048,7 +992,7 @@ class AccessService:
 
     def _remove_new(self, directory, created: dict) -> bool:
         try:
-            directory.delete(created["id"])
+            getattr(directory, "discard", directory.delete)(created["id"])
             return True
         except Exception:  # noqa: BLE001
             log.error("account create: could not remove an unexpected account")
@@ -1103,12 +1047,6 @@ class AccessService:
             return identity
         missing = Denied(404, "no_account",
                          "No account uses this email. Create a new account instead.")
-        from . import accounts as accountlib
-
-        if self._accounts_override is None and not accountlib.configured(self.hub_dir):
-            raise Denied(404, "no_account",
-                         "No account with this email is known here yet. It appears after they "
-                         "first sign in, or create a new account instead.")
         found = self._directory_call(self.accounts().find, email)
         if not found or not found.get("id"):
             raise missing
@@ -1125,8 +1063,8 @@ class AccessService:
         implicitly), and "pending" while the account awaits approval."""
         identity = self._account_target(actor, subject)
         account = self._live_account(self.accounts(), identity)
-        # Hubzoid's own directory says how the account signs in; for Open WebUI
-        # it is what the Console recorded when it created the account.
+        # The directory says how the account signs in, else what the Console
+        # recorded when it created the account.
         sign_in = account.get("sign_in") or self._sign_in_of(identity["subject"])
         return dict(subject=identity["subject"], name=account.get("name"),
                     role=account.get("role"), sign_in=sign_in, phone=identity.get("phone"),
@@ -1147,9 +1085,7 @@ class AccessService:
     def set_password(self, actor: Actor, subject: str, password: str | None = None) -> dict | None:
         """Reset a person's password (organization administrators).
 
-        Open WebUI mode: set the password the administrator typed; returns None.
-
-        Default mode (``links_mode``): without a password, the current one stops
+        With ``links_mode``: without a password, the current one stops
         working, their sessions end, and the result is a one-time link for them
         to set a new one, ``{"link", "expires_at"}``. With a password, it is set
         and their sessions end; the result is ``{}``."""
@@ -1172,6 +1108,10 @@ class AccessService:
             check_hubzoid_password(password)
         directory = self.accounts()
         account = self._live_account(directory, identity)
+        if account.get("sign_in") == "directory":
+            raise Denied(409, "directory_managed",
+                         "This user signs in through your company directory, which manages "
+                         "their sign-in.")
         if account.get("sign_in") == "google":
             raise Denied(409, "google_managed",
                          "This user signs in with Google, so their password is managed "
@@ -1339,13 +1279,7 @@ class AccessService:
         except Exception:  # noqa: BLE001 — "where available": the store guard still applies
             log.warning("accounts: chat-app administrators could not be listed")
             return None
-        from .accounts import service_account_email
-
-        service = service_account_email(self.hub_dir)
-        ignored = {normalize(subject), ""}
-        if service and not self.store.can(service, ORG, MANAGE_ACCESS):
-            ignored.add(service)
-        return admins - ignored
+        return admins - {normalize(subject), ""}
 
     def delete_account(self, actor: Actor, subject: str) -> None:
         """Delete a user: every grant (`revoke_all`), then their chat account
@@ -1374,17 +1308,6 @@ class AccessService:
                          "Access was removed, but the chat account could not be deleted. "
                          f"{detail} Try again.".strip())
         gs.mark_account_removed(subject, actor=actor.subject, surface=actor.surface)
-        from .. import appmode
-
-        if appmode.is_openwebui(self.hub_dir):
-            # Hubzoid's own accounts drop their connections on delete; an Open
-            # WebUI account's connections are stored under its id here.
-            try:
-                from ..connectors import tokens
-
-                tokens.drop_user(self.hub_dir, str(identity["owui_id"]))
-            except Exception:  # noqa: BLE001 — unusable anyway: no account has this id
-                log.warning("account delete: personal connections were not removed")
         try:
             gs.set_metadata(DELETED_PREFIX + subject, identity["owui_id"])
         except Exception:  # noqa: BLE001 — People would only keep listing them as unavailable
@@ -1429,7 +1352,7 @@ class AccessService:
             gs.write_audit(conn, subject, "change_proposed", subject=target, hub=hub,
                            surface=actor.surface, request_id=request_id)
         return dict(id=request_id, expires=expires, summary=self.summary(canonical),
-                    confirm_path=f"/portal/#/confirm/{request_id}")
+                    confirm_path=f"/settings#/confirm/{request_id}")
 
     def _canonical_plan(self, actor: Actor, scope: Scope, plan: dict):
         if not isinstance(plan, dict):
@@ -1718,9 +1641,9 @@ def deleted_by_console(gs, subject: str, owui_id: str | None) -> bool:
 # The store keeps two independent block markers per subject and `is_suspended`
 # ORs them: `suspended:<subject>` (an admin's explicit block, or an
 # account_replaced safeguard) and `account_unavailable:<subject>` (derived from
-# Open WebUI: the account is pending approval, or vanished from the directory).
-# Only the first is cleared by "reactivate"; the second only clears when OWUI
-# reports the account as approved/present again. They are exposed apart so the
+# the account directory: the account is pending approval, or vanished). Only
+# the first is cleared by "reactivate"; the second only clears when the
+# directory reports the account as approved/present again. They are exposed apart so the
 # Console can tell "blocked by an admin" from "blocked by the chat app".
 
 def _account_flags(gs, subject: str) -> dict:

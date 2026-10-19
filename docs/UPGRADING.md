@@ -1,15 +1,89 @@
 # Upgrading
 
-Native chat is the default. Native chat and the optional Open WebUI interface
-are permanently and equally supported, with the same release-testing
-requirements and no planned removal. Upgrading does not require switching
-interfaces; retain `hubzoid[openwebui]` and `HUBZOID_UI=openwebui` when using it.
+Hubzoid 2.0 has one chat interface, the Hubzoid web app. Open WebUI is no
+longer an option: there is no `hubzoid[openwebui]` extra, no `HUBZOID_UI`
+switch and no account sync. A deployment that still needs Open WebUI stays on
+the 1.x line (`pip install "hubzoid<2"`). The sections for 1.x releases below
+describe those releases as they were.
 
+- [Upgrading to 2.0: Open WebUI removed](#upgrading-to-20-open-webui-removed)
 - [Upgrading to 1.3.2](#upgrading-to-132)
 - [Upgrading to 1.3: workflows from chat](#upgrading-to-13-workflows-from-chat)
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Upgrading to 2.0: Open WebUI removed
+
+### What changes
+- **One interface.** `hubzoid run` and `hubzoid gateway` start the Hubzoid web
+  app, or no UI with `--no-ui`. Open WebUI is never started or installed.
+- **The Console is in Settings.** The management screens (Agents, People &
+  access, Activity, Schedules, Workspace settings, Health, Advanced settings,
+  Compatibility) are sections of the web app's Settings page. The old address
+  `/portal/` sends people to the same section there, so bookmarks keep working.
+- **Accounts are the web app's own.** Sign-in, Google sign-in and sign-up use
+  the web app's settings ([accounts and sign-in](auth.md)). Open WebUI API keys
+  no longer work. MCP clients connect through OAuth ([MCP server](mcp-server.md));
+  personal API keys in the web app are planned, not in 2.0's first part.
+- **Open WebUI settings are named, never ignored.** At start, and in
+  `hubzoid doctor`, Hubzoid lists every Open WebUI setting it finds in the
+  environment or a hub's `.env`.
+
+### Settings that stop the start until changed
+
+These decide who can sign in or who owns the deployment. Dropping them
+silently could turn sign-in off or lose the owner, so the start stops with a
+message naming each one, even when its value is blank or `false`:
+
+| Setting | Change it to |
+|---|---|
+| `HUBZOID_UI` set to `openwebui`, `open-webui`, `owui` or `legacy` | Remove it. To keep Open WebUI, stay on 1.x. |
+| A deployment recorded in Open WebUI mode (`ui_mode` in the gateway's deployment record) | Move it with the steps below, or stay on 1.x. |
+| `WEBUI_AUTH` | `HUBZOID_AUTH`, same value |
+| `WEBUI_URL` | `HUBZOID_PUBLIC_URL`, same value |
+| `WEBUI_ADMIN_EMAIL`, `HUBZOID_GATEWAY_ADMIN_EMAIL` | `HUBZOID_ADMIN_EMAIL`, same value |
+| `WEBUI_ADMIN_PASSWORD`, `HUBZOID_GATEWAY_ADMIN_PASSWORD` | `HUBZOID_ADMIN_PASSWORD`, or remove it once the owner has signed in |
+
+### Settings that only warn
+- `WEBUI_NAME` is still read as the deployment's name until one is set in
+  Settings → Brand. Then remove it.
+- `HUBZOID_OWUI_DB` is read only by `hubzoid migrate openwebui`. Remove it once
+  the move is done.
+- `DEFAULT_USER_ROLE`: new accounts follow `ENABLE_SIGNUP` and
+  `ENABLE_OAUTH_SIGNUP`. Remove it.
+- Open WebUI's own settings (`WEBUI_SECRET_KEY`, `ENABLE_*` feature switches,
+  `USER_PERMISSIONS_*`, `OPENAI_API_*`, `DEFAULT_MODELS`, `RAG_*`,
+  `AUDIO_STT_ENGINE` and the Hubzoid settings that configured the Open WebUI
+  integration, such as `HUBZOID_OWUI_PORT` and `BYPASS_MODEL_ACCESS_CONTROL`)
+  have no effect. Chat defaults live in Settings → Workspace settings and
+  `chat/config.yaml`. Remove them.
+
+These names keep their meaning in the web app: `ENABLE_SIGNUP`,
+`ENABLE_LOGIN_FORM`, `ENABLE_OAUTH_SIGNUP`, `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` and the `OAUTH_*` settings.
+
+### Steps for a deployment on Open WebUI
+1. **Back up** on 1.x: `hubzoid backup ./my-hub --out pre-2.0.tar.gz`, plus
+   `pg_dump` for PostgreSQL ([backup](BACKUP.md)). Keep a protected copy of
+   each `.env`.
+2. **Install** 2.0: `pip install -U "hubzoid>=2"`.
+3. **Check readiness** (reads only): `hubzoid migrate readiness ./my-hub`.
+4. **Dry run, then apply** the move of accounts, conversations and share links,
+   with the deployment stopped: `hubzoid migrate openwebui ./my-hub`, then
+   `hubzoid migrate openwebui ./my-hub --apply`. The command reads Open WebUI's
+   database and never changes it. [What moves and what does not](#what-moves-and-what-does-not)
+   still applies.
+5. **Rename** the settings in the first table, and remove the ones that warn.
+6. **Start** with `hubzoid run my-hub` (or `hubzoid gateway`), then run
+   `hubzoid doctor my-hub` and sign in as the owner and as an ordinary user.
+
+What 2.0 does not yet cover compared with Open WebUI is listed in
+Settings → Workspace settings → Compatibility and in the 2.0 release notes.
+
+### Going back
+Reinstall 1.x (`pip install "hubzoid<2"`), restore the backup taken in step 1
+and restore the old `.env` files. Open WebUI's database was never changed.
 
 ## Upgrading to 1.3.2
 

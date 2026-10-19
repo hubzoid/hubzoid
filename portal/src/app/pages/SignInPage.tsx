@@ -1,13 +1,15 @@
 // Sign in with a password or an external provider, and create an account when
 // self sign-up is on. Every error code from contract 6.1 reads as a sentence.
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Building2 } from "lucide-react";
 import { t } from "../i18n/en";
-import { ApiError, post } from "../lib/api";
+import { ApiError, get, post } from "../lib/api";
 import { useApp } from "../lib/app-context";
 import { describeError } from "../lib/errors";
 import { navigate } from "../lib/router";
 import type { SessionUser } from "../lib/types";
 import { Button, Field, Notice } from "../components/ui";
+import { CodeForm, RecoveryCodes, SetupPanel, type Setup } from "../components/Security";
 import { AuthLayout } from "./AuthLayout";
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
@@ -22,7 +24,8 @@ export function authErrorText(error: unknown): string {
   return describeError(error);
 }
 
-function ProviderIcon({ id }: { id: string }) {
+function ProviderIcon({ id, kind }: { id: string; kind?: string }) {
+  if (kind === "saml") return <Building2 size={15} aria-hidden />;
   if (id === "google")
     return (
       <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
@@ -44,10 +47,21 @@ function ProviderIcon({ id }: { id: string }) {
   return null;
 }
 
-export default function SignInPage({ redirect, error }: { redirect: string; error: string | null }) {
+type Stage = "form" | "code" | "setup" | "codes";
+type LoginAnswer = { state?: string; user?: SessionUser; email?: string; setup?: Setup;
+                     recovery_codes?: string[]; recovery_codes_left?: number };
+
+export default function SignInPage({ redirect, error, step }: { redirect: string; error: string | null; step?: string | null }) {
   const app = useApp();
   const session = app.session;
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [stage, setStage] = useState<Stage>(step === "code" ? "code" : step === "setup" ? "setup" : "form");
+  const [who, setWho] = useState("");
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [codes, setCodes] = useState<string[]>([]);
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [forgot, setForgot] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -61,6 +75,77 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
   useEffect(() => {
     emailRef.current?.focus();
   }, [mode]);
+
+  // A provider or a set-password link was the first step: load the set-up again.
+  useEffect(() => {
+    if (step !== "setup") return;
+    get<LoginAnswer>("/api/auth/mfa/setup", { quiet401: true })
+      .then((r) => {
+        setSetup(r.setup ?? null);
+        setWho(r.email ?? "");
+      })
+      .catch((err) => restart(err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  const restart = (err: unknown) => {
+    setStage("form");
+    setSetup(null);
+    setCodeError(null);
+    setMessage({ tone: "error", text: authErrorText(err) });
+  };
+
+  /** What the first step answered: signed in, a code to enter, or set-up. */
+  const after = async (res: LoginAnswer | undefined) => {
+    if (res?.state === "mfa_required") {
+      setWho(res.email ?? email.trim());
+      setStage("code");
+      return;
+    }
+    if (res?.state === "mfa_setup") {
+      setWho(res.email ?? email.trim());
+      setSetup(res.setup ?? null);
+      setStage("setup");
+      return;
+    }
+    await finish();
+  };
+
+  const verify = async (value: string) => {
+    setBusy(true);
+    setCodeError(null);
+    try {
+      const res = await post<LoginAnswer>(
+        "/api/auth/mfa/verify",
+        useRecovery ? { recovery_code: value } : { code: value },
+        { quiet401: true },
+      );
+      if (typeof res?.recovery_codes_left === "number") sessionStorage.setItem("hz.usedRecovery", String(res.recovery_codes_left));
+      await finish();
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === "step_expired" || err.status === 410)) return restart(err);
+      const left = err instanceof ApiError ? (err.detail?.tries_left as number | undefined) : undefined;
+      setCodeError(`${authErrorText(err)}${typeof left === "number" ? ` ${t.auth.triesLeft(left)}` : ""}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmSetup = async (value: string) => {
+    setBusy(true);
+    setCodeError(null);
+    try {
+      const res = await post<LoginAnswer>("/api/auth/mfa/setup", { code: value }, { quiet401: true });
+      setCodes(res?.recovery_codes ?? []);
+      setStage("codes");
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === "step_expired" || err.status === 410)) return restart(err);
+      const left = err instanceof ApiError ? (err.detail?.tries_left as number | undefined) : undefined;
+      setCodeError(`${authErrorText(err)}${typeof left === "number" ? ` ${t.auth.triesLeft(left)}` : ""}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const providers = session.providers ?? [];
   const passwordOn = session.password !== false;
@@ -91,8 +176,9 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
     setBusy(true);
     try {
       if (mode === "signin") {
-        await post<{ user: SessionUser }>("/api/auth/login", { email: email.trim(), password }, { quiet401: true });
-        await finish();
+        const res = await post<LoginAnswer>("/api/auth/login", { email: email.trim(), password }, { quiet401: true });
+        setPassword("");
+        await after(res);
         return;
       }
       const res = await post<{ status?: string }>(
@@ -101,8 +187,8 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
         { quiet401: true },
       );
       if (res?.status === "active") {
-        await post("/api/auth/login", { email: email.trim(), password }, { quiet401: true });
-        await finish();
+        const answer = await post<LoginAnswer>("/api/auth/login", { email: email.trim(), password }, { quiet401: true });
+        await after(answer);
         return;
       }
       setMode("signin");
@@ -120,6 +206,56 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
   const heading =
     mode === "signin" ? brandCopy?.signin_title || t.auth.title(app.brandName) : t.auth.signupTitle(app.brandName);
   const subtitle = mode === "signin" ? brandCopy?.signin_body || t.auth.subtitle : t.auth.signupSubtitle;
+
+  const back = (
+    <button type="button" className="mt-4 w-full text-center text-[13px] text-mute hover:text-ink" onClick={() => restart(new ApiError(410, "step_expired", ""))}>
+      {t.auth.startOver}
+    </button>
+  );
+
+  if (stage === "code")
+    return (
+      <AuthLayout title={t.auth.codeTitle}>
+        <div className="hz-signin" data-testid="mfa-step">
+          <h1 className="m-0 text-center text-[1.5rem] font-medium tracking-tight text-ink">{t.auth.codeTitle}</h1>
+          <p className="m-0 mt-2 text-center text-[0.9286rem] leading-relaxed text-mute">
+            {useRecovery ? t.auth.recoveryHelp : t.auth.codeSubtitle(who || t.auth.email.toLowerCase())}
+          </p>
+          <div className="mt-6">
+            {useRecovery ? (
+              <RecoveryForm busy={busy} error={codeError} onSubmit={(v) => void verify(v)} />
+            ) : (
+              <CodeForm busy={busy} error={codeError} onSubmit={(v) => void verify(v)} />
+            )}
+            <button type="button" className="mt-3 w-full text-center text-[13px] text-accent-text hover:underline"
+              onClick={() => { setUseRecovery(!useRecovery); setCodeError(null); }}>
+              {useRecovery ? t.auth.useCode : t.auth.useRecovery}
+            </button>
+            {back}
+          </div>
+        </div>
+      </AuthLayout>
+    );
+
+  if (stage === "setup" || stage === "codes")
+    return (
+      <AuthLayout title={t.auth.setupTitle}>
+        <div className="hz-signin">
+          <h1 className="m-0 text-center text-[1.5rem] font-medium tracking-tight text-ink">{t.auth.setupTitle}</h1>
+          {stage === "setup" && <p className="m-0 mt-2 text-center text-[0.9286rem] leading-relaxed text-mute">{t.auth.setupSubtitle}</p>}
+          <div className="mt-6">
+            {stage === "codes" ? (
+              <RecoveryCodes codes={codes} onDone={() => void finish()} />
+            ) : setup ? (
+              <SetupPanel setup={setup} busy={busy} error={codeError} onCode={(v) => void confirmSetup(v)} />
+            ) : (
+              <p className="text-center text-mute">{t.loading}</p>
+            )}
+            {stage === "setup" && back}
+          </div>
+        </div>
+      </AuthLayout>
+    );
 
   return (
     <AuthLayout title={mode === "signin" ? t.auth.signIn : t.auth.signupSubmit}>
@@ -173,6 +309,14 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
               error={fieldErrors.password}
               help={mode === "signup" ? t.auth.passwordHint : undefined}
             />
+            {mode === "signin" && (
+              <div className="-mt-2 text-right">
+                <button type="button" className="text-[12.5px] text-mute hover:text-ink" onClick={() => setForgot(!forgot)}>
+                  {t.auth.forgot}
+                </button>
+                {forgot && <p className="m-0 mt-1 text-left text-[12.5px] text-mute" role="status">{t.auth.forgotHelp}</p>}
+              </div>
+            )}
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
               {mode === "signin"
                 ? busy
@@ -197,10 +341,10 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
             {providers.map((p) => (
               <a
                 key={p.id}
-                href={`/oauth/${encodeURIComponent(p.id)}/login?redirect=${encodeURIComponent(redirect)}`}
+                href={`${p.login_url ?? `/oauth/${encodeURIComponent(p.id)}/login`}?redirect=${encodeURIComponent(redirect)}`}
                 className="hz-btn hz-btn-secondary hz-btn-lg w-full no-underline"
               >
-                <ProviderIcon id={p.id} />
+                <ProviderIcon id={p.id} kind={p.kind} />
                 {t.auth.continueWith(p.name || p.id)}
               </a>
             ))}
@@ -226,5 +370,18 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
         </p>
       )}
     </AuthLayout>
+  );
+}
+
+function RecoveryForm({ onSubmit, busy, error }: { onSubmit: (v: string) => void; busy?: boolean; error?: string | null }) {
+  const [value, setValue] = useState("");
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }} noValidate className="space-y-3">
+      <Field label={t.auth.recoveryCode} autoFocus autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)}
+        error={error} placeholder="XXXX-XXXX-XXXX-XXXX" data-testid="mfa-recovery" />
+      <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!value.trim()}>
+        {busy ? t.auth.verifying : t.auth.verify}
+      </Button>
+    </form>
   );
 }

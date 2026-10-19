@@ -177,7 +177,10 @@ def test_set_role(hub):
     assert users.get(hub, waiting["id"])["status"] == "active"
 
 
-def test_refuses_open_webui_deployments(hub, monkeypatch):
+
+def test_an_open_webui_deployment_is_refused_until_it_is_moved(hub, monkeypatch):
+    # Its accounts are still in Open WebUI: creating one here would split them.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    code, out = run("list", str(hub))
-    assert code == 2 and "Open WebUI accounts" in out
+    code, out = run("create", "ana@example.com", str(hub))
+    assert code == 2 and "HUBZOID_UI" in out and "UPGRADING" in out
+    assert users.find_by_email(hub, "ana@example.com") is None

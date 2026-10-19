@@ -1,46 +1,20 @@
-"""Per-hub branding: copy <hub>/branding/<file> into Open WebUI's static dirs.
+"""The ``<hub>/branding/`` folder convention: which files count as brand assets.
 
-Convention: drop branding files into ``<hub>/branding/``. Filenames map
-1:1 to OWUI asset filenames. Match is case-insensitive. Each branding
-file is copied (with its case-corrected name) into every Open WebUI
-static root we know about. If a file is absent, OWUI's default for that
-asset renders.
-
-Known OWUI asset filenames (the set hubzoid will mirror):
-  favicon.svg
-  favicon.png
-  favicon-dark.png
-  favicon-96x96.png
-  favicon.ico
-  apple-touch-icon.png
-  logo.png
-  splash.png
-  splash-dark.png
-  web-app-manifest-192x192.png
-  web-app-manifest-512x512.png
-
-Convenience aliases: ``logo.{svg,png,...}`` in branding/ is treated as a
-synonym for ``favicon.<same-ext>`` (most operators say "logo" when they
-mean the brand mark; OWUI's brand mark is the favicon).
-
-Single-master convenience: any raster slot the operator does NOT supply is
-filled from ``favicon.png`` (itself aliased from ``logo.png`` when needed),
-so one image brands every surface — light and dark, tab icon and sidebar.
-Only PNG slots are synthesized; ``.svg``/``.ico`` are copied only when a real
-file of that format is present (PNG bytes are not valid SVG/ICO).
-
-Idempotent. Runs on every ``hubzoid run`` before the OWUI subprocess
-starts. Edits to branding/ are picked up on next start.
+A deployment's page chrome comes from a branding folder (the gateway's, or a
+hub's). ``has_assets`` says whether a folder holds any, so the gateway can fall
+back to the next candidate. Matching is case-insensitive; ``logo.<ext>`` is a
+synonym for ``favicon.<ext>``, and one ``favicon.png`` fills every raster slot
+it does not supply. The web app serves these files at ``/branding/*`` and the
+reviewed brand manifest (``hubzoid.ui.branding_*``) decides what is shown.
 """
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 
 log = logging.getLogger("hubzoid.branding")
 
-# Exact filenames (lowercased) that we mirror to OWUI's static dirs.
+# Exact filenames (lowercased) that count as brand assets.
 # Case-insensitive on the input; output uses the canonical case below.
 _MIRROR_NAMES: list[str] = [
     "favicon.svg",
@@ -58,7 +32,7 @@ _MIRROR_NAMES: list[str] = [
 ]
 
 # Raster slots synthesized from the master (favicon.png) when the operator did
-# not supply them, so a single image brands every OWUI chrome surface. `.svg`
+# not supply them, so a single image brands every surface. `.svg`
 # and `.ico` are deliberately absent — PNG bytes are not valid in those formats.
 _DERIVE_FROM_MASTER: tuple[str, ...] = (
     "favicon-dark.png",
@@ -72,73 +46,6 @@ _DERIVE_FROM_MASTER: tuple[str, ...] = (
 )
 
 
-# Baseline CSS hubzoid injects into Open WebUI's `<static>/custom.css`
-# slot. OWUI's index.html already references this file, so just writing
-# bytes to the path is enough — no template work.
-#
-# Why CSS and not env vars: OWUI has no env vars to hide the Workspace
-# nav from admins, no toggle to hide the voice-mode / mic / read-aloud
-# buttons (Issue #12771 open). CSS is the working route.
-#
-# Operator can override by dropping their own `custom.css` into
-# `<hub>/branding/`; it replaces this baseline entirely.
-_BASELINE_CUSTOM_CSS = """\
-/* hubzoid baseline overrides. Override by placing your own
-   custom.css in <hub>/branding/. */
-
-/* Hide the Workspace nav item from the sidebar (admin and non-admin).
-   Hubzoid agents are independent products; the Workspace tab exposes
-   OWUI-as-platform surfaces that should not be visible to chat users. */
-a[href="/workspace"],
-a[aria-label="Workspace"] {
-  display: none !important;
-}
-
-/* Hide the in-chat voice-mode button (full-duplex call).
-   The feature is unreliable (OWUI Issue #22684) and confuses users. */
-button[aria-label="Voice mode"] {
-  display: none !important;
-}
-
-/* Hide the mic / voice-input button.
-   Browser STT quality is uneven and the button often does nothing on
-   first click while permissions resolve. Disable until reliable. */
-button[aria-label="Voice Input"] {
-  display: none !important;
-}
-"""
-
-
-# Gateway variant of the baseline. Same voice/mic hiding, but it deliberately
-# KEEPS the Workspace nav item: a gateway fronts many hubs and its admins manage
-# per-team Groups and per-model access on the Workspace screens. Hiding it (as
-# the single-hub baseline does) would lock admins out of the very controls the
-# gateway's per-team isolation depends on. Operators still override by dropping
-# their own custom.css into the gateway branding dir.
-GATEWAY_BASELINE_CSS = """\
-/* hubzoid gateway baseline overrides. Override by placing your own
-   custom.css in the gateway branding dir. Workspace stays visible on
-   purpose — gateway admins manage Groups + per-model ACLs there. */
-
-/* Hide the in-chat voice-mode button (full-duplex call).
-   The feature is unreliable (OWUI Issue #22684) and confuses users. */
-button[aria-label="Voice mode"] {
-  display: none !important;
-}
-
-/* Hide the mic / voice-input button.
-   Browser STT quality is uneven and the button often does nothing on
-   first click while permissions resolve. Disable until reliable. */
-button[aria-label="Voice Input"] {
-  display: none !important;
-}
-"""
-
-
-def baseline_custom_css() -> str:
-    """The hubzoid baseline custom.css. Exposed for tests."""
-    return _BASELINE_CUSTOM_CSS
-
 # Logo aliases: branding/logo.<ext> is treated as branding/favicon.<ext>.
 # Only honored when the corresponding favicon.<ext> file is NOT also
 # present in branding/ (favicon wins on tie).
@@ -146,7 +53,7 @@ _LOGO_TO_FAVICON_EXTS = {"svg", "png", "webp", "jpg", "jpeg"}
 
 
 def _build_source_index(branding_dir: Path) -> dict[str, Path]:
-    """Index files in branding_dir by canonical OWUI filename.
+    """Index files in branding_dir by canonical asset filename.
 
     Case-insensitive match on both stem and extension. Logo aliases are
     folded into favicon.* slots if favicon.* is absent.
@@ -188,116 +95,12 @@ def _build_source_index(branding_dir: Path) -> dict[str, Path]:
 
 
 def has_assets(branding_dir: Path) -> bool:
-    """True when ``branding_dir`` yields at least one mirror-able asset.
+    """True when ``branding_dir`` yields at least one brand asset.
 
     Ignores non-asset files (README, notes). Used to decide whether an
     explicit gateway branding dir is populated before falling back to a hub's.
     """
     return bool(_build_source_index(branding_dir))
-
-
-def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -> dict[str, Path | str]:
-    """Copy hub branding into one OWUI static root. Idempotent.
-
-    Returns a dict of {canonical_filename: source_path | "<baseline>"}
-    for assets that were written. Missing files are silently skipped
-    (OWUI defaults render).
-
-    Files are written to BOTH ``static_dir/<name>`` and
-    ``static_dir/static/<name>`` because OWUI's asset routing has both
-    layouts across versions.
-
-    A baseline ``custom.css`` is always written even when the hub has
-    no ``branding/`` folder; this is how hubzoid hides Workspace, voice
-    mode, and mic buttons (no OWUI env vars exist for these). Operators
-    override by placing their own ``custom.css`` in ``<hub>/branding/``.
-    """
-    branding_dir = hub_dir / "branding"
-    index = _build_source_index(branding_dir)
-    # Put back Open WebUI's own file for every slot this hub doesn't brand, so
-    # an unbranded hub (or a brand with fewer files) never shows a previous
-    # hub's images from the shared install.
-    _restore_originals(static_dir, keep=set(index))
-
-    applied: dict[str, Path | str] = {}
-    for canonical, src in index.items():
-        for dst in (static_dir / canonical, static_dir / "static" / canonical):
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            _keep_original(static_dir, dst)
-            shutil.copyfile(src, dst)
-        applied[canonical] = src
-        log.info("branding: %s -> %s", src.name, canonical)
-
-    # Baseline custom.css. Only written when the hub did not provide its
-    # own (per-hub custom.css already landed in the loop above). Callers may
-    # pass a `baseline_css` override (the gateway does, to keep Workspace).
-    if "custom.css" not in applied:
-        css = baseline_css or _BASELINE_CUSTOM_CSS
-        for dst in (static_dir / "custom.css", static_dir / "static" / "custom.css"):
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(css)
-        applied["custom.css"] = "<baseline>"
-        log.info("branding: baseline custom.css -> custom.css")
-
-    return applied
-
-
-_ORIGINALS = ".hubzoid-originals"
-
-
-def _keep_original(static_dir: Path, dst: Path) -> None:
-    """Before the first overwrite of an Open WebUI asset, keep its original
-    (or note that there was none) under static_dir/.hubzoid-originals/."""
-    backup = static_dir / _ORIGINALS / dst.relative_to(static_dir)
-    absent = backup.with_name(backup.name + ".absent")
-    if backup.exists() or absent.exists():
-        return
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    if dst.is_file():
-        shutil.copyfile(dst, backup)
-    else:
-        absent.touch()
-
-
-def _restore_originals(static_dir: Path, *, keep: set[str]) -> None:
-    """Restore every kept original whose slot is not in ``keep``."""
-    root = static_dir / _ORIGINALS
-    if not root.is_dir():
-        return
-    for backup in root.rglob("*"):
-        if not backup.is_file():
-            continue
-        rel = backup.relative_to(root)
-        if rel.name.endswith(".absent"):
-            rel = rel.with_name(rel.name[: -len(".absent")])
-            if rel.name not in keep:
-                (static_dir / rel).unlink(missing_ok=True)
-        elif rel.name not in keep:
-            shutil.copyfile(backup, static_dir / rel)
-
-
-def static_dirs() -> list[Path]:
-    """Locate Open WebUI's installed static directories.
-
-    Open WebUI ships TWO static roots:
-      - <pkg>/frontend/ : the SPA build OWUI serves at HTTP `/`.
-        Contains favicon.png, favicon.svg, the static/ subdir, etc.
-      - <pkg>/static/   : PWA manifest icons (web-app-manifest-*.png).
-
-    Returns the dirs that exist. Empty list if open_webui is not installed.
-    """
-    try:
-        import open_webui  # type: ignore
-    except ImportError:
-        return []
-    pkg_dir = Path(open_webui.__file__).resolve().parent
-    return [d for d in (pkg_dir / "frontend", pkg_dir / "static") if d.is_dir()]
-
-
-def static_dir() -> Path | None:
-    """Backwards-compatible single-dir accessor. Prefers ``frontend/``."""
-    dirs = static_dirs()
-    return dirs[0] if dirs else None
 
 
 # Backwards-compatible function (used by older tests). Returns the source
@@ -307,7 +110,7 @@ def find_slot_file(branding_dir: Path, slot: str) -> Path | None:
 
     Slot is matched against canonical filenames where the stem equals
     ``slot``. For ``slot='logo'``, also accepts ``logo.<ext>`` files
-    directly (the logo->favicon alias is only applied inside apply()).
+    directly (the logo->favicon alias applies only to the asset index).
 
     Returns the first matching file, with extension preference following
     the legacy ordering: svg, png, webp, jpg, jpeg, ico.

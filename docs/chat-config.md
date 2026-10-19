@@ -2,7 +2,7 @@
 
 `chat/config.yaml` is an optional deployment file for chat settings. Without it
 every setting has its product default and a fresh hub works. The file, the CLI,
-the API and Console → Settings → Chat share one schema and one apply.
+the API and Settings → Workspace settings → Chat defaults share one schema and one apply.
 
 ## The file
 
@@ -73,7 +73,7 @@ API: `GET` and `PUT /api/chat/preferences` with `expected_revision`.
 
 ## Theme
 
-Chat and Console render from one token set. `branding/theme.json` overrides
+Chat and Settings render from one token set. `branding/theme.json` overrides
 any token per mode; everything else inherits the Hubzoid theme:
 
 ```json

@@ -96,7 +96,7 @@ MATRIX = [
     ("M10", "Rehearsal", "partial", "SQLite single-hub rehearsal on a copy works; gateway and PostgreSQL wait."),
     ("M11", "Restore", "unrun", "Needs the HUB-109 backup package."),
     ("M12", "Cutover", "unrun", "Needs every row above."),
-    ("M13", "Removed option", "unrun", "Open WebUI stays installable until the migration is complete and approved."),
+    ("M13", "Removed option", "unrun", "Hubzoid 2.0 has no Open WebUI mode; until the move is done, stay on 1.x or restore the pre-2.0 backup."),
 ]
 
 

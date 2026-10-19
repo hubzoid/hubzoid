@@ -24,7 +24,7 @@ jobs:
   # The checks run side by side; publishing waits for all of them.
   tests:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
-    # The suite with slow and end-to-end tests and Open WebUI mode, except the
+    # The suite with slow and end-to-end tests, except the
     # heavy ones (5 s or more each, see tests/conftest.py), on two machines.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -57,8 +57,8 @@ jobs:
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Install with Open WebUI mode and test tools
-        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
+      - name: Install with test tools
+        run: pip install -e '.[dev,postgres]'
       - name: Real Codex tool isolation (local fake model, no provider credentials)
         if: matrix.group == 1
         run: |
@@ -83,11 +83,11 @@ jobs:
           export PATH="$(pg_config --bindir):$PATH"
           command -v initdb && command -v pg_ctl
           pytest -q -ra -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py --deselect=tests/test_workflows_from_chat_engine.py
-      - name: Both live chat interfaces (sign-in, stream, restart; no model)
+      - name: Live web app (sign-in, stream, restart; no model)
         if: matrix.group == 2
         timeout-minutes: 4
         run: pytest -q -ra -m "" tests/test_ui_release_smoke.py --junitxml=ui-smoke.xml
-      - name: Test suite, part ${{ matrix.group }} of 2 (Open WebUI mode included, heavy tests left out)
+      - name: Test suite, part ${{ matrix.group }} of 2 (heavy tests left out)
         # These exact checks already ran above. Keep every distinct regression,
         # but don't run the focused checks again in the general shards.
         run: >-

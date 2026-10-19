@@ -213,7 +213,7 @@ def test_a_grant_made_before_grants_had_times_keeps_its_links(hub, tmp_path):
     ("https://hub.example.com/b/sales", None, "https://hub.example.com"),   # gateway bridge
     ("https://hub.example.com/b/sales/", None, "https://hub.example.com"),
     ("https://hub.example.com", None, "https://hub.example.com"),           # standalone
-    (None, "https://chat.example.com/", "https://chat.example.com"),
+    (None, "https://chat.example.com/", "http://127.0.0.1:3080"),       # WEBUI_URL is not read
     (None, None, "http://127.0.0.1:3080"),
 ])
 def test_report_and_public_links_use_the_site_root(hub, tmp_path, monkeypatch,

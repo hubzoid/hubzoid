@@ -12,8 +12,7 @@ from hubzoid import portal
 
 
 def test_mount_serves_api_and_static(tmp_path, monkeypatch):
-    # The Open WebUI session check: the legacy UI mode (HUBZOID_UI=openwebui).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")  # sign-in on: no session means nobody
     eng = db.engine_for(tmp_path)  # real per-hub sqlite under tmp
     access._stores.clear()
 
@@ -21,7 +20,7 @@ def test_mount_serves_api_and_static(tmp_path, monkeypatch):
     portal.mount_portal(app, tmp_path)
     c = TestClient(app)
 
-    # API is mounted; unauthenticated -> 401 (no dev user, no OWUI session)
+    # API is mounted; unauthenticated -> 401 (no dev user, no session)
     monkeypatch.delenv("HUBZOID_PORTAL_DEV_USER", raising=False)
     assert c.get("/portal/api/me").status_code == 401
 

@@ -7,7 +7,14 @@ import pytest
 
 from hubzoid.access.service import SIGN_IN_PREFIX, Denied
 from tests.test_access_service import ROOT, actor, make_deployment
-from tests.test_accounts_owui import PASSWORD, _bound
+
+PASSWORD = "Correct-Horse-7-battery"
+
+
+def _bound(dep, email="ann@x.org", role="user"):
+    uid = dep.owui.add_user(email, email.split("@")[0], role=role)
+    dep.gs.upsert_identity(email=email, owui_id=uid, pending=role == "pending")
+    return uid
 
 
 @pytest.fixture
@@ -89,17 +96,6 @@ def test_last_chat_app_administrator_cannot_be_demoted_or_deleted(dep):
     _bound(dep, "other@x.org", role="admin")
     dep.svc.set_role(actor(ROOT), "co@x.org", "user")
     assert dep.owui.users[uid]["role"] == "user"
-
-
-def test_service_account_counts_when_someone_administers_with_it(dep):
-    # The owner signs in with the Console's service account and administers
-    # with it: demoting the only other chat-app administrator is allowed.
-    from tests.test_accounts_owui import SERVICE
-    uid = _bound(dep, "co@x.org", role="admin")
-    dep.gs.grant(SERVICE, "*", "manage_access", actor="test")
-    dep.svc.set_role(actor(ROOT), "co@x.org", "user")
-    assert dep.owui.users[uid]["role"] == "user"
-
 
 def test_nobody_changes_their_own_role(dep):
     _bound(dep, ROOT, role="admin")
