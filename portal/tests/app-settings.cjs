@@ -25,7 +25,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.getByLabel("Search settings").fill("password");
-    await sections.getByRole("link", { name: "Profile & security", exact: true }).click();
+    await sections.getByRole("link", { name: "Profile", exact: true }).click();
     await page.getByLabel("Display name").fill("Ada Review");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByText("Name saved.").waitFor();

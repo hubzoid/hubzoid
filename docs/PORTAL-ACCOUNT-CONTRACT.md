@@ -210,7 +210,7 @@ existing users' access is changed with `POST /access/apply`.
 | `POST /accounts/{subject}/password` | `{}` or `{password}` | Without a password, returns a one-time link (`link`, `expires_at`) to share. Either way the account's other sessions end. 409 `google_managed` for a Google-only account |
 | `POST /accounts/{subject}/approve` | | `pending` to `user`, then the identity is marked available |
 | `POST /accounts/{subject}/role` | `{role: "user"\|"admin"}` | The Administrator role: the account's role first, then organization-wide `manage_access`. Returns `{ok, subject, role, changed, console_admin, chat_admin, administrator}`. 502 `role_partial` when only one side changed (the body carries `retry: true` and both sides); repeating the request finishes it. 409 `pending` before approval, 409 `last_admin` for the last administrator on either side |
-| `DELETE /accounts/{subject}` | `{confirm_email}` | Removes every grant, then the account and its chats; marks the email removed. 422 `confirm_email` if the email doesn't match. 409 `last_admin` if it would remove the last administrator on either side. 502 `partial` if grants were removed but the account was not |
+| `DELETE /accounts/{subject}` | `{confirm_email}` | Removes every grant, then the account (a tombstone that keeps their chats; sessions, keys, sign-ins and connections end, share links stop); marks the email removed. 422 `confirm_email` if the email doesn't match. 409 `last_admin` if it would remove the last administrator on either side. 502 `partial` if grants were removed but the account was not |
 
 Each refuses your own account (`self_change`), and checks that the account
 linked to the subject still has that email (`account_changed`).
