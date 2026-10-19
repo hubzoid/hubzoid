@@ -280,6 +280,22 @@ def test_queue_order_stop_parks_and_removed_predecessor_parks_successors(client)
     assert [u["content"][0]["text"] for u in users] == ["slow first", "two"]
 
 
+def test_a_message_after_stop_with_nothing_queued_is_sent(client):
+    # Stop parks the queue to hold what was waiting; with nothing waiting, the
+    # next message goes out at once instead of sitting behind a paused queue.
+    cid, b = new_conv(client)
+    first = send(client, cid, "slow first", b)
+    client.post(f"/api/runs/{first['run_id']}/cancel", headers=ORIGIN, json={"park_queue": True})
+    assert wait_run(client, first["run_id"])["status"] == "stopped"
+    assert branch_of(client, cid, b["id"])["queue_paused"]
+    r = client.post(f"/api/conversations/{cid}/queue", headers=h(), json={"branch_id": b["id"], "content": "next"})
+    assert r.status_code == 202 and r.json()["dispatched"] is True, r.text
+    assert not branch_of(client, cid, b["id"])["queue_paused"]
+    wait_run(client, r.json()["run_id"])
+    users = [m for m in snap(client, cid)["messages"] if m["role"] == "user"]
+    assert [u["content"][0]["text"] for u in users] == ["slow first", "next"]
+
+
 def test_delete_reparents_grandchildren(client):
     cid, b = new_conv(client)
     one = send(client, cid, "one", b)

@@ -56,6 +56,14 @@ def test_local_quickstart_runs_as_admin_localhost(hub):
     assert configured_owner(hub) == "admin@localhost"
 
 
+def test_a_local_run_before_any_bridge_start_gives_the_local_owner_the_hub(hub):
+    # `hubzoid schedule run` on a new hub: no bridge has started, so nothing has
+    # given admin@localhost its access yet, and every tool call is checked.
+    assert not store_for(hub).can("admin@localhost", hub.name, "use_hub")
+    assert idlib.configured(hub) == ("admin@localhost", "local")
+    assert store_for(hub).can("admin@localhost", hub.name, "use_hub")
+
+
 def test_setup_records_the_configured_owner_once(shared):
     gs = store_for(shared)
     assert configured_owner(shared) == "owner@company.com"

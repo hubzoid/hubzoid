@@ -1099,7 +1099,7 @@ class ChatEngine:
     def enqueue(self, conversation_id: str, actor: Actor, body: dict, *, key: str | None
                 ) -> tuple[idempotency.Outcome, RunPlan | None]:
         """Queue a follow-up on a branch. On an idle branch with nothing
-        queued it is sent at once."""
+        queued it is sent at once, even after Stop parked the (now empty) queue."""
         lane = body.get("lane", "queue")
         if lane not in QUEUE_LANES:
             raise Err(400, "invalid_operation", "lane is steer or queue.")
@@ -1116,7 +1116,13 @@ class ChatEngine:
                 g.queue.c.branch_id == b.id, g.queue.c.state.in_(g.QUEUE_LIVE + ("dispatching",)))).scalar() or 0
             busy = conn.execute(sa.select(g.leases.c.run_id).where(g.leases.c.branch_id == b.id,
                                                                    g.leases.c.expires_at > _now())).first()
-            if not busy and not live and not b.queue_paused and lane == "queue":
+            if not busy and not live and lane == "queue":
+                if b.queue_paused:
+                    # Stop parked the queue to hold what was waiting. Nothing is
+                    # waiting now, so a new message is sent and the queue reopens.
+                    conn.execute(g.branches.update().where(g.branches.c.id == b.id)
+                                 .values(queue_paused=0, queue_revision=b.queue_revision + 1))
+                    g.emit(conn, conversation_id, "queue.updated", b.id, {"paused": False})
                 status, out, plan = self._op_send(conn, conv_, actor, {
                     "branch_id": b.id, "parent_id": b.head_id, "expected_revision": b.revision,
                     "model_selection": body.get("model_selection"), "web_search": body.get("web_search") is True},
