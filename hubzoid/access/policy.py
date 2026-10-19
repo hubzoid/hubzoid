@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from .identity import Identity, normalize
 
-# Surfaces that may reach restricted tools. Open WebUI is the verified-login
-# surface; `web`/`api` are aliases for direct authenticated callers; `mcp` is
-# the hosted MCP server, where the caller authenticated with their own OWUI
-# API key (a per-person verified login, unlike Slack's shared bot token).
+# Surfaces that may reach restricted tools. `web` is the signed-in web app
+# (`owui`, the 1.x chat, is kept so stored settings still mean the same);
+# `api` is a direct authenticated caller; `mcp` is the hosted MCP server, where
+# the caller signed in over OAuth (a per-person verified login, unlike Slack's
+# shared bot token).
 # Slack and Telegram are deliberately absent. Override per
 # deployment with HUBZOID_RESTRICTED_SURFACES (comma-separated COMPLETE list;
 # it replaces this default), read in guard.py.

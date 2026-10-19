@@ -169,21 +169,22 @@ def check_use_hub(hub_dir: Path, email: str) -> None:
     from ..access.identity import normalize
     from ..access.store import USE_HUB
 
+    from ..access.evaluator import authorize
+
     email = normalize(email)
-    try:
-        gs = store_for(hub_dir)
-        blocked = bool(email) and gs.is_suspended(email)
-    except Exception:  # noqa: BLE001 — fail closed
-        log.exception("chat: use_hub check unavailable for %s", hub_dir.name)
+    decision = authorize(hub_dir, email, USE_HUB, hub=hub_dir.name)
+    if decision.reason == "store_error":
         raise error(503, "access_unavailable", "Access check unavailable. Try again shortly.")
-    if blocked:
+    if decision.reason == "blocked":
         raise error(403, "suspended", "Your agent access is blocked. Contact your administrator.")
+    if decision.reason in ("account_inactive", "credentials_revoked"):
+        raise error(403, "no_access", "This account no longer has access. Sign in again.")
+    allowed = decision.allowed
     try:
-        allowed = bool(email) and gs.can(email, hub_dir.name, USE_HUB)
-        manages = (not allowed) and bool(email) and gs.can(email, hub_dir.name, "manage_access")
-    except Exception:  # noqa: BLE001 — fail closed
-        log.exception("chat: use_hub can() failed for %s", hub_dir.name)
-        raise error(503, "access_unavailable", "Access check unavailable. Try again shortly.")
+        manages = (not allowed) and bool(email) and store_for(hub_dir).can(
+            email, hub_dir.name, "manage_access")
+    except Exception:  # noqa: BLE001 — only changes the wording
+        manages = False
     if not allowed:
         raise error(403, "no_access", (
             f"You do not have access to the '{hub_dir.name}' hub. Signed in as {email}. "

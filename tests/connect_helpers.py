@@ -1,12 +1,12 @@
 """Shared fakes for the connection-journey and personal-MCP tests.
 
-Since 1.2 every UI mode uses the connectors added in the Console, so these
-helpers keep their Open WebUI-shaped arguments (accounts with Open WebUI ids,
-servers, connections) and store them as Hubzoid connectors, identities and
-encrypted tokens in the test's operational store:
+The helpers keep their 1.x-shaped arguments (accounts with fixed ids,
+servers, connections) and store them as Hubzoid accounts, connectors,
+identities and encrypted tokens in the test's operational store:
 
 * ``seed_owui`` / ``connect`` record accounts, servers and connections.
-* ``owui_env`` selects Open WebUI mode with a deployment key.
+* ``owui_env`` turns sign-in on (so each email is its own account) with a
+  deployment key.
 * ``isolated_store`` points every operational-DB user at one SQLite file and
   writes what was recorded. Every seeded connector is offered in every agent,
   as a server registered once used to be.
@@ -63,7 +63,8 @@ def _store_token(seed, user_id, server_id, token, now):
 def owui_env(monkeypatch, db, secret):
     monkeypatch.setenv("HUBZOID_SECRET_KEY", fernet_key(secret))
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    monkeypatch.delenv("HUBZOID_UI", raising=False)
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
     from hubzoid import secretbox
 
     getattr(secretbox, "_cache", {}).clear()
@@ -92,9 +93,14 @@ def _apply(seed, root: Path, monkeypatch) -> None:
     import hubzoid.access as access
     from hubzoid.connectors import ConnectorError, registry
 
+    from hubzoid.auth import users
+
     seed["applied"] = root
     gs = access.store_for(root)
+    accounts = users.store(root)
     for uid, email in seed["users"]:
+        if accounts.get(uid) is None:
+            accounts.create(email=email, name=email.split("@")[0], id=uid, source="admin")
         gs.upsert_identity(email=email, owui_id=uid)
     ids: set[str] = set()
     for srv in seed["servers"]:

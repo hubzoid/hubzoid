@@ -26,12 +26,14 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts",
                # workflows from chat (op_0019): report series, personal schedules, proposals
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
-               # secrets set in the Console (op_0040)
+               # secrets set in the Console (op_0045)
                "hz_secrets"}
 
 
 # Tables added after op_0019, dropped when a test rewinds to op_0016.
-LATER_TABLES = ("hz_authoring_drafts", "hz_authoring_versions", "hz_personal_prompts", "hz_chat_presets", "hz_knowledge_collections", "hz_knowledge_sources", "hz_knowledge_generations",
+LATER_TABLES = ("hz_directory_providers", "hz_directory_accounts", "hz_scim_tokens",
+                "hz_saml_replay", "hz_mfa_factors", "hz_mfa_recovery", "hz_auth_challenges", "hz_api_keys",
+                "hz_auth_settings", "hz_run_identities", "hz_authoring_drafts", "hz_authoring_versions", "hz_personal_prompts", "hz_chat_presets", "hz_knowledge_collections", "hz_knowledge_sources", "hz_knowledge_generations",
                 "hz_knowledge_chunks", "hz_knowledge_jobs", "hz_knowledge_citations", "hz_knowledge_fts",
                 "hz_chat_storage_configs", "hz_chat_files", "hz_chat_file_uploads", "hz_chat_file_references",
                 "hz_chat_artifacts", "hz_chat_artifact_versions", "hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_branch_leases",
@@ -46,7 +48,7 @@ LATER_TABLES = ("hz_authoring_drafts", "hz_authoring_versions", "hz_personal_pro
                 "hz_chat_preferences", "hz_branding_drafts", "hz_branding_assets",
                 "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",
                 "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
-                "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans",
+                "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans", "hz_hitl_requests", "hz_hitl_grants", "hz_hitl_events", "hz_workflow_access", "hz_workflow_access_revisions", "hz_hub_changes", "hz_personal_memory",
                 "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles",
                 "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes")
 
@@ -330,7 +332,7 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019 and op_0040.
+        # And op_0019 and op_0045 (secrets).
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals", "hz_secrets"):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
@@ -338,6 +340,10 @@ def _previous_phone_schema(engine):
         # And the 2.0 chat foundations (op_0020 onward).
         for table in LATER_TABLES:
             conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        # And op_0032's columns.
+        for table, column in (("hz_users", "auth_epoch"), ("hz_users", "deleted_at"),
+                              ("hz_users", "managed_by"), ("hz_sessions", "mfa_at")):
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

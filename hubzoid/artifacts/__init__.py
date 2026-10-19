@@ -177,7 +177,7 @@ def public_base_url(hub_dir=None) -> str:
     without either setting (a CLI command running a job) uses the address the
     gateway recorded in the deployment manifest."""
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
-    base = re.sub(r"/b/[^/]+$", "", base) or (os.environ.get("WEBUI_URL") or "").rstrip("/")
+    base = re.sub(r"/b/[^/]+$", "", base)
     if not base and hub_dir is not None:
         from .. import deployment
         try:

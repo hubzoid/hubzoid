@@ -26,6 +26,7 @@ import { ShortcutsDialog, useShortcuts } from "./components/Shortcuts";
 applyTheme();
 
 const ChatPage = lazy(() => import("./chat/ChatPage"));
+const RequestsPage = lazy(() => import("./pages/RequestsPage"));
 const SharePage = lazy(() => import("./pages/SharePage"));
 const SignInPage = lazy(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
@@ -45,6 +46,7 @@ function normalizeSession(raw: Partial<Session> | null | undefined): Session {
     password: raw?.password !== false,
     signup: !!raw?.signup,
     branding_name: raw?.branding_name,
+    unsafe_network: !!raw?.unsafe_network,
   };
 }
 
@@ -111,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
-    if (!authenticated && !isPublic) navigate(signInHref(location.href), { replace: true });
+    if (!authenticated && !isPublic) navigate(signInHref(location.href + window.location.hash), { replace: true });
     else if (authenticated && route.name === "signin") navigate(route.redirect, { replace: true });
   }, [session, authenticated, isPublic, route, location.href]);
 
@@ -283,7 +285,7 @@ export default function App() {
     return wrap(
       <Suspense fallback={<PageSpinner />}>
         {route.name === "signin" ? (
-          <SignInPage redirect={route.redirect} error={route.error} />
+          <SignInPage redirect={route.redirect} error={route.error} step={route.step} />
         ) : (
           <SetPasswordPage token={route.token} />
         )}
@@ -319,6 +321,12 @@ export default function App() {
       />
     );
   else if (route.name === "settings") page = <SettingsPage section={route.section} />;
+  else if (route.name === "requests")
+    page = (
+      <Suspense fallback={<PageSpinner />}>
+        <RequestsPage />
+      </Suspense>
+    );
   else if (route.name === "account") page = <RedirectTo to="/settings#/me/profile" />;
   else if (route.name === "sources") page = <RedirectTo to="/settings#/me/sources" />;
   else if (route.name === "workspace") page = <RedirectTo to="/settings#/workspace" />;
@@ -342,6 +350,11 @@ export default function App() {
         <SearchDialog />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
           <OfflineBanner />
+          {value.session.unsafe_network && (
+            <div role="alert" className="bg-warning-soft px-4 py-2 text-center text-[12.5px] text-warning" data-testid="unsafe-network">
+              {t.unsafeNetwork}
+            </div>
+          )}
           <AnnouncementBanner
             manifest={branding.manifest}
             dismissed={brandMe.me?.dismissed_announcements ?? []}

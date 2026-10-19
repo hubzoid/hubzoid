@@ -15,7 +15,7 @@ export type SessionUser = {
   version?: string;
 };
 
-export type Provider = { id: string; name: string };
+export type Provider = { id: string; name: string; kind?: string; login_url?: string };
 
 export type Session = {
   authenticated: boolean;
@@ -25,6 +25,8 @@ export type Session = {
   password?: boolean;
   signup?: boolean;
   branding_name?: string;
+  /** Sign-in is off and the server listens beyond this computer (an explicit opt-out). */
+  unsafe_network?: boolean;
 };
 
 export type Agent = {

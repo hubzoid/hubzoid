@@ -385,6 +385,18 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
                                                text=m.text, has_media=bool(m.media))
                 if waiting:
                     user_text = waiting
+                # A reply to a waiting approval or question (hubzoid.hitl):
+                # "1"/"2", an option number or an answer settles it, and the
+                # agent continues with the outcome.
+                if not m.media:
+                    from ..hitl import channels as hitl_channels
+                    from ..hitl import service as hitl_service
+
+                    settled = hitl_channels.answer_by_reply(hub_dir, chat_id=chat_id, email=email,
+                                                            text=m.text, via="whatsapp")
+                    if settled is not None:
+                        hitl_channels.mark_continued(hub_dir, settled)
+                        user_text = hitl_service.outcome_text(settled)
             turn_started = time.time() - 0.25
             prior = history.load(chat_id)
             reply = dispatch_fn(
@@ -400,6 +412,10 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
                                             reply=reply or "")
                 if extra:
                     text = f"{text.rstrip()}\n\n{extra}" if text.strip() else extra
+                from ..hitl import channels as hitl_channels
+
+                for req in hitl_channels.pending_in_chat(hub_dir, chat_id, email, since=turn_started):
+                    text = f"{text.rstrip()}\n\n{hitl_channels.describe(req)}"
             # A blank rendered reply (e.g. all think/tool blocks) must still acknowledge
             # the user — WhatsApp has no placeholder to fall back on. (code-review #4)
             wa.send_text(phone_number_id=wa.phone_number_id, token=wa.token,

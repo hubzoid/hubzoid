@@ -1,4 +1,4 @@
-"""Open WebUI login + Hubzoid consent for the hosted MCP surface.
+"""Hubzoid sign-in + consent for the hosted MCP surface.
 
 FastMCP/Python MCP SDK implement the OAuth protocol endpoints. This provider owns
 persistence, the account/grant policy, resource binding and browser approval.
@@ -22,14 +22,13 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from pydantic import AnyHttpUrl
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from mcp.server.auth.routes import cors_middleware, build_metadata
 
 from . import access
-from .access import owui_db
 from .mcp_oauth_store import OAuthStore
 
 SCOPE = "hub:access"
@@ -62,55 +61,20 @@ def validate_public_url(value):
 
 
 def account(hub_dir, *, email=None, account_id=None):
-    """Resolve only current, non-pending accounts; never trust token email.
+    """Resolve only current, non-pending Hubzoid accounts
+    (``auth.users.mcp_account``); never trust token email."""
+    from .auth.users import mcp_account
 
-    Default mode: Hubzoid accounts (``auth.users.mcp_account``). Open WebUI mode:
-    Open WebUI accounts, read from its database."""
-    from . import appmode
-
-    if not appmode.is_openwebui(hub_dir):
-        from .auth.users import mcp_account
-
-        return mcp_account(hub_dir, email=email, account_id=account_id)
-    con = owui_db.connect_ro(hub_dir)
-    if con is None:
-        return None
-    try:
-        cols = {c["name"] for c in inspect(con).get_columns("user")}
-        role = "role" if "role" in cols else "'user'"
-        field, value = ("id", account_id) if account_id else ("email", email)
-        row = con.execute(
-            text(f'SELECT id,email,{role} FROM "user" WHERE {field}=:value'),
-            {"value": value},
-        ).first()
-        if not row or row[2] == "pending":
-            return None
-        normalized = access.normalize(row[1])
-        gs = access.store_for(hub_dir)
-        known = gs.identity(normalized)
-        if known and known.get("owui_id") and known["owui_id"] != str(row[0]):
-            return None
-        if gs.is_suspended(normalized):
-            return None
-        return {"account_id": str(row[0]), "email": normalized}
-    except Exception:
-        return None
-    finally:
-        con.close()
+    return mcp_account(hub_dir, email=email, account_id=account_id)
 
 
 def allowed(hub_dir, email):
     """May `email` use this hub over MCP: not blocked and holding `use_hub`.
     Fails closed."""
+    from .access.evaluator import authorize
     from .access.store import USE_HUB
 
-    try:
-        gs = access.store_for(hub_dir)
-        if gs.is_suspended(email):
-            return False
-        return gs.can(email, hub_dir.name, USE_HUB)
-    except Exception:
-        return False
+    return authorize(hub_dir, email, USE_HUB, hub=hub_dir.name).allowed
 
 
 class HubOAuth(OAuthProvider):
@@ -221,6 +185,9 @@ class HubOAuth(OAuthProvider):
         if (
             not who
             or who["email"] != g["email"]
+            # "Revoke all credentials", a password reset, a block or a deletion
+            # moved the account's credential counter: grants made before end.
+            or int(who.get("auth_epoch") or 0) != int(g.get("auth_epoch") or 0)
             or not allowed(self.hub_dir, who["email"])
         ):
             return None

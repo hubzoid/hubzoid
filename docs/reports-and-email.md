@@ -34,7 +34,6 @@ company link.
   - `audience="hub"` shares the artifact with everyone who can use the agent.
   - `audience="people", share_with=["sam@company.com", {"kind": "group",
     "principal": "finance"}]` shares it with those people or groups.
-  - Both need a Console-managed hub.
   - A workflow can never create a public link.
   - `audience="domain"` adds a company link (see [Live reports](#live-reports)).
 - **Every call stores a new artifact,** unless a `key` is given and nothing
@@ -76,7 +75,7 @@ toolbar with the title, creation time, **Share** (owner only) and
 - A signed-out person is sent to the normal sign-in, with password or Google,
   and comes back to the same artifact. The return address is built by Hubzoid
   from the artifact id and is never taken from the link.
-- Nobody needs Admin Console rights to view or share their own artifacts.
+- Nobody needs administrator rights to view or share their own artifacts.
 - A link in WhatsApp or email is not a sign-in: the person still signs in in
   the browser.
 
@@ -99,7 +98,7 @@ just the email address.
   email gets none of the old account's artifacts or the shares made to it.
 - **The owner must be active.** A blocked owner loses access to their artifacts
   until they are reactivated.
-- **On a Console-managed hub, the owner also needs Use this agent.** This
+- **The owner also needs Use this agent.** This
   applies to their artifacts, public links, sharing and deletion, and access
   returns when the permission does.
 
@@ -151,7 +150,7 @@ people or with the agent, never grants it.
 A `key` gives a report one link that always shows its newest copy.
 
 - **Team or personal.** A team run (the declared schedule, a webhook, the
-  Console or the CLI) writes the agent's report:
+  Settings or the CLI) writes the agent's report:
   `https://<your host>/portal/latest/<agent>/<key>`. Run for me and personal
   schedules ([workflows.md](workflows.md#reports-people-run-and-schedule-in-chat-13))
   write that person's own copy, at its own link, private to them until they
@@ -194,10 +193,10 @@ ENABLE_OAUTH_SIGNUP=true               # readers get an account on first visit
 and company sign-in (Google, Microsoft or OIDC, see [auth.md](auth.md)). The
 publisher needs **Share reports with the company domain**. Taking that away,
 or turning the link off, stops the link at once. A link an admin turns off
-stays off until someone makes a new one in the Console, even while the
+stays off until someone makes a new one in Settings, even while the
 workflow keeps publishing with `audience="domain"`. An agent that an older
 "everyone signed in" grant opens can't have company links: give people access
-by name first. In the Console, **Schedules & reports → Everyone** lists every
+by name first. In Settings, **Schedules & reports → Everyone** lists every
 live report: admins copy, replace or turn off team links, and turn off personal
 ones. People see their own under **Yours**.
 Anyone else sees one "This report isn't available" page, whatever the reason.

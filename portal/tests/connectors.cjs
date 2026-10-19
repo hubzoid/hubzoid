@@ -8,6 +8,7 @@ const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { settingsHost } = require("./settings-host.cjs");
 
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
 const ORIGIN = "http://hubzoid.test";
@@ -17,7 +18,6 @@ const HUBS = [{ key: "sales", name: "Sales Assistant" }, { key: "support", name:
 function fixture() {
   const state = {
     org: true,
-    webApp: true,
     calls: [],
     connectors: [
       {
@@ -48,7 +48,7 @@ function fixture() {
     if (endpoint === "/me")
       return { subject: "ada@example.org", org_admin: state.org, manageable: HUBS.map((h) => h.key),
                grantable: { sales: [], support: [] }, account_admin: state.org, can_create_accounts: false,
-               accounts_configured: true, sign_in: { password: true, google: false }, web_app: state.webApp };
+               accounts_configured: true, sign_in: { password: true, google: false }, web_app: true };
     if (endpoint === "/hubs") return { hubs: HUBS };
     if (endpoint === "/hub-mcp-servers")
       return { warning: null, servers: [
@@ -116,6 +116,7 @@ const step = (name) => {
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
+  const host = await settingsHost();
   const fx = fixture();
   let page;
   try {
@@ -139,7 +140,8 @@ const step = (name) => {
           return route.fulfill({ status: e.status || 500, json: { detail: { code: e.code, message: e.message } } });
         }
       }
-      const relative = url.pathname.replace(/^\/portal\/?/, "") || "index.html";
+      if (await host.forward(route, url)) return;
+      const relative = url.pathname.replace(/^\/(portal\/?)?/, "") || "index.html";
       const file = path.join(root, relative);
       const exists = fs.existsSync(file) && fs.statSync(file).isFile();
       return route.fulfill({
@@ -151,15 +153,12 @@ const step = (name) => {
     // The list reloads after each change, so look for the last write.
     const last = () => [...fx.state.calls].reverse().find((c) => c.method !== "GET");
 
-    step("With the web app on, the Console opens the same screen in the chat app's Settings");
+    step("The old Console address opens the same screen in Settings");
     await page.goto(`${ORIGIN}/portal/#/agents/sales/access`);
     await page.waitForURL(/\/settings#\/agents\/sales\/access$/);
-    // The rest checks the screens themselves, as the standalone Console shows them.
-    fx.state.webApp = false;
 
     step("Organization administrators find Connectors in each agent");
-    await page.goto(`${ORIGIN}/portal/#/agents/sales/access`);
-    await page.locator(".ant-tabs").getByRole("link", { name: "Connectors", exact: true }).click();
+    await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Connectors", exact: true }).click();
     await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#/agents/sales/connectors");
     // Only the connectors this agent offers are listed; Notion is another agent's.
@@ -167,13 +166,12 @@ const step = (name) => {
 
     step("The list shows each connector's sign-in, tools, people and switch");
     const gmail = page.getByRole("row").filter({ hasText: "Gmail" });
-    await gmail.getByText("gmail · https://gmail-mcp.example.org/mcp").waitFor();
-    await gmail.getByText("2 allowed").waitFor();
-    await gmail.getByText("3 people").waitFor();
+    // Settings folds tools and people into one line under the name.
+    await gmail.getByText("3 connected · 2 tools").waitFor();
     assert.equal(await gmail.locator("svg.logo").count(), 1, "a known server shows its brand mark");
     const linear = page.getByRole("row").filter({ hasText: "Linear" });
     await linear.getByText("OAuth · own client").waitFor();
-    await linear.getByText("All tools").waitFor();
+    await linear.getByText("0 connected · All tools").waitFor();
     assert.equal(await linear.getByRole("switch").isChecked(), true);
 
     step("Adding starts from popular servers, each with how people sign in, or a custom one");
@@ -364,25 +362,21 @@ const step = (name) => {
     await page.setViewportSize({ width: 1440, height: 950 });
 
     step("An old Connectors bookmark explains where connectors went");
-    await page.goto(`${ORIGIN}/portal/?bookmark#/connectors`);
+    await page.goto(`${ORIGIN}/settings?bookmark#/connectors`);
     await page.getByText("Connectors are in each agent").waitFor();
     assert.equal(await page.getByRole("menuitem", { name: "Connectors" }).count(), 0);
 
     step("Agent administrators see where connectors come from but cannot change them");
     fx.state.org = false;
-    await page.goto(`${ORIGIN}/portal/?again#/agents/sales/connectors`);
+    await page.goto(`${ORIGIN}/settings?again#/agents/sales/connectors`);
     await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
     await page.getByText("From the hub folder").waitFor();
     await page.getByRole("button", { name: "Add connector", exact: true }).waitFor({ state: "detached" });
     assert.equal(await page.getByRole("button", { name: "Add connector", exact: true }).count(), 0);
 
-    step("In Open WebUI mode the tab is the same: connectors are added here");
     fx.state.org = true;
-    fx.state.webApp = false;
-    await page.goto(`${ORIGIN}/portal/?owui#/agents/sales/connectors`);
+    await page.goto(`${ORIGIN}/settings?again2#/agents/sales/connectors`);
     await page.getByRole("button", { name: "Add connector" }).first().waitFor();
-    await page.getByRole("row").filter({ hasText: "Linear" }).waitFor();
-    assert.equal(await page.getByText("This deployment uses Open WebUI", { exact: false }).count(), 0);
 
     step("The hub folder's servers are listed read-only, with what they still need");
     const crm = page.getByRole("row").filter({ hasText: "crm" });
@@ -401,5 +395,6 @@ const step = (name) => {
     process.exitCode = 1;
   } finally {
     await browser.close();
+    await host.close();
   }
 })();

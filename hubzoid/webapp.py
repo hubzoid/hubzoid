@@ -1,7 +1,6 @@
 """The Hubzoid web app on the bridge: one page for chat and Console.
 
-``mount`` runs in the default UI mode (not Open WebUI mode). It
-registers, in order:
+``mount`` registers, in order:
 
   1. sign-in routes          hubzoid.auth.routes.mount        (/api/auth, /oauth)
   2. chat routes             hubzoid.chat.routes.mount        (/api/chat, /api/conversations, /api/shares)
@@ -31,7 +30,7 @@ DIST = Path(__file__).parent / "portal_dist"
 SHELL_PATHS = ("/", "/c/{rest:path}", "/s/{rest:path}", "/auth", "/auth/{rest:path}",
                "/account", "/account/{rest:path}", "/new", "/new/{rest:path}",
                "/branding-preview/{rest:path}", "/sources", "/sources/{rest:path}",
-               "/workspace", "/settings")
+               "/workspace", "/settings", "/requests")
 
 _MOUNTS = (
     "hubzoid.auth.routes",
@@ -43,6 +42,8 @@ _MOUNTS = (
     "hubzoid.connectors.routes",
     "hubzoid.secretstore.routes",
     "hubzoid.hubs.routes",
+    "hubzoid.access.access_routes",
+    "hubzoid.auth.directory.scim",
     "hubzoid.webapp_gateway",
 )
 

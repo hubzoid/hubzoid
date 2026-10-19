@@ -96,7 +96,7 @@ def make(ctx) -> list:
             except Exception:  # noqa: BLE001 — never leak internals to the model
                 log.exception("connect_account listing failed")
                 return "The connections could not be listed right now. Try again shortly."
-            return _listing(rows, connect_journey.public_base() + "/portal/connections")
+            return _listing(rows, connect_journey.public_base() + "/account/connections")
         try:
             # Blocking DB and provider I/O. `to_thread` copies the context, so
             # the trusted identity and chat id reach the worker thread.
@@ -109,7 +109,7 @@ def make(ctx) -> list:
                 rows = await asyncio.to_thread(connect_journey.list_for, hub_dir)
             except Exception:  # noqa: BLE001 — the refusal alone still answers
                 return err.message
-            return err.message + " " + _listing(rows, connect_journey.public_base() + "/portal/connections")
+            return err.message + " " + _listing(rows, connect_journey.public_base() + "/account/connections")
         except Exception:  # noqa: BLE001 — never leak internals to the model
             log.exception("connect_account failed")
             return "The connection could not be started right now. Try again shortly."

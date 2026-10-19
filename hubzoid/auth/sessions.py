@@ -166,7 +166,8 @@ def local_owner(hub_dir: Path) -> AuthUser:
 
             user = ensure_local_owner(Path(hub_dir))
             found = AuthUser(id=user["id"], email=user["email"],
-                             name=user.get("name") or "Local owner", role="admin", method="local")
+                             name=user.get("name") or "Local owner", role="admin", method="local",
+                             credential="local")
             _owner_cache[key] = found
     return found
 
@@ -208,12 +209,72 @@ def forget(request: Request) -> None:
         pass
 
 
+def bearer_token(request: Request) -> str:
+    """A personal API key sent as ``Authorization: Bearer hzp_...``, else ""."""
+    from .api_keys import looks_like_key
+
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return ""
+    token = raw[7:].strip()
+    return token if looks_like_key(token) else ""
+
+
+def _key_user(request: Request, hub_dir: Path, token: str) -> AuthUser | None:
+    """The person behind a personal API key, within its limits. A key the
+    request may not use answers 403 (never the cookie, never the local owner)."""
+    from . import api_keys
+
+    if request.cookies.get(SESSION_COOKIE):
+        raise HTTPException(status_code=400, detail={
+            "code": "ambiguous_credentials",
+            "message": "Send either a session cookie or an API key, not both."})
+    try:
+        info = api_keys.resolve(Path(hub_dir), token)
+        if info is None:
+            return None
+        from ..access import store_for
+
+        if store_for(Path(hub_dir)).is_suspended(info["user"]["email"]):
+            return None
+    except (SQLAlchemyError, OSError, ValueError, RuntimeError):
+        log.warning("auth: API key check failed (store unavailable)", exc_info=True)
+        raise HTTPException(status_code=503, detail=dict(_UNAVAILABLE))
+    path = request.url.path
+    if not api_keys.allows(info["operations"], request.method, path):
+        raise HTTPException(status_code=403, detail={
+            "code": "key_not_allowed",
+            "message": "This API key can't do this. Use a key with more access, or sign in."})
+    hubs = info["hubs"]
+    if hubs is not None and path not in api_keys.LIMITED_PATHS:
+        raise HTTPException(status_code=403, detail={
+            "code": "key_not_allowed",
+            "message": "A key limited to some agents works with the chat API (/v1) only."})
+    if hubs is not None and any(path.startswith(p) for p in api_keys.HUB_PATHS):
+        from ..access.identity import normalize
+
+        if normalize(Path(hub_dir).name) not in hubs:
+            raise HTTPException(status_code=403, detail={
+                "code": "key_not_allowed", "message": "This API key can't use this agent."})
+    u = info["user"]
+    return AuthUser(id=u["id"], email=u["email"], name=u["name"], role=u["role"],
+                    method="api_key", credential="api_key", credential_id=info["key_id"],
+                    operations=info["operations"], hubs=hubs)
+
+
 def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
-    """Who is making this request, or None. Local mode: the local owner."""
+    """Who is making this request, or None. A personal API key (bearer) is
+    checked first and never falls back to the cookie or the local owner.
+    Local mode: the local owner."""
     hub_dir = Path(hub_dir)
     hit = _cached(request, hub_dir)
     if hit is not None:
         return hit[1]
+    token = bearer_token(request)
+    if token:
+        user = _key_user(request, hub_dir, token)
+        _remember(request, hub_dir, user)
+        return user
     if not appmode.auth_enabled(hub_dir):
         user = local_owner(hub_dir) if local_request_allowed(request) else None
     else:
@@ -264,7 +325,8 @@ def resolve_token(hub_dir: Path, token: str) -> AuthUser | None:
                     sessions.c.token_hash == hashed, sessions.c.revoked_at.is_(None),
                 ).values(last_seen_at=now))
         return AuthUser(id=m["user_id"], email=m["email"], name=m["name"] or "",
-                        role=m["role"], method=m["method"] or "")
+                        role=m["role"], method=m["method"] or "",
+                        credential_id=session_id(hashed))
     except (SQLAlchemyError, OSError, ValueError, RuntimeError):
         # The account or access store can't be read: nobody is signed in on
         # its say-so (fail closed), and the caller hears it is unavailable.
@@ -274,8 +336,11 @@ def resolve_token(hub_dir: Path, token: str) -> AuthUser | None:
 
 # ---- creation and revocation --------------------------------------------------
 
+MAX_SESSIONS = 10
+
+
 def create_session(hub_dir: Path, user, *, method: str, request: Request | None = None,
-                   expect_updated_at: float | None = None) -> str:
+                   expect_updated_at: float | None = None, mfa: bool = False) -> str:
     """Start a session for ``user`` (an AuthUser or an account dict). Returns
     the token for the cookie; only its digest is stored.
 
@@ -295,7 +360,7 @@ def create_session(hub_dir: Path, user, *, method: str, request: Request | None 
             token_hash=digest(token), user_id=str(user_id), created_at=now, last_seen_at=now,
             expires_at=now + lifetime_seconds(), idle_seconds=idle_seconds(),
             user_agent=agent or None, ip=client_ip(request) or None, method=(method or "")[:16],
-            revoked_at=None,
+            revoked_at=None, mfa_at=now if mfa else None,
         ))
         if expect_updated_at is not None:
             current = conn.execute(
@@ -309,6 +374,14 @@ def create_session(hub_dir: Path, user, *, method: str, request: Request | None 
             sessions.c.user_id == str(user_id),
             sa.or_(sessions.c.expires_at < now - 86400, sessions.c.revoked_at < now - 86400),
         ))
+        # At most MAX_SESSIONS signed-in devices: the least recently used go.
+        live = conn.execute(sa.select(sessions.c.token_hash).where(
+            sessions.c.user_id == str(user_id), sessions.c.revoked_at.is_(None),
+            sessions.c.expires_at > now,
+        ).order_by(sessions.c.last_seen_at.desc()).offset(MAX_SESSIONS)).fetchall()
+        if live:
+            conn.execute(sessions.update().where(
+                sessions.c.token_hash.in_([r[0] for r in live])).values(revoked_at=now))
     _sweep(engine, now)
     return token
 
@@ -367,3 +440,103 @@ def set_cookie(response, token: str, request: Request | None = None) -> None:
 def clear_cookie(response, request: Request | None = None) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax",
                            secure=is_https(request))
+
+
+# ---- the signed-in person's devices ----------------------------------------------
+
+RECENT_SECONDS = 600
+
+
+def session_id(token_hash: str) -> str:
+    """A public id for a session: the start of its digest (the token can't be
+    derived from it)."""
+    return token_hash[:16]
+
+
+def _device(agent: str | None) -> str:
+    """'Chrome on macOS' from a user agent, for people reading their devices."""
+    ua = agent or ""
+    browser = next((name for key, name in (("Edg/", "Edge"), ("OPR/", "Opera"),
+                                           ("Firefox/", "Firefox"), ("Chrome/", "Chrome"),
+                                           ("Safari/", "Safari"), ("curl/", "curl"),
+                                           ("python", "Python"), ("hubzoid", "Hubzoid CLI"))
+                    if key.lower() in ua.lower()), "Browser")
+    system = next((name for key, name in (("iPhone", "iPhone"), ("iPad", "iPad"),
+                                          ("Android", "Android"), ("Mac OS X", "macOS"),
+                                          ("Macintosh", "macOS"), ("Windows", "Windows"),
+                                          ("Linux", "Linux")) if key in ua), "")
+    return f"{browser} on {system}" if system else browser
+
+
+def _place(ip: str | None) -> str:
+    """The address, shortened: enough to recognise a network, not a person."""
+    if not ip:
+        return ""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
+    if addr.is_loopback:
+        return "This computer"
+    if addr.version == 4:
+        parts = ip.split(".")
+        return ".".join(parts[:3]) + ".x"
+    return ip.split(":")[0] + ":…"
+
+
+def list_sessions(hub_dir: Path, user_id: str, current: str | None = None) -> list[dict]:
+    now = time.time()
+    current_hash = digest(current) if current else ""
+    with engine_for(Path(hub_dir)).connect() as conn:
+        rows = conn.execute(sa.select(sessions).where(
+            sessions.c.user_id == str(user_id), sessions.c.revoked_at.is_(None),
+            sessions.c.expires_at > now,
+        ).order_by(sessions.c.last_seen_at.desc())).fetchall()
+    out = []
+    for row in rows:
+        m = row._mapping
+        if m["last_seen_at"] + min(m["idle_seconds"], idle_seconds()) <= now:
+            continue
+        out.append({"id": session_id(m["token_hash"]), "device": _device(m["user_agent"]),
+                    "place": _place(m["ip"]), "signed_in_at": m["created_at"],
+                    "last_active_at": m["last_seen_at"], "method": m["method"] or "",
+                    "current": m["token_hash"] == current_hash})
+    return out
+
+
+def revoke_session_id(hub_dir: Path, user_id: str, sid: str) -> bool:
+    if not sid or len(sid) != 16 or not all(c in "0123456789abcdef" for c in sid):
+        return False
+    with engine_for(Path(hub_dir)).begin() as conn:
+        return bool(conn.execute(sessions.update().where(
+            sessions.c.user_id == str(user_id), sessions.c.token_hash.like(sid + "%"),
+            sessions.c.revoked_at.is_(None)).values(revoked_at=time.time())).rowcount)
+
+
+def recently_verified(request: Request, hub_dir: Path) -> bool:
+    """Whether this browser session proved who it is in the last ten minutes
+    (signed in, or confirmed with ``/api/auth/reauth``). A personal API key
+    never counts. Local mode: the local owner at this computer counts."""
+    if bearer_token(request):
+        return False
+    if not appmode.auth_enabled(hub_dir):
+        return True
+    token = current_token(request)
+    if not token:
+        return False
+    with engine_for(Path(hub_dir)).connect() as conn:
+        row = conn.execute(sa.select(sessions.c.created_at, sessions.c.mfa_at).where(
+            sessions.c.token_hash == digest(token), sessions.c.revoked_at.is_(None))).first()
+    if row is None:
+        return False
+    latest = max(row[0] or 0, row[1] or 0)
+    return time.time() - latest <= RECENT_SECONDS
+
+
+def mark_verified(hub_dir: Path, request: Request) -> None:
+    token = current_token(request)
+    if not token:
+        return
+    with engine_for(Path(hub_dir)).begin() as conn:
+        conn.execute(sessions.update().where(sessions.c.token_hash == digest(token))
+                     .values(mfa_at=time.time()))

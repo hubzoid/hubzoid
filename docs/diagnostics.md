@@ -1,8 +1,8 @@
-# Settings and diagnostics in the Console
+# Workspace settings and diagnostics
 
-Console → Settings lists every settings area with its file, owner and the
-command that changes it (Chat, Appearance, Admin, Parity ledger). Console →
-Diagnostics runs read-only checks.
+Settings → Workspace settings lists every settings area with its file, owner
+and the command that changes it (Chat defaults, Brand, Advanced, Compatibility).
+Settings → Workspace settings → Health & support runs read-only checks.
 
 ## admin.yaml
 

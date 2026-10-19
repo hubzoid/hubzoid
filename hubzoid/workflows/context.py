@@ -34,6 +34,7 @@ that person's connections, never the author's or an administrator's.
 """
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .state import WorkflowState
+
+log = logging.getLogger(__name__)
 
 # Injectable seams so the façade stays model-free and testable. server.py/cli.py
 # wire the real hub runtime; tests set fakes. Signature mirrors the POC.
@@ -54,6 +57,11 @@ _JEV: Callable[..., Any] | None = None     # (spec: dict, hub_dir, subject) -> d
 _LLM_STEP: Callable[..., Any] | None = None
 _AGENT_STEP: Callable[..., Any] | None = None
 _JEV_STEP: Callable[..., Any] | None = None
+# Approvals and questions (hubzoid.hitl): creating and reading a request are
+# checkpointed steps, and the wait between them is a durable DBOS receive.
+_HITL_CREATE_STEP: Callable[..., Any] | None = None
+_HITL_READ_STEP: Callable[..., Any] | None = None
+HITL_POLL_SECONDS = 600
 
 
 def configure(*, llm: Callable[..., Any] | None = None,
@@ -468,6 +476,79 @@ class Hub:
 
         return _validated(extract_json(text), response_model, text)
 
+    # -- a person in the loop -------------------------------------------------------
+    def approve(self, action: str, *, details=None, approvers=None) -> dict:
+        """Stop until a person approves ``action`` (shown with ``details``,
+        exactly). Waits durably: the run holds no process while it waits and
+        continues after a restart. The person who asks is the account this run
+        acts as, unless ``approvers`` names people (emails or account ids).
+        Returns ``{"approved": bool, "note": str | None, "by": email}``."""
+        req = self._wait_for(kind="approval", title=action, arguments=details, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def ask(self, question: str, *, options=None, approvers=None) -> str:
+        """Ask a person one question and wait durably for the answer. ``options``
+        is a list of 2 or 3 labels; the person may also type their own answer."""
+        opts = [o if isinstance(o, dict) else {"label": str(o)} for o in (options or [])] or None
+        req = self._wait_for(kind="question", title=question[:200], question=question, options=opts,
+                             approvers=approvers)
+        return req.get("answer") or ""
+
+    def review_plan(self, path, *, title: str | None = None, approvers=None) -> dict:
+        """Ask a person to approve one exact plan document (a file this run
+        wrote, published as an artifact version). Editing the plan makes a new
+        version, which needs its own approval. Returns ``{"approved": bool,
+        "note": str | None, "by": email}``; a request for changes is not approved."""
+        import hashlib
+
+        source = Path(path) if Path(path).is_absolute() else Path(_ctx().hub_dir) / path
+        data = source.read_bytes()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        # Publish a copy named by its digest, so the approved bytes are exactly
+        # the published ones even if the source changes meanwhile.
+        snap = self.data_dir / "plans" / f"{digest[7:23]}{source.suffix}"
+        snap.parent.mkdir(parents=True, exist_ok=True)
+        if not snap.exists():
+            snap.write_bytes(data)
+        people = [a for a in (approvers or []) if isinstance(a, str) and "@" in a]
+        art = self.publish_artifact(snap, title=title or source.name,
+                                    **({"audience": "people", "share_with": people} if people else {}))
+        # The version number is assigned when the request is created (a
+        # durable step): 1 + the earlier plans this run asked about.
+        subject = {"name": title or source.name, "url": art.get("share_url") or art.get("url"),
+                   "digest": digest, "plan": True}
+        req = self._wait_for(kind="approval", title=subject["name"], subject=subject, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def _wait_for(self, **spec) -> dict:
+        ctx = _ctx()
+        _recheck(ctx, "Asking a person")
+        ident = _identity(ctx)
+        spec["approvers"] = list(spec.get("approvers") or ["requester"])
+        payload = {"hub_dir": str(ctx.hub_dir), "hub": ctx.hub, "workflow_id": ctx.run_id or "",
+                   "requester": ident.email or ident.subject, "account_id": ident.account_id or "", **spec}
+        create = _HITL_CREATE_STEP or _hitl_create
+        read = _HITL_READ_STEP or _hitl_read
+        req = create(payload)
+        if req["status"] == "pending" and spec["approvers"] == ["requester"]:
+            # Nobody watches a scheduled run: email the person a link to answer.
+            from ..appmode import public_url
+
+            base = (public_url() or "").rstrip("/")
+            what = spec.get("question") or spec["title"]
+            self.send_email(f"Waiting for you: {spec['title'][:150]}",
+                            f"{ctx.workflow} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {base}/requests\n", raise_on_failure=False)
+        while req["status"] == "pending":
+            if not _hitl_receive(req["id"]):
+                import time
+
+                time.sleep(1.0)
+            req = read(str(ctx.hub_dir), ctx.hub, req["id"])
+        return req
+
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
         """Typed decisions from TypeSafe's Jev through OpenRouter.
         Each question is a "noul" (does it hold?), "choice" (which label?) or
@@ -488,6 +569,51 @@ class Hub:
         else:
             data = _JEV(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
         return data["answers"]
+
+
+def _hitl_create(payload: dict) -> dict:
+    from ..hitl import service
+
+    hub_dir, hub_id = Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower()
+    if payload.get("workflow_id"):
+        # A replay after a crash (the request was saved, the step was not)
+        # finds the same pending request instead of asking twice.
+        same = service.pending_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["kind"],
+                                            payload["title"], (payload.get("subject") or {}).get("digest"))
+        if same is not None:
+            return same
+    subject = payload.get("subject")
+    if subject and subject.get("plan") and payload.get("workflow_id"):
+        earlier = service.count_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["title"])
+        payload["subject"] = {**subject, "version": earlier + 1}
+
+    caller = service.Caller(account_id=payload.get("account_id") or payload["requester"],
+                            email=payload["requester"], present=True, origin="workflow")
+    return service.create(Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower(), caller, kind=payload["kind"],
+                          title=payload["title"], arguments=payload.get("arguments"),
+                          question=payload.get("question"), options=payload.get("options"),
+                          subject=payload.get("subject"), approvers=tuple(payload["approvers"]),
+                          workflow_id=payload.get("workflow_id") or None)
+
+
+def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
+    from ..hitl import service
+
+    return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
+
+
+def _hitl_receive(request_id: str) -> bool:
+    """Inside a DBOS workflow: wait for the decision's message (or a periodic
+    re-check). Elsewhere (a bare run in tests): False, and the caller polls."""
+    try:
+        from dbos import DBOS
+
+        if not DBOS.workflow_id:
+            return False
+        DBOS.recv(topic=f"hitl:{request_id}", timeout_seconds=HITL_POLL_SECONDS)
+        return True
+    except Exception:  # noqa: BLE001 - outside a workflow
+        return False
 
 
 def _validated(value, response_model, raw_text: str):
@@ -599,9 +725,39 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
             if identity:
                 from ..access import Identity, identity_scope
 
-                with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+                with identity_scope(_workflow_identity(hub_dir, hub, workflow, run_id, identity,
+                                                       ctx.subject)):
                     yield
             else:
                 yield
     finally:
         _run.reset(token)
+
+
+def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: str):
+    """The request identity of a workflow run, with its run identity record
+    (``access.run_identity``). Written once per run id: a run recovering after
+    a restart gets its first record back, built from the account id stored
+    with the run, never by looking the email up again. A run whose stored
+    identity is a pre-account service subject is recorded as legacy."""
+    from ..access import Identity, run_identity
+
+    base = Identity.make(subject, surface="workflow")
+    if not run_id:
+        return base
+    legacy = identity.get("source") == "legacy-service" or "@" not in (subject or "")
+    fields = dict(run_kind="workflow", run_id=f"{hub}:{run_id}",
+                  acts_as_id=None if legacy else identity.get("account_id"),
+                  acts_as_email=None if legacy else subject, requested_by=subject,
+                  started_from="workflow", origin_id=workflow, person_present=False,
+                  credential_kind="workflow", legacy=legacy)
+    if legacy:
+        # A legacy run gets no extra trust from its record: it runs on its
+        # grants alone whether or not the record is written.
+        try:
+            run_identity.admit(Path(hub_dir), **fields)
+        except Exception:  # noqa: BLE001
+            log.warning("workflow: legacy run identity not recorded", exc_info=True)
+        return base
+    record = run_identity.admit_or_refuse(Path(hub_dir), **fields)
+    return run_identity.identity(record, "workflow")
