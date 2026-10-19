@@ -447,7 +447,9 @@ lxml==6.1.1
 mako==1.4.3
     # via alembic
 markdown==3.10.2
-    # via open-webui
+    # via
+    #   hubzoid (pyproject.toml)
+    #   open-webui
 markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3

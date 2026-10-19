@@ -217,6 +217,8 @@ litellm==1.95.0
     #   openai-agents
 mako==1.4.3
     # via alembic
+markdown==3.10.2
+    # via hubzoid (pyproject.toml)
 markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3

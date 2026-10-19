@@ -85,6 +85,7 @@ dependencies = [
   "Pillow>=12.2,<12.3",     # vision_inject.py resizes uploaded images before sending them to the model
   "openapi-spec-validator>=0.7.2,<0.8",  # chat/authoring.py: validate imported OpenAPI documents (Apache-2.0)
   "defusedxml>=0.7.1,<0.8",  # ui/branding_assets.py: parse uploaded SVG logos without entity expansion (PSF licence)
+  "markdown>=3.10.2,<3.11", # email_delivery.py: formatted email bodies (Markdown to sanitized HTML)
   "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL
   "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
