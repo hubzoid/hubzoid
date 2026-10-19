@@ -523,22 +523,10 @@ class FileService:
     def _validate(self, file_id: str, data: bytes) -> None:
         """The declared type must match the bytes (a renamed executable or an
         HTML page posing as an image is quarantined)."""
-        state, problem = "ready", None
         with self.engine.connect() as conn:
             row = self._row(conn, file_id)
-        mime = row.mime_type
-        head = data[:512].lstrip().lower()
-        if mime.startswith("image/") and mime != "image/svg+xml":
-            sig = {b"\x89png": "image/png", b"\xff\xd8\xff": "image/jpeg", b"gif8": "image/gif", b"riff": "image/webp"}
-            if not any(data[:4].lower().startswith(k) for k in sig):
-                state, problem = "quarantined", "The bytes are not the image type they claim to be."
-        elif mime == "application/pdf" and not data.startswith(b"%PDF"):
-            state, problem = "quarantined", "The bytes are not a PDF."
-        elif mime in ("text/plain", "text/csv", "text/markdown", "application/json"):
-            if head.startswith((b"<!doctype html", b"<html", b"<script")) or b"\x00" in data[:4096]:
-                state, problem = "quarantined", "The bytes are not plain text."
-        elif data[:2] == b"MZ" or data[:4] == b"\x7fELF":
-            state, problem = "quarantined", "Executable files can't be attached."
+        problem = content_problem(row.mime_type, data)
+        state = "quarantined" if problem else "ready"
         with self.engine.begin() as conn:
             conn.execute(files.update().where(files.c.file_id == file_id, files.c.state == "validating")
                          .values(state=state, processing_error=problem, revision=files.c.revision + 1))
@@ -950,3 +938,23 @@ def service_for(hub_dir: Path, engine, hub: str, chat_engine=None) -> FileServic
     elif chat_engine is not None:
         svc.chat = chat_engine
     return svc
+
+
+def content_problem(mime: str, data: bytes) -> str | None:
+    """Why the bytes are not the type they claim to be, or None. A renamed
+    executable, an HTML page posing as an image or a fake PDF is refused."""
+    head = data[:512].lstrip().lower()
+    if mime.startswith("image/") and mime != "image/svg+xml":
+        sig = {b"\x89png": "image/png", b"\xff\xd8\xff": "image/jpeg", b"gif8": "image/gif", b"riff": "image/webp"}
+        if not any(data[:4].lower().startswith(k) for k in sig):
+            return "The bytes are not the image type they claim to be."
+    elif mime == "application/pdf" and not data.startswith(b"%PDF"):
+        return "The bytes are not a PDF."
+    elif mime in ("text/plain", "text/csv", "text/markdown", "application/json"):
+        if head.startswith((b"<!doctype html", b"<html", b"<script")) or b"\x00" in data[:4096]:
+            return "The bytes are not plain text."
+    elif mime.startswith("application/vnd.openxmlformats-officedocument.") and not data.startswith(b"PK\x03\x04"):
+        return "The bytes are not an Office document."
+    elif data[:2] == b"MZ" or data[:4] == b"\x7fELF":
+        return "Executable files can't be attached."
+    return None

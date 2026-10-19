@@ -37,7 +37,11 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                # cards (op_0054)
                "hz_app_config_revisions", "hz_app_resources", "hz_app_instances",
                # secrets set in the Console (op_0060)
-               "hz_secrets"}
+               "hz_secrets",
+               # channels (op_0070)
+               "hz_channel_connections", "hz_channel_threads", "hz_channel_deliveries", "hz_channel_links",
+               # intake (op_0071)
+               "hz_intake_items", "hz_intake_attachments"}
 
 
 # Tables added after op_0019, dropped when a test rewinds to op_0016 and when
@@ -344,12 +348,14 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019, op_0050 to op_0054 and op_0060 (secrets).
+        # And op_0019, op_0050 to op_0054, op_0060 (secrets), op_0070 and op_0071.
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
                       "hz_work_items", "hz_operations", "hz_idempotency",
                       "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps",
                       "hz_budget_reservations", "hz_app_config_revisions", "hz_app_resources",
-                      "hz_app_instances", "hz_secrets"):
+                      "hz_app_instances", "hz_secrets", "hz_channel_connections", "hz_channel_threads",
+                      "hz_channel_deliveries", "hz_channel_links", "hz_intake_attachments",
+                      "hz_intake_items"):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
         conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))

@@ -2558,6 +2558,7 @@ from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
 from .chat import engine_cli as _chat_engine_cli  # noqa: E402
 from .secretstore.cli import secrets_app  # noqa: E402
+from .hubs.cli import hub_app  # noqa: E402
 
 _chat_engine_cli.register(chat_app)
 from .chat import feedback_cli as _chat_feedback_cli  # noqa: E402
@@ -2650,6 +2651,12 @@ app.add_typer(
     migrate_app,
     name="migrate",
     help="Move an Open WebUI install to the Hubzoid web app.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    hub_app,
+    name="hub",
+    help="A hub's settings (settings.yaml, hub.settings.yaml) and its own checks.",
     rich_help_panel="Commands",
 )
 app.add_typer(
@@ -3325,6 +3332,18 @@ app.add_typer(work_items_app, name="work-items",
               rich_help_panel="Commands")
 app.add_typer(operations_app, name="operations",
               help="Recorded external writes: approve, deny and resolve.",
+              rich_help_panel="Commands")
+
+from .channels.cli import channels_app  # noqa: E402
+
+app.add_typer(channels_app, name="channels",
+              help="Channels: Slack, GitHub, Linear, email and WhatsApp threads for this hub.",
+              rich_help_panel="Commands")
+
+from .intake.cli import intake_app  # noqa: E402
+
+app.add_typer(intake_app, name="intake",
+              help="Intake: review email and WhatsApp messages before work starts.",
               rich_help_panel="Commands")
 
 from .stations.cli import handoffs_app, stations_app  # noqa: E402
