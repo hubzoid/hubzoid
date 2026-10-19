@@ -13,8 +13,8 @@ hubzoid restore /var/backups/hubzoid-2026-09-25.tar.gz
 
 | Saved | Where it comes from |
 |---|---|
-| Every SQLite database | The operational store (accounts, sessions, conversations, grants, audit, usage, workflow state and encrypted connector credentials), and each hub's DBOS run history. In Open WebUI mode, also `webui.db` and its vector store. Each database is copied with SQLite's online backup. |
-| Chat UI data | Hubzoid uploads under each hub's `.hubzoid/chats/`. In Open WebUI mode, also uploads and settings in `<hub>/.openwebui-data` or the gateway's `--data-dir`; its model cache is rebuilt on demand. |
+| Every SQLite database | The operational store (accounts, sessions, conversations, grants, audit, usage, workflow state and encrypted connector credentials), and each hub's DBOS run history. From a 1.x Open WebUI deployment, also `webui.db` and its vector store, so a pre-2.0 backup stays restorable. Each database is copied with SQLite's online backup. |
+| Chat UI data | Hubzoid uploads under each hub's `.hubzoid/chats/`. From a 1.x Open WebUI deployment, also uploads and settings in `<hub>/.openwebui-data` or the gateway's `--data-dir`, but not its model cache. |
 | Hub runtime state | Each hub's `.hubzoid`, `.inbound`, `logs` and `output` (files the agent made for users). |
 
 A hub that belongs to a gateway is backed up with the whole gateway: every hub
@@ -27,7 +27,7 @@ Not saved:
   hub's git repository.
 - **Secrets.** Each `.env`, the deployment encryption key (`secret.key` in
   the gateway data directory, or `<hub>/.hubzoid/secret.key`), the artifact signing key
-  (`.hubzoid/artifact_secret`) and `.webui_secret_key` are left out unless you
+  (`.hubzoid/artifact_secret`) and a 1.x `.webui_secret_key` are left out unless you
   pass `--include-secrets`. So are the database passwords in the gateway's
   `deployment.json`, which is saved with each password replaced by `***`.
   Keep those files, or the configured `HUBZOID_SECRET_KEY`, protected separately.
@@ -89,22 +89,21 @@ can be given more than once.
 hubzoid restore backup.tar.gz --move /root/Hubs=/srv/hubs
 ```
 
-Restore then rewrites the absolute paths that Hubzoid and Open WebUI store:
-the gateway's deployment manifest, each hub's pointer to it, the schedule
-state and Open WebUI's uploaded-file paths. Check out the hubs' git
+Restore then rewrites the absolute paths that Hubzoid stores: the gateway's
+deployment manifest, each hub's pointer to it, the schedule state and, in a
+1.x Open WebUI backup, its uploaded-file paths. Check out the hubs' git
 repositories at the new paths, copy back each `.env` and the separately saved
 deployment encryption and artifact signing keys, then start.
 
-After a restore, run `hubzoid doctor` and open the Console to check access
+After a restore, run `hubzoid doctor` and open Settings to check access
 and recent runs.
 
 ## PostgreSQL
 
 With `DATABASE_URL`, `HUBZOID_OPERATIONAL_DB` or `HUBZOID_DBOS_DB` pointing at
 PostgreSQL, those databases are not in the archive. `hubzoid backup` lists
-each one as `Not included (PostgreSQL)`. Dump every one of them, and Open
-WebUI's database too. Open WebUI reads `DATABASE_URL`, so its database is that
-one unless you gave Open WebUI its own. Dump each distinct database once.
+each one as `Not included (PostgreSQL)`. Dump every one of them, once per
+distinct database.
 
 The schedule hold covers only the archive, not the dumps. For a dump and an
 archive that match, stop the deployment around both:

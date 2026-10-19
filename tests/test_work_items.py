@@ -500,6 +500,26 @@ def test_redaction_and_classes():
         tool_classes.check("admin")
 
 
+def test_a_declared_class_survives_the_access_wrappers(hub_dir):
+    """Every runtime wraps every tool (access.apply); the copy must keep what the
+    tool declared, or a declared read becomes an external write."""
+    from agents import function_tool
+
+    from hubzoid import access, tool_classes
+
+    @function_tool
+    def lookup(q: str) -> str:
+        "Look something up."
+        return q
+
+    tool_classes.declare(lookup, "external_write", action="crm.update")
+    lookup._hz_source = "tools_local/lookup.py"
+    wrapped = access.apply(hub_dir, {"lookup": lookup})["lookup"]
+    assert wrapped is not lookup
+    assert tool_classes.classify(wrapped) == "external_write" and tool_classes.action_of(wrapped) == "crm.update"
+    assert wrapped._hz_source == "tools_local/lookup.py"
+
+
 
 # -- review findings -------------------------------------------------------------
 
@@ -659,7 +679,7 @@ def test_cli_decisions_need_local_mode(hub_dir, monkeypatch):
     from hubzoid.work_items import cli as wi_cli
 
     assert wi_cli._decider(hub_dir, False) == OWNER
-    monkeypatch.setenv("WEBUI_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
     with pytest.raises(typer.Exit) as exited:
         wi_cli._decider(hub_dir, True)
     assert exited.value.exit_code == 3

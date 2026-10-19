@@ -394,7 +394,7 @@ def test_review_diff_returns_findings_and_posts_nothing(hub):
 def test_workflow_declarations(hub):
     """As Hubzoid reads them: a file that fails to load is missing here."""
     from hubzoid.workflows.schedule_grammar import to_cron
-    defs = h.definitions(hub)
+    defs = {n: d for n, d in h.definitions(hub).items() if n != "repeated_request"}  # built in
     assert set(defs) == {"setup_check", "github_events", "pr_sweep", "security_watch", "deep_audit", "repo_profiles",
                          "weekly_digest", "code_report", "delivery_report", "people_report", "review_diff"}
     for d in defs.values():

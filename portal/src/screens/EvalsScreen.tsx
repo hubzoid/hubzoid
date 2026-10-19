@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Alert,
   Button,
@@ -155,7 +155,7 @@ function Verdict({ passed }: { passed: boolean }) {
   );
 }
 
-export function EvalsScreen({ hub, run }: { hub: Hub; run?: string }) {
+export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: string; embedded?: boolean }) {
   const [page, setPage] = useState(1);
   const overview = useData<EvalsOverview>("/evals" + query({ hub: hub.key }), { keepStale: true });
   const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*50, limit: 50 }), {
@@ -232,13 +232,13 @@ export function EvalsScreen({ hub, run }: { hub: Hub; run?: string }) {
         <NoCases hub={hub} docs={data.docs} folder={data.folder} />
       ) : (
         <>
-          <CasesTable hub={hub} cases={data.cases} />
+          <CasesTable embedded={embedded} hub={hub} cases={data.cases} />
           <div className="section">
             <Title level={3}>Runs</Title>
             {!runs.data ? (
               <LoadState error={runs.error} retry={runs.reload} rows={2} />
             ) : (
-              <><RunsTable hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={50} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
+              <><RunsTable embedded={embedded} hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={50} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
             )}
           </div>
         </>
@@ -324,9 +324,16 @@ function NoCases({ hub, docs, folder }: { hub: Hub; docs: string; folder: boolea
   );
 }
 
-function CasesTable({ hub, cases }: { hub: Hub; cases: EvalCaseRow[] }) {
+function EvalTableFrame({ embedded, label, children }: { embedded: boolean; label: string; children: ReactNode }) {
+  return embedded ? <div className="hz-table-scroll" tabIndex={0} role="region" aria-label={label}>{children}</div> : children;
+}
+
+function CasesTable({ hub, cases, embedded }: { hub: Hub; cases: EvalCaseRow[]; embedded: boolean }) {
   return (
+    <EvalTableFrame embedded={embedded} label="Eval cases">
     <Table<EvalCaseRow>
+      className={embedded ? "hz-scroll-table" : undefined}
+      aria-label="Eval cases"
       rowKey="name"
       size="middle"
       dataSource={cases}
@@ -426,12 +433,16 @@ function CasesTable({ hub, cases }: { hub: Hub; cases: EvalCaseRow[] }) {
         },
       ]}
     />
+    </EvalTableFrame>
   );
 }
 
-function RunsTable({ hub, runs }: { hub: Hub; runs: EvalRunSummary[] }) {
+function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; embedded: boolean }) {
   return (
+    <EvalTableFrame embedded={embedded} label="Eval runs">
     <Table<EvalRunSummary>
+      className={embedded ? "hz-scroll-table" : undefined}
+      aria-label="Eval runs"
       rowKey="stamp"
       size="middle"
       dataSource={runs}
@@ -493,6 +504,7 @@ function RunsTable({ hub, runs }: { hub: Hub; runs: EvalRunSummary[] }) {
         },
       ]}
     />
+    </EvalTableFrame>
   );
 }
 

@@ -1345,6 +1345,75 @@ class ChatEngine:
             email = ((users.get(self.hub_dir, author_id) or {}).get("email") or "").lower()
         return Actor(id=author_id, email=email, groups=frozenset(self.groups_for(email)))
 
+    # -- results of personal workflows -----------------------------------------------------
+    def deliver(self, actor: Actor, *, agent: str, title: str, prompt: str, answer: str,
+                conversation_id: str | None = None) -> str:
+        """A new private conversation for ``actor`` holding a request and the
+        answer a workflow run produced. Returns its id. With a fixed
+        ``conversation_id`` (from the run), delivering again is a no-op."""
+        if conversation_id:
+            with self.engine.connect() as conn:
+                row = conn.execute(sa.select(conversations.c.head_id).where(
+                    conversations.c.id == conversation_id)).first()
+            if row is not None and row.head_id is not None:
+                return conversation_id  # already delivered
+        if not conversation_id or row is None:
+            conv = self.create_conversation(actor, agent=agent, conversation_id=conversation_id)
+            cid = conv["conversation_id"]
+        else:
+            cid = conversation_id
+        with self.engine.begin() as conn:
+            c = self._conv(conn, cid)
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.conversation_id == cid)
+                             .with_for_update()).first()
+            uid = self._insert(conn, conv_id=cid, mid=None, parent_id=None, role="user",
+                               content=[{"type": "text", "text": prompt}], branch_id=b.id, actor=actor)
+            aid = self._insert(conn, conv_id=cid, mid=None, parent_id=uid, role="assistant",
+                               content=[{"type": "text", "text": answer}], branch_id=b.id, actor=actor)
+            g.move_head(conn, b.id, b.revision, aid)
+            self._touch(conn, cid, aid)
+            g.set_view(conn, cid, actor.id, b.id, aid)
+            conn.execute(conversations.update().where(conversations.c.id == cid)
+                         .values(title=title[:200], title_source="manual"))
+            del c
+        self.notify(cid)
+        return cid
+
+    # -- approvals and questions (hubzoid.hitl) ---------------------------------------------
+    class Busy(Exception):
+        """The reply that asked is still being written: continue when it ends."""
+
+    def continue_after_request(self, conversation_id: str, *, actor_id: str, branch_id: str,
+                               after_message_id: str, parts: list) -> RunPlan | None:
+        """The person answered a request the agent made in this branch: add
+        their answer as their next message and start the agent's reply to it,
+        on the same branch, after the message that asked. None when the branch
+        moved on (they wrote something else, or it was edited away)."""
+        with self.engine.begin() as conn:
+            conv = self._conv(conn, conversation_id)
+            if conv is None or conv.get("deleted_at"):
+                return None
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == branch_id).with_for_update()).first()
+            if b is None or b.conversation_id != conversation_id or b.head_id != after_message_id \
+                    or b.writer_actor_id != actor_id:
+                return None
+            head = self._message_in(conn, conversation_id, after_message_id)
+            if head["status"] == "running":
+                raise self.Busy()
+            actor = self._author(conv, actor_id)
+            uid = self._insert(conn, conv_id=conversation_id, mid=None, parent_id=after_message_id, role="user",
+                               content=parts, branch_id=b.id, actor=actor)
+            run_id, aid, fence = self._admit(conn, conv=conv, actor=actor, branch_id=b.id, parent_id=uid,
+                                             kind="respond", operation_id=str(uuid.uuid4()),
+                                             snapshot={"kind": "respond", "target": uid, "after_request": True})
+            g.move_head(conn, b.id, b.revision, aid)
+            self._touch(conn, conversation_id, aid)
+            g.set_view(conn, conversation_id, actor.id, b.id, aid)
+            plan = self._plan(run_id=run_id, conv=conv, branch_id=b.id, aid=aid, actor=actor, kind="respond",
+                              prompt_mid=uid, fence=fence)
+        self.notify(conversation_id)
+        return plan
+
     # -- native runtime sessions ----------------------------------------------------------
     def binding_for(self, plan: RunPlan, config_digest: str) -> str | None:
         """The native session this run may resume: only a ``send`` or

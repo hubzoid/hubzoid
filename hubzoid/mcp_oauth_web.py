@@ -1,9 +1,8 @@
 """Small member-facing consent and connection pages.
 
 Who is signed in comes from ``access.session.verified_email``: the Hubzoid
-session in the default mode (the local owner when sign-in is off), the Open
-WebUI session in Open WebUI mode. Signing in happens on the web app's
-``/auth`` page (Open WebUI's in Open WebUI mode), which returns here afterwards."""
+session (the local owner when sign-in is off). Signing in happens on the web
+app's ``/auth`` page, which returns here afterwards."""
 
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 
-from . import appmode
 from .access import session
 from .mcp_oauth_store import digest
 
@@ -225,7 +223,6 @@ def browser_routes(provider):
             ),
         }
         if request.method == "GET":
-            through = " through Open WebUI" if appmode.is_openwebui(provider.hub_dir) else ""
             csrf = csrf_form(who, "consent:" + ticket)
             app_name = client.client_name or "An assistant"
             agent = _agent_name(provider.hub_dir)
@@ -236,7 +233,7 @@ def browser_routes(provider):
             body = f"""<div class="consent">
 <div class="parties" aria-hidden="true"><span class="tile">{escape(app_name[:1].upper())}</span><span class="link"><i></i><i></i><i></i></span><span class="tile hub"><b>/</b>{escape(agent[:1].lower())}</span></div>
 <h1>{escape(app_name)} wants to use {escape(agent)}</h1>
-<p class="who">Signed in as <strong>{escape(who['email'])}</strong>{through}</p>
+<p class="who">Signed in as <strong>{escape(who['email'])}</strong></p>
 <p class="label">This will allow it to</p>
 <ul class="scope">
 <li>{yes}<span>Read {escape(agent)}’s knowledge and files</span></li>

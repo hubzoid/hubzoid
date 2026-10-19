@@ -248,8 +248,7 @@ def test_units_may_write_the_gateways_shared_store(tmp_path, monkeypatch):
     hub.mkdir(parents=True)
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key="nurturing", name="nurturing", path=str(hub), model_id="nurturing")],
-                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
-                    owui_url="http://127.0.0.1:9", owui_db=str(gw / "webui.db"))
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}", owui_db=str(gw / "webui.db"))
     for render in (systemd_unit_for_hub, inbound_unit):
         unit = render(hub_dir=hub, python_path=Path("/venv/bin/python"))
         assert f"ReadWritePaths={hub} {gw.resolve()}\n" in unit

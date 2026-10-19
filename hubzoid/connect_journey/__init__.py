@@ -15,8 +15,8 @@ The journey, end to end:
      If not, :func:`start` records a short-lived journey bound to the trusted
      caller's account and returns ``<public>/portal/connect/<id>``, never a
      provider URL.
-  2. The link page requires a signed-in session (Hubzoid's, or Open WebUI's in
-     Open WebUI mode) for the journey's own account and email (`web.py`).
+  2. The link page requires a signed-in Hubzoid session for the journey's own
+     account and email (`web.py`).
      ``Start`` begins Hubzoid's own OAuth flow.
   3. After consent the browser returns to ``/portal/connect/<id>/done``, which
      asks the provider whether *this* journey connected. Callback parameters
@@ -77,30 +77,26 @@ def ttl(env=None) -> int:
 
 
 def app_key(name: str) -> str:
-    from ..owui_mcp import app_key as _key
+    from ..personal_mcp import app_key as _key
 
     return _key(name)
 
 
 def capability(app: str) -> str:
-    from ..owui_mcp import capability as _cap
+    from ..personal_mcp import capability as _cap
 
     return _cap(app)
 
 
 def public_base(env=None) -> str:
-    """The deployment's public root (where `/portal` and Open WebUI are served).
-
-    ``WEBUI_URL`` first (the chat app's public URL, which OAuth needs anyway),
-    then ``HUBZOID_PUBLIC_URL`` without a gateway's per-bridge ``/b/<slug>``.
+    """The deployment's public root (where the web app is served):
+    ``HUBZOID_PUBLIC_URL`` without a gateway's per-bridge ``/b/<slug>``.
     """
     env = os.environ if env is None else env
-    base = (env.get("WEBUI_URL") or "").strip().rstrip("/")
-    if not base:
-        base = (env.get("HUBZOID_PUBLIC_URL") or "").strip().rstrip("/")
-        head, sep, tail = base.rpartition("/b/")
-        if sep and tail and "/" not in tail:
-            base = head
+    base = (env.get("HUBZOID_PUBLIC_URL") or "").strip().rstrip("/")
+    head, sep, tail = base.rpartition("/b/")
+    if sep and tail and "/" not in tail:
+        base = head
     if not base:
         base = f"http://localhost:{(env.get('PORT') or '3080').strip()}"
     return base

@@ -45,7 +45,7 @@ def _register(tmp_path: Path, hubs: list[Path], secret: dict | None = None, slug
         manifest,
         hubs=[dict(key=h.name.lower(), name=h.name, path=str(h.resolve()), model_id=h.name,
                    **({"slug": slugs[h.name]} if slugs else {})) for h in hubs],
-        operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="http://127.0.0.1:1",
+        operational_url=f"sqlite:///{tmp_path / 'op.db'}",
         owui_db=str(tmp_path / "webui.db"), deployment_secret=secret)
     return manifest
 
@@ -141,14 +141,15 @@ def test_gateway_hub_takes_only_bridge_keys_from_the_deployment_secret(tmp_path,
     _register(tmp_path, [hub], {"name": "dep", "region": "eu-west-1"})
     install(monkeypatch, {"dep": {"WEBUI_SECRET_KEY": "k", "DATABASE_URL": "sqlite:///x.db",
                                   "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY": "e", "OTEL_EXPORTER_OTLP_HEADERS": "h",
-                                  "HUBZOID_GATEWAY_ADMIN_EMAIL": "a@x", "GOOGLE_CLIENT_SECRET": SENTINEL,
+                                  "HUBZOID_ADMIN_EMAIL": "a@x", "GOOGLE_CLIENT_SECRET": SENTINEL,
                                   "ENABLE_SIGNUP": "false"}})
     caplog.set_level(logging.INFO)
     settings.load(hub)
-    for key in ("WEBUI_SECRET_KEY", "DATABASE_URL", "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY",
-                "OTEL_EXPORTER_OTLP_HEADERS", "HUBZOID_GATEWAY_ADMIN_EMAIL"):
+    for key in ("DATABASE_URL", "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY",
+                "OTEL_EXPORTER_OTLP_HEADERS", "HUBZOID_ADMIN_EMAIL"):
         assert key in os.environ
     assert "GOOGLE_CLIENT_SECRET" not in os.environ and "ENABLE_SIGNUP" not in os.environ
+    assert "WEBUI_SECRET_KEY" not in os.environ  # Open WebUI's key is not a bridge key
     assert "GOOGLE_CLIENT_SECRET" in caplog.text and SENTINEL not in caplog.text
 
 
@@ -188,10 +189,10 @@ def test_external_bridge_without_manifest_pointer_uses_its_own_environment(tmp_p
     hub = _hub(tmp_path)
     _register(tmp_path, [hub])
     os.environ.update({"AWS_SECRET_NAME": "dep", "AWS_REGION": "eu-west-1"})
-    fake = install(monkeypatch, {"dep": {"WEBUI_SECRET_KEY": "k", "GOOGLE_CLIENT_SECRET": "g"}})
+    fake = install(monkeypatch, {"dep": {"OAUTH_SESSION_TOKEN_ENCRYPTION_KEY": "k", "GOOGLE_CLIENT_SECRET": "g"}})
     settings.load(hub)
     assert fake.calls == [("dep", "eu-west-1")]
-    assert os.environ["WEBUI_SECRET_KEY"] == "k" and "GOOGLE_CLIENT_SECRET" not in os.environ
+    assert os.environ["OAUTH_SESSION_TOKEN_ENCRYPTION_KEY"] == "k" and "GOOGLE_CLIENT_SECRET" not in os.environ
 
 
 def test_hub_secret_is_named_only_in_the_hub_file(tmp_path, monkeypatch):
@@ -235,12 +236,12 @@ def test_unreadable_secret_stops_the_load_with_name_and_layer(tmp_path, monkeypa
 def test_a_differing_hub_signing_key_warns_but_loads(tmp_path, monkeypatch, caplog):
     hub = _hub(tmp_path)
     _register(tmp_path, [hub], {"name": "dep", "region": "eu-west-1"})
-    (hub / ".env").write_text(f"WEBUI_SECRET_KEY={SENTINEL}\n")
-    install(monkeypatch, {"dep": {"WEBUI_SECRET_KEY": "deployment-key"}})
+    (hub / ".env").write_text(f"OAUTH_SESSION_TOKEN_ENCRYPTION_KEY={SENTINEL}\n")
+    install(monkeypatch, {"dep": {"OAUTH_SESSION_TOKEN_ENCRYPTION_KEY": "deployment-key"}})
     caplog.set_level(logging.WARNING)
     settings.load(hub)
-    assert os.environ["WEBUI_SECRET_KEY"] == SENTINEL  # the more specific layer wins
-    assert "WEBUI_SECRET_KEY" in caplog.text and "differs" in caplog.text
+    assert os.environ["OAUTH_SESSION_TOKEN_ENCRYPTION_KEY"] == SENTINEL  # the more specific layer wins
+    assert "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY" in caplog.text and "differs" in caplog.text
     assert SENTINEL not in caplog.text and "deployment-key" not in caplog.text
 
 
@@ -296,17 +297,5 @@ def test_views_drop_hub_only_layers_and_restore_lower_values(tmp_path, monkeypat
 
     view = cs.deployment_view(os.environ)
     assert "TOOL_TOKEN" not in view and "HUB_SECRET" not in view
-    assert view["WEBUI_SECRET_KEY"] == "w"  # an Open WebUI setting in restricted/.env still reaches it
+    assert "WEBUI_SECRET_KEY" not in view  # restricted/.env never reaches the edge
 
-    owui = cs.owui_env({**view, "HUBZOID_GATEWAY_ADMIN_PASSWORD": "p", "AWS_SECRET_NAME": "n",
-                        "AWS_ACCESS_KEY_ID": "id"})
-    assert "HUBZOID_HUB_SECRET_NAME" not in owui and "HUBZOID_GATEWAY_ADMIN_PASSWORD" not in owui
-    assert "AWS_SECRET_NAME" not in owui
-    assert "AWS_ACCESS_KEY_ID" not in owui  # a secret was loaded in this process
-
-
-def test_owui_keeps_aws_settings_when_no_secret_is_used():
-    """Open WebUI's own S3 storage may use AWS_* credentials. Without a Hubzoid
-    secret they pass through as before."""
-    env = {"AWS_ACCESS_KEY_ID": "id", "AWS_REGION": "eu-west-1", "WEBUI_AUTH": "true", "HUBZOID_X": "1"}
-    assert cs.owui_env(env) == {"AWS_ACCESS_KEY_ID": "id", "AWS_REGION": "eu-west-1", "WEBUI_AUTH": "true"}

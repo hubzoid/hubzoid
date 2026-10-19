@@ -112,6 +112,8 @@ def build_registry(
     builtin = make_builtin_tools(ctx)
     local = tools_local_loader.load_all(hub_dir)
     registry = access.apply(hub_dir, {**builtin, **local})
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry, questions=False)
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).
@@ -156,7 +158,18 @@ def _mcp_identity(hub_dir: Path) -> "access.Identity":
             log.warning("mcp: authenticated request resolved to anonymous identity")
         return access.ANONYMOUS
     groups = access.effective_groups(hub_dir, email=email, surface=MCP_SURFACE)
-    return access.Identity.make(user=email, groups=groups, surface=MCP_SURFACE)
+    return access.Identity.make(user=email, groups=groups, surface=MCP_SURFACE,
+                                account_id=getattr(token, "subject", None) or None)
+
+
+def _mcp_grant_id() -> str:
+    from fastmcp.server.dependencies import get_access_token
+
+    try:
+        token = get_access_token()
+    except Exception:  # noqa: BLE001
+        return ""
+    return str((token.claims or {}).get("grant_id") or "")[:16] if token is not None else ""
 
 
 
@@ -214,6 +227,18 @@ def _registry_tool_class():
                 run_config=RunConfig(),
             )
             ident = _mcp_identity(self._hub_dir)
+            if ident.user:
+                from .access import run_identity
+
+                try:
+                    record = run_identity.admit_or_refuse(
+                        self._hub_dir, run_kind="mcp", run_id=tool_ctx.tool_call_id,
+                        acts_as_id=ident.account_id, acts_as_email=ident.user, started_from="mcp",
+                        person_present=False, credential_kind="mcp_grant",
+                        credential_id=_mcp_grant_id())
+                except run_identity.NotAdmitted as exc:
+                    return ToolResult(content=f"[{exc}]", is_error=True)
+                ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
             with access.identity_scope(ident):
                 try:
                     result = await fn.on_invoke_tool(tool_ctx, args_json)

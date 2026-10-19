@@ -5,7 +5,7 @@ database or file is created, no migration runs, and no database URL or password
 is ever returned.
 
   * openwebui_database(hub)  where the hub's Open WebUI database is, resolved as
-                             hubzoid.access.owui_db resolves it
+                             hubzoid.migration.openwebui.source resolves it
   * openwebui_accounts(hub)  (where, number of accounts) when it has any
   * hubzoid_accounts(hub)    accounts in the Hubzoid web app (hz_users), or
                              AccountsUnreadable when the store cannot be read
@@ -23,7 +23,7 @@ from pathlib import Path
 
 def openwebui_database(hub: Path):
     """(SQLAlchemy URL, schema, where) of the Open WebUI database this hub used,
-    resolved as hubzoid.access.owui_db does (the deployment's registered
+    resolved as hubzoid.migration.openwebui.source does (the deployment's registered
     database, then DATABASE_URL, then the SQLite file) without importing
     hubzoid.access, which loads the agent SDKs and would slow every start."""
     from sqlalchemy.engine import URL, make_url

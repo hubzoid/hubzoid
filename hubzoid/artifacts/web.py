@@ -13,12 +13,12 @@
   POST   /portal/p/open                          exchange the token for a view cookie
   GET    /portal/p/<id>/content|download         the file, with that cookie
 
-Identity comes only from the Open WebUI session, verified server-side
+Identity comes only from the Hubzoid session, verified server-side
 (`access.session.verified_email`). Every request re-decides access through
 `artifacts.role`/`open_link`, so a revoked share or link stops at once. No
 Console privilege is involved: owners manage their own artifacts here.
 
-Isolation. The viewer page and the Open WebUI app share an origin behind the
+Isolation. The viewer page and the web app share an origin behind the
 edge. Artifact HTML is served with CSP `sandbox` (no `allow-same-origin`) and
 framed with the `sandbox` attribute, so it runs in an opaque origin: it cannot
 read the session cookie, call the app's APIs with it, or reach the toolbar. By

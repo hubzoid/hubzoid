@@ -3,7 +3,6 @@
 // own navigation).
 import { lazy, type ReactNode } from "react";
 import type { Hub, Me } from "./api";
-import type { Area } from "./components/Shell";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
 
@@ -17,14 +16,16 @@ const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => (
 export const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
 export const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
 const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
-const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
-export const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.MyAgents })));
 export const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
 const SandboxesScreen = lazy(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
+const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
+/** Which part of the management screens a route belongs to. */
+export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
+
 export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: () => void, embedded = false): { screen: ReactNode; active: Area } {
   const [area, ...rest] = parts;
   let screen: ReactNode;

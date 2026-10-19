@@ -9,6 +9,12 @@ RESOURCE = "https://hub.example/mcp"
 
 
 def seed(hub, *, token="oauth-test", email="alice@example.com", account_id="u1"):
+    """A consented grant for ``email``'s Hubzoid account (created when missing)."""
+    from hubzoid.auth import users
+
+    accounts = users.store(hub)
+    if accounts.get(account_id) is None and accounts.find_by_email(email) is None:
+        accounts.create(email=email, name=email.split("@")[0], id=account_id, source="admin")
     store = OAuthStore(hub, RESOURCE)
     grant = secrets.token_urlsafe(32)
     with store.engine.begin() as c:

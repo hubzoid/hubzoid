@@ -12,14 +12,13 @@ the hub.
 
 With sign-in on, people sign in with a password, Google, Microsoft or one
 standard OpenID Connect provider (Okta, Auth0, Keycloak, authentik and
-others). One account works for the web app, the Admin Console at `/portal/`,
-hosted MCP and every agent of a [gateway](DEPLOYING.md). An account is not
-access: what someone may use is granted per agent in the Console (see
+others). One account works for the web app and its Settings, hosted MCP and
+every agent of a [gateway](DEPLOYING.md). An account is not access: what
+someone may use is granted per agent in Settings (see
 [administration](ADMINISTRATION.md)).
 
-This page describes the Hubzoid web app, the default in 1.1. Open WebUI mode
-(`HUBZOID_UI=openwebui`) keeps Open WebUI's own sign-in, described at the end
-in [Sign-in in Open WebUI mode](#sign-in-in-open-webui-mode).
+Hubzoid 2.0 has no Open WebUI sign-in. A deployment moving from it renames its
+settings as described in [upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-webui-removed).
 
 ## Local mode
 
@@ -52,9 +51,9 @@ HUBZOID_PUBLIC_URL=https://hub.example.com   # the address people open
 
 `HUBZOID_PUBLIC_URL` is needed when people reach Hubzoid through a proxy or a
 name other than `localhost`, and for Google, Microsoft and OpenID Connect
-sign-in. The 1.0 names still work: `WEBUI_AUTH` for `HUBZOID_AUTH` and
-`WEBUI_URL` for `HUBZOID_PUBLIC_URL`. When both are set, the `HUBZOID_` name
-wins.
+sign-in. The Open WebUI names `WEBUI_AUTH` and `WEBUI_URL` are no longer read:
+a start that finds either stops and asks you to rename it, so sign-in is never
+turned off by a dropped name.
 
 Then create the first administrator. Either:
 
@@ -81,18 +80,18 @@ Then create the first administrator. Either:
 
   When sign-in is on and no account exists yet (the local owner does not
   count), the first start creates this administrator and gives it the owner's
-  access. Remove both lines after the first start. The 1.0 names
-  `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` work too.
+  access. Remove both lines after the first start. The Open WebUI names
+  `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` stop the start until renamed.
 
   The owner's access is given once per hub. A hub you already ran in local
   mode has the local owner as its owner, so this route creates an
   Administrator account with no access there. Use `hubzoid admin create
   --owner` instead, or fix it afterwards with `hubzoid admin set-role
-  you@example.com admin my-hub` and give yourself **Use this agent** in the
-  Console.
+  you@example.com admin my-hub` and give yourself **Use this agent** in
+  Settings.
 
 Restart the hub. `hubzoid run` prints `(sign-in on)` in its ready line.
-Teammates are added in the Console (**People → Add user**) or with `hubzoid
+Teammates are added in Settings (**People & access → Add user**) or with `hubzoid
 admin create`. Nothing is emailed: you share each person's sign-in link
 yourself.
 
@@ -124,7 +123,7 @@ person sets a password and is signed in.
 - A newer link for the same person, or any password change, cancels it.
 - Using it ends the person's other sessions.
 - Only a SHA-256 digest of the token is stored.
-- The Console builds the link on `HUBZOID_PUBLIC_URL` when it is set, else on
+- Settings builds the link on `HUBZOID_PUBLIC_URL` when it is set, else on
   the address you are using. `hubzoid admin` uses `HUBZOID_PUBLIC_URL`, else
   `http://127.0.0.1:<PORT>` (3080 by default).
 - Hubzoid sends no email. Share the link directly with the person.
@@ -206,8 +205,8 @@ Register the redirect URI `https://hub.example.com/oauth/oidc/callback`.
 - send an `email` claim in the ID token or from its userinfo endpoint, and
   `email_verified` true for linking by email and for `OAUTH_ALLOWED_DOMAINS`.
 
-Group and role claims are not read. Access comes from Console grants to
-people and groups (see [administration](ADMINISTRATION.md)).
+Group and role claims are not read. Access comes from grants to people in
+Settings (see [administration](ADMINISTRATION.md)).
 
 ## How an external sign-in finds its account
 
@@ -221,10 +220,14 @@ expiry and nonce. Then, in order:
    subject. A linked sign-in goes to its account. Links moved from Open WebUI
    are found by provider and subject, and take the real issuer at their first
    sign-in.
-2. **An account with the same email.** The sign-in is linked to it only when
-   the provider says the email is verified and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`
-   is true. Otherwise the person sees `email_not_verified` or `not_linked`.
-   Hubzoid never links on an unverified email.
+2. **An invited account with the same email.** The sign-in is linked to it
+   only when the provider says the email is verified,
+   `OAUTH_MERGE_ACCOUNTS_BY_EMAIL` is true, and the account is an invitation
+   nobody has used yet (never signed in, no other provider linked). An account
+   already in use is never taken over by email: its owner signs in the usual
+   way and adds the provider under **Settings → Security → Link**. Otherwise
+   the person sees `email_not_verified` or `not_linked`. Hubzoid never links on
+   an unverified email.
 3. **No account.** With `ENABLE_OAUTH_SIGNUP=true` a new account is created
    (see [self sign-up](#self-sign-up-and-approval)). Without it the person
    sees "There's no account for that email yet" (`no_account`).
@@ -275,6 +278,150 @@ until someone grants it.
 - Changes from a browser must come from the deployment's own page (the
   `Origin` header must match the host or a configured origin).
 
+- At most ten sessions per person: signing in on an eleventh device signs the
+  least recently used one out. Each person sees their devices under
+  **Settings → Security** and can sign one, or all the others, out.
+
+## Two-step sign-in
+
+People can turn on a second step under **Settings → Security**: after the
+password (or Google, or OIDC), a 6-digit code from an authenticator app such
+as Google Authenticator, 1Password or Microsoft Authenticator.
+
+- **Who must use it.** `none`, `admins` (the default) or `all`, chosen by an
+  administrator under **Workspace settings → Sign-in**, through
+  `PUT /api/auth/mfa/policy`, or with `hubzoid auth mfa policy admins
+  --server ...`. Before anyone chooses, `HUBZOID_MFA_REQUIRED` gives the
+  default. Someone who must use it and hasn't set it up is taken through set-up
+  right after their password, on one screen, and is never locked out.
+- **Set-up.** Scan the QR code (or type the key), enter the first code, then
+  save ten recovery codes. Each recovery code works once; **Get new recovery
+  codes** replaces the set.
+- **Codes.** Six digits, 30-second steps, one step either side. Each code works
+  once, even if two requests race. Five wrong codes end the sign-in step.
+- **Lost phone.** Sign in with a recovery code, then **Set up a new
+  authenticator**. Or an administrator uses **People → the person → Reset
+  two-step sign-in**. That also signs them out everywhere, and they set it up
+  again at their next sign-in.
+- A password reset keeps two-step sign-in on. The authenticator secret is
+  encrypted with the deployment key; recovery codes are stored as digests only.
+- People who sign in through a company directory (SAML) use that provider's own
+  sign-in policy, including its MFA, and aren't asked for a second code.
+
+## Confirm it's you
+
+Some changes ask the person to confirm who they are when their last check was
+more than ten minutes ago: creating an API key, changing two-step sign-in,
+weakening the two-step sign-in rule, resetting someone else's two-step
+sign-in, managing company sign-in, and **Sign out everywhere**. They confirm
+with their password, and a code when they use two-step sign-in. An account
+without a password confirms by signing in with its provider again. An API key
+can never confirm.
+
+## Sign out everywhere
+
+**Settings → Security → Sign out everywhere and end all keys**, or **People →
+the person → Sign out everywhere** for an administrator, ends every session
+except the current one, every personal API key and every assistant (MCP)
+connection at once. It does this by moving the account's credential counter.
+The same happens when a person is blocked, deleted or turned off by the
+company directory, and when their password is reset.
+
+## Personal API keys
+
+A key lets a script, a CI job or the Hubzoid command line act as one person.
+Create one under **Settings → Security → API keys** or with `hubzoid auth keys
+create "CI evals" --preset read --server ...`. The key (`hzp_...`) is shown
+once; Hubzoid keeps only its digest. Send it as `Authorization: Bearer hzp_...`.
+
+| Preset | Operations | What it reaches |
+|---|---|---|
+| Chat with my agents | `chat` | `/api/chat`, `/api/conversations`, `/v1/chat/completions`, `/v1/models`, the agent list |
+| Read only | `read` | Any read (GET) the person can make |
+| Everything I can do | `chat`, `read`, `manage` | Any change the person can make, except the list below |
+
+- A key never does more than its owner can do right now: blocking, deleting or
+  removing someone's access applies to their keys at once.
+- A key limited to some agents can only chat, only with those agents, and only
+  through the OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`).
+- A `chat` key writes only your own chats, files and organizing, never the
+  workspace's chat settings. On the bridge, file and upload routes take only
+  the bridge's own keys.
+- Keys expire after 30, 90 or 365 days.
+- A key can never make or revoke keys, change two-step sign-in or the password,
+  confirm a sign-in, sign devices out, or approve requests.
+- A request carrying both a session cookie and a key is refused
+  (`ambiguous_credentials`). An unknown key never falls back to the cookie or
+  the local owner.
+
+## The command line against a hosted Hubzoid
+
+```bash
+hubzoid auth login --server https://team.example.com   # password, then a code
+hubzoid auth whoami
+hubzoid auth keys list
+hubzoid auth sessions revoke-others
+hubzoid api GET /api/agents
+HUBZOID_API_KEY=hzp_... hubzoid api GET /api/me/access
+```
+
+`--server` or `HUBZOID_SERVER` names the deployment. `HUBZOID_API_KEY`, or the
+session saved by `hubzoid auth login` (in `~/.config/hubzoid/credentials.json`,
+readable by you only, holding the session token, never the password), signs
+the requests. Exit codes: 0 done, 2 invalid input, 3 not allowed, 4 conflict,
+5 unavailable, 6 accepted but not finished. A remote failure never falls back
+to local files.
+
+## From a laptop hub to team sign-in
+
+A hub that ran without sign-in has a local owner (`admin@localhost`) that owns
+its conversations. Keep them by turning that owner into a real account:
+
+```bash
+hubzoid auth bootstrap ./my-hub --email you@example.com --password-stdin
+```
+
+It keeps the same account id (so the conversations stay yours) and gives the
+new email the local owner's access. Then set `HUBZOID_AUTH=true` and restart.
+
+## Company sign-in (SAML and SCIM)
+
+Install the optional extra and `xmlsec1`:
+
+```bash
+pip install "hubzoid[saml]"
+brew install libxmlsec1        # macOS; Debian and Ubuntu: apt-get install xmlsec1
+```
+
+Then, under **Workspace settings → Sign-in → Company sign-in**:
+
+1. **Add identity provider.** Choose a short id (it goes in the URLs) and the
+   button label, and give the identity provider's metadata URL or paste its
+   XML.
+2. **Paste the values shown** into Okta or Microsoft Entra ID: the Entity ID
+   (audience) and the sign-in URL (ACS, HTTP-POST). Send the person's email or
+   userName as the NameID.
+3. **Create a SCIM token** and give it, with the SCIM base URL, to the identity
+   provider's provisioning settings. Provision users, not groups (group push
+   isn't supported yet).
+4. **Test sign-in**, then **Turn on**. People see "Continue with <label>" on the
+   sign-in page.
+
+How it behaves:
+
+- **Who exists.** The directory decides, through SCIM. A provisioned account is
+  managed: it signs in only through its provider and has no Hubzoid password.
+  An email that already has a Hubzoid account isn't joined automatically.
+- **Who signs in.** Only signed assertions answering a request this browser
+  started are accepted, each once. The NameID must match exactly one
+  provisioned person (by SCIM userName). Nobody is created at sign-in.
+- **Offboarding.** Deactivating or deleting a person in the directory turns
+  their account off and ends their sessions, API keys, MCP connections and
+  scheduled work, in one step. Only the directory can turn it back on. The
+  account and its conversations are kept.
+- **Not yet:** SAML single logout, LDAP, group sync, and joining existing
+  accounts to a directory.
+
 ## Rate limits
 
 Failed sign-ins are counted per client address and per email, in the shared
@@ -296,7 +443,7 @@ store, so every bridge enforces the same limits.
   a client can send its own `X-Forwarded-For`, so the per-address limit is
   easy to avoid. See [reverse proxy and TLS](DEPLOYING.md#6-reverse-proxy--tls-optional-recommended).
 - Sign-ins, failed sign-ins to existing accounts, sign-outs, password changes,
-  used links and sign-ups appear in the Console's **Activity** for
+  used links and sign-ups appear in Settings → **Activity** for
   organization administrators.
 
 ## More than one public address
@@ -315,15 +462,16 @@ spelling (`localhost` or `127.0.0.1`) for you.
 
 Behind a gateway, every agent accepts each address the deployment names: the
 gateway's `--public-url` and `HUBZOID_ALLOWED_ORIGINS`, and each hub's own
-`HUBZOID_PUBLIC_URL` (or `WEBUI_URL`) and `HUBZOID_ALLOWED_ORIGINS`. The gateway
+`HUBZOID_PUBLIC_URL` and `HUBZOID_ALLOWED_ORIGINS`. The gateway
 records them when it starts, so restart it after adding an address.
 
 ## The admin command
 
 `hubzoid admin` works on the deployment's account store without signing in,
 with the authority of whoever runs it on the server. Pass any hub of a gateway,
-or run it in a hub folder. It refuses a deployment in the Open WebUI
-mode. Passwords are typed at a hidden prompt, never passed as arguments, and
+or run it in a hub folder. It refuses a deployment that still has Open WebUI
+settings that stop the start, since its accounts are still in Open WebUI.
+Passwords are typed at a hidden prompt, never passed as arguments, and
 never printed.
 
 | Command | What it does |
@@ -358,57 +506,13 @@ you set `HUBZOID_WORKFLOW_USER` or `run_as` to a real account (see
 | "This request came from another site" | The page's address is not `HUBZOID_PUBLIC_URL` or in `HUBZOID_ALLOWED_ORIGINS` |
 | "Too many attempts" | Wait 15 minutes, or reset the password with `hubzoid admin reset-password` |
 | Nobody can administer | `hubzoid admin set-role <email> admin <hub>` on the server |
-| Signed in, but no agent | The account has no access yet. An administrator grants **Use this agent** in the Console |
+| Signed in, but no agent | The account has no access yet. An administrator grants **Use this agent** in Settings |
 
-## Sign-in in Open WebUI mode
+## Coming from Open WebUI (1.x)
 
-This section applies only with `HUBZOID_UI=openwebui` and the `openwebui`
-extra. In Open WebUI mode Open WebUI owns accounts and sign-in, as in Hubzoid
-1.0.x, and everything above about Hubzoid accounts does not apply. Who may use
-each agent is still decided in the Console, never by Open WebUI groups or model
-access lists. To move to Hubzoid accounts, see [upgrading](UPGRADING.md).
-
-Settings go in the hub's `.env` (for a gateway, in the gateway's environment):
-
-```bash
-WEBUI_AUTH=true
-WEBUI_SECRET_KEY=<openssl rand -hex 32>   # required: Hubzoid refuses to start without it
-WEBUI_URL=https://your.host               # required behind a proxy and for OAuth
-WEBUI_ADMIN_EMAIL=you@example.com         # one-shot: seeds the first administrator
-WEBUI_ADMIN_PASSWORD=<temporary password> # remove both ADMIN lines after the first start
-ENABLE_SIGNUP=false
-```
-
-- **Accounts.** Managers add people in the Admin Console with **Add user**,
-  which creates an Open WebUI account through its admin API as the
-  deployment's service account (`HUBZOID_GATEWAY_ADMIN_EMAIL` and
-  `HUBZOID_GATEWAY_ADMIN_PASSWORD`, or the internal URL under `hubzoid run`).
-  The password is shown once to share.
-- **Google** uses the same variables as above (`GOOGLE_CLIENT_ID`,
-  `GOOGLE_CLIENT_SECRET`, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`,
-  `OAUTH_ALLOWED_DOMAINS`) and the same callback path. Open WebUI 0.11.4 links
-  by email without checking `email_verified`, so list only domains you
-  control. Keep `ENABLE_OAUTH_PERSISTENT_CONFIG` off (the Hubzoid default) so
-  environment changes apply on restart.
-- **Microsoft, GitHub and generic OIDC** use Open WebUI's variables:
-  `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`,
-  `MICROSOFT_CLIENT_TENANT_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-  `GITHUB_CLIENT_SCOPE=user:email`, `OPENID_PROVIDER_URL`, `OAUTH_CLIENT_ID`,
-  `OAUTH_CLIENT_SECRET`, `OAUTH_PROVIDER_NAME` and `OAUTH_SCOPES`. Callbacks are
-  `/oauth/<provider>/callback`. Open WebUI can also sync roles and groups from
-  claims (`ENABLE_OAUTH_ROLE_MANAGEMENT`, `ENABLE_OAUTH_GROUP_MANAGEMENT`), use
-  LDAP (`ENABLE_LDAP` and the `LDAP_*` settings), or trust a reverse proxy's
-  headers (`WEBUI_AUTH_TRUSTED_EMAIL_HEADER`). With trusted headers, the proxy
-  must strip those headers from client requests, and Open WebUI must accept
-  traffic only from the proxy. See Open WebUI's documentation for these.
-- **First owner.** The configured owner (`HUBZOID_GATEWAY_ADMIN_EMAIL` or
-  `WEBUI_ADMIN_EMAIL`), signed in as an Open WebUI administrator, receives the
-  owner's grants once. Local single-user mode uses `admin@localhost`.
-- **Pending accounts** appear in the Console's People screen to approve when
-  `DEFAULT_USER_ROLE=pending`. Accounts created with Add user are never
-  pending.
-- Rotating `WEBUI_SECRET_KEY` signs everyone out and makes stored personal
-  connection tokens unreadable.
-
-GitHub, LDAP, trusted headers and claim-based roles and groups are Open WebUI mode
-features. The Hubzoid web app does not offer them.
+`hubzoid migrate openwebui` moves Open WebUI accounts, their passwords and
+their Google, Microsoft and OpenID Connect links (see
+[upgrading](UPGRADING.md#upgrading-to-20-open-webui-removed)). GitHub, LDAP,
+trusted proxy headers and claim-based roles and groups were Open WebUI
+features; the web app does not offer them. Accounts that used them need a
+password link or one of the providers above.
