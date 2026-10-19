@@ -176,7 +176,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
     # has no restricted/ folder, so existing hubs are unchanged.
     from . import access  # deferred to avoid circular import via __init__.py
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl
@@ -392,3 +393,21 @@ def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
     if not system_addendum.is_enabled(ctx.hub_dir):
         return body
     return body.rstrip() + "\n\n" + system_addendum.build(ctx, backend=backend)
+
+
+def hub_tool_registry(hub_dir: Path) -> dict[str, FunctionTool]:
+    """The hub's pre-shipped and local tools, gated as for the main agent
+    (access and approvals), for a station to pick from. A station gets only the names it lists; nothing
+    else here (skills, delegates, MCP servers) reaches it."""
+    hub_dir = Path(hub_dir).resolve()
+    settings = settingslib.load(hub_dir)
+    session_id = memlib.make_session_id()
+    ctx = HubContext(hub_dir=hub_dir, output_dir=memlib.session_output_dir(hub_dir, session_id),
+                     session_id=session_id, settings=settings,
+                     knowledge=knowledge_loader.load_all(hub_dir))
+    connlib.attach(ctx)
+    registry: dict[str, FunctionTool] = {**make_builtin_tools(ctx), **tools_local_loader.load_all(hub_dir)}
+    from . import access, hitl
+    # The same approval gate as every agent's tools; an unattended station call
+    # that needs a person is refused by it, and no question tool is added.
+    return hitl.equip(hub_dir, access.apply(hub_dir, registry), questions=False)

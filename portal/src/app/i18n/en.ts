@@ -418,6 +418,11 @@ export const en = {
     data: "Data & history",
     schedules: "Schedules",
     schedulesLede: "Work the agents do for you on a timetable.",
+    myWork: "My work items",
+    myWorkLede: "Work you asked the agents for: its progress, what waits for your approval, and what you decided.",
+    workItems: "Work items",
+    sandboxes: "Sandboxes",
+    usageLimits: "Usage limits",
     agents: "Agents",
     people: "People & access",
     activity: "Activity",
@@ -852,6 +857,20 @@ export const en = {
     saveFailed: "The new version couldn't be saved. Try again.",
     previewFailed: "This document couldn't be shown. Download it instead.",
     noPreview: "There's no preview for this type of file. Download it to open it.",
+  },
+  cards: {
+    label: (kind: string) =>
+      ({ table: "Table", report: "Report", progress: "Progress", approval: "Approval" } as Record<string, string>)[kind] ?? "Card",
+    loading: "Loading the card… Here is the result as text meanwhile.",
+    failed: (why: string) => `The card couldn’t load (${why}). The result as text:`,
+    inactive: (why: string) =>
+      why === "revoked" ? "This card was revoked. The result as text:"
+        : why ? "This card is no longer live. The result as text:" : "The result as text:",
+    passive: "A card in a shared or exported conversation is shown as text.",
+    review: "Review in Hub",
+    askedBy: (who: string) => `asked by ${who}`,
+    open: "Open in Hub",
+    openExternal: (host: string) => `Open ${host} in a new tab?`,
   },
   tools: {
     details: "Technical details",

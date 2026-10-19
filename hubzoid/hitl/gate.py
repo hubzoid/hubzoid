@@ -14,7 +14,6 @@ and ends its turn (see ``service``).
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import logging
 from pathlib import Path
@@ -122,7 +121,9 @@ def wrap(ft, hub_dir: Path, *, connector: str | None = None, read_only: bool | N
         note_waiting(ft.name, verdict.request)
         return waiting_text(verdict)
 
-    out = dataclasses.replace(ft, on_invoke_tool=invoke)
+    from ..tool_classes import copy_tool
+
+    out = copy_tool(ft, on_invoke_tool=invoke)
     try:
         out.hitl_wrapped = True
     except Exception:  # noqa: BLE001 - frozen copies just lose the marker

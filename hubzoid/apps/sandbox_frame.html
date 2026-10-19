@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Card</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; overflow: hidden; }
+  iframe { border: 0; width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<script>
+// Hubzoid card sandbox. Served on the deployment's own sandbox origin (never
+// the app's), with no cookie and a CSP that forbids any network request. The
+// card's HTML runs one level down, in an `allow-scripts` frame with an opaque
+// origin, which inherits this page's CSP. This page only relays messages
+// between the chat (PARENT, checked by the server) and that frame.
+(function () {
+  "use strict";
+  var PARENT = "__HZ_PARENT_ORIGIN__";
+  var inner = null;
+  var port = null;
+  window.addEventListener("message", function (event) {
+    if (event.source === window.parent) {
+      if (event.origin !== PARENT) return;
+      var d = event.data;
+      if (inner === null) {
+        // The first message carries the card's HTML and a reply port.
+        if (!d || !d.body || !event.ports || !event.ports[0]) return;
+        port = event.ports[0];
+        var html;
+        try { html = new TextDecoder().decode(d.body); } catch (e) { port.postMessage({ type: "error", message: "bad content" }); return; }
+        inner = document.createElement("iframe");
+        inner.setAttribute("sandbox", "allow-scripts");
+        inner.setAttribute("referrerpolicy", "no-referrer");
+        inner.setAttribute("title", "Card");
+        inner.addEventListener("load", function () { port.postMessage({ type: "msg" }); }, { once: true });
+        inner.srcdoc = html;
+        document.body.appendChild(inner);
+        return;
+      }
+      if (inner.contentWindow) inner.contentWindow.postMessage(d, "*");
+      return;
+    }
+    if (inner !== null && event.source === inner.contentWindow) {
+      window.parent.postMessage(event.data, PARENT);
+    }
+  });
+  window.parent.postMessage({ type: "ready" }, PARENT);
+})();
+</script>
+</body>
+</html>

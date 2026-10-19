@@ -17,6 +17,16 @@ Frontmatter schema when present:
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents
                in v1. The main agent always has the full pre-shipped plus tools_local set
                plus the dynamic load_skill / read_knowledge tools.
+
+Isolated agents (stations), all optional, on sub-agents only:
+  isolated:    true makes the agent a station: called from a workflow, with only
+               its own instructions and exactly the tools it lists (none when empty).
+               It is never loaded as a skill or delegate of the main agent.
+  engine:      claude-local or codex-local (default: the hub's runtime).
+  response_schema: a JSON Schema file in the agent's folder for its result.
+  input:       forward (default) or never.
+  sandbox:     a sandbox profile for the agent's workspace.
+  timeout_seconds: an optional limit on its active time.
 """
 from __future__ import annotations
 
@@ -38,6 +48,13 @@ class AgentSpec(BaseModel):
     # Quick-start prompts shown on the empty new-chat screen as click-to-send
     # buttons. Only honored on the main agent; ignored on sub-agents.
     suggestions: list[str] = Field(default_factory=list)
+    # Isolated agents (stations): see the module notes. All optional.
+    isolated: bool = False
+    engine: str | None = None
+    response_schema: str | None = None
+    input: str = "forward"
+    sandbox: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
 
 
 @dataclass
@@ -155,6 +172,8 @@ def split_subagents(hub_dir: Path, hub_model: str | None):
     skill_agents: list[LoadedAgent] = []
     delegate_agents: list[LoadedAgent] = []
     for loaded in load_subagents(hub_dir):
+        if loaded.spec.isolated:
+            continue   # a station: called from workflows, never a skill or delegate
         if handover.classify(loaded.spec.model, hub_model) == "delegate":
             delegate_agents.append(loaded)
         else:

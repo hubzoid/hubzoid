@@ -192,6 +192,12 @@ def register(DBOS, hub_dir, hub):
             await asyncio.to_thread(fail, hub_dir, hub, row, 'Workflow mapping changed before execution', owner=owner)
             raise RuntimeError('Webhook workflow mapping is unavailable')
         event = json.loads(row['payload'])
+        if (wf.extra or {}).get('work_items'):
+            # A work item: the delivery is admitted once under its event key and
+            # the item keeps its own saved stages. A retry or redrive finds the
+            # same item, so finished stages never run again.
+            await _admit_work_item(DBOS, hub_dir, hub, row, wf, event, owner)
+            return
         delays = settings(hub_dir).get('webhook_retry_delays', [60, 300])
         if not isinstance(delays, list) or len(delays) > 9 or any(not isinstance(x, (int,float)) or not math.isfinite(x) or x < 0 for x in delays):
             raise ValueError('webhook_retry_delays must contain at most 9 nonnegative seconds')
@@ -219,6 +225,46 @@ def register(DBOS, hub_dir, hub):
             else:
                 await asyncio.to_thread(update, hub_dir, eid, 'succeeded', owner=owner)
                 return
+
+
+async def _admit_work_item(DBOS, hub_dir, hub, row, wf, event, owner):
+    """Admit one webhook delivery as a work item and queue its first run."""
+    from ..work_items import engine as wi_engine
+    from ..work_items import service, store
+    from ..work_items.errors import WorkItemError
+    from . import runtime
+
+    eid = row['id']
+    await asyncio.to_thread(update, hub_dir, eid, 'running', attempt=1,
+                            version=runtime._APP_VERSION, owner=owner)
+    try:
+        item, _ = await asyncio.to_thread(
+            service.admit, hub_dir, workflow=wf.name,
+            key=f"webhook:{row['webhook']}:{event.get('key')}", input=event.get('body'),
+            requester='', origin={'source': 'webhook', 'surface': 'webhook', 'event_id': eid,
+                                  'webhook': row['webhook']})
+    except WorkItemError as exc:
+        await asyncio.to_thread(fail, hub_dir, hub, row, exc.code, owner=owner)
+        return
+    if item['state'] == 'accepted' and item['execution'] <= 1:
+        wid = wi_engine.execution_id(item['id'], 1)
+        if item['execution'] == 0:
+            # Record the execution first, so a worker that starts at once finds
+            # itself expected. The fixed id makes a repeated queueing run once.
+            try:
+                await asyncio.to_thread(store.update_item, hub_dir, item['id'],
+                                        expected_revision=item['revision'], expect_state=('accepted',),
+                                        execution=1, workflow_id=wid)
+            except WorkItemError:
+                current = await asyncio.to_thread(store.get_item, hub_dir, item['id'])
+                if not current or current.get('workflow_id') != wid:
+                    await asyncio.to_thread(update, hub_dir, eid, 'succeeded', owner=owner)
+                    return
+        options = {'workflow_name': wf.name, 'queue_name': wi_engine.queue_name(hub),
+                   'queue_partition_key': item['id'], 'workflow_id': wid}
+        await DBOS.enqueue_workflow_with_options_async(
+            options, hub, None, {'trigger': 'webhook', 'scope': 'team', 'work_item': item['id']})
+    await asyncio.to_thread(update, hub_dir, eid, 'succeeded', owner=owner)
 
 
 def reconcile(hub_dir, hub):

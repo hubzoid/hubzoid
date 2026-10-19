@@ -105,8 +105,13 @@ def codex_available() -> bool:
 class CodexRuntime:
     def __init__(self, *, name, instructions, registry, model_setting="codex-local",
                  hub_dir=None, max_turns=20, tool_mode="compact", mcp_servers=None,
-                 vision=(True, 1568, 4), effort=None, personal_mcp=False):
+                 vision=(True, 1568, 4), effort=None, personal_mcp=False, output_schema=None,
+                 turn_timeout=600):
         self.name = name
+        # A station's result schema: Codex constrains the turn's final message
+        # to it (the app-server's TurnStartParams.outputSchema).
+        self.output_schema = output_schema
+        self.turn_timeout = turn_timeout      # None: only the caller's deadline applies
         self.instructions = instructions
         self.registry = registry
         self.model = model_setting.partition("/")[2] or None
@@ -172,10 +177,20 @@ class CodexRuntime:
         return run_events.as_text(self.stream_events(prompt), tool_mode=self.tool_mode)
 
     async def stream_events(self, prompt):
-        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers (see `personal_mcp`),
-        their tools join a per-turn copy of the registry for this turn only.
-        The shared registry never changes."""
+        """Run one turn as a typed stream (see `hubzoid.run_events`), after the
+        hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        def refuse(exc):
+            self._error.set(exc)
+
+        async for part in budgets.guarded(self.hub_dir, "codex-local", lambda: self._turn_events(prompt), refuse):
+            yield part
+
+    async def _turn_events(self, prompt):
+        """When the caller connected personal MCP servers (see
+        `personal_mcp`), their tools join a per-turn copy of the registry for this
+        turn only. The shared registry never changes."""
         personal = self._personal_servers()
         if not personal:
             async for part in self._stream(prompt, self.registry):
@@ -275,7 +290,7 @@ class CodexRuntime:
                 self._processes.add(proc)
                 try:
                     from .workflows.deadlines import remaining
-                    async with asyncio.timeout(remaining(600)):
+                    async with asyncio.timeout(remaining(self.turn_timeout)):
                         async for part in self._exchange(proc, prompt, tmp, usage, **turn_tools):
                             shown.append(run_events.text_of(part))
                             yield part
@@ -362,6 +377,8 @@ class CodexRuntime:
             if isinstance(data, list):
                 inputs.extend({"type": "image", "url": b["image_url"]} for b in data[0]["content"] if b["type"] == "input_image")
         turn_params = {"threadId": thread, "input": inputs}
+        if self.output_schema is not None:
+            turn_params["outputSchema"] = self.output_schema
         if self.effort:
             turn_params["effort"] = self.effort
         # Events can precede the turn/start response, so consume both in one loop.
@@ -378,7 +395,8 @@ class CodexRuntime:
                 raise RuntimeError("Codex returned an unexpected thread identity.")
             if method == "item/tool/call":
                 calls += 1
-                if calls > self.max_turns:
+                from . import budgets
+                if calls > budgets.cap_turns(self.max_turns):
                     raise RuntimeError("Codex reached the configured tool-call limit.")
                 name, arguments = p.get("tool"), p.get("arguments", {})
                 tool = shown.get(name) if not p.get("namespace") else None
@@ -407,7 +425,9 @@ class CodexRuntime:
                         log.exception("Codex tool %s failed", name)
                     # 1.0.x printed nothing for a Codex tool result, failed or not.
                     finished = run_events.ToolResult(id=call_id, name=name, ok=success,
-                                                     message=None if success else run_events.TOOL_FAILED)
+                                                     message=None if success else run_events.TOOL_FAILED,
+                                                     card=_request_ctx.take_card(result, call_id=call_id, tool=name)
+                                                     if success else None)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
                 if tool is not None:
@@ -531,7 +551,9 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     ctx = HubContext(hub_dir=hub_dir, output_dir=memory.session_output_dir(hub_dir, session), session_id=session,
                      settings=config, skills=_with_core_skills(skills), knowledge=knowledge.load_all(hub_dir), delegates=delegates)
     connections.attach(ctx)
-    registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir),
+                                                          **(extra_tools or {})}))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl
