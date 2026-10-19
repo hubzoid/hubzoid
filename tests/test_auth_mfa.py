@@ -112,6 +112,38 @@ def test_five_wrong_codes_end_the_step(hub):
     assert late.status_code == 410  # sign in again for a new step
 
 
+def test_a_known_password_does_not_reset_the_code_limit(hub, monkeypatch):
+    # Someone with the password signs in again after every few wrong codes:
+    # the account's counter still reaches the limit and locks.
+    monkeypatch.setenv("HUBZOID_AUTH_MAX_FAILURES", "6")
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    secret, _ = _enroll(c)
+    statuses = []
+    for _ in range(4):
+        c.cookies.clear()
+        statuses.append(sign_in(c).status_code)
+        for _ in range(2):
+            statuses.append(c.post("/api/auth/mfa/verify", json={"code": "111111"},
+                                   headers=ORIGIN).status_code)
+    assert 429 in statuses, statuses
+    assert sign_in(c).status_code == 429
+
+
+def test_completed_two_step_sign_ins_never_add_up(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_AUTH_MAX_FAILURES", "3")
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    _secret, codes = _enroll(c)
+    for i in range(5):
+        c.cookies.clear()
+        assert sign_in(c).json()["state"] == "mfa_required", i
+        ok = c.post("/api/auth/mfa/verify", json={"recovery_code": codes[i]}, headers=ORIGIN)
+        assert ok.status_code == 200, (i, ok.text)
+
+
 def test_admins_must_set_up_at_sign_in_without_being_locked_out(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_MFA_REQUIRED", "admins")
     person(hub, email="boss@example.com", role="admin")

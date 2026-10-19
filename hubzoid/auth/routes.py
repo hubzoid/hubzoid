@@ -284,6 +284,13 @@ def build_router(hub_dir: Path) -> APIRouter:
                 headers=_NO_STORE), token)
         return start_session(request, user, method=method)
 
+    def _second_step(response: Response) -> bool:
+        """Whether ``complete`` answered with a code step instead of a session."""
+        try:
+            return json.loads(response.body).get("state") in ("mfa_required", "mfa_setup")
+        except (AttributeError, ValueError):
+            return False
+
     def _setup_view(user: dict, secret: str) -> dict:
         from . import mfa
 
@@ -399,8 +406,17 @@ def build_router(hub_dir: Path) -> APIRouter:
                 bumped = st.rehash(user["id"], new_hash, stored)
                 if bumped is not None:
                     user = {**user, "updated_at": bumped}
-            ratelimit.record_success(hub_dir, ip=ip, email=email)
-            return complete(request, user, method="password")
+            try:
+                response = complete(request, user, method="password")
+            except HTTPException:
+                ratelimit.record_success(hub_dir, ip=ip, email=email)
+                raise
+            # When a code step follows, the account's counter keeps this
+            # attempt until the code is right: a known password must not
+            # reset the limit between code guesses.
+            ratelimit.record_success(hub_dir, ip=ip,
+                                     email=None if _second_step(response) else email)
+            return response
         except SQLAlchemyError:
             log.warning("auth: sign-in failed (database error)")
             raise _unavailable()
@@ -670,6 +686,7 @@ def build_router(hub_dir: Path) -> APIRouter:
             if not mfa.finish_challenge(hub_dir, step["token"]):
                 raise error(410, "step_expired", "This sign-in step was already used. Sign in again.")
             codes = mfa.activate(hub_dir, user["id"], step["data"]["secret"], matched)
+            ratelimit.record_success(hub_dir, email=user["email"])  # the password step's attempt
             response = start_session(request, {**user, "updated_at": step["data"]["updated_at"]},
                                      method=step["data"].get("method") or "password", mfa_done=True)
         except SQLAlchemyError:
