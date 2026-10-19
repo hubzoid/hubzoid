@@ -26,7 +26,7 @@ _PRIVATE_WORDS = {
 _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
 
 # Built from parts so this file does not match itself.
-_LOCAL_PATH = re.compile("/Users/[A-Za-z0-9._-]+/|" + "~" + "/Desktop/|" + "C:" + r"\\Users\\")
+_LOCAL_PATH = re.compile(r"(?<![A-Za-z0-9_.-])/Users/[A-Za-z0-9._-]+/|" + "~" + "/Desktop/|" + "C:" + r"\\Users\\")
 
 _BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".woff", ".woff2",
                     ".ttf", ".otf", ".pdf", ".zip", ".gz", ".db", ".sqlite"}

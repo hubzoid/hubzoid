@@ -1,0 +1,7 @@
+{"acceptance": ["HZP-search"], "adapter_owner": "HUB-75", "customer_required": true, "decision": "B037", "disposition": "key_provider", "family": "search", "id": "search-1", "reference": "Open WebUI web search providers"}
+{"adapter_owner": "HUB-75", "customer_required": false, "decision": "B037", "disposition": "deferred", "family": "retrieval", "id": "vector-local", "reference": "Open WebUI vector databases"}
+{"adapter_owner": "HUB-74", "customer_required": true, "decision": "B037", "disposition": "key_provider", "family": "storage", "id": "storage-local", "reference": "Open WebUI local storage"}
+{"adapter_owner": "HUB-74", "customer_required": true, "decision": "B037", "disposition": "key_provider", "family": "storage", "id": "storage-s3", "reference": "Open WebUI S3 storage"}
+{"adapter_owner": "HUB-99", "customer_required": false, "decision": "B037", "disposition": "key_provider", "family": "image", "id": "image-1", "reference": "Open WebUI image generation engines"}
+{"adapter_owner": "HUB-77", "customer_required": true, "decision": "B037", "disposition": "key_provider", "family": "speech", "id": "speech-browser", "reference": "Open WebUI Web API speech"}
+{"adapter_owner": null, "customer_required": false, "decision": "B037", "disposition": "approved_omission", "family": "realtime", "id": "realtime-voice", "reference": "Open WebUI call mode"}

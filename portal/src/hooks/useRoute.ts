@@ -112,6 +112,11 @@ export type NavigationGuard = {
 
 let guard: NavigationGuard | null = null;
 
+/** Whether a screen has unsaved or in-flight changes (for hosts with their own router). */
+export function hasPendingChanges(): boolean {
+  return !!guard && (guard.dirty || guard.busy);
+}
+
 export function useNavigationGuard(state: NavigationGuard | null) {
   useEffect(() => {
     guard = state;

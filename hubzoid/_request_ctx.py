@@ -306,3 +306,45 @@ def chat_scope(chat_id: str | None) -> Iterator[None]:
         _current_artifacts.reset(art_token)
         _current_usage.reset(usage_token)
         _current_failure.reset(failure_token)
+
+
+# -- native runtime sessions ----------------------------------------------------------
+class SessionSlot:
+    """One chat run's binding to the runtime's own session (Claude session id,
+    Codex thread, OpenAI Session). ``resume_id`` and ``delta_prompt`` come in:
+    a runtime that can resume sends only the new turn into that session; any
+    other runtime ignores the slot and uses the full prompt. ``session_id``
+    goes out: the session the run ended in, for the next turn of the branch."""
+
+    def __init__(self, resume_id: str | None = None, delta_prompt: str | None = None):
+        self.resume_id = resume_id
+        self.delta_prompt = delta_prompt
+        self.session_id: str | None = None
+        self.resumed = False
+        self.runtime: str | None = None
+        #: () -> bool: may the run start another tool step (not stopped, still
+        #: owning its branch). A runtime with a pre-tool hook refuses the step.
+        self.guard = None
+        #: this turn may use the runtime's own web search (policy, grant and the
+        #: person's choice all agreed); a runtime without one ignores it.
+        self.web_search = False
+        #: a model the person chose for this turn (from the runtime's own list), or None.
+        self.model: str | None = None
+        #: when set, the only hub tools this run may call (a comparison candidate reads, never acts).
+        self.tool_allowlist: list[str] | None = None
+
+
+_current_session_slot: ContextVar = ContextVar("hubzoid_session_slot", default=None)
+
+
+def native_session() -> SessionSlot | None:
+    return _current_session_slot.get()
+
+
+@contextmanager
+def native_session_scope(slot: SessionSlot | None) -> Iterator[None]:
+    token = _current_session_slot.set(slot)
+    try:
+        yield
+    finally:
+        _current_session_slot.reset(token)

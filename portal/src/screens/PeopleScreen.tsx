@@ -57,10 +57,12 @@ export function PeopleScreen({
   me,
   hubs,
   selected,
+  embedded = false,
 }: {
   me: Me;
   hubs: Hub[];
   selected?: string;
+  embedded?: boolean;
 }) {
   const { message } = App.useApp();
   // Filters live in the URL so refresh, Back and shared links restore the view.
@@ -212,7 +214,7 @@ export function PeopleScreen({
             rowKey="subject"
             size="middle"
             dataSource={data.data.people}
-            scroll={{ x: 720 }}
+            scroll={{ x: embedded ? 620 : 720 }}
             pagination={{
               current: page,
               pageSize: PAGE,
@@ -238,6 +240,7 @@ export function PeopleScreen({
               {
                 title: "Person",
                 key: "person",
+                width: embedded ? 230 : undefined,
                 render: (_, p) => (
                   <PersonCell subject={p.subject} display={p.display} link={personHref(p.subject)} />
                 ),
@@ -245,7 +248,7 @@ export function PeopleScreen({
               {
                 title: "Account",
                 key: "account",
-                width: 170,
+                width: embedded ? 150 : 170,
                 render: (_, p) => (
                   <Space size={4} wrap>
                     <AccountTag status={p.status} />
@@ -257,9 +260,15 @@ export function PeopleScreen({
               {
                 title: "Agents",
                 key: "agents",
+                width: embedded ? 130 : undefined,
                 render: (_, p) => {
                   const entries = Object.entries(p.access).filter(([, perms]) => perms.length);
                   if (!entries.length) return <Text type="secondary">No agent access</Text>;
+                  if (embedded) return <Tooltip title={entries.map(([h]) => agentName(h)).join(", ")}>
+                    <a href={personHref(p.subject)} aria-label={`Agent access for ${personName(p.subject, p.display)}`}>
+                      {entries.length} {entries.length === 1 ? "agent" : "agents"}
+                    </a>
+                  </Tooltip>;
                   return (
                     <Space wrap size={[6, 6]}>
                       {entries.map(([h, perms]) => (

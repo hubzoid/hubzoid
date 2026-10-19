@@ -1054,7 +1054,7 @@ function createApp(options = {}) {
         if (staticFile(res, path.join(dist, relative))) return;
         return page(res);
       }
-      if (/^\/(c|s)\/[^/]+$/.test(url.pathname) || /^\/(auth|account|new)(\/|$)/.test(url.pathname) || url.pathname === "/") return page(res);
+      if (/^\/(c|s)\/[^/]+$/.test(url.pathname) || /^\/(auth|account|new|settings|sources|spaces|workspace)(\/|$)/.test(url.pathname) || url.pathname === "/") return page(res);
       return send(res, 404, { detail: { code: "not_found", message: "Not found." } });
     } catch (error) {
       const status = error.status || 500;
