@@ -71,6 +71,10 @@ def hub(tmp_path, monkeypatch):
     (h / "AGENTS.md").write_text("---\nname: Card Hub\nmodel: claude-local\n---\nA hub with cards.\n")
     (h / "tools_local" / "orders.py").write_text(TOOLS)
     (h / config.FILE).write_text("version: 1\n")
+    # Every tool call rechecks that its person may use the hub (access.apply).
+    from hubzoid.access import store_for
+
+    store_for(h).grant(OWNER, "cardhub", "use_hub")
     _card(h, "order-summary.yaml", """\
         version: 1
         id: order-summary
