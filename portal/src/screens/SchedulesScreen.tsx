@@ -477,8 +477,8 @@ function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catal
     <List dataSource={catalog} renderItem={(r) => <List.Item>
       <Space direction="vertical" style={{ width: "100%" }}>
         <Text strong>{r.title}</Text><Text type="secondary">{agents.find((a) => a.key === r.hub)?.name} · {r.schedulable ? "Run once or schedule" : "Run once"}</Text>
-        <Text copyable={{ text: `Run ${r.workflow} for me` }}>Ask: Run {r.workflow} for me</Text>
-        {r.schema && <Text type="secondary">Inputs: {Object.keys(r.schema.properties).join(", ") || "none"}</Text>}
+        <Text copyable={{ text: `Run ${r.title} for me` }}>Ask in chat: “Run {r.title} for me”</Text>
+        {r.schema && Object.keys(r.schema.properties).length > 0 && <Text type="secondary">The agent asks for: {Object.entries(r.schema.properties).map(([k, p]) => (p as { title?: string }).title || k.replace(/_/g, " ")).join(", ")}</Text>}
         <Button href={agents.find((a) => a.key === r.hub)?.chat ?? "/"}>Open chat ↗</Button>
       </Space>
     </List.Item>} />
@@ -492,10 +492,12 @@ function RecentRuns({ agents }: { agents: MyAgent[] }) {
   const data = useData<{ runs: PersonalRun[] }>(agent ? `/my/runs${query({ hub: agent.key })}` : null);
   useVisibleRefresh(data.reload, data.refreshing || data.loading, !!agent);
   if (!agent) return null;
-  return <Section title="Recent requests" help="Your recent one-off reports and answers, including work that continued after chat stopped waiting.">
+  return <Section title="Recent requests" help="Your recent one-off reports and answers on one agent, including work that continued after chat stopped waiting. Pick the agent to see its requests.">
     {usable.length > 1 && <Select aria-label="Recent requests agent" value={agent.key} onChange={setSelected}
-      options={usable.map((a) => ({ value: a.key, label: a.name }))} />}
-    {data.data ? <List dataSource={data.data.runs} locale={{ emptyText: "No recent requests. Choose a report above to get started." }}
+      options={usable.map((a) => ({ value: a.key, label: a.name }))} style={{ minWidth: 220 }} />}
+    {data.data ? <List dataSource={data.data.runs} locale={{ emptyText: usable.length > 1
+        ? `No recent requests on ${agent.name}. Pick another agent above, or ask in chat to run a report.`
+        : "No recent requests yet. Ask in chat to run a report." }}
       renderItem={(r) => <List.Item><Space direction="vertical" style={{ width: "100%" }}>
         <Space wrap><Text strong>{r.report}</Text><RunStatusTag status={r.status} /></Space>
         {r.links.map((link) => <a key={link.url} href={link.url}>{link.title} ↗</a>)}

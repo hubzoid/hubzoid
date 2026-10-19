@@ -115,15 +115,21 @@ def resources(hub_dir: Path) -> list[dict]:
     from .. import scheduling
     from . import observe
 
-    out = [{"key": r["name"], "kind": "code", "source": r.get("source")} for r in observe.definitions(hub_dir)]
+    from .runtime import title_for
+
+    out = [{"key": r["name"], "kind": "code", "source": r.get("source"), "title": title_for(r["name"])}
+           for r in observe.definitions(hub_dir)]
     try:
         tasks, _problems = scheduling.load_tasks(Path(hub_dir))
     except Exception:  # noqa: BLE001 - a broken task file is reported elsewhere
         tasks = []
-    out += [{"key": f"md:{t.name}", "kind": "markdown", "source": f"schedule/{t.name}.md"} for t in tasks]
+    out += [{"key": f"md:{t.name}", "kind": "markdown", "source": f"schedule/{t.name}.md",
+             "title": title_for(t.name)} for t in tasks]
     from .builtin import files as builtin_files
 
-    out += [{"key": p.stem, "kind": "builtin", "source": "built in"} for p in builtin_files()]
+    out += [{"key": p.stem, "kind": "builtin", "source": "built in",
+             "title": "Repeated requests" if p.stem == "repeated_request" else title_for(p.stem)}
+            for p in builtin_files()]
     return sorted(out, key=lambda r: r["key"])
 
 

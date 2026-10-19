@@ -1396,12 +1396,31 @@ class ChatEngine:
             conn.execute(conversations.update().where(conversations.c.id == cid)
                          .values(title=title[:200], title_source="manual"))
             del c
+            branch_id = b.id
         self.notify(cid)
+        self._ready_notice(cid, branch_id, aid, actor.id)
         return cid
 
     # -- approvals and questions (hubzoid.hitl) ---------------------------------------------
     class Busy(Exception):
         """The reply that asked is still being written: continue when it ends."""
+
+    def _ready_notice(self, conversation_id: str, branch_id: str, message_id: str, actor_id: str) -> None:
+        """A message a workflow put in someone's chat counts as a reply that
+        finished: one "Reply ready" item in their notifications."""
+        try:
+            if self.on_terminal is not None:
+                self.on_terminal(run_id=message_id, conversation_id=conversation_id, branch_id=branch_id,
+                                 message_id=message_id, actor_id=actor_id, status="complete",
+                                 stopped_by_self=False)
+                return
+            from .feedback import service_for
+
+            service_for(self.hub_dir, self.engine, self.hub).on_run_terminal(
+                run_id=message_id, conversation_id=conversation_id, branch_id=branch_id, message_id=message_id,
+                actor_id=actor_id, status="complete", stopped_by_self=False)
+        except Exception:  # noqa: BLE001 - a notice never blocks the message
+            log.warning("chat: no notice for %s", message_id, exc_info=True)
 
     def post_from_run(self, conversation_id: str, *, branch_id: str, actor_id: str, message_id: str,
                       parts: list, unless_mentioned: str | None = None) -> str:
@@ -1431,6 +1450,7 @@ class ChatEngine:
             g.move_head(conn, b.id, b.revision, mid)
             self._touch(conn, conversation_id, mid)
         self.notify(conversation_id)
+        self._ready_notice(conversation_id, branch_id, mid, actor_id)
         return "posted"
 
     def continue_after_request(self, conversation_id: str, *, actor_id: str, branch_id: str,

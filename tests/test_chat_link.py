@@ -68,3 +68,15 @@ def test_a_post_waits_for_a_reply_in_progress_and_skips_a_card_already_shown(cha
                                 parts=parts, unless_mentioned="x") == "exists"
     assert engine.post_from_run(cid, branch_id="nope", actor_id="u_ana", message_id="m_req_cccccccc",
                                 parts=parts) == "gone"
+
+
+def test_an_answer_posted_by_a_run_notifies_like_a_reply(chat):
+    from hubzoid.chat import feedback
+    from hubzoid.workflows import chat_link
+
+    hub, engine, _actor, link = chat
+    chat_link.post_result(hub, {"chat": link, "started_at": time.time() - 999}, "repeated_request", "run-9",
+                          ok=True, result="3 items are low")
+    with engine.engine.connect() as c:
+        rows = c.execute(feedback.inbox.select().where(feedback.inbox.c.recipient_id == "u_ana")).fetchall()
+    assert len(rows) == 1

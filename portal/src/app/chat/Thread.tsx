@@ -298,7 +298,17 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
     s.message.content.some((p) => p.type === "text" && (p as { text: string }).text.trim() !== ""),
   );
   const isLast = useAuiState((s) => s.message.isLast);
+  const decision = useAuiState((s) => !!(s.message.metadata?.custom as { decision?: boolean } | undefined)?.decision);
   const del = useDelete();
+  if (decision)
+    // The answer to a card: a quiet line under it, not a chat bubble.
+    return (
+      <MessagePrimitive.Root className="hz-message hz-decision" data-role="user" role="note" data-testid="decision-line">
+        <span className="hz-decision-line">
+          <MessagePrimitive.Parts components={{ Text: UserText }} />
+        </span>
+      </MessagePrimitive.Root>
+    );
   return (
     <MessagePrimitive.Root
       className="hz-message hz-user"

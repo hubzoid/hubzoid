@@ -545,7 +545,10 @@ class Hub:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         # Publish a copy named by its digest, so the approved bytes are exactly
         # the published ones even if the source changes meanwhile.
-        snap = self.data_dir / "plans" / f"{digest[7:23]}{source.suffix}"
+        import re as _re
+
+        slug = _re.sub(r"[^a-z0-9]+", "-", (title or source.stem).lower()).strip("-")[:60] or "plan"
+        snap = self.data_dir / "plans" / digest[7:23] / f"{slug}{source.suffix}"  # named for people
         snap.parent.mkdir(parents=True, exist_ok=True)
         if not snap.exists():
             snap.write_bytes(data)
