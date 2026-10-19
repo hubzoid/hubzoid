@@ -275,6 +275,10 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         user = await run_in_threadpool(auth.require_user, request, hub_dir)
         try:
             agents = await run_in_threadpool(agents_for, hub_dir, user.email, model_label=model_label)
+            if user.hubs is not None:
+                # A personal API key limited to some agents lists only those.
+                agents = [a for a in agents if normalize(a.get("hub") or "")
+                          in user.hubs]
         except Exception:  # noqa: BLE001 — fail closed
             log.exception("webapp: access check failed")
             raise HTTPException(503, detail={"code": "access_unavailable",

@@ -187,13 +187,20 @@ def test_delete_removes_sessions_identities_and_links(store):
         chat.save_share(conversation_id=cid, owner_id=owner, title=None, agent="sales",
                         snapshot={"messages": ["private"]})
     assert store.delete(uid) is True
-    assert chat.get_conversation("c_deleted01") is None
-    assert chat.get_message("m_deleted01") is None
+    # A tombstone: the conversation and its messages stay with the account id,
+    # its share link stops, and the email is free for a new account.
+    assert chat.get_conversation("c_deleted01") is not None
+    assert chat.get_message("m_deleted01") is not None
     assert chat.share_for("c_deleted01") is None
     assert chat.get_conversation("c_retained1") is not None
     assert chat.get_message("m_retained1") is not None
     assert chat.share_for("c_retained1") is not None
-    assert store.get(uid) is None and store.find_identity("https://idp", "s1") is None
+    gone = store.get(uid)
+    assert gone["status"] == "deleted" and gone["email"].endswith("@deleted.invalid")
+    assert gone["auth_epoch"] == 1 and store.find_by_email("e@example.com") is None
+    assert store.find_identity("https://idp", "s1") is None
+    assert store.delete(uid) is False
+    assert store.create(email="e@example.com")["id"] != uid
     with store.engine.connect() as conn:
         for table in ("hz_sessions", "hz_auth_links"):
             assert conn.execute(text(f"SELECT count(*) FROM {table} WHERE user_id=:u"),
@@ -310,7 +317,7 @@ def test_mcp_account_requires_an_active_bound_unblocked_account(hub):
 
     user = users.create(hub, email="m@example.com")
     users.sync_identity(hub, user)
-    assert users.mcp_account(hub, email="m@example.com") == {"account_id": user["id"],
+    assert users.mcp_account(hub, email="m@example.com") == {"auth_epoch": 0, "account_id": user["id"],
                                                                "email": "m@example.com"}
     assert users.mcp_account(hub, account_id=user["id"])["email"] == "m@example.com"
     store_for(hub).suspend("m@example.com", actor="test")

@@ -24,6 +24,7 @@ import {
   ListChecks,
   Search,
   SlidersHorizontal,
+  ShieldCheck,
   Sparkles,
   Star,
   UserRound,
@@ -39,14 +40,18 @@ import { Button, IconButton, Notice, PageSpinner, cx } from "../components/ui";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
+import { MyAccess } from "../components/MyAccess";
 
 const ConnectionsPage = lazy(() => import("./ConnectionsPage"));
 const SourcesPage = lazy(() => import("./SourcesPage"));
 const WorkspacePage = lazy(() => import("./WorkspacePage"));
+const SecurityPage = lazy(() => import("./SecurityPage"));
+const SignInSettings = lazy(() => import("./SignInSettings"));
 const ConsoleEmbed = lazy(() => import("../../ConsoleEmbed"));
 
 type Key =
   | "profile"
+  | "security"
   | "appearance"
   | "notifications"
   | "connections"
@@ -58,6 +63,7 @@ type Key =
   | "activity"
   | "schedules"
   | "chat"
+  | "signin"
   | "instructions"
   | "brand"
   | "health"
@@ -71,6 +77,7 @@ type Item = { key: Key; label: string; icon: ReactNode; hash: string; team?: boo
 const S = t.settingsPage;
 const ITEMS: Item[] = [
   { key: "profile", label: S.profile, icon: <UserRound size={16} aria-hidden />, hash: "/me/profile", keywords: "name password sign out email" },
+  { key: "security", label: S.security, icon: <ShieldCheck size={16} aria-hidden />, hash: "/me/security", keywords: "password two-step mfa authenticator devices sessions api keys sign out" },
   { key: "appearance", label: S.appearance, icon: <Palette size={16} aria-hidden />, hash: "/me/appearance", keywords: "theme dark light text size spacing time zone" },
   { key: "notifications", label: S.notifications, icon: <Bell size={16} aria-hidden />, hash: "/me/notifications", keywords: "alerts sound desktop" },
   { key: "connections", label: S.connections, icon: <Plug size={16} aria-hidden />, hash: "/me/connections", keywords: "accounts github google sign in" },
@@ -82,6 +89,7 @@ const ITEMS: Item[] = [
   { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
+  { key: "signin", label: S.signIn, icon: <ShieldCheck size={16} aria-hidden />, hash: "/settings/sign-in", team: true, admin: true, keywords: "two-step mfa saml scim okta entra company directory single sign-on sso" },
   { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
   { key: "brand", label: S.brand, icon: <Sparkles size={16} aria-hidden />, hash: "/settings/appearance", team: true, keywords: "logo colours colors name" },
   { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, keywords: "diagnostics support checks" },
@@ -100,7 +108,8 @@ function keyFor(hash: string): Key | null {
   if (a === "schedules") return "schedules";
   if (a === "diagnostics") return "health";
   if (a === "workspace") return "instructions";
-  if (a === "settings") return b === "appearance" ? "brand" : b === "admin" ? "advanced" : b === "parity" ? "parity" : "chat";
+  if (a === "settings")
+    return b === "appearance" ? "brand" : b === "sign-in" ? "signin" : b === "admin" ? "advanced" : b === "parity" ? "parity" : "chat";
   return null;
 }
 
@@ -155,8 +164,8 @@ export default function SettingsPage({ section }: { section: string | null }) {
     document.title = `${current ? current.label : t.account.settings} · ${app.brandName}`;
   }, [current, app.brandName]);
 
-  const personalTabs = items.filter((i) => ["profile", "appearance", "notifications", "data"].includes(i.key));
-  const workspaceTabs = items.filter((i) => ["chat", "brand", "health", "advanced", "parity"].includes(i.key));
+  const personalTabs = items.filter((i) => ["profile", "security", "appearance", "notifications", "data"].includes(i.key));
+  const workspaceTabs = items.filter((i) => ["chat", "signin", "brand", "health", "advanced", "parity"].includes(i.key));
   const tabs = personalTabs.some((i) => i.key === active) ? personalTabs : workspaceTabs.some((i) => i.key === active) ? workspaceTabs : [];
   const groupKey = (key: Key) => personalTabs.some((i) => i.key === key) ? "profile" : workspaceTabs.some((i) => i.key === key) ? "chat" : key;
   const groupLabel = (item: Item) => item.key === "profile" ? S.preferences : item.key === "chat" ? S.workspaceSettings : item.label;
@@ -259,6 +268,15 @@ function SectionBody({ item }: { item: Item }) {
         <WorkspacePage agent={new URLSearchParams(location.hash.split("?")[1] ?? "").get("agent")} />
       </Suspense>
     );
+  if (item.key === "signin")
+    return (
+      <>
+        <Heading title={S.signIn} lede={S.signInLede} />
+        <Suspense fallback={<PageSpinner />}>
+          <SignInSettings />
+        </Suspense>
+      </>
+    );
   if (item.team)
     return (
       <Suspense fallback={<PageSpinner />}>
@@ -280,11 +298,25 @@ function SectionBody({ item }: { item: Item }) {
               <Section title={t.account.password} description={t.account.passwordHelp}>
                 <PasswordForm />
               </Section>
-              <Section title={t.account.session} description={t.account.sessionHelp}>
-                <SignOut />
-              </Section>
             </>
           )}
+          <Section title={t.myAccess.title} description={t.myAccess.help}>
+            <MyAccess />
+          </Section>
+          {!app.isLocal && (
+            <Section title={t.account.session} description={t.account.sessionHelp}>
+              <SignOut />
+            </Section>
+          )}
+        </>
+      );
+    case "security":
+      return (
+        <>
+          <Heading title={S.security} lede={t.security.lede} />
+          <Suspense fallback={<PageSpinner />}>
+            <SecurityPage />
+          </Suspense>
         </>
       );
     case "appearance":

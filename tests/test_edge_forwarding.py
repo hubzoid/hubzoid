@@ -197,3 +197,25 @@ def test_without_fallbacks_the_body_streams_as_before():
     (host, at_dispatch, body), = seen
     assert status == 200 and host == "bridge1" and len(body) == 32 * 65536
     assert at_dispatch == 0
+
+
+def _with_auth(base: str, method: str, path: str, auth: str) -> tuple[int, str]:
+    u = urlsplit(base)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request(method, path, body=b"{}", headers={"Authorization": auth})
+        r = conn.getresponse()
+        return r.status, r.read().decode()
+    finally:
+        conn.close()
+
+
+def test_only_a_personal_key_reaches_the_chat_api(web_app_edge):
+    """The OpenAI-compatible chat API is public for a person's own key (the
+    bridge checks it); the bridge's keys and other internal routes stay
+    internal."""
+    assert _with_auth(web_app_edge, "POST", "/v1/chat/completions", "Bearer hzp_abc_def") == \
+        (200, "INTERNAL:/v1/chat/completions")
+    assert _with_auth(web_app_edge, "POST", "/v1/chat/completions", "Bearer dev")[0] == 404
+    assert _with_auth(web_app_edge, "POST", "/uploads/c1/x", "Bearer hzp_abc_def")[0] == 404
+    assert _with_auth(web_app_edge, "POST", "/otel/v1/traces", "Bearer hzp_abc_def")[0] == 404

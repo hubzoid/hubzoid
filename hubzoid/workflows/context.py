@@ -34,6 +34,7 @@ that person's connections, never the author's or an administrator's.
 """
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .state import WorkflowState
+
+log = logging.getLogger(__name__)
 
 # Injectable seams so the façade stays model-free and testable. server.py/cli.py
 # wire the real hub runtime; tests set fakes. Signature mirrors the POC.
@@ -578,9 +581,39 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
             if identity:
                 from ..access import Identity, identity_scope
 
-                with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+                with identity_scope(_workflow_identity(hub_dir, hub, workflow, run_id, identity,
+                                                       ctx.subject)):
                     yield
             else:
                 yield
     finally:
         _run.reset(token)
+
+
+def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: str):
+    """The request identity of a workflow run, with its run identity record
+    (``access.run_identity``). Written once per run id: a run recovering after
+    a restart gets its first record back, built from the account id stored
+    with the run, never by looking the email up again. A run whose stored
+    identity is a pre-account service subject is recorded as legacy."""
+    from ..access import Identity, run_identity
+
+    base = Identity.make(subject, surface="workflow")
+    if not run_id:
+        return base
+    legacy = identity.get("source") == "legacy-service" or "@" not in (subject or "")
+    fields = dict(run_kind="workflow", run_id=f"{hub}:{run_id}",
+                  acts_as_id=None if legacy else identity.get("account_id"),
+                  acts_as_email=None if legacy else subject, requested_by=subject,
+                  started_from="workflow", origin_id=workflow, person_present=False,
+                  credential_kind="workflow", legacy=legacy)
+    if legacy:
+        # A legacy run gets no extra trust from its record: it runs on its
+        # grants alone whether or not the record is written.
+        try:
+            run_identity.admit(Path(hub_dir), **fields)
+        except Exception:  # noqa: BLE001
+            log.warning("workflow: legacy run identity not recorded", exc_info=True)
+        return base
+    record = run_identity.admit_or_refuse(Path(hub_dir), **fields)
+    return run_identity.identity(record, "workflow")

@@ -274,7 +274,8 @@ def test_approve_role_and_delete(hub, owner):
     assert users.get(hub, waiting["id"])["role"] == "user"
     sessions.create_session(hub, waiting, method="password")
     service.delete_account(actor(), "w@example.com")
-    assert users.get(hub, waiting["id"]) is None and live_sessions(hub, waiting["id"]) == 0
+    assert users.get(hub, waiting["id"])["status"] == "deleted"  # a tombstone keeps their chats
+    assert live_sessions(hub, waiting["id"]) == 0
     assert gs.is_suspended("w@example.com")  # unavailable until re-created
 
 

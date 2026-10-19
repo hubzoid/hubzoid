@@ -7,12 +7,16 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly retryAfter?: number;
-  constructor(status: number, code: string, message: string, retryAfter?: number) {
+  /** The server's whole {"detail": {...}} object, for fields such as tries_left. */
+  readonly detail?: Record<string, unknown>;
+  constructor(status: number, code: string, message: string, retryAfter?: number,
+              detail?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.retryAfter = retryAfter;
+    this.detail = detail;
   }
   /** True when the server gave a sentence written for people. */
   get hasServerMessage() {
@@ -53,6 +57,7 @@ export async function errorFrom(response: Response): Promise<ApiError> {
   let code = codeForStatus(response.status);
   let message = "";
   let retryAfter: number | undefined;
+  let raw: Record<string, unknown> | undefined;
   const header = response.headers.get("retry-after");
   if (header && !Number.isNaN(Number(header))) retryAfter = Number(header);
   try {
@@ -61,6 +66,7 @@ export async function errorFrom(response: Response): Promise<ApiError> {
     // for people; a bare string ("Not Found") is framework boilerplate.
     const detail = data?.detail ?? data;
     if (detail && typeof detail === "object") {
+      raw = detail;
       if (typeof detail.code === "string") code = detail.code;
       if (typeof detail.message === "string") message = detail.message;
       const ra = detail.retry_after ?? data?.retry_after;
@@ -69,7 +75,7 @@ export async function errorFrom(response: Response): Promise<ApiError> {
   } catch {
     /* not JSON */
   }
-  return new ApiError(response.status, code, message || code, retryAfter);
+  return new ApiError(response.status, code, message || code, retryAfter, raw);
 }
 
 export function networkError(): ApiError {

@@ -992,7 +992,7 @@ class AccessService:
 
     def _remove_new(self, directory, created: dict) -> bool:
         try:
-            directory.delete(created["id"])
+            getattr(directory, "discard", directory.delete)(created["id"])
             return True
         except Exception:  # noqa: BLE001
             log.error("account create: could not remove an unexpected account")
@@ -1108,6 +1108,10 @@ class AccessService:
             check_hubzoid_password(password)
         directory = self.accounts()
         account = self._live_account(directory, identity)
+        if account.get("sign_in") == "directory":
+            raise Denied(409, "directory_managed",
+                         "This user signs in through your company directory, which manages "
+                         "their sign-in.")
         if account.get("sign_in") == "google":
             raise Denied(409, "google_managed",
                          "This user signs in with Google, so their password is managed "

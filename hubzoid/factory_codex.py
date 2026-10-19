@@ -136,6 +136,10 @@ class CodexRuntime:
         self._stack = AsyncExitStack()
         try:
             for server in self._servers:
+                if self.hub_dir:
+                    from .access.guard import checked_server
+
+                    server = checked_server(server, self.hub_dir)
                 await self._stack.enter_async_context(server)
                 tools = await MCPUtil.get_function_tools(
                     server, False, RunContextWrapper(context=None), Agent(name=self.name))
@@ -204,7 +208,8 @@ class CodexRuntime:
         from .runtime import open_personal_mcp
 
         registry = dict(self.registry)
-        for _server, tools in await open_personal_mcp(stack, personal, set(registry)):
+        for _server, tools in await open_personal_mcp(stack, personal, set(registry),
+                                                      hub_dir=self.hub_dir):
             for tool in tools:
                 registry[tool.name] = tool
         return registry

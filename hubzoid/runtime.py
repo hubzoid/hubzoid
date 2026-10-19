@@ -278,7 +278,8 @@ class OpenAIAgentsRuntime:
         from contextlib import AsyncExitStack
 
         async with AsyncExitStack() as stack:
-            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent))
+            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent),
+                                           hub_dir=self._hub_dir)
             agent = self._agent
             if live:
                 # The connector tools join as function tools under their
@@ -433,7 +434,8 @@ def connector_tool_name(server_key: str, tool: str) -> str:
     return name
 
 
-async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None) -> list:
+async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None,
+                            hub_dir=None) -> list:
     """Connect each personal server on `stack` and list its (allow-listed)
     tools, renamed ``mcp__<server key>__<tool>`` (:func:`connector_tool_name`).
     Returns ``[(server, tools)]`` for the servers kept.
@@ -453,6 +455,10 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
     kept: list = []
     for srv in personal:
         server = make(srv)
+        if hub_dir is not None:
+            from .access.guard import checked_server
+
+            server = checked_server(server, hub_dir)
         try:
             await stack.enter_async_context(server)
             tools = await MCPUtil.get_function_tools(

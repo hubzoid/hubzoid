@@ -71,15 +71,10 @@ def account(hub_dir, *, email=None, account_id=None):
 def allowed(hub_dir, email):
     """May `email` use this hub over MCP: not blocked and holding `use_hub`.
     Fails closed."""
+    from .access.evaluator import authorize
     from .access.store import USE_HUB
 
-    try:
-        gs = access.store_for(hub_dir)
-        if gs.is_suspended(email):
-            return False
-        return gs.can(email, hub_dir.name, USE_HUB)
-    except Exception:
-        return False
+    return authorize(hub_dir, email, USE_HUB, hub=hub_dir.name).allowed
 
 
 class HubOAuth(OAuthProvider):
@@ -190,6 +185,9 @@ class HubOAuth(OAuthProvider):
         if (
             not who
             or who["email"] != g["email"]
+            # "Revoke all credentials", a password reset, a block or a deletion
+            # moved the account's credential counter: grants made before end.
+            or int(who.get("auth_epoch") or 0) != int(g.get("auth_epoch") or 0)
             or not allowed(self.hub_dir, who["email"])
         ):
             return None

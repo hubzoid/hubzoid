@@ -13,9 +13,15 @@ Rules held here:
   * Password hashes never leave this module except through ``password_hash``
     (used to verify a sign-in). Public views never include them.
   * Changing a password, the role or the status to pending ends the person's
-    sessions. Deleting a person also deletes their sessions, external sign-in
-    identities and one-time links (and their personal connection tokens, when
-    ``hubzoid.connectors.tokens`` is installed).
+    sessions. Deleting a person keeps the account as a tombstone (status
+    ``deleted``, its email released) so their conversations and run history
+    stay attached to the id; their sessions, external sign-in identities,
+    one-time links, share links, MFA, API keys (and personal connection tokens, when
+    ``hubzoid.connectors.tokens`` is installed) go.
+  * ``auth_epoch`` is the account's credential counter. A password set or
+    reset, leaving ``active``, a block, a deletion and "revoke all
+    credentials" move it in the same transaction that ends the sessions, so
+    personal API keys and MCP grants issued before stop working everywhere.
   * ``updated_at`` moves on every change to the account row (not on sign-in
     activity, ``last_login_at``) and when the person is blocked
     (``end_sessions_in``): it is the account's version. A change that ends
@@ -55,6 +61,7 @@ log = logging.getLogger("hubzoid.auth")
 ROLES = ("admin", "user")
 MIGRATED_ISSUER_PREFIX = "openwebui-migrated:"
 STATUSES = ("active", "pending")
+DELETED = "deleted"
 # How an account came to exist (hz_users.source).
 SOURCES = ("local", "admin", "signup", "bootstrap", "migrated", "oidc")
 LOCAL_OWNER_NAME = "Local owner"
@@ -103,6 +110,9 @@ def _public(row) -> dict | None:
         "created_at": m["created_at"],
         "updated_at": m["updated_at"],
         "last_login_at": m["last_login_at"],
+        "auth_epoch": int(m["auth_epoch"] or 0),
+        "deleted_at": m["deleted_at"],
+        "managed_by": m["managed_by"],
     }
 
 
@@ -114,8 +124,11 @@ def is_local_address(email: str | None) -> bool:
 
 
 def sign_in_of(user: Mapping) -> str:
-    """How the person signs in, for people reading it: "google" (an external
-    provider only), otherwise "password"."""
+    """How the person signs in, for people reading it: "directory" (a
+    company directory manages the account), "google" (an external provider
+    only), otherwise "password"."""
+    if user.get("managed_by"):
+        return "directory"
     return "password" if user.get("password_enabled") else "google"
 
 
@@ -142,13 +155,28 @@ class UserStore:
             row = conn.execute(sa.select(users).where(users.c.email == email)).first()
         return _public(row)
 
-    def list(self) -> list[dict]:
+    def list(self, *, include_deleted: bool = False) -> list[dict]:
+        q = sa.select(users).order_by(users.c.email)
+        if not include_deleted:
+            q = q.where(users.c.status != DELETED)
         with self.engine.connect() as conn:
-            rows = conn.execute(sa.select(users).order_by(users.c.email)).fetchall()
+            rows = conn.execute(q).fetchall()
         return [_public(r) for r in rows]
 
+    def _managed(self, user_id: str) -> str | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(sa.select(users.c.managed_by).where(users.c.id == str(user_id))).first()
+        return row[0] if row else None
+
+    def epoch(self, user_id: str) -> int | None:
+        """The account's credential counter, or None when it is gone."""
+        with self.engine.connect() as conn:
+            row = conn.execute(sa.select(users.c.auth_epoch).where(
+                users.c.id == str(user_id))).first()
+        return None if row is None else int(row[0] or 0)
+
     def count(self, *, exclude_local: bool = False) -> int:
-        q = sa.select(sa.func.count()).select_from(users)
+        q = sa.select(sa.func.count()).select_from(users).where(users.c.status != DELETED)
         if exclude_local:
             q = q.where(users.c.source != "local")
         with self.engine.connect() as conn:
@@ -266,6 +294,9 @@ class UserStore:
         raised. A reset, role change or block landing meanwhile is never undone."""
         stored = passwords.hash_password(password) if password is not None else password_hash
         now = time.time()
+        if stored and self._managed(user_id):
+            raise InvalidAccount("This account signs in through the company directory, so it "
+                                 "has no Hubzoid password.")
         with self.engine.begin() as conn:
             where = () if expect_updated_at is None else (users.c.updated_at == expect_updated_at,)
             done = self._update(conn, user_id, *where, password_hash=stored or None,
@@ -280,7 +311,7 @@ class UserStore:
                     sessions.c.user_id == str(user_id))).first()
                 if live is None or live[0] is not None:
                     raise AccountChanged()  # rolls the password back
-            self._revoke(conn, user_id, now, except_token_hash)
+            self._revoke(conn, user_id, now, except_token_hash, credentials=True)
             conn.execute(links.delete().where(links.c.user_id == str(user_id),
                                               links.c.used_at.is_(None)))
 
@@ -331,9 +362,13 @@ class UserStore:
                 raise KeyError(user_id)
             if row[0] == status:
                 return False
+            if row[0] == "disabled":
+                # Turned off by a company directory: only the directory turns
+                # it back on (``directory.store``), never a role or approval.
+                return False
             self._update(conn, user_id, status=status)
             if status != "active":
-                self._revoke(conn, user_id, now)
+                self._revoke(conn, user_id, now, credentials=True)
         return True
 
     def set_password_enabled(self, user_id: str, enabled: bool) -> None:
@@ -351,12 +386,47 @@ class UserStore:
                          .values(last_login_at=time.time() if now is None else now))
 
     def delete(self, user_id: str) -> bool:
-        """Delete the account, its sign-in data, conversations and shares atomically."""
-        user_id = str(user_id)
-        from ..chat.store import delete_owner_in
+        """Delete the account, keeping a tombstone: the row stays with status
+        ``deleted`` and a released email (``deleted-<id>@deleted.invalid``), so
+        the person's conversations and run history keep their owner id and the
+        email can be used for a new account. Sign-in data, MFA, API keys and
+        one-time links go, and the credential counter moves, in one transaction."""
+        from ..chat.store import shares
+        from .schema import api_keys, mfa_factors, mfa_recovery
 
+        user_id = str(user_id)
+        now = time.time()
         with self.engine.begin() as conn:
-            delete_owner_in(conn, user_id)
+            row = conn.execute(sa.select(users.c.status).where(users.c.id == user_id)).first()
+            if row is None or row[0] == DELETED:
+                return False
+            self._revoke(conn, user_id, now, credentials=True)
+            conn.execute(sessions.delete().where(sessions.c.user_id == user_id))
+            conn.execute(identities.delete().where(identities.c.user_id == user_id))
+            conn.execute(links.delete().where(links.c.user_id == user_id))
+            conn.execute(mfa_factors.delete().where(mfa_factors.c.user_id == user_id))
+            conn.execute(mfa_recovery.delete().where(mfa_recovery.c.user_id == user_id))
+            # Their share links stop working; the conversations themselves stay.
+            conn.execute(shares.delete().where(shares.c.owner_id == user_id))
+            conn.execute(api_keys.update().where(api_keys.c.user_id == user_id,
+                                                 api_keys.c.revoked_at.is_(None))
+                         .values(revoked_at=now))
+            self._update(conn, user_id, status=DELETED, deleted_at=now,
+                         email=f"deleted-{user_id}@deleted.invalid", password_hash=None,
+                         password_enabled=0)
+        return True
+
+    def purge(self, user_id: str) -> bool:
+        """Remove an account created moments ago that never got used (a lost
+        sign-up race, an account whose grants could not be written). Unlike
+        ``delete`` nothing is kept; refused (False) once it owns a conversation."""
+        from ..chat.store import conversations
+
+        user_id = str(user_id)
+        with self.engine.begin() as conn:
+            if conn.execute(sa.select(conversations.c.id).where(
+                    conversations.c.owner_id == user_id).limit(1)).first():
+                return False
             conn.execute(sessions.delete().where(sessions.c.user_id == user_id))
             conn.execute(identities.delete().where(identities.c.user_id == user_id))
             conn.execute(links.delete().where(links.c.user_id == user_id))
@@ -365,12 +435,31 @@ class UserStore:
     # ---- sessions (revocation lives here so every account change can use it) ----
 
     @staticmethod
-    def _revoke(conn, user_id: str, now: float, except_token_hash: str | None = None) -> int:
+    def _revoke(conn, user_id: str, now: float, except_token_hash: str | None = None,
+                *, credentials: bool = False) -> int:
+        """End the account's sessions (except ``except_token_hash``). With
+        ``credentials``, also move ``auth_epoch`` and drop pending sign-in
+        challenges, so API keys and MCP grants issued before stop working."""
         q = sessions.update().where(sessions.c.user_id == str(user_id),
                                     sessions.c.revoked_at.is_(None))
         if except_token_hash:
             q = q.where(sessions.c.token_hash != except_token_hash)
-        return conn.execute(q.values(revoked_at=now)).rowcount
+        ended = conn.execute(q.values(revoked_at=now)).rowcount
+        if credentials:
+            from .schema import challenges
+
+            conn.execute(users.update().where(users.c.id == str(user_id))
+                         .values(auth_epoch=users.c.auth_epoch + 1))
+            conn.execute(challenges.delete().where(challenges.c.user_id == str(user_id)))
+        return ended
+
+    def revoke_credentials(self, user_id: str, *, except_token_hash: str | None = None) -> int:
+        """End every session (except ``except_token_hash``) and move the
+        credential counter: every API key and MCP grant stops working."""
+        with self.engine.begin() as conn:
+            if not conn.execute(sa.select(users.c.id).where(users.c.id == str(user_id))).first():
+                raise KeyError(user_id)
+            return self._revoke(conn, user_id, time.time(), except_token_hash, credentials=True)
 
     def revoke_sessions(self, user_id: str, *, except_token_hash: str | None = None) -> int:
         with self.engine.begin() as conn:
@@ -389,7 +478,7 @@ class UserStore:
         if row is None:
             return 0
         conn.execute(users.update().where(users.c.id == row[0]).values(updated_at=now))
-        return self._revoke(conn, row[0], now)
+        return self._revoke(conn, row[0], now, credentials=True)
 
     # ---- external sign-in identities --------------------------------------------
 
@@ -510,24 +599,25 @@ def set_status(hub_dir: Path, user_id: str, status: str) -> bool:
 
 
 def delete(hub_dir: Path, user_id: str) -> bool:
-    """Delete an account (``UserStore.delete``) and its personal connection
-    tokens when the connections part is installed."""
-    from .. import deployment
-    from ..chat.store import conversations, chat_key, remove_chat_files
-
+    """Delete an account (``UserStore.delete``: a tombstone that keeps their
+    conversations) and its personal connection tokens when the connections
+    part is installed."""
     st = store(hub_dir)
-    with st.engine.connect() as conn:
-        chats = [dict(row._mapping) for row in conn.execute(
-            conversations.select().where(conversations.c.owner_id == str(user_id)))]
     done = st.delete(user_id)
     if done:
         _drop_connector_tokens(Path(hub_dir), str(user_id))
-        for chat in chats:
-            try:
-                remove_chat_files(deployment.hub_path(Path(hub_dir), chat["hub"]), chat_key(chat))
-            except (OSError, ValueError, KeyError):
-                log.warning("auth: files of a deleted conversation could not be removed")
     return done
+
+
+def revoke_credentials(hub_dir: Path, user_id: str, *, except_token: str | None = None) -> int:
+    from .sessions import digest
+
+    return store(hub_dir).revoke_credentials(
+        user_id, except_token_hash=digest(except_token) if except_token else None)
+
+
+def epoch(hub_dir: Path, user_id: str) -> int | None:
+    return store(hub_dir).epoch(user_id)
 
 
 def _drop_connector_tokens(hub_dir: Path, user_id: str) -> None:
@@ -652,6 +742,46 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def convert_local_owner(hub_dir: Path, *, email: str, password: str, name: str | None = None) -> dict:
+    """Turn the laptop's local owner into a sign-in account, keeping its id:
+    its conversations, run history and settings stay attached. The local
+    owner's grants are given to the new email, and its access identity is
+    bound to the same account id. Refused when another active administrator
+    can already sign in (one bootstrap only), or the email is taken."""
+    from ..access import store_for
+
+    hub_dir = Path(hub_dir)
+    email = normalize_email(email)
+    if not EMAIL_PATTERN.match(email) or is_local_address(email):
+        raise InvalidAccount("Enter a real email address for the owner.")
+    passwords.check(password)
+    st = store(hub_dir)
+    if st.admins(exclude_local=True):
+        raise InvalidAccount("An administrator who can sign in already exists. Ask them to add you.")
+    if st.find_by_email(email) is not None:
+        raise AccountExists("An account with this email already exists.")
+    owner = ensure_local_owner(hub_dir)
+    gs = store_for(hub_dir)
+    held = [(h, p) for (subj, h, p) in gs.list_grants() if subj == LOCAL_OWNER_EMAIL]
+    with st.engine.begin() as conn:
+        done = st._update(conn, owner["id"], email=email,  # noqa: SLF001
+                          name=(name or "").strip() or email.split("@", 1)[0],
+                          password_hash=passwords.hash_password(password), password_enabled=1,
+                          source="bootstrap", role="admin", status="active")
+        if not done:
+            raise KeyError(owner["id"])
+    gs.upsert_identity(email=email, owui_id=owner["id"], display=name or None)
+    for hub, permission in held:
+        gs.grant(email, hub, permission, actor="cli:bootstrap")
+    provision_owner(hub_dir, email)
+    from .sessions import reset_cache
+
+    reset_cache()
+    converted = st.get(owner["id"])
+    assert converted is not None
+    return converted
+
+
 def bootstrap_admin_from_env(hub_dir: Path, env: Mapping[str, str] | None = None) -> dict | None:
     """Create the first administrator from ``HUBZOID_ADMIN_EMAIL`` and
     ``HUBZOID_ADMIN_PASSWORD`` when sign-in is on and no account exists yet
@@ -738,7 +868,8 @@ def mcp_account(hub_dir: Path, *, email: str | None = None,
             return None
         if gs.is_suspended(user["email"]):
             return None
-        return {"account_id": user["id"], "email": user["email"]}
+        return {"account_id": user["id"], "email": user["email"],
+                "auth_epoch": int(user.get("auth_epoch") or 0)}
     except Exception:  # noqa: BLE001 — fail closed
         log.warning("auth: MCP account lookup failed")
         return None

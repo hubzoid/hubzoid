@@ -20,6 +20,12 @@ from .identity import normalize
 log = logging.getLogger("hubzoid.portal")
 
 
+def _key_only(request: Request) -> bool:
+    from ..auth.sessions import SESSION_COOKIE, bearer_token
+
+    return bool(bearer_token(request)) and not request.cookies.get(SESSION_COOKIE)
+
+
 def require_same_origin(request: Request) -> None:
     """Reject a cross-site mutation. The session cookie is ambient, so a POST
     must come from our own origin: an Origin (or Referer) whose host equals
@@ -30,6 +36,11 @@ def require_same_origin(request: Request) -> None:
 
     from .. import appmode
 
+    if _key_only(request):
+        # A personal API key is sent on purpose by its holder, never ambiently
+        # by a browser, so another site can't use it (the key itself is checked
+        # by ``hubzoid.auth.sessions``).
+        return
     origin = request.headers.get("origin") or request.headers.get("referer") or ""
     parsed = urlparse(origin)
     # Require a real http/https origin with an authority — 'null', an opaque

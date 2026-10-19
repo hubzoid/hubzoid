@@ -245,6 +245,6 @@ def test_mcp_account_dispatch(hub, monkeypatch, tmp_path):
 
     user = users.create(hub, email="m@example.com")
     users.sync_identity(hub, user)
-    assert mcp_oauth.account(hub, email="m@example.com") == {"account_id": user["id"],
+    assert mcp_oauth.account(hub, email="m@example.com") == {"auth_epoch": 0, "account_id": user["id"],
                                                                "email": "m@example.com"}
 

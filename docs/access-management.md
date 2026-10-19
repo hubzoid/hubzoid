@@ -129,11 +129,12 @@ Delegates (Manage access on specific agents) have no role control.
 
 ### Delete a user (implemented)
 
-**…** → **Delete user**, then type their email to confirm. This is a real
-deletion:
+**…** → **Delete user**, then type their email to confirm:
 
-- Every grant is removed, then the account is deleted with its chats, shared
-  chat links and connections.
+- Every grant is removed and every credential ends (sessions, API keys,
+  assistant connections). The account keeps a tombstone: their chats stay
+  attached to their id, their share links stop, and the email can be used for
+  a new account.
 - Kept: Activity history, usage records and artifacts they published (their
   public links stop working). The email is marked as removed, so it inherits
   nothing; only an organization administrator can create an account with it

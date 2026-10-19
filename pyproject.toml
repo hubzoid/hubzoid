@@ -86,10 +86,18 @@ dependencies = [
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
+  "qrcode>=8.2,<9",          # auth/mfa.py: the authenticator set-up QR code, drawn as SVG (BSD)
 ]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.3,<4"]  # only when DATABASE_URL points at Postgres
+# Company directories (auth/directory/): SAML sign-in and SCIM provisioning.
+# SAML also needs the xmlsec1 program (brew install libxmlsec1, apt-get install xmlsec1).
+saml = [
+  "pysaml2>=7.5.5,<7.6",     # Apache-2.0
+  "pyopenssl>=26.2,<26.3",   # pysaml2's; this line accepts cryptography 48
+  "scim2-models>=0.12.2,<0.13",  # Apache-2.0: SCIM resources, filters and PATCH
+]
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
@@ -99,6 +107,7 @@ dev = [
   "build>=1.2",
   "twine>=5.0",
   "reportlab>=4.0",
+  "scim2-tester>=0.5.2,<0.6",  # tests/test_auth_directory.py: SCIM conformance checks
 ]
 
 [project.scripts]
