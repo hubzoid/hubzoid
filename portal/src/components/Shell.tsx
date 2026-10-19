@@ -1,15 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Box, CalendarClock, History, ListChecks, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { Activity, Box, CalendarClock, History, ListChecks, Menu as MenuIcon, Monitor, Moon, MoonStar, Plug, Settings, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
+import { usePresentation } from "../lib/presentation";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
 import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "people" | "activity" | "schedules" | "connections";
+export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -70,6 +71,12 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
+// Deployment-wide pages: settings for organization administrators, diagnostics
+// for anyone who manages an agent (the server checks each call).
+const orgItems = [
+  { key: "settings", icon: <Settings size={18} />, label: <a href={href("/settings")}>Settings</a> },
+];
+const diagnosticsItem = { key: "diagnostics", icon: <Activity size={18} />, label: <a href={href("/diagnostics")}>Diagnostics</a> };
 // Connectors live in each agent (its Connectors tab), not in the menu. An
 // admin's own schedules and connections are under "You", as on everyone's My
 // workspace; connections are the web app's Settings page there.
@@ -80,11 +87,64 @@ function youItems(me: Me) {
     { key: "connections", icon: <Plug size={18} />, label: <a href={connections}>Connections</a> },
   ];
 }
-function navItems(_me: Me) {
-  return items;
+function navItems(me: Me) {
+  return me.org_admin ? [...items, diagnosticsItem, ...orgItems] : [...items, diagnosticsItem];
+}
+
+type ActiveBrand = { name: string; logo_light?: string; logo_dark?: string } | null;
+let brandCache: Promise<ActiveBrand> | null = null;
+
+/** The deployment's activated brand (GET /api/branding), shared by every
+ *  Wordmark on the page. Without one the Console keeps the Hubzoid mark. */
+function useActiveBrand(): ActiveBrand {
+  const [brand, setBrand] = useState<ActiveBrand>(null);
+  useEffect(() => {
+    brandCache ??= fetch("/api/branding", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) =>
+        b?.manifest
+          ? { name: b.manifest.identity.name, logo_light: b.manifest.assets.logo_light, logo_dark: b.manifest.assets.logo_dark }
+          : null,
+      )
+      .catch(() => null);
+    let live = true;
+    const show = () =>
+      void brandCache!.then((b) => {
+        if (!live) return;
+        setBrand(b);
+        document.title = b ? `${b.name} Console` : "Hubzoid Admin Console";
+      });
+    show();
+    // An activation from Settings → Appearance refreshes the Console's own brand.
+    const onChange = () => {
+      brandCache = null;
+      brandCache = fetch("/api/branding", { credentials: "same-origin" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((b) => (b?.manifest ? { name: b.manifest.identity.name, logo_light: b.manifest.assets.logo_light, logo_dark: b.manifest.assets.logo_dark } : null))
+        .catch(() => null);
+      show();
+    };
+    window.addEventListener("hz:brand-changed", onChange);
+    return () => {
+      live = false;
+      window.removeEventListener("hz:brand-changed", onChange);
+    };
+  }, []);
+  return brand;
 }
 
 function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
+  const brand = useActiveBrand();
+  if (brand) {
+    const logo = isDark ? brand.logo_dark || brand.logo_light : brand.logo_light;
+    return (
+      <a className={`brand${compact ? " compact" : ""}`} href={href(to)} aria-label={brand.name} data-brand-slot="brand.logoFrame"
+        style={{ display: "flex", alignItems: "center", gap: 10, color: "inherit", textDecoration: "none" }}>
+        {logo && <img src={logo} alt="" style={{ width: 28, height: 28, borderRadius: 6, objectFit: "contain" }} />}
+        <span style={{ fontWeight: 600, fontSize: 16 }}>{brand.name}</span>
+      </a>
+    );
+  }
   return (
     <a className={`brand${compact ? " compact" : ""}`} href={href(to)} aria-label="Hubzoid">
       <img src={isDark ? wordmarkDark : wordmarkLight} alt="Hubzoid" className="brand-wordmark" />
@@ -93,6 +153,15 @@ function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?
 }
 
 function ThemeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  // The deployment's allowed appearances and lock apply here as in the chat.
+  const view = usePresentation();
+  if (view.locked.mode) return <Text type="secondary" className="theme-toggle">Theme managed by your administrator</Text>;
+  const all = [
+    { value: "light" as Mode, icon: <Sun size={14} />, title: "Light", label: <span className="sr-only">Light</span> },
+    { value: "dark" as Mode, icon: <Moon size={14} />, title: "Dark", label: <span className="sr-only">Dark</span> },
+    { value: "oled" as Mode, icon: <MoonStar size={14} />, title: "Black (OLED)", label: <span className="sr-only">Black (OLED)</span> },
+    { value: "system" as Mode, icon: <Monitor size={14} />, title: "Match system", label: <span className="sr-only">Match system</span> },
+  ];
   return (
     <Segmented<Mode>
       size="small"
@@ -100,11 +169,7 @@ function ThemeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void
       onChange={setMode}
       className="theme-toggle"
       aria-label="Color theme"
-      options={[
-        { value: "light", icon: <Sun size={14} />, title: "Light", label: <span className="sr-only">Light</span> },
-        { value: "dark", icon: <Moon size={14} />, title: "Dark", label: <span className="sr-only">Dark</span> },
-        { value: "system", icon: <Monitor size={14} />, title: "Match system", label: <span className="sr-only">Match system</span> },
-      ]}
+      options={all.filter((o) => view.allowed.modes.includes(o.value))}
     />
   );
 }

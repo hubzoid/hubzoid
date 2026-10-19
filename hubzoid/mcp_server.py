@@ -114,6 +114,11 @@ def build_registry(
     registry = access.apply(hub_dir, {**builtin, **local})
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
+    # Read-only admin tools, for agent administrators only (MCP surface only).
+    from .admin import mcp_tools as admin_tools
+
+    for ft in admin_tools.make(hub_dir):
+        registry.setdefault(ft.name, ft)
 
     permissions = {
         ft.name: permission
@@ -262,13 +267,21 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
         if name not in permissions
         and getattr(getattr(ft, "is_enabled", None), "hubzoid_permission", None) is not None
     }
+    # Tools gated by a platform capability (the read-only admin tools).
+    by_capability = {name for name, ft in (registry or {}).items()
+                     if getattr(ft, "hubzoid_capability", None)}
 
     class _AccessListFilter(Middleware):
         async def on_list_tools(self, context, call_next):
             tools = await call_next(context)
-            if not permissions and not gated:
+            if not permissions and not gated and not by_capability:
                 return tools
             ident = _mcp_identity(hub_dir)
+            if by_capability:
+                from .admin import mcp_tools as admin_tools
+
+                if not admin_tools.allowed(hub_dir, ident.user):
+                    tools = [t for t in tools if t.name not in by_capability]
             surfaces = _allowed_surfaces()
             # Use the SAME fail-closed decision as invocation, so a user sees a
             # tool exactly when invoking it would be allowed.
@@ -280,7 +293,9 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                     log.exception("mcp: visibility check failed")
                     vis = {}
                 for t in tools:
-                    if t.name in gated:
+                    if t.name in by_capability:
+                        ok = True  # already filtered above; the tool checks again on invoke
+                    elif t.name in gated:
                         ok = vis.get(t.name, False)
                     else:
                         ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]

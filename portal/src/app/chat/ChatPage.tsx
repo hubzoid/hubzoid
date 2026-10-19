@@ -1,12 +1,13 @@
 // A chat page: a new chat (/, with the agent picker) or a stored conversation
 // (/c/:id). Loads the conversation first so every failure has a plain state,
-// then mounts assistant-ui's local runtime with Hubzoid's adapters.
+// then mounts assistant-ui's external store over the server's conversation
+// graph (runtime.ts): the server owns messages, branches, runs and the queue.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AssistantRuntimeProvider, useAui, useLocalRuntime } from "@assistant-ui/react";
-import { Archive, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
+import { AssistantRuntimeProvider, WebSpeechDictationAdapter, WebSpeechSynthesisAdapter } from "@assistant-ui/react";
+import { Archive, Files, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
-import { ApiError, enc, get } from "../lib/api";
+import { ApiError, enc, get, hubUrl, post } from "../lib/api";
 import { agentById, useApp } from "../lib/app-context";
 import {
   deleteConversation,
@@ -25,12 +26,17 @@ import type { Agent, Conversation, ConversationDetail } from "../lib/types";
 import { ShareDialog } from "../components/ShareDialog";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
-import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
-import { cancelRun, ChatSession, pollRun } from "./session";
+import { ChatSession } from "./session";
+import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
+import { FeedContext, type Features } from "./feed-context";
 import { Thread } from "./Thread";
+import { ArtifactPanel, loadArtifacts, type Artifact } from "./ArtifactPanel";
+import type { ModelsInfo } from "./models";
 import { AgentSwitcher } from "./AgentPicker";
+import { SidebarToggle } from "../components/Sidebar";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
+import { readConversation, useNotices } from "../lib/notices";
 
 type Load = { status: "loading" } | { status: "ready"; detail: ConversationDetail | null } | { status: "error"; error: unknown };
 
@@ -159,7 +165,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
   }, [title, app.brandName]);
   return (
     <>
-      <header className="flex h-14 flex-none items-center gap-2 border-b border-line px-3 lg:hidden">
+      <header className="flex h-12 flex-none items-center gap-2 px-3 lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />
         </IconButton>
@@ -172,7 +178,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
 function ChatSkeleton() {
   return (
     <div className="flex h-full flex-col" aria-busy="true">
-      <div className="flex h-14 flex-none items-center gap-3 border-b border-line px-4">
+      <div className="flex h-12 flex-none items-center gap-3 px-4">
         <div className="hz-skeleton h-7 w-7 rounded-lg" />
         <div className="hz-skeleton h-4 w-40" />
       </div>
@@ -237,16 +243,10 @@ function ChatView({
   }, []);
 
   const [session] = useState(() => {
-    const repo = detail
-      ? toRepository(detail.messages ?? [], detail.head_id, {
-          conversationId: detail.conversation.id,
-          apiBase: detail.conversation.api_base ?? initialAgent.api_base,
-        })
-      : null;
     const s = new ChatSession({
       conversationId: detail?.conversation.id ?? null,
       agent: detail ? { ...initialAgent, api_base: detail.conversation.api_base ?? initialAgent.api_base } : initialAgent,
-      repository: repo,
+      repository: null,
       events: {
         onConversationCreated: (c) => {
           setConversation(c);
@@ -280,13 +280,37 @@ function ChatView({
     });
     return s;
   });
-  const runningIds = useMemo(() => {
-    if (!detail) return [];
-    return toRepository(detail.messages ?? [], detail.head_id, session.convertContext).runningIds;
-  }, [detail, session]);
+  const me = app.user?.id ?? null;
+  const [feed] = useState(
+    () =>
+      new ConversationFeed(
+        detail?.conversation.id ?? null,
+        session.apiBase,
+        me ?? ((detail as unknown as Snapshot | null)?.conversation.owner_id ?? null),
+        (detail as unknown as Snapshot | null) ?? null,
+      ),
+  );
+  useEffect(() => () => feed.close(), [feed]);
+  const ensureFeed = useCallback(async () => {
+    if (feed.conversationId) return feed;
+    const id = await session.ensureConversation();
+    feed.conversationId = id;
+    feed.apiBase = session.apiBase;
+    await feed.load();
+    if (!feed.me) feed.me = feed.snapshot?.conversation.owner_id ?? null;
+    feed.connect();
+    return feed;
+  }, [feed, session]);
+  const [confirmedDeletes] = useState(() => new Map<string, DeletionPreview>());
+  const onError = useCallback((error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) session.events.onUnauthorized();
+    else toast(describeError(error, t.chat.runError), "error");
+  }, [session]);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const canPick = !conversation && app.agents.list.length > 1;
+  // Inside a conversation, choosing another agent starts a new chat with it.
+  const canSwitch = app.agents.list.length > 1;
   const pickAgent = useCallback(
     (next: Agent) => {
       if (session.conversationId) return;
@@ -301,12 +325,122 @@ function ChatView({
     if (!session.conversationId && agent.id) rememberLast(agent.id);
   }, [agent.id, session]);
 
-  const chatModel = useMemo(() => session.chatModelAdapter(), [session]);
-  // A new chat has nothing to load; without a history adapter it starts empty
-  // (not "loading"), so the empty state renders at once, scrolled to the top.
-  const history = useMemo(() => (detail ? session.historyAdapter() : undefined), [session, detail]);
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
-  const runtime = useLocalRuntime(chatModel, { adapters: { history, attachments } });
+  // The models this person may pick or compare (HUB-78).
+  const [models, setModels] = useState<ModelsInfo | undefined>(undefined);
+  useEffect(() => {
+    get<ModelsInfo>(hubUrl(session.apiBase, "/api/chat/models"), { quiet401: true }).then(setModels).catch(() => {});
+  }, [session]);
+  // Member features (B037): voice and the rest only with a grant.
+  const [features, setFeatures] = useState<Features>({});
+  useEffect(() => {
+    get<{ features?: Features }>("/api/chat/capabilities", { quiet401: true })
+      .then((c) => setFeatures(c.features ?? {}))
+      .catch(() => setFeatures({}));
+    // Leaving the page stops anything being read aloud.
+    return () => {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* no speech synthesis here */
+      }
+    };
+  }, []);
+  const speechAdapters = useMemo(() => {
+    const out: { speech?: WebSpeechSynthesisAdapter; dictation?: WebSpeechDictationAdapter } = {};
+    if (features.chat_read_aloud && typeof window !== "undefined" && "speechSynthesis" in window) out.speech = new WebSpeechSynthesisAdapter();
+    if (features.chat_dictation && WebSpeechDictationAdapter.isSupported()) out.dictation = new WebSpeechDictationAdapter();
+    return out;
+  }, [features]);
+  const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError, ...speechAdapters });
+
+  const unreadHere = useNotices()
+    .filter((n) => n.state === "unread" && n.conversation_id === conversation?.id)
+    .map((n) => n.id)
+    .join(",");
+  useEffect(() => {
+    const id = conversation?.id;
+    if (!id) return;
+    const read = () => {
+      if (!document.hidden && document.hasFocus()) readConversation(id);
+    };
+    read();
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", read);
+    return () => {
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", read);
+    };
+  }, [conversation?.id, unreadHere]);
+
+  // Tell the server this person is looking at this chat (no notice for it then).
+  useEffect(() => {
+    let device = "";
+    try {
+      device = localStorage.getItem("hz.device") || "";
+      if (!device) {
+        device = Math.random().toString(36).slice(2, 14);
+        localStorage.setItem("hz.device", device);
+      }
+    } catch {
+      device = "tab-" + Math.random().toString(36).slice(2, 10);
+    }
+    const ping = () => {
+      if (!feed.conversationId) return;
+      void post("/api/chat/notification-presence", { device_id: device, conversation_id: feed.conversationId, focused: !document.hidden }, { quiet401: true }).catch(() => {});
+    };
+    ping();
+    const timer = setInterval(ping, 15000);
+    document.addEventListener("visibilitychange", ping);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", ping);
+    };
+  }, [feed]);
+
+  // Documents the agent made here, beside the conversation. A new or changed
+  // document opens the panel once when a reply finishes (wide screens only).
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [panel, setPanel] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
+  const known = useRef<Map<string, string>>(new Map());
+  const refreshArtifacts = useCallback(
+    async (autoOpen: boolean) => {
+      const cid = feed.conversationId ?? conversationRef.current?.id;
+      if (!cid) return;
+      try {
+        const list = await loadArtifacts(session.apiBase, cid);
+        const fresh = list.find((a) => known.current.get(a.artifact_id) !== a.current_version_id);
+        known.current = new Map(list.map((a) => [a.artifact_id, a.current_version_id]));
+        setArtifacts(list);
+        if (autoOpen && fresh && window.innerWidth >= 1024) setPanel({ open: true, id: fresh.artifact_id });
+      } catch {
+        /* the conversation still works without its documents list */
+      }
+    },
+    [feed, session],
+  );
+  useEffect(() => {
+    void refreshArtifacts(false);
+  }, [refreshArtifacts, conversation?.id]);
+
+  // The server's title and run endings flow back to the page and the list.
+  const wasRunning = useRef(false);
+  useEffect(
+    () =>
+      feed.subscribe(() => {
+        const serverTitle = feed.snapshot?.conversation.title;
+        if (serverTitle && serverTitle !== title && feed.conversationId) session.events.onTitle(feed.conversationId, serverTitle);
+        const running = !!feed.activeRun;
+        if (wasRunning.current && !running && feed.conversationId) {
+          session.events.onRunSettled(feed.conversationId);
+          announce(t.chat.responseDone);
+          void refreshArtifacts(true);
+        }
+        wasRunning.current = running;
+      }),
+    [feed, session, title, refreshArtifacts],
+  );
   useEffect(() => {
     session.countAttachments = () => runtime.thread.composer.getState().attachments.length;
   }, [runtime, session]);
@@ -320,117 +454,53 @@ function ChatView({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <FilesContext.Provider value={{ conversationId: conversation?.id ?? null, apiBase: session.apiBase }}>
+       <div className="flex min-h-0 min-w-0 flex-1">
+       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ChatHeader
           agent={agent}
           title={shownTitle}
           conversation={conversation}
           onRenamed={(next) => setTitle(next)}
-          picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
+          picker={
+            canSwitch
+              ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: (a: Agent) => (conversation ? app.newChat(a.id) : pickAgent(a)) }
+              : null
+          }
+          documents={artifacts.length ? { count: artifacts.length, open: panel.open,
+            onToggle: () => setPanel((p) => ({ open: !p.open, id: p.id })) } : null}
         />
-        <FollowRuns session={session} runningIds={runningIds} detail={detail}>
-          {(following, stopFollowed) => (
-            <Thread
-              agent={agent}
-              canPickAgent={canPick}
-              onChangeAgent={() => setPickerOpen(true)}
-              requestedMissing={requestedMissing}
-              isFollowing={following}
-              onStopFollowed={stopFollowed}
-              onHeadChanged={(id) => session.saveHead(id)}
-              notice={
-                !agentKnown && app.agents.status === "ready" ? (
-                  <Notice tone="warning" className="mb-2">
-                    {t.agents.unavailable}
-                  </Notice>
-                ) : null
-              }
-            />
-          )}
-        </FollowRuns>
+        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features, apiBase: session.apiBase, models,
+          ensureConversation: () => session.ensureConversation() }}>
+          <Thread
+            agent={agent}
+            canPickAgent={canPick}
+            onChangeAgent={() => setPickerOpen(true)}
+            requestedMissing={requestedMissing}
+            notice={
+              !agentKnown && app.agents.status === "ready" ? (
+                <Notice tone="warning" className="mb-2">
+                  {t.agents.unavailable}
+                </Notice>
+              ) : null
+            }
+          />
+        </FeedContext.Provider>
+       </div>
+        {panel.open && artifacts.length > 0 && (
+          <ArtifactPanel
+            apiBase={session.apiBase}
+            artifacts={artifacts}
+            selectedId={panel.id}
+            onSelect={(id) => setPanel({ open: true, id })}
+            onClose={() => setPanel((p) => ({ open: false, id: p.id }))}
+            onChanged={() => void refreshArtifacts(false)}
+            canEdit={feed.snapshot?.permissions?.write ?? true}
+          />
+        )}
+       </div>
       </FilesContext.Provider>
     </AssistantRuntimeProvider>
   );
-}
-
-/**
- * A reply that was still being written when this page loaded: poll the run
- * until it ends, showing its progress, then load the finished conversation.
- */
-function FollowRuns({
-  session,
-  runningIds,
-  detail,
-  children,
-}: {
-  session: ChatSession;
-  runningIds: string[];
-  detail: ConversationDetail | null;
-  children: (following: boolean, stop: () => void) => React.ReactNode;
-}) {
-  const aui = useAui();
-  const [following, setFollowing] = useState<string | null>(runningIds.at(-1) ?? null);
-
-  useEffect(() => {
-    if (!runningIds.length || !detail) return;
-    const controller = new AbortController();
-    const messages = [...(detail.messages ?? [])];
-    const ctx = session.convertContext;
-    const importTree = () => {
-      const state = aui.thread().getState();
-      const head = state.messages.at(-1)?.id ?? detail.head_id;
-      const repo = toRepository(messages, head, ctx);
-      aui.thread().import({ headId: repo.headId, messages: repo.messages });
-    };
-    const ended = new Map<string, string>();
-    (async () => {
-      for (const id of runningIds) {
-        setFollowing(id);
-        for await (const status of pollRun(session.apiBase, id, controller.signal)) {
-          if (status.status !== "running") ended.set(id, String(status.status || "complete"));
-          const index = messages.findIndex((m) => m.id === id);
-          if (index === -1) break;
-          const current = messages[index];
-          const next = status.message
-            ? { ...current, ...status.message, id, parent_id: current.parent_id }
-            : { ...current };
-          next.status = status.status === "running" ? "running" : (status.status as typeof next.status) || "complete";
-          if (status.status === "error" && !status.message) next.error = next.error || "";
-          messages[index] = next;
-          if (toThreadMessage(next, ctx)) importTree();
-        }
-      }
-      if (controller.signal.aborted || !session.conversationId) return;
-      // Load the finished conversation (titles, final text) once everything settled.
-      try {
-        const fresh = await get<ConversationDetail>(`/api/conversations/${enc(session.conversationId)}`, {
-          signal: controller.signal,
-        });
-        // A run that ended (or vanished) never shows as running again.
-        const settled = (fresh.messages ?? []).map((m) =>
-          m.status === "running" && ended.has(m.id) ? { ...m, status: ended.get(m.id) as typeof m.status } : m,
-        );
-        messages.splice(0, messages.length, ...settled);
-        for (const m of fresh.messages ?? []) session.ids.markPersisted(m.id);
-        importTree();
-        announce(t.chat.responseDone);
-        if (fresh.conversation?.title) patchLocal(fresh.conversation.id, { title: fresh.conversation.title });
-      } catch {
-        /* the polled state is already on screen */
-      }
-      setFollowing(null);
-    })().finally(() => {
-      if (!controller.signal.aborted) setFollowing(null);
-    });
-    return () => controller.abort();
-    // Runs once for the conversation this page opened.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const stop = useCallback(() => {
-    if (following) void cancelRun(session.apiBase, following);
-  }, [following, session]);
-
-  return <>{children(!!following, stop)}</>;
 }
 
 function ChatHeader({
@@ -439,11 +509,14 @@ function ChatHeader({
   conversation,
   onRenamed,
   picker,
+  documents,
 }: {
   agent: Agent;
   title: string;
   conversation: Conversation | null;
   onRenamed: (title: string) => void;
+  /** The conversation's documents: the button that shows or hides them. */
+  documents: { count: number; open: boolean; onToggle: () => void } | null;
   /** A new chat with several agents: the title opens the agent menu. */
   picker: { open: boolean; onOpenChange: (open: boolean) => void; onPick: (agent: Agent) => void } | null;
 }) {
@@ -455,24 +528,14 @@ function ChatHeader({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState(title);
   const agentName = displayName(agent.name);
-  const titleBlock = (
+  const agentBlock = (
     <>
-      <AgentAvatar name={agent.name} src={agent.avatar_url} size={28} />
-      <span className="min-w-0">
-        <span
-          className="block truncate text-[15px] font-semibold leading-tight text-ink"
-          data-testid="chat-title"
-          {...(picker ? {} : { role: "heading", "aria-level": 1 })}
-        >
-          {conversation ? title : agentName}
-        </span>
-        <span className="block truncate text-xs leading-tight text-mute" data-testid="chat-agent">
-          {conversation ? agentName : t.sidebar.newChat}
-        </span>
+      <AgentAvatar name={agent.name} src={agent.avatar_url} size={18} />
+      <span className="truncate" data-testid="chat-agent">
+        {agentName}
       </span>
     </>
   );
-
   const doRename = async () => {
     if (!conversation) return;
     const next = draft.trim();
@@ -520,43 +583,68 @@ function ChatHeader({
   };
 
   return (
-    <header className="flex h-14 flex-none items-center gap-2 border-b border-line bg-bg px-2 sm:px-4">
+    <header className="hz-chat-header">
       <div className="lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
-          <MenuIcon size={20} aria-hidden />
+          <MenuIcon size={19} aria-hidden />
         </IconButton>
       </div>
-      <div className="flex min-w-0 flex-1 items-center">
+      <SidebarToggle />
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         {picker ? (
           <AgentSwitcher agent={agent} agents={app.agents.list} {...picker}>
-            {titleBlock}
+            {agentBlock}
           </AgentSwitcher>
         ) : (
-          <div className="flex min-w-0 items-center gap-2.5">{titleBlock}</div>
+          <span className="hz-hubpick is-static">{agentBlock}</span>
         )}
+        {conversation && (
+          <>
+            <span className="hz-crumb-sep" aria-hidden>
+              /
+            </span>
+            <h1 className="hz-chat-title" data-testid="chat-title">
+              {title}
+            </h1>
+          </>
+        )}
+        {!conversation && <h1 className="sr-only" data-testid="chat-title">{t.sidebar.newChat}</h1>}
       </div>
       {conversation && (
-        <div className="flex flex-none items-center gap-1">
+        <div className="flex flex-none items-center gap-0.5">
+          {documents && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Files size={14} aria-hidden />}
+              onClick={documents.onToggle}
+              aria-pressed={documents.open}
+              className={documents.open ? "!bg-active" : undefined}
+            >
+              {t.artifacts.openCount(documents.count)}
+            </Button>
+          )}
           <Button
             size="sm"
-            variant="secondary"
+            variant="ghost"
             icon={<Share2 size={14} aria-hidden />}
             onClick={() => setSharing(true)}
             className="hidden sm:inline-flex"
           >
             {t.chat.share}
           </Button>
-          <IconButton label={t.chat.share} onClick={() => setSharing(true)} className="sm:!hidden" size="lg">
-            <Share2 size={18} aria-hidden />
-          </IconButton>
           <Menu.Root>
             <Menu.Trigger asChild>
-              <IconButton label={t.chat.moreActions} size="lg" tooltip={false}>
-                <MoreHorizontal size={18} aria-hidden />
+              <IconButton label={t.chat.moreActions} tooltip={false}>
+                <MoreHorizontal size={17} aria-hidden />
               </IconButton>
             </Menu.Trigger>
             <Menu.Portal>
-              <Menu.Content className="hz-menu" align="end" sideOffset={4}>
+              <Menu.Content className="hz-menu w-[200px]" align="end" sideOffset={4}>
+                <Menu.Item className="hz-menu-item sm:!hidden" onSelect={() => setSharing(true)}>
+                  <Share2 size={15} aria-hidden />
+                  {t.chat.share}
+                </Menu.Item>
                 <Menu.Item
                   className="hz-menu-item"
                   onSelect={() => {

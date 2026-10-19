@@ -34,6 +34,27 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_sandboxes", "hz_sandbox_read_stamps"}
 
 
+# Tables added after op_0019, dropped when a test rewinds to op_0016.
+LATER_TABLES = ("hz_authoring_drafts", "hz_authoring_versions", "hz_personal_prompts", "hz_chat_presets", "hz_knowledge_collections", "hz_knowledge_sources", "hz_knowledge_generations",
+                "hz_knowledge_chunks", "hz_knowledge_jobs", "hz_knowledge_citations", "hz_knowledge_fts",
+                "hz_chat_storage_configs", "hz_chat_files", "hz_chat_file_uploads", "hz_chat_file_references",
+                "hz_chat_artifacts", "hz_chat_artifact_versions", "hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_branch_leases",
+                "hz_chat_queue", "hz_chat_events", "hz_chat_copy_lineage", "hz_chat_members",
+                "hz_chat_member_sets", "hz_chat_runtime_bindings", "hz_feedback", "hz_helper_jobs",
+                "hz_notification_events", "hz_notification_inbox", "hz_notification_target_sets",
+                "hz_notification_targets", "hz_notification_deliveries", "hz_notification_presence",
+                "hz_share_manifests", "hz_share_previews", "hz_share_copy_operations", "hz_chat_folders",
+                "hz_chat_user_organization", "hz_chat_tags", "hz_chat_conversation_tags", "hz_chat_bookmarks",
+                "hz_chat_organization_state", "hz_chat_search_documents", "hz_chat_search_fts",
+                "hz_chat_operations", "hz_chat_config_revisions", "hz_chat_config_heads",
+                "hz_chat_preferences", "hz_branding_drafts", "hz_branding_assets",
+                "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",
+                "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
+                "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans",
+                "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles",
+                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes")
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     migrations._done.clear()
@@ -320,6 +341,9 @@ def _previous_phone_schema(engine):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
         conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))
+        # And the 2.0 chat foundations (op_0020 onward).
+        for table in LATER_TABLES:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 
