@@ -1,6 +1,6 @@
 // Browser journeys for the Hubzoid web app against REAL Hubzoid servers.
 //
-// Unlike app-journey.cjs (an in-memory fixture), this starts real bridges
+// This starts real bridges
 // (`uvicorn hubzoid.server:build_app`) on fresh scratch hubs made with
 // `hubzoid init`, using the scripted test model (MODEL=hubzoid-test/scripted
 // with HUBZOID_TEST_RUNTIME=1: no model, no network, no cost):
@@ -244,6 +244,8 @@ async function main() {
       HUBZOID_ADMIN_EMAIL: ADMIN.email,
       HUBZOID_ADMIN_PASSWORD: ADMIN.password,
       HUBZOID_ADMIN_NAME: ADMIN.name,
+      // Two-step sign-in has its own journeys (milestone B); these sign in with a password.
+      HUBZOID_MFA_REQUIRED: "none",
       // Reasoning text in full, so the reasoning panel has something to show.
       SHOW_THINKING: "full",
     });
@@ -253,6 +255,7 @@ async function main() {
       HUBZOID_ADMIN_EMAIL: MCP_OWNER.email,
       HUBZOID_ADMIN_PASSWORD: MCP_OWNER.password,
       HUBZOID_ADMIN_NAME: MCP_OWNER.name,
+      HUBZOID_MFA_REQUIRED: "none",
       HUBZOID_PUBLIC_URL: `http://localhost:${mcpPort}`,
       MCP_SERVER: "true",
       MCP_PUBLIC_URL: `http://localhost:${mcpPort}/mcp`,
@@ -447,11 +450,24 @@ journey("signin", "Sign-in: wrong password, return to the requested page", async
 
 
 /** Every state a tool entry shows, in order, for entries of `toolName`. */
+// Everything the screen-reader live region says, in order (it keeps only the latest).
+async function watchAnnouncements(page) {
+  await page.evaluate(() => {
+    window.__said = [];
+    const region = document.querySelector('[data-testid="live-region"]');
+    new MutationObserver(() => {
+      const text = region.textContent.trim();
+      if (text) window.__said.push(text);
+    }).observe(region, { childList: true, characterData: true, subtree: true });
+  });
+  return (text) => page.waitForFunction((t) => window.__said.includes(t), text);
+}
+
 async function watchToolStates(page) {
   await page.evaluate(() => {
     window.__toolStates = [];
     const seen = (el) => {
-      const name = el.querySelector("button .font-mono")?.textContent || "";
+      const name = el.getAttribute("data-tool-name") || "";
       const state = el.getAttribute("data-tool-state");
       const list = window.__toolStates;
       const last = list.filter((x) => x.el === el).pop();
@@ -500,6 +516,8 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
 
   step("A suggestion fills the draft; sending streams the reply and gives the chat its own URL");
   await page.goto(`${ctx.BASE}/`);
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
+  const said = await watchAnnouncements(page);
   await c.settled();
   await page.getByRole("button", { name: "What is in this hub?" }).click();
   assert.equal(await c.composer().inputValue(), "What is in this hub?");
@@ -515,7 +533,7 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
   step("The generated title replaces the first words, in the sidebar and the header");
   await c.sidebar().getByRole("link", { name: "About what is in this" }).waitFor({ timeout: 20_000 });
   await page.getByTestId("chat-title").getByText("About what is in this").waitFor();
-  await page.getByTestId("live-region").getByText("Response complete").waitFor();
+  await said("Response complete");
   await page.waitForFunction((t) => document.title === t, `About what is in this · ${AGENT_NAME}`);
 
   step("A markdown reply: a table, highlighted code and a working copy button");
@@ -552,10 +570,11 @@ journey("tools", "Tool entries (running, done, failed) and the reasoning panel",
   step("A tool call shows Running, then Done, as a collapsed entry with its input");
   await c.send("Please use a tool to check the pricing");
   await c.idle();
-  const entry = page.getByTestId("tool-entry").filter({ hasText: "read_knowledge" });
+  const entry = page.locator('[data-testid="tool-entry"][data-tool-name="read_knowledge"]');
   await entry.getByText("Done").waitFor();
-  assert.deepEqual(await states("read_knowledge"), ["running", "done"]);
-  const toggle = entry.getByRole("button", { name: /read_knowledge/ });
+  // The scripted tool finishes at once, so "running" may never reach the page.
+  assert.deepEqual((await states("read_knowledge")).filter((x) => x !== "running"), ["done"]);
+  const toggle = entry.getByRole("button", { name: /Read knowledge/ });
   assert.equal(await toggle.getAttribute("aria-expanded"), "false");
   await toggle.click();
   assert.equal(await toggle.getAttribute("aria-expanded"), "true");
@@ -564,11 +583,11 @@ journey("tools", "Tool entries (running, done, failed) and the reasoning panel",
   step("A failing tool shows Failed and a plain sentence, not a stack trace");
   await c.send("Now try the call that will fail");
   await c.idle();
-  const failed = page.getByTestId("tool-entry").filter({ hasText: "grep_data" });
+  const failed = page.locator('[data-testid="tool-entry"][data-tool-name="grep_data"]');
   await failed.getByText("Failed").waitFor();
   // The sentence shows under the collapsed entry (and again inside it when opened).
   await failed.getByText("The tool did not complete. The agent may retry or ask for more information.").first().waitFor();
-  assert.deepEqual(await states("grep_data"), ["running", "failed"]);
+  assert.deepEqual((await states("grep_data")).filter((x) => x !== "running"), ["failed"]);
   await ctx.shot(page, "06-tools");
 
   step("Reasoning is a collapsed Thought process panel that opens to the text");
@@ -584,8 +603,8 @@ journey("tools", "Tool entries (running, done, failed) and the reasoning panel",
   step("After a reload, tool entries and reasoning come back from the stored message");
   await page.reload();
   await c.composer().waitFor();
-  await page.getByTestId("tool-entry").filter({ hasText: "read_knowledge" }).getByText("Done").waitFor();
-  await page.getByTestId("tool-entry").filter({ hasText: "grep_data" }).getByText("Failed").waitFor();
+  await page.locator('[data-testid="tool-entry"][data-tool-name="read_knowledge"]').getByText("Done").waitFor();
+  await page.locator('[data-testid="tool-entry"][data-tool-name="grep_data"]').getByText("Failed").waitFor();
   await page.getByRole("button", { name: /Thought process/ }).waitFor();
   await context.close();
 });
@@ -595,13 +614,14 @@ journey("stop", "Stop a slow reply: the stream ends, the partial text stays, can
   ctx.setDiagnostic(page);
   const c = ctx.chat(page);
   await c.settled();
+  const said = await watchAnnouncements(page);
   step("Stop ends a slow reply where it is");
   await c.send("Give me a slow answer please");
   await c.lastAssistant().getByText("Chunk 3.", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Stop response" }).click();
   await c.lastAssistant().getByTestId("stopped").waitFor();
   await c.idle();
-  await page.getByTestId("live-region").getByText("Response stopped").waitFor();
+  await said("Response stopped");
   const id = c.conversationId();
   const shown = await c.lastAssistant().innerText();
   assert.ok(!shown.includes("Chunk 40."), "the reply stopped before its end");
@@ -723,7 +743,8 @@ journey("uploads", "A text file and an image: on the message, in the reply, down
   await c.settled();
   step("Both files upload right away and show in the composer");
   const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Attach files" }).click();
+  await page.getByTestId("composer-add").click();
+  await page.getByRole("menuitem", { name: "Attach files" }).click();
   await (await chooser).setFiles([
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Quarterly notes: revenue up 4 percent.\n") },
     { name: "chart.png", mimeType: "image/png", buffer: chartPng() },
@@ -886,20 +907,23 @@ journey("sidebar", "Sidebar: rename, search by title and text, archive, restore,
   assert.equal((await ctx.apiGet(context, `/api/conversations/${id}`)).json.conversation.title, title);
 
   step("Search finds a chat by its title and by words inside its messages");
-  const search = sidebar.getByRole("searchbox", { name: "Search chats" });
+  // Search is a dialog (⌘K, or Search in the sidebar) listing matching chats.
+  await page.getByTestId("open-search").click();
+  const search = page.getByRole("combobox", { name: "Search chats" });
+  const results = page.getByRole("listbox", { name: "Search chats" }).getByRole("option");
   await search.fill("pelican plan");
-  await sidebar.getByRole("link", { name: title }).waitFor();
-  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Conversations"] li a').length === 1);
+  await results.filter({ hasText: title }).waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('#hz-search-results [role="option"]').length === 1);
   await search.fill(`second sidebar chat ${stamp}`);
-  await row(otherId).waitFor();
-  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Conversations"] li a').length === 1);
+  await results.first().waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('#hz-search-results [role="option"]').length === 1);
   await search.fill("You said"); // words only in the replies
-  await row(id).waitFor();
-  await row(otherId).waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('#hz-search-results [role="option"]').length >= 2);
   await search.fill(`nothing-matches-${stamp}`);
-  await sidebar.getByText(`No chats match “nothing-matches-${stamp}”.`).waitFor();
+  await page.getByText(`No chats match “nothing-matches-${stamp}”.`).waitFor();
   await ctx.shot(page, "15-sidebar-search");
-  await sidebar.getByRole("button", { name: "Clear search" }).click();
+  await page.keyboard.press("Escape");
+  await search.waitFor({ state: "hidden" });
   await row(otherId).waitFor();
 
   step("Archive hides it; the Archived view lists it; Restore brings it back");
@@ -908,7 +932,9 @@ journey("sidebar", "Sidebar: rename, search by title and text, archive, restore,
   await page.getByText("Chat archived.").waitFor();
   await row(id).waitFor({ state: "detached" });
   assert.equal((await ctx.apiGet(context, `/api/conversations/${id}`)).json.conversation.archived, true);
-  await sidebar.getByRole("button", { name: "Archived chats" }).click();
+  // Archived chats open from the account menu.
+  await page.getByRole("button", { name: /^Account menu: / }).click();
+  await page.getByRole("menuitem", { name: "Archived chats" }).click();
   await sidebar.getByRole("heading", { name: "Archived" }).waitFor();
   await row(id).waitFor();
   assert.equal(await row(otherId).count(), 0);
@@ -932,7 +958,9 @@ journey("sidebar", "Sidebar: rename, search by title and text, archive, restore,
   await dialog.getByRole("button", { name: "Delete chat" }).click();
   await page.getByText("Chat deleted.").waitFor();
   await row(id).waitFor({ state: "detached" });
-  await page.waitForURL(`${ctx.BASE}/`);
+  // The deleted chat was open: the page moves on to a new chat.
+  await page.waitForURL((url) => !url.pathname.startsWith("/c/"));
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   assert.equal((await ctx.apiGet(context, `/api/conversations/${id}`)).status, 404);
   assert.equal(fs.existsSync(chatDir), false, "the chat's folder is gone from disk");
   const gone = await context.request.get(`${ctx.BASE}/artifacts/web-${encodeURIComponent(id)}/scripted-report.md`);
@@ -958,7 +986,10 @@ journey("share", "Share: a read-only link another person opens, until it is turn
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: ctx.BASE });
   await page.getByRole("button", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
-  await dialog.getByRole("button", { name: "Create link" }).click();
+  // A snapshot link: preview exactly what is shared, then publish it.
+  await dialog.getByRole("button", { name: "Preview" }).click();
+  await dialog.getByText(/messages? will be shared\./).waitFor();
+  await dialog.getByRole("button", { name: "Publish link" }).click();
   const field = dialog.getByRole("textbox", { name: "Share link" });
   await field.waitFor();
   const shareUrl = await field.inputValue();
@@ -978,8 +1009,8 @@ journey("share", "Share: a read-only link another person opens, until it is turn
   await sam.page.waitForURL(shareUrl);
   const title = (await ctx.apiGet(context, `/api/conversations/${id}`)).json.conversation.title;
   await sam.page.getByRole("heading", { name: title, level: 1 }).waitFor();
-  await sam.page.getByTestId("share-byline").getByText(new RegExp(`^Shared by ${ADMIN.name} · `)).waitFor();
-  await sam.page.getByTestId("tool-entry").getByText("read_knowledge").waitFor();
+  await sam.page.getByTestId("share-byline").getByText(/^Shared snapshot · /).waitFor();
+  await sam.page.locator('[data-testid="tool-entry"][data-tool-name="read_knowledge"]').waitFor();
   await sam.page.locator('[data-role="assistant"]').getByRole("table").waitFor();
   assert.equal(await sam.page.getByRole("textbox", { name: /^Message / }).count(), 0, "no composer");
   assert.equal(await sam.page.getByRole("button", { name: "Edit message" }).count(), 0, "no edit");
@@ -1130,7 +1161,9 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: AGENT_NAME }).click();
   await page.waitForURL(/#\/agents\/[^/]+\/access/);
   await consoleDrawer().getByText(who.name).first().waitFor();
-  assert.equal(await consoleDrawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
+  // Nothing is chosen for them: the administrator picks what they can do.
+  assert.equal(await consoleDrawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), false);
+  await consoleDrawer().getByRole("checkbox", { name: /Use this agent/ }).check();
   await ctx.shot(page, "27-console-access-editor");
   await consoleDrawer().getByRole("button", { name: "Review changes" }).click();
   await consoleDrawer().getByRole("button", { name: "Save change" }).click();
@@ -1173,46 +1206,44 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
 });
 
 
-journey("console", "Console: reachable from the account menu for administrators only; its Sign out signs out", async (ctx) => {
-  step("A member's account menu has no Admin Console, and /portal/ turns them away");
+journey("console", "Settings: team sections for administrators only; the old Console address leads there", async (ctx) => {
+  step("A member's Settings has no team sections, and /portal/ shows only their own");
   const sam = await ctx.signedIn(SAM);
   ctx.setDiagnostic(sam.page);
   await sam.page.getByRole("button", { name: /^Account menu: / }).click();
-  await sam.page.getByRole("menuitem", { name: "Account" }).waitFor();
-  assert.equal(await sam.page.getByRole("menuitem", { name: "Admin Console" }).count(), 0);
-  await sam.page.keyboard.press("Escape");
-  await sam.page.goto(`${ctx.BASE}/portal/`);
-  await sam.page.waitForTimeout(1500);
-  await ctx.shot(sam.page, "29-console-member");
-  const me = await sam.context.request.get(`${ctx.BASE}/portal/api/me`);
-  assert.equal(me.status(), 403);
+  await sam.page.getByRole("menuitem", { name: "Settings" }).click();
+  await sam.page.waitForURL(/\/settings/);
+  const samNav = sam.page.getByRole("navigation", { name: "Settings sections" });
+  await samNav.getByText("Personal").waitFor();
+  assert.equal(await samNav.getByText("Team & deployment").count(), 0);
+  assert.equal(await samNav.getByRole("link", { name: "People & access" }).count(), 0);
+  await sam.page.goto(`${ctx.BASE}/portal/#/people`);
+  await sam.page.waitForURL(/\/settings/);
+  await ctx.shot(sam.page, "29-settings-member");
+  assert.equal(await sam.page.locator(".person-cell").count(), 0, "a member never sees the people list");
+  assert.equal((await sam.context.request.get(`${ctx.BASE}/portal/api/me`)).status(), 403);
   await sam.context.close();
 
-  step("An administrator opens the Console from the account menu");
+  step("An administrator opens Settings from the account menu and finds the team sections");
   const ada = await ctx.signedIn(ADMIN);
   ctx.setDiagnostic(ada.page);
   const page = ada.page;
   await page.getByRole("button", { name: /^Account menu: / }).click();
-  await page.getByRole("menuitem", { name: "Admin Console" }).click();
-  await page.waitForURL(`${ctx.BASE}/portal/`);
-  await page.getByRole("link", { name: "People" }).waitFor();
-  assert.equal(await page.title(), "Hubzoid Admin Console");
-  await ctx.shot(page, "30-console-home");
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const nav = page.getByRole("navigation", { name: "Settings sections" });
+  await nav.getByText("Team & deployment").waitFor();
+  await nav.getByRole("link", { name: "People & access" }).click();
+  await page.locator(".person-cell").first().waitFor();
+  await ctx.shot(page, "30-settings-people");
 
-  step("Open chat goes back to the chat app, still signed in");
-  await page.getByRole("link", { name: /Open chat/ }).click();
-  await page.waitForURL(`${ctx.BASE}/`);
+  step("An old Console link opens the same section in Settings");
+  await page.goto(`${ctx.BASE}/portal/#/people?status=active`);
+  await page.waitForURL(/\/settings#\/people\?status=active$/);
+  await page.locator(".person-cell").first().waitFor();
+
+  step("Back to chat returns to the chat app, still signed in");
+  await page.locator(".hz-set-backlink").click();
   await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
-
-  step("The Console's Sign out signs out of Hubzoid");
-  await page.goto(`${ctx.BASE}/portal/`);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await page.waitForURL(/\/auth/);
-  await page.getByRole("heading", { name: `Sign in to ${AGENT_NAME}` }).waitFor();
-  assert.equal((await ctx.apiGet(ada.context, "/api/auth/session")).json.authenticated, false);
-  await page.goto(`${ctx.BASE}/portal/`);
-  await page.waitForTimeout(1000);
-  assert.equal((await ada.context.request.get(`${ctx.BASE}/portal/api/me`)).status(), 401);
   await ada.context.close();
 });
 
@@ -1233,6 +1264,8 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await page.goto(`${ctx.BASE}/portal/#/agents/${hubKey}/connectors`);
   await page.getByRole("button", { name: "Add connector" }).first().click();
   const editor = page.locator(".ant-drawer-section[role=dialog]");
+  // The drawer opens on popular servers; a server of our own is a custom one.
+  await editor.getByRole("button", { name: /^Custom server/ }).click();
   await editor.getByLabel("Name").fill("Remote Notes");
   await editor.getByLabel("Server URL").fill(`${ctx.mcp.base}/mcp`);
   await ctx.shot(page, "32-console-add-connector");
@@ -1252,8 +1285,8 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await page.getByRole("button", { name: `Edit access for ${SAM.name}` }).click();
   const access = page.locator(".ant-drawer-section[role=dialog]");
   await access.getByText(SAM.name).first().waitFor();
-  // Connector capabilities sit with the agent's tools.
-  const tools = access.getByRole("button", { name: /^Hubzoid tools/ });
+  // Connector capabilities have their own group.
+  const tools = access.getByRole("button", { name: /^Connectors/ });
   if ((await tools.getAttribute("aria-expanded")) !== "true") await tools.click();
   await access.getByRole("checkbox", { name: /Connect Remote Notes/ }).check();
   await ctx.shot(page, "33b-console-grant-connector");
@@ -1281,7 +1314,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   // Back to the other hub's own consent page (a server page, not the chat app's).
   await page2.waitForURL(/\/mcp\/oauth\/consent\?ticket=/);
   await page2.getByRole("heading", { name: /wants to use Remote Notes/ }).waitFor();
-  await page2.getByText(`Signed in as ${MCP_OWNER.email}.`).waitFor();
+  await page2.getByText(`Signed in as ${MCP_OWNER.email}`).waitFor();
   await ctx.shot(page2, "36-mcp-consent");
   await page2.getByRole("button", { name: "Allow connection" }).click();
 
@@ -1404,9 +1437,9 @@ journey("local", "Local mode: no sign-in page and no Sign out", async (ctx) => {
   await c.send("Hello from local mode");
   await c.idle();
   await c.lastAssistant().getByText("You said: “Hello from local mode”").waitFor();
-  step("The account menu has the Console and no Sign out; the account page explains why");
+  step("The account menu has Settings and no Sign out; the account page explains why");
   await page.getByRole("button", { name: /^Account menu: Local mode/ }).click();
-  await page.getByRole("menuitem", { name: "Admin Console" }).waitFor();
+  await page.getByRole("menuitem", { name: "Settings" }).waitFor();
   assert.equal(await page.getByRole("menuitem", { name: "Sign out" }).count(), 0);
   await page.keyboard.press("Escape");
   await page.goto(`${ctx.local.base}/account`);

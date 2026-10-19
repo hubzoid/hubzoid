@@ -1310,7 +1310,7 @@ function step(name) {
     await drawer().getByText("Gone User").first().waitFor();
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Delete user" }).click();
-    await drawer().getByText("Activity history, usage records and artifacts they published are kept", { exact: false }).waitFor();
+    await drawer().getByText("Their chats, activity history, usage records and published artifacts are kept", { exact: false }).waitFor();
     const deleteButton = drawer().getByRole("button", { name: "Delete user" });
     assert.equal(await deleteButton.isDisabled(), true, "Delete waits for the typed email");
     await drawer().getByRole("textbox", { name: "Type gone.user@example.org to confirm" }).fill("gone.user@example.org");
@@ -1426,7 +1426,7 @@ function step(name) {
     step("Unknown routes and agents recover to a useful place");
     // An unknown Settings address opens the first section.
     await go("/nowhere/at/all");
-    await page.getByRole("heading", { name: "Profile & security" }).waitFor();
+    await page.getByRole("heading", { name: "Profile", exact: true }).waitFor();
     assert.equal(await hash(), "#/me/profile");
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
