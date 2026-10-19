@@ -30,8 +30,10 @@ and are baked into the image, and state goes to `/data`.
     state in that hub's folder.
   - With it set, the hub's files come from the image: Settings shows agent
     instructions read-only, with a note to change them in Git and redeploy.
-    Setting values, channel, budget and card files apply as committed; a
-    change to them is refused (409 `hub_read_only`).
+    Setting values, budget and card files apply as committed; a change to
+    them is refused (409 `hub_read_only`). A channel's active configuration
+    is its revision in the database, so channel changes stay in the data
+    folder and write no file into the image (`hubzoid channels export`).
   - Doctor shows where state lives, and warns when state is split between the
     hub folder and the data folder.
 - **`hubzoid deploy init railway|maritime [HUB]`.** Like Agno's per-provider

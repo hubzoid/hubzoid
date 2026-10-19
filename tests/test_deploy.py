@@ -23,6 +23,15 @@ def _hub(tmp_path: Path) -> Path:
     return hub
 
 
+def test_a_folder_name_that_cannot_name_the_image_folder_is_refused(tmp_path):
+    hub = tmp_path / "Desk Hub"
+    hub.mkdir()
+    (hub / "AGENTS.md").write_text("---\nname: desk\ndescription: d\n---\nHelp.\n")
+    with pytest.raises(scaffold.ScaffoldError, match="Rename the folder"):
+        scaffold.write(hub, "railway")
+    assert not (hub / "Dockerfile").exists()
+
+
 @pytest.mark.parametrize("provider", ["railway", "maritime"])
 def test_init_writes_the_provider_files_and_never_replaces_without_force(tmp_path, provider):
     hub = _hub(tmp_path)
@@ -31,7 +40,8 @@ def test_init_writes_the_provider_files_and_never_replaces_without_force(tmp_pat
         "Dockerfile": "created", ".dockerignore": "created",
         f"deploy/{provider}/README.md": "created", f"deploy/{provider}/env.example": "created"}
     dockerfile = (hub / "Dockerfile").read_text()
-    assert "FROM ghcr.io/hubzoid/hubzoid:9.9.9\nCOPY . /hub\nENV HUBZOID_DATA_DIR=/data\n" in dockerfile
+    assert ("FROM ghcr.io/hubzoid/hubzoid:9.9.9\nCOPY . /hubs/desk\nWORKDIR /hubs/desk\n"
+            "ENV HUBZOID_DATA_DIR=/data\nCMD [\"run\", \"/hubs/desk\"]\n") in dockerfile   # keeps the hub's name
     ignored = (hub / ".dockerignore").read_text().splitlines()
     assert {"**/.env", "**/.hubzoid", "**/.openwebui-data", "**/secret.key", "**/*.db", "output/", ".git/"} <= set(ignored)
     assert "HUBZOID_AUTH=true" in (hub / "deploy" / provider / "env.example").read_text()

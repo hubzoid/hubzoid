@@ -378,7 +378,6 @@ def build_edge_app(
             # The public health check (also a gateway hub's /b/<slug>/healthz):
             # whether a bridge answers, and nothing about the hub or its model.
             # Start-up checks ask the bridge itself.
-            from starlette.responses import JSONResponse
             hit = _match(path, norm_routes)
             candidates = hit.upstreams() if hit is not None else default_bases
             ok = False

@@ -1,6 +1,7 @@
 """The provider files `hubzoid deploy init` writes into a hub."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from . import PROVIDERS
 
 DEFAULT_REGISTRY = "ghcr.io/hubzoid/hubzoid"
+_SAFE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
 
 class ScaffoldError(ValueError):
@@ -30,13 +32,15 @@ def _template(*parts: str) -> str:
     return resources.files("hubzoid.deploy").joinpath("providers", *parts).read_text(encoding="utf-8")
 
 
-def render(provider: str, image: str | None = None) -> dict[str, str]:
-    """{hub-relative path: content} for ``provider``."""
+def render(provider: str, image: str | None = None, hub: str = "hub") -> dict[str, str]:
+    """{hub-relative path: content} for ``provider``. ``hub`` is the hub's key
+    (its folder name), kept as the image's folder."""
     from .. import __version__
 
     if provider not in PROVIDERS:
         raise ScaffoldError(f"Unknown provider {provider!r}: use {' or '.join(PROVIDERS)}.")
-    values = {"{{provider}}": provider, "{{image}}": image or default_image(), "{{version}}": __version__}
+    values = {"{{provider}}": provider, "{{image}}": image or default_image(), "{{version}}": __version__,
+              "{{hub}}": hub}
 
     def fill(text: str) -> str:
         for key, value in values.items():
@@ -57,7 +61,13 @@ def write(hub_dir: Path, provider: str, *, image: str | None = None, force: bool
     hub_dir = Path(hub_dir)
     if not (hub_dir / "AGENTS.md").is_file():
         raise ScaffoldError(f"{hub_dir} is not a hub (no AGENTS.md).")
-    files = render(provider, image)
+    from ..assertions import hub_key
+
+    key = hub_key(hub_dir.resolve())
+    if not _SAFE.fullmatch(key):
+        raise ScaffoldError(f"The hub's folder name {hub_dir.resolve().name!r} cannot name its image folder. "
+                            "Rename the folder to letters, digits, '-', '_' or '.', then try again.")
+    files = render(provider, image, hub=key)
     plan: list[Written] = []
     clashes: list[str] = []
     for rel, text in files.items():

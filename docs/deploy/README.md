@@ -5,8 +5,9 @@ way of hosting it works the same way:
 
 - **One image.** The released Hubzoid image plus the hub's own files, built
   from its Git repository. The hub's files are only read there, so Settings
-  shows them read-only: agent instructions, setting values, channels and
-  budgets. Change them in Git and redeploy.
+  shows them read-only: agent instructions, setting values and budgets.
+  Change them in Git and redeploy. Channel changes made in Settings are kept
+  in `/data`; `hubzoid channels export` gives the file to commit.
 - **One durable folder.** Everything the hub writes goes to `/data`
   (`HUBZOID_DATA_DIR`): accounts, chats, uploads, keys, workflow state and
   backups. SQLite there is the default. PostgreSQL is optional

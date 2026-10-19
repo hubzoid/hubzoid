@@ -610,7 +610,8 @@ def write(hub_dir: Path, document: Mapping, *, expected_revision: int | str | No
     from .. import datadir
 
     if datadir.hub_read_only(hub_dir):
-        raise ReadOnly(datadir.READ_ONLY)
+        raise ReadOnly(f"{datadir.READ_ONLY} A setting's value can also come from an environment "
+                       "variable of the same name, set on the provider.")
     path = Path(hub_dir) / VALUES
     body = yaml.safe_dump(dict(document), sort_keys=False, allow_unicode=True)
     header = "# Hub setting values. Secrets are references only (secret:... or env:...).\n"

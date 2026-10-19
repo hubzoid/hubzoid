@@ -80,6 +80,11 @@ def import_legacy_cmd(hub: Path = HUB, cid: str = typer.Option("slack-main", "--
                 "transport": "socket_mode", "installation_team_id": team, "app_id": app,
                 "bot_token_ref": "env:SLACK_BOT_TOKEN", "app_token_ref": "env:SLACK_APP_TOKEN",
                 "allowed_channel_ids": [], "allow_direct_messages": True}}
+    from ... import datadir
+
+    if output is None and datadir.hub_read_only(hub):
+        _fail("hub_read_only", f"{datadir.READ_ONLY} Write the file elsewhere with --output, commit it, "
+              "then apply it.", 409, as_json)
     target = output or (config.channels_dir(hub, create=True) / f"{cid}.yaml")
     if target.exists() and not force:
         _fail("already_exists", f"{target} already exists. Nothing was changed. Pass --force to replace it.", 409,
