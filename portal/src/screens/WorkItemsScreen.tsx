@@ -62,13 +62,18 @@ function StateTag({ state, reason }: { state: string; reason?: string | null }) 
   );
 }
 
-/** `selected`: a work item to open at once (a card's "Review in Hub" link). */
-export function WorkItemsScreen({ hubs, selected }: { hubs: HubOption[]; selected?: { hub: string; item: string } }) {
+/** `selected`: a work item to open at once (a card's "Review in Hub" link).
+ *  `mine`: only the work this person asked for (their own page), even when they manage the hub. */
+export function WorkItemsScreen({ hubs, selected, mine = false }: {
+  hubs: HubOption[];
+  selected?: { hub: string; item: string };
+  mine?: boolean;
+}) {
   const [hub, setHub] = useState<string | undefined>(
     selected && hubs.some((h) => h.key === selected.hub) ? selected.hub : hubs[0]?.key);
   const [state, setState] = useState<string>("");
   const [open, setOpen] = useState<string | null>(selected?.item ?? null);
-  const path = hub ? `/hubs/${encodeURIComponent(hub)}/work-items${query({ state })}` : null;
+  const path = hub ? `/hubs/${encodeURIComponent(hub)}/work-items${query({ state, mine: mine || undefined })}` : null;
   const items = useData<{ items: WorkItem[] }>(path, { keepStale: true });
   useVisibleRefresh(items.reload, items.refreshing, !open);
 
