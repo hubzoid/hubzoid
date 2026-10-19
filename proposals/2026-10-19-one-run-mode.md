@@ -18,7 +18,9 @@ two modes:
 - **B2 / F10.** Behind a gateway, `/v1/chat/completions` always answers as
   the first hub. `model: "gpms-hub"` returned an IRS answer with no error, and
   `/b/<hub>/v1` isn't routed. A personal API key limited to any other agent can
-  never be used. In single-hub mode `/v1` works.
+  never be used. In single-hub mode `/v1` works. (Milestone B's review fixes
+  add a `/b/<agent>/v1` route per hub; this proposal keeps it as the
+  per-agent API base.)
 - **F16.** Approval and "Waiting for you" links are built from
   `HUBZOID_PUBLIC_URL`, which behind a gateway holds `/b/<hub>`, so the links
   point at a path the edge doesn't route.
