@@ -401,7 +401,7 @@ function SidebarBody({
 
   return (
     <nav aria-label={t.sidebar.label} className="flex h-full min-h-0 w-full flex-col">
-      <div className="flex items-center gap-1 px-2.5 pb-1 pt-2.5">
+      <div className="flex items-center gap-1 px-2.5 pb-4 pt-3.5">
         <Brand />
         {inDrawer ? (
           <IconButton label={t.sidebar.closeMenu} onClick={onClose} tooltip={false}>

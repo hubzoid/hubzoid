@@ -33,6 +33,7 @@ export function SettingsScreen({ tab, embedded }: { tab?: string; embedded?: boo
         <Typography.Title level={2} style={{ marginTop: 0 }}>
           {EMBEDDED_TITLES[active]}
         </Typography.Title>
+        {active === "appearance" && <p className="hz-settings-help">The published revision is what teammates see. Import your Hub’s branding files or edit a draft here, then review and activate it. File edits alone do not replace a published revision. Export active files to keep your Hub in sync.</p>}
         <Suspense fallback={<Spin />}>{TABS.find((t) => t.key === active)!.node}</Suspense>
       </div>
     );

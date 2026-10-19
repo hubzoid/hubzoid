@@ -93,7 +93,7 @@ function SignInTag({ c }: { c: Connector }) {
  * (organization administrators). The hub folder's own servers are listed
  * read-only below.
  */
-export function AgentConnectors({ hub, me }: { hub: Hub; me: Me }) {
+export function AgentConnectors({ hub, me, embedded = false }: { hub: Hub; me: Me; embedded?: boolean }) {
   if (!me.org_admin)
     return (
       <div className="panel">
@@ -104,7 +104,7 @@ export function AgentConnectors({ hub, me }: { hub: Hub; me: Me }) {
         <HubFolderServers hub={hub} />
       </div>
     );
-  return <ConnectorsScreen hub={hub} />;
+  return <ConnectorsScreen hub={hub} embedded={embedded} />;
 }
 
 /** The hub folder's connectors/.mcp.json, read-only. Names and settings only. */
@@ -155,7 +155,7 @@ function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean })
   );
 }
 
-function ConnectorsScreen({ hub }: { hub: Hub }) {
+function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   const { message, modal } = App.useApp();
   const data = useConnectors();
   const [offering, setOffering] = useState(false);
@@ -298,7 +298,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
               size="middle"
               dataSource={list}
               pagination={false}
-              scroll={{ x: 900 }}
+              scroll={{ x: embedded ? 600 : 900 }}
               locale={{
                 emptyText: (
                   <Empty description="No connectors yet. Add one to give agents access to an app.">
@@ -324,7 +324,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
                         {c.name}
                       </a>
                       <Text type="secondary" className="identity" style={{ display: "block" }}>
-                        {c.id} · {c.url}
+                        {embedded ? `${c.connections} connected · ${c.tool_allowlist?.length ? `${c.tool_allowlist.length} tools` : "All tools"}` : `${c.id} · ${c.url}`}
                       </Text>
                       </div>
                     </div>
@@ -333,12 +333,13 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
                 {
                   title: "Sign-in",
                   key: "auth",
-                  width: 150,
+                  width: embedded ? 110 : 150,
                   render: (_, c) => <SignInTag c={c} />,
                 },
                 {
                   title: "Tools",
                   key: "tools",
+                  hidden: embedded,
                   width: 130,
                   render: (_, c) =>
                     c.tool_allowlist?.length ? (
@@ -354,6 +355,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
                 {
                   title: "Connected",
                   key: "connections",
+                  hidden: embedded,
                   width: 110,
                   render: (_, c) => (
                     <Text>
@@ -364,7 +366,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
                 {
                   title: "On",
                   key: "enabled",
-                  width: 80,
+                  width: embedded ? 60 : 80,
                   render: (_, c) => (
                     <Switch
                       size="small"
@@ -378,7 +380,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
                 {
                   title: "",
                   key: "actions",
-                  width: 150,
+                  width: embedded ? 130 : 150,
                   align: "right",
                   render: (_, c) => (
                     <Space size={4}>

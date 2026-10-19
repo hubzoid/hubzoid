@@ -45,7 +45,7 @@ function figure(card: Card_ | undefined, format?: (v: number) => string) {
   return typeof card.value === "number" && format ? format(card.value) : String(card.value);
 }
 
-export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
+export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; embedded?: boolean }) {
   const { message } = App.useApp();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [reports, setReports] = useState<ReportRow[] | null>(null);
@@ -147,7 +147,7 @@ export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
           action={<Button onClick={() => void load()}>Retry</Button>}
         />
       )}
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+      {!embedded && <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} md={6}>
           <Card size="small"><Statistic title={`Turns (${overview?.interval_days ?? 7} days)`} valueRender={() => figure(c?.turns)} /></Card>
         </Col>
@@ -167,7 +167,7 @@ export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
         <Col xs={12} md={6}>
           <Card size="small"><Statistic title="Last report" valueRender={() => figure(c?.diagnostics)} /></Card>
         </Col>
-      </Row>
+      </Row>}
 
       <Card title="Run checks" size="small" style={{ marginBottom: 16 }}>
         <Space wrap>

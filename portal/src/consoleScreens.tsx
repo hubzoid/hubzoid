@@ -28,9 +28,9 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
   let screen: ReactNode;
   let active: Area = "agents";
   if (!area || area === "home") {
-    screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} />;
+    screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} embedded={embedded} />;
   } else if (area === "agents") {
-    if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} />;
+    if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} embedded={embedded} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);
       const tab = (rest[1] || "access") as AgentTab;
@@ -57,13 +57,13 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     screen = <AllRunsScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
-    screen = <PeopleScreen me={me} hubs={list} selected={rest[0]} />;
+    screen = <PeopleScreen me={me} hubs={list} selected={rest[0]} embedded={embedded} />;
   } else if (area === "activity") {
     active = "activity";
     screen = <ActivityScreen hubs={list} />;
   } else if (area === "schedules") {
     active = "schedules";
-    screen = <SchedulesScreen admin hubs={list} />;
+    screen = <SchedulesScreen admin hubs={list} embedded={embedded} />;
   } else if (area === "connections") {
     active = "connections";
     screen = <ConnectionsScreen />;
@@ -72,7 +72,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     screen = <SettingsScreen tab={rest[0]} embedded={embedded} />;
   } else if (area === "diagnostics") {
     active = "diagnostics";
-    screen = <DiagnosticsScreen hubs={list} />;
+    screen = <DiagnosticsScreen hubs={list} embedded={embedded} />;
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;

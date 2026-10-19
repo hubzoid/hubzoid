@@ -2151,6 +2151,45 @@
   color: var(--hz-bg);
 }
 .hz-auth .hz-btn-primary:hover:not(:disabled) { opacity: .9; background: var(--hz-ink); }
+.hz-auth .hz-btn-lg { border-radius: 999px; font-weight: 500; }
+.hz-auth .hz-input { border-color: transparent; background: var(--hz-raised); padding-inline: 12px; }
+.hz-auth .hz-input:focus { border-color: var(--hz-mute); box-shadow: 0 0 0 1px var(--hz-mute); }
+.hz-auth .hz-label { font-weight: 400; }
+.hz-auth .hz-auth-providers { margin-top: 24px; }
+.hz-settings-help { margin: 0 0 24px; max-width: 65ch; color: var(--hz-mute); font-size: .9286rem; line-height: 1.6; }
+.hz-set .hz-connections-intro { display: none; }
+.hz-connection-status { display: inline-flex; align-items: center; gap: 5px; border-radius: 5px; padding: 2px 6px; font-size: .7857rem; line-height: 1.4; }
+.hz-connection-list > li { padding-inline: 0; }
+.hz-connection-list > li > span { width: 32px; height: 32px; border-radius: 8px; }
+.console-embed .hz-usage-details { margin: 12px 0 24px; }
+.console-embed .hz-usage-details > summary { cursor: pointer; color: var(--hz-mute); padding: 8px 0; }
+.console-embed .hz-usage-details[open] > summary { margin-bottom: 12px; }
+.console-embed .hz-usage-details .workspace-controls { justify-content: space-between; margin-bottom: 16px; }
+.console-embed .agent-grid { display: flex; flex-direction: column; gap: 0; }
+.console-embed .agent-card { min-height: 0; }
+.console-embed .agent-card .ant-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 8px 20px;
+  padding: 18px 4px;
+  height: auto;
+}
+.console-embed .agent-card-head { grid-column: 1; grid-row: 1; align-items: center; gap: 10px; }
+.console-embed .agent-card-head > .ant-avatar { width: 32px !important; height: 32px !important; font-size: 16px !important; }
+.console-embed .agent-card .agent-name { font-size: 1rem; }
+.console-embed .agent-card-chevron { display: none; }
+.console-embed .agent-card-tags { grid-column: 1; grid-row: 2; margin: 0 0 0 42px; gap: 6px; }
+.console-embed .agent-card-usage { grid-column: 2; grid-row: 1 / 3; border: 0; margin: 0; padding: 0; gap: 20px; align-self: center; }
+.console-embed .agent-card-usage dd { font-size: 1rem; margin-top: 4px; }
+.console-embed .agent-card-usage small { display: none; }
+.console-embed .person-cell { min-width: 174px; overflow-wrap: anywhere; }
+.console-embed td:has(.person-cell) > .ant-space { gap: 10px !important; }
+.console-embed td:has(.person-cell) > .ant-space > .ant-space-item:first-child { flex: none; }
+@media (max-width: 1100px) {
+  .console-embed .agent-card .ant-card-body { grid-template-columns: minmax(0, 1fr); }
+  .console-embed .agent-card-usage { display: none; }
+}
 /* Console CSS is unlayered and loaded on demand. Keep these compound-field
    rules unlayered too, so visiting Settings cannot add a second focus ring. */
 .hz-composer textarea:focus-visible,

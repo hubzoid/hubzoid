@@ -59,8 +59,8 @@ export function AuthLayout({ title, children }: { title: string; children: React
         </span>
         <ThemeSwitch />
       </header>
-      <main id="main" className="flex flex-1 items-start justify-center px-6 pb-16 pt-[8vh] sm:pt-[12vh]">
-        <div className="w-full max-w-[360px]">{children}</div>
+      <main id="main" className="flex flex-1 items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[360px] sm:-translate-y-5">{children}</div>
       </main>
       <footer className="px-5 py-5 text-center text-xs text-mute">
         <BrandFooter manifest={app.branding.manifest} className="mb-2" />

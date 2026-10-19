@@ -34,3 +34,15 @@ Rebuilt assets are a separate commit. Do not push or open a PR.
 
 The founder authorized review followed by fixes in this session. This document
 records that bounded scope before implementation.
+
+## Annotated follow-up
+
+The founder's browser review authorized a second visual pass: adapt the agent
+dashboard to the narrow Settings pane, fix People identities, explain schedules
+versus workflows and branding publication, reduce repeated health/usage content,
+add space below the sidebar identity, and refine sign-in using Open WebUI as a
+visual reference. Seed fictional connectors in the isolated test deployment and
+provide a clearly labeled Google sign-in design preview without credentials.
+Shared management components may accept an optional embedded presentation; their
+standalone defaults stay unchanged. Theme reduction and a guided inbound MCP
+connection panel are recommendations, not backend changes in this patch.
