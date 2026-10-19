@@ -97,3 +97,15 @@ export function fileNameFromUrl(href: string): string {
     return href;
   }
 }
+
+/** "now", "5m", "3h", "Yesterday", or a short date. */
+export function formatRelative(value: Timestamp, now = new Date()): string {
+  const d = toDate(value);
+  if (!d) return "";
+  const s = Math.round((now.getTime() - d.getTime()) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (dateGroup(value, now) === "today") return `${Math.floor(s / 3600)}h`;
+  if (dateGroup(value, now) === "yesterday") return "Yesterday";
+  return formatDate(value, { month: "short", day: "numeric" });
+}

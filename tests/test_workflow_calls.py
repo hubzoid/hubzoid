@@ -209,8 +209,10 @@ def test_litellm_path_uses_json_mode_and_records_usage(hub_dir, tmp_path, monkey
         "prompt": "route it", "system": None, "model": "openrouter/anthropic/claude-haiku-4.5",
         "response_format": "json", "schema": Ticket.model_json_schema()}, subject="workflow:triage")
     assert out["json"] == {"team": "payments", "urgent": True}
-    assert calls[0]["response_format"] == {"type": "json_object"}
-    assert "JSON Schema" in calls[0]["messages"][-1]["content"]
+    # A schema uses the provider's native structured output, not a prompted instruction.
+    assert calls[0]["response_format"] == {"type": "json_schema",
+                                           "json_schema": {"name": "result", "schema": Ticket.model_json_schema()}}
+    assert "JSON Schema" not in calls[0]["messages"][-1]["content"] and out["structured"] == "native"
     (row,) = _rows(tmp_path)
     assert (row["kind"], row["surface"], row["subject"]) == ("llm", "workflow", "workflow:triage")
     assert (row["input_tokens"], row["output_tokens"], row["cost_usd"]) == (120, 15, 0.0021)

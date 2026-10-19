@@ -707,6 +707,13 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     tolerant parsing. Returns {"text", "json", "model"} and records a usage row
     (`surface`, `kind` and `chat_id` label it: the web app's conversation
     titles are `web` / `background`).
+
+    With ``response_format: "json"`` and a ``schema``, the runtime's native
+    structured output is used where it exists (Claude ``output_format``, an
+    OpenAI-compatible ``json_schema`` response format); Codex falls back to the
+    prompted instruction and tolerant parsing. ``result["structured"]`` says
+    which path ran (``native``, ``prompted`` or ``test``), and the object is
+    checked against the schema either way (``schema_errors``).
     """
     import asyncio
     import time
@@ -716,7 +723,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     hub_dir = Path(hub_dir)
     model_id = (spec.get("model") or "").strip() or _resolve_model_id(hub_dir, settingslib.load(hub_dir))
     want_json = spec.get("response_format") == "json"
-    prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json else "")
+    schema = spec.get("schema") if want_json and isinstance(spec.get("schema"), dict) else None
+    native = schema is not None and not (model_id == "codex-local" or model_id.startswith("codex-local/"))
+    prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json and not native else "")
+    path_used = "native" if native else ("prompted" if want_json else None)
     system = spec.get("system")
     from .workflows.deadlines import remaining
     budget = min(float(spec.get("timeout", 120)), remaining(120))
@@ -733,6 +743,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
         from . import testing_runtime
         if testing_runtime.is_test_model(model_id):
             text, usage = testing_runtime.complete(spec, model_id=model_id)
+            path_used = "test" if want_json else None
         elif model_id == "codex-local" or model_id.startswith("codex-local/"):
             from .factory_codex import CodexRuntime
             async def codex_complete():
@@ -748,7 +759,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
         elif model_id.lower().startswith("claude-local"):
             from .factory_claude import claude_complete
 
-            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id, hub_dir=hub_dir)))
+            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id,
+                                                              hub_dir=hub_dir, output_schema=schema)))
+            if native and usage.get("structured") != "native":
+                raise AgentRunError("The model returned no structured output for the requested schema.")
         else:
             import litellm
 
@@ -758,7 +772,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             bound = budgets.output_bound(model_id, prompt + (system or ""))
             if bound is not None:
                 kwargs["max_tokens"] = bound      # what the dollar limit still allows
-            if want_json:
+            if schema is not None:
+                kwargs["response_format"] = {"type": "json_schema",
+                                             "json_schema": {"name": "result", "schema": schema}}
+            elif want_json:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = asyncio.run(bounded(litellm.acompletion(**kwargs)))
             text = resp.choices[0].message.content or ""
@@ -770,8 +787,12 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             usage = {"input_tokens": getattr(u, "prompt_tokens", None),
                      "output_tokens": getattr(u, "completion_tokens", None),
                      "cost_usd": cost, "model": model_id}
-        result = {"text": text, "json": structured.extract_json(text) if want_json else None,
-                  "model": usage.get("model") or model_id}
+        parsed = structured.extract_json(text) if want_json else None
+        result = {"text": text, "json": parsed, "model": usage.get("model") or model_id}
+        if path_used:
+            result["structured"] = path_used
+        if schema is not None:
+            result["schema_errors"] = structured.schema_errors(parsed, schema)
         status = "ok"
         return result
     finally:

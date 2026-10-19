@@ -67,13 +67,14 @@ const at = (seconds: number | null | undefined) => (seconds ? new Date(seconds *
  * person's own schedules and report links on every agent; admins also get
  * "Everyone", one agent at a time. The server decides what each view returns.
  */
-export function SchedulesScreen({ admin, hubs }: { admin: boolean; hubs?: Hub[] }) {
+export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: boolean; hubs?: Hub[]; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
   const everyone = admin && q.scope === "everyone";
   return (
     <>
       <PageHeader
         title="Schedules & reports"
+        description={embedded ? "Recurring requests and reports created from chat. To manage authored workflows and their schedules, open an agent’s Runs & schedules tab." : undefined}
         extra={admin && (
           <Segmented
             value={everyone ? "everyone" : "mine"}
