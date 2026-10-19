@@ -115,7 +115,8 @@ def test_the_core_install_keeps_open_webuis_release_lines():
     owui_pins = {"openai": "2.29.0", "mcp": "1.27.2", "tiktoken": "0.13",
                  "fastapi": "0.136.3", "uvicorn": "0.51", "httpx": "0.28.1", "pydantic": "2.13.4",
                  "cryptography": "48", "pypdf": "6.7.5", "pillow": "12.2", "sqlalchemy": "2.0.50",
-                 "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2"}
+                 "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2",
+                 "markdown": "3.10.2"}
     for name, floor in owui_pins.items():
         spec = core[name]
         assert f">={floor}" in spec, spec
