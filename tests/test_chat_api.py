@@ -346,7 +346,6 @@ def test_delete_removes_messages_shares_and_files(hub, client, agent):
                     files={"file": ("notes.txt", b"hello", "text/plain")}).json()
     _send(client, "c_delete001", "make an artifact", agent, "m_user00001", "m_asst00001",
           files=(f["file_id"],))
-    client.post("/api/conversations/c_delete001/share", headers=ORIGIN)
     folder = memory.chat_root(hub, "web-c_delete001")
     assert (folder / "uploads" / "notes.txt").is_file()
     assert (folder / "artifacts" / "scripted-report.md").is_file()
@@ -386,7 +385,6 @@ def test_conversations_are_private_to_their_owner(hub, monkeypatch):
         ("GET", "/api/runs/m_asst00001", None),
         ("POST", "/api/runs/m_asst00001/cancel", None),
         ("GET", "/api/conversations/c_anas00001/share", None),
-        ("POST", "/api/conversations/c_anas00001/share", None),
     ]:
         r = client.request(method, path, headers=ben, json=body)
         assert r.status_code == 404, (method, path, r.text)

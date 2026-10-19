@@ -86,6 +86,17 @@ def _body(content: list) -> str:
     return "\n".join(texts + names)
 
 
+
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_MARKS = re.compile(r"(^|\s)#{1,6}\s+|[*`~>|]+|(?<!\w)__?|__?(?!\w)")
+
+
+def _plain(text: str) -> str:
+    """Message text without markdown marks, on one line, for a snippet."""
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_MARKS.sub(lambda m: m.group(1) or " ", text)
+    return " ".join(text.split())
+
 class SearchService:
     def __init__(self, engine, hub: str, hub_dir):
         self.engine = engine
@@ -262,11 +273,18 @@ class SearchService:
 
     @staticmethod
     def _result(r, terms: list[str]) -> dict:
-        body = r.body_text or ""
+        body = _plain(r.body_text or "")
         low = body.casefold()
         at = min([i for i in (low.find(t) for t in terms if t) if i >= 0] or [0])
         start = max(0, at - 60)
-        snippet = body[start:start + 240]
+        if start:  # begin at a word, not inside one
+            space = body.rfind(" ", 0, start + 1)
+            start = space + 1 if space >= 0 and at - space < 120 else start
+        end = min(len(body), start + 240)
+        if end < len(body):
+            space = body.rfind(" ", start, end)
+            end = space if space > at else end
+        snippet = ("…" if start else "") + body[start:end] + ("…" if end < len(body) else "")
         highlights = []
         for t in terms:
             i = snippet.casefold().find(t)

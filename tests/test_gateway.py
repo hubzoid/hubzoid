@@ -48,11 +48,16 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
     gp = gateway.plan([sales, support], load=load)
     routes = gp.edge_routes()
     # Each hub's artifacts, Console API, web app API and branding reach its own
-    # bridge, with the /b/<slug> prefix stripped.
+    # bridge, with the /b/<slug> prefix stripped. /api/hubs/<key> reaches it by
+    # hub key, with the path unchanged.
     expected = []
     for slug, port in (("sales", 8000), ("support", 8001)):
-        expected += [{"prefix": f"/b/{slug}{part}", "upstream": f"http://127.0.0.1:{port}",
-                      "strip_prefix": f"/b/{slug}"} for part in ("/artifacts", "/portal/api", "/api", "/branding")]
+        up = f"http://127.0.0.1:{port}"
+        expected += [{"prefix": f"/b/{slug}{part}", "upstream": up, "strip_prefix": f"/b/{slug}"}
+                     for part in ("/artifacts", "/portal/api")]
+        expected.append({"prefix": f"/api/hubs/{slug}", "upstream": up})
+        expected += [{"prefix": f"/b/{slug}{part}", "upstream": up, "strip_prefix": f"/b/{slug}"}
+                     for part in ("/api", "/branding")]
     assert routes == expected
 
 

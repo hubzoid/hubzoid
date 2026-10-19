@@ -53,7 +53,8 @@ export function DiffView({ diff }: { diff: string }) {
 export function statusText(c: HubChange): string {
   switch (c.status) {
     case "applied":
-      return H.applied(c.decided_by || "", c.commit_sha ? c.commit_sha.slice(0, 7) : null);
+      return H.applied(c.decided_by || "", c.commit_sha ? c.commit_sha.slice(0, 7) : null) +
+        (c.publish_state === "local" ? H.notPushed : c.publish_state === "pushed" ? H.pushed : "");
     case "rejected":
       return H.rejected(c.decided_by || "") + (c.note ? `: ${c.note}` : "");
     case "conflict":
@@ -122,7 +123,8 @@ export function DecideButtons({ change, url, onDone }: { change: HubChange; url:
 export function HubChangeCard({ id }: { id: number }) {
   const files = useContext(FilesContext);
   const { change, setChange, error, url } = useHubChange(files.apiBase, id);
-  const [open, setOpen] = useState(false);
+  // Shown open while it waits for review: whoever applies it reads exactly what changes.
+  const [open, setOpen] = useState<boolean | null>(null);
   if (error) return <p className="m-0 py-1 text-[13px] text-mute" data-testid="hub-change-card">{error}</p>;
   if (!change)
     return (
@@ -131,6 +133,7 @@ export function HubChangeCard({ id }: { id: number }) {
       </div>
     );
   const pending = change.status === "pending";
+  const shown = open ?? (pending && !!change.can_review);
   const bad = change.status === "conflict" || change.status === "needs_attention";
   return (
     <div className={cx("hz-request", !pending && "is-done")} data-testid="hub-change-card" data-status={change.status}>
@@ -140,10 +143,10 @@ export function HubChangeCard({ id }: { id: number }) {
         <span className="min-w-0 truncate text-secondary">· {change.title}</span>
       </div>
       <p className="m-0 truncate text-[13px] text-mute">{change.paths.join(", ")}</p>
-      <button type="button" className="hz-request-more" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="hub-change-toggle">
-        {open ? H.hideDiff : H.showDiff} <ChevronDown size={12} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
+      <button type="button" className="hz-request-more" aria-expanded={shown} onClick={() => setOpen(!shown)} data-testid="hub-change-toggle">
+        {shown ? H.hideDiff : H.showDiff} <ChevronDown size={12} aria-hidden className={cx("hz-act-chev", shown && "rotate-180")} />
       </button>
-      {open && change.diff && <DiffView diff={change.diff} />}
+      {shown && change.diff && <DiffView diff={change.diff} />}
       {pending && change.can_review ? (
         <DecideButtons change={change} url={url} onDone={setChange} />
       ) : (

@@ -570,6 +570,64 @@ def _eval_checks(hub: Path) -> list[Check]:
     return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
 
 
+def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[str, str],
+                   base_env: dict[str, str]) -> list[Check]:
+    """Stored secrets and the secrets the hub expects: names and status only.
+
+    secrets.store      what the store holds and whether each is used
+    secrets.missing    names the hub expects that nothing sets
+    secrets.blank      names a file sets to an empty value
+    secrets.overrides  hub files that set a different value than the deployment
+    """
+    from . import config_secrets as cs
+    from .secretstore import layer as secret_layer
+    from .secretstore import report as secret_report
+
+    out: list[Check] = []
+    rows = secret_report.rows(hub, env=base_env, fetch_secrets=fetch_secrets)
+    stored = [r for r in rows if r["stored"]]
+    if stored:
+        unused = [r["name"] for r in stored if r["stored_status"] == secret_layer.OVERRIDDEN]
+        broken = [r["name"] for r in stored
+                  if r["stored_status"] in (secret_layer.UNREADABLE, secret_layer.REBIND)]
+        detail = [{"name": r["name"], "scope": r["stored"]["scope"], "level": r["level"],
+                   "status": r["stored_status"]} for r in stored]
+        if broken:
+            out.append(Check("secrets.store", "warn",
+                             f"{len(broken)} stored secret(s) cannot be used: {', '.join(broken)}. Set them "
+                             "again with hubzoid secrets set (the deployment key or their destination "
+                             "changed).", detail))
+        elif unused:
+            out.append(Check("secrets.store", "warn",
+                             f"Stored but unused, because an operator source sets them: {', '.join(unused)}. "
+                             "Remove one of the two.", detail))
+        else:
+            out.append(Check("secrets.store", "ok",
+                             f"{len(stored)} stored secret(s), in use from the next bridge start", detail))
+    missing = [r for r in rows if r["status"] == "missing" and r["expected"]]
+    if missing:
+        out.append(Check("secrets.missing", "warn",
+                         f"{len(missing)} expected secret(s) not set: {', '.join(r['name'] for r in missing)}",
+                         [{"name": r["name"], "level": r["level"], "why": r["expected"],
+                           "fix": f"hubzoid secrets set {hub} --name {r['name']}"
+                                  + (" --restricted" if r["level"] == "restricted" else "")}
+                          for r in missing]))
+    blank = [r["name"] for r in rows if r["status"] == "blank"]
+    if blank:
+        out.append(Check("secrets.blank", "warn",
+                         f"Set to an empty value: {', '.join(blank)}. Give each a value or remove the line.",
+                         blank))
+    files = {**cs._read_file(hub / ".env"), **cs._read_file(hub / "restricted" / ".env")}
+    deployment = {**base_env, **deployment_values}
+    differs = sorted(k for k, v in files.items()
+                     if v.strip() and (deployment.get(k) or "").strip() and deployment[k] != v)
+    if differs:
+        out.append(Check("secrets.overrides", "warn",
+                         f"The hub files set a different value than the deployment for: {', '.join(differs)}. "
+                         "Keep shared values in one place.", differs))
+    return out
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -577,6 +635,7 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     from . import settings as settingslib
 
     hub = Path(hub).resolve()
+    base_env = config_secrets._start_env()  # before the hub's layers load below
     config, deployment_values, unreadable = _config_checks(hub, fetch_secrets=fetch_secrets)
     # Past an unreadable secret, check the rest from the files alone.
     files_only = config_secrets.fetching_disabled() if (unreadable or not fetch_secrets) else nullcontext()
@@ -607,6 +666,12 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
             checks += _store_checks(hub)
         except Exception as exc:  # noqa: BLE001
             checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
+        try:
+            checks += _secret_checks(hub, fetch_secrets=fetch_secrets and not unreadable,
+                                     deployment_values=deployment_values, base_env=base_env)
+        except Exception as exc:  # noqa: BLE001 - reported by class only, never a value
+            checks.append(Check("secrets.store", "warn",
+                                f"Stored secrets could not be checked ({type(exc).__name__})"))
     return checks
 
 
