@@ -604,3 +604,16 @@ def test_public_installation_return_needs_its_state(hub_dir, api):
     with pytest.raises(ChannelError) as exc:
         setup.installed(config.active(hub_dir, "github"), 7001, "")
     assert exc.value.code == "setup_state_invalid"
+
+
+def test_tools_follow_the_applied_connection_not_a_half_edited_file(hub_dir):
+    from types import SimpleNamespace
+
+    from hubzoid.tools import github_tools
+
+    assert github_tools.make(SimpleNamespace(hub_dir=hub_dir)) == []          # nothing applied: no database made
+    assert not (hub_dir / ".hubzoid" / "hub.db").exists()
+    app_conn(hub_dir)
+    (hub_dir / "channels").mkdir(exist_ok=True)
+    (hub_dir / "channels" / "github.yaml").write_text("provider: github\n  broken: [\n")
+    assert len(github_tools.make(SimpleNamespace(hub_dir=hub_dir))) == 31
