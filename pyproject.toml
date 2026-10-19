@@ -81,13 +81,13 @@ dependencies = [
   "Pillow>=12.2,<12.3",     # vision_inject.py resizes uploaded images before sending them to the model
   "openapi-spec-validator>=0.7.2,<0.8",  # chat/authoring.py: validate imported OpenAPI documents (Apache-2.0)
   "defusedxml>=0.7.1,<0.8",  # ui/branding_assets.py: parse uploaded SVG logos without entity expansion (PSF licence)
+  "markdown>=3.10.2,<3.11", # email_delivery.py: formatted email bodies (Markdown to sanitized HTML)
   "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL
   "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
   "qrcode>=8.2,<9",          # auth/mfa.py: the authenticator set-up QR code, drawn as SVG (BSD)
-  "markdown>=3.7,<4",        # email_delivery.py: formatted report email (BSD); came via open-webui in 1.x
 ]
 
 [project.optional-dependencies]

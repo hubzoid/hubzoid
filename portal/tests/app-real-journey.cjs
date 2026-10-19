@@ -369,6 +369,13 @@ async function main() {
       local,
       mcp,
       setup,
+      // An administrator API session. Journeys sign the admin in on many
+      // devices and each account keeps at most 10, so sign in again first.
+      async admin() {
+        const again = await setup.post("/api/auth/login", { data: { email: ADMIN.email, password: ADMIN.password } });
+        assert.equal(again.status(), 200, `admin sign-in: ${await again.text()}`);
+        return setup;
+      },
       browser,
       open,
       signIn,
@@ -585,8 +592,9 @@ journey("tools", "Tool entries (running, done, failed) and the reasoning panel",
   await c.idle();
   const failed = page.locator('[data-testid="tool-entry"][data-tool-name="grep_data"]');
   await failed.getByText("Failed").waitFor();
-  // The sentence shows under the collapsed entry (and again inside it when opened).
-  await failed.getByText("The tool did not complete. The agent may retry or ask for more information.").first().waitFor();
+  // The plain sentence is inside the entry: open it to read why it failed.
+  await failed.getByRole("button").first().click();
+  await failed.getByText("The tool did not complete. The agent may retry or ask for more information.", { exact: false }).first().waitFor();
   assert.deepEqual((await states("grep_data")).filter((x) => x !== "running"), ["failed"]);
   await ctx.shot(page, "06-tools");
 
@@ -1030,7 +1038,7 @@ journey("share", "Share: a read-only link another person opens, until it is turn
   step("Turn off link: the link stops working");
   await page.getByRole("button", { name: "Share", exact: true }).click();
   await dialog.getByRole("button", { name: "Turn off link" }).click();
-  await page.getByText("Link turned off. It no longer opens this chat.").waitFor();
+  await page.getByText("Link turned off.", { exact: true }).waitFor();
   await page.keyboard.press("Escape");
   await sam.page.reload();
   await sam.page.getByRole("heading", { name: "Link not available" }).waitFor();
@@ -1089,8 +1097,11 @@ journey("account", "Account: display name, password change ends other sessions, 
 
 /** A member account made through the Console API and its one-time link. */
 async function createMember(ctx, who, grants = null) {
-  const hubs = await (await ctx.setup.get("/portal/api/hubs")).json();
-  const created = await ctx.setup.post("/portal/api/accounts", {
+  const setup = await ctx.admin();
+  const listed = await setup.get("/portal/api/hubs");
+  const hubs = await listed.json().catch(() => ({}));
+  assert.ok(listed.ok() && hubs.hubs?.length, `List hubs: ${listed.status()} ${JSON.stringify(hubs).slice(0, 300)}`);
+  const created = await setup.post("/portal/api/accounts", {
     data: {
       email: who.email,
       name: who.name,
@@ -1260,7 +1271,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await ctx.axe(page, "connections");
 
   step("The administrator registers the second hub's MCP server in the agent's Connectors tab");
-  const hubKey = (await (await ctx.setup.get("/portal/api/hubs")).json()).hubs[0].key;
+  const hubKey = (await (await (await ctx.admin()).get("/portal/api/hubs")).json()).hubs[0].key;
   await page.goto(`${ctx.BASE}/portal/#/agents/${hubKey}/connectors`);
   await page.getByRole("button", { name: "Add connector" }).first().click();
   const editor = page.locator(".ant-drawer-section[role=dialog]");

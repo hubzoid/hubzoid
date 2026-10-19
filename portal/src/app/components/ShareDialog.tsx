@@ -1,14 +1,14 @@
 // Share a conversation: a snapshot link (previewed, then published for named
 // people, everyone signed in here, or the public when allowed), or live
 // collaborators who read along or write on their own branches.
-import { useEffect, useState } from "react";
-import { Copy, Link2, Link2Off, UserMinus, Users } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { CircleHelp, Copy, Link2, Link2Off, UserMinus, Users } from "lucide-react";
 import { t } from "../i18n/en";
 import { del, enc, get, post, put } from "../lib/api";
 import { describeError } from "../lib/errors";
 import type { Conversation, ShareLink } from "../lib/types";
 import { toast } from "./toast";
-import { Button, Field, Modal, Notice, Spinner, cx } from "./ui";
+import { Button, Field, Modal, Notice, Spinner, Tip, cx } from "./ui";
 
 export function shareUrl(link: ShareLink): string {
   if (link.url && /^https?:\/\//.test(link.url)) return link.url;
@@ -48,6 +48,23 @@ type Share = { id: string; url?: string; revision: number; status: string; audie
 const linkOf = (share: Share) => shareUrl({ share_id: share.id, url: share.url });
 type Preview = { preview_id: string; digest: string; omissions: string[]; projection: { messages: unknown[] } };
 type Member = { principal_id: string; role: "editor" | "viewer"; email?: string | null; name?: string | null };
+
+/** Hover or focus for help; tap to keep it open on touch devices. */
+function ShareExplanation({ children, help }: { children: string; help: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <div>
+    <div className="flex items-center gap-1 text-[13px] text-mute">
+      <p className="m-0">{children}</p>
+      <Tip label={help}>
+        <button type="button" className="hz-icon-btn flex-none" aria-label="About sharing" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+          <CircleHelp size={14} aria-hidden />
+        </button>
+      </Tip>
+    </div>
+    <p id={id} hidden={!open} className="m-0 mt-1 text-[13px] text-mute">{help}</p>
+  </div>;
+}
 
 export function ShareDialog({
   conversation,
@@ -151,7 +168,7 @@ export function ShareDialog({
       {error && <Notice tone="error" className="mb-3">{error}</Notice>}
       {tab === "snapshot" ? (
         <div className="space-y-3" data-testid="share-snapshot">
-          <p className="m-0 text-[13px] text-mute">{t.share.snapshotBody}</p>
+          <ShareExplanation help={t.share.snapshotHelp}>{t.share.snapshotBody}</ShareExplanation>
           {shares === null ? (
             <Spinner size={14} />
           ) : (
@@ -216,7 +233,7 @@ export function ShareDialog({
         </div>
       ) : (
         <div className="space-y-3" data-testid="share-live">
-          <p className="m-0 text-[13px] text-mute">{t.share.liveBody}</p>
+          <ShareExplanation help={t.share.liveHelp}>{t.share.liveBody}</ShareExplanation>
           <ul className="m-0 list-none space-y-1 p-0">
             {(members?.members ?? []).map((m) => (
               <li key={m.principal_id} className="flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">

@@ -1,1 +1,0 @@
-import{i as e}from"./graphlib-DcFlq1hi.js";var t=4;function n(n){return e(n,t)}export{n as t};

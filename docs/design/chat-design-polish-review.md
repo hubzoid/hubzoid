@@ -207,3 +207,27 @@ Spaces revision `op_0032`. A SQLite backup was made before aligning its revision
 marker with `op_0031`; the now-unused Spaces tables were retained. No repository
 migration or customer database was changed. This local fixture adjustment is
 not an upgrade procedure for deployed databases.
+
+
+## 2026-10-19: quieter activity and application copy
+
+Source changes on main after fast-forwarding to 89e5a163. No push. Production bundles are intentionally unchanged while development continues.
+
+- Tool activity shows the current action with a neutral text shimmer, followed by one collapsed call count. Consecutive calls group together without crossing intervening text. No visible Done badges. Errors and stopped calls remain labelled. Input and result are available on expansion. Approval and hub-change cards remain visible.
+- Main actions use neutral filled buttons in native chat and embedded settings. Alternatives use outlines and row actions use ghost buttons. The standalone Console theme is unchanged.
+- Composer focus uses a thin neutral outline. Copy is shorter across sharing, personal preferences, sign-in/security explanations, sources, model comparison, workflows, people, branding, chat defaults and diagnostics. The add-user outcome gives the identity and access once, followed by the next action.
+- Sharing explanation has hover/focus help and a persistent tap disclosure. Access and copy-retention rules remain available. No user-authored messages or model output are rewritten.
+- HubzoidStudio now has a Dashboard & chat reference, which is the application design baseline. Website references remain for marketing. Its content is synthetic.
+
+### Product decisions to review
+
+1. **Compatibility / parity ledger:** the page reads a deployment-owned parity.yaml checklist and records candidates, reviews and freezes. This is maintainer release/migration workflow, not ordinary team administration. Recommend moving it out of everyday settings into developer/release tooling. Labels were simplified, but the workflow and API remain intact pending a decision.
+2. **Advanced settings registry:** raw domain ownership, configuration file names, CLI commands and revision metadata belong in technical support or builder tools. Keep necessary diagnostics accessible, but decide which registry controls are useful to a team owner.
+3. **Brand and chat configuration:** draft, review and publish are meaningful safeguards. The UI still needs a clear file-versus-active provenance policy rather than implying a direct editor save changes live settings. No precedence or activation behavior changed here.
+4. **Schedules vs workflows:** scheduled chat reports and file-authored workflows are different mechanisms. The current description explains where to find each, but naming and placement deserve a product decision before combining their controls.
+
+### Validation and limits
+
+TypeScript checks pass. Focused browser checks cover running/completed activity, 20-call grouping, text boundaries, results, failures/cancellation, approval visibility, reduced motion, 390px touch layout, sharing help and focus after embedded Console styles load. Tests use synthetic data and a graph-response adapter because the general chat fixture predates the current engine. Stream, image and runtime unit checks pass.
+
+The older settings browser suite stops at its removed Profile & security label. The router unit suite expects a sign-in route without the new step field. These pre-existing expectations are not passing checks. No real-provider, OAuth or complete release validation is claimed. Use APP_DEV=1 node tests/app-tool-activity.cjs to verify source without rebuilding bundles.

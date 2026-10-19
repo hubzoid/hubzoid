@@ -49,7 +49,8 @@ def _bridge_app() -> Starlette:
         return PlainTextResponse("INTERNAL:" + request.url.path)
 
     async def any_path(request: Request):
-        return PlainTextResponse("BRIDGE:" + request.scope["path"], status_code=404)
+        query = request.scope["query_string"].decode()
+        return PlainTextResponse("BRIDGE:" + request.scope["path"] + (" query:" + query if query else ""), status_code=404)
 
     return Starlette(routes=[
         Route("/otel/v1/traces", internal, methods=["POST"]),
@@ -106,7 +107,10 @@ def test_double_encoding_cannot_reach_the_bridges_internal_api(web_app_edge, met
     ("/b/sales/api/files/100%25.pdf", "/api/files/100%.pdf"),   # a literal % in a file name
     ("/b/sales/api/files/50%2525off.pdf", "/api/files/50%25off.pdf"),
     ("/b/sales/api/files/caf%C3%A9%20menu.pdf", "/api/files/café menu.pdf"),
-    ("/b/sales/api/a%3Fb", "/api/a"),                           # the edge checked /api/a too
+    ("/b/sales/api/a%3Fb", "/api/a?b"),                         # an escaped ? stays in the path
+    ("/b/sales/api/a%23b", "/api/a#b"),                         # so do # and a backslash, which Starlette 1.9
+    ("/b/sales/api/a%5Cb", "/api/a\\b"),                        # re-escapes the same way
+    ("/b/sales/api/a%3Fb?c=%3F&d", "/api/a?b query:c=%3F&d"),   # and the query passes as sent
 ])
 def test_routes_forward_the_path_they_matched(web_app_edge, path, seen):
     assert _raw(web_app_edge, "GET", path) == (404, "BRIDGE:" + seen)
