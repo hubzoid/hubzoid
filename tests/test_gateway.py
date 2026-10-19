@@ -199,8 +199,6 @@ def test_plan_model_label_matches_bridge_derivation(tmp_path):
 
 def _gateway_harness(tmp_path, monkeypatch):
     """Shared fake-process harness for gateway CLI wiring tests."""
-    from hubzoid import webui
-
     sales = tmp_path / "sales"
     sales.mkdir()
     (sales / "AGENTS.md").write_text(
@@ -214,14 +212,6 @@ def _gateway_harness(tmp_path, monkeypatch):
         ),
     ))
     monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
-
-    def fake_start_gateway(**kwargs):
-        proc = MagicMock()
-        proc._log_path = tmp_path / "log"
-        proc.wait.return_value = 0
-        proc.poll.return_value = None
-        return proc
-    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
 
     def fake_popen(cmd, env=None, **kw):
         proc = MagicMock()

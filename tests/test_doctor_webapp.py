@@ -1,9 +1,8 @@
 """`hubzoid doctor` checks for the web app: the UI mode, sign-in, the
-deployment key (fingerprint only), the openwebui extra in Open WebUI mode, an Open
-WebUI install not yet moved, and the local-mode loopback guard."""
+deployment key (fingerprint only), retired Open WebUI settings, an Open WebUI
+install not yet moved, and the local-mode loopback guard."""
 from __future__ import annotations
 
-import importlib.util
 import json
 import sqlite3
 
@@ -11,7 +10,7 @@ import pytest
 from cryptography.fernet import Fernet
 from typer.testing import CliRunner
 
-from hubzoid import cli, secretbox, webui
+from hubzoid import cli, secretbox
 from hubzoid import doctor as doc
 
 _ENV = ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT", "MODEL",

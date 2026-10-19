@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from hubzoid import branding, cli, webui
+from hubzoid import cli
 from tests._fake_secrets import clean_process_env
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +26,6 @@ _WAIT_ANY = cli._wait_any
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch):
-    # Never stamp branding into, or patch, an installed Open WebUI.
-    monkeypatch.setattr(webui, "_patch_owui_suffix", lambda strip: None)
-    monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
-    monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
     monkeypatch.setattr(cli, "_wait_any", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_stop_groups", cli._stop_processes)
@@ -107,7 +103,7 @@ def _edge(calls):
 def test_default_mode_runs_bridge_and_edge_only(tmp_path, launched):
     result = _run(_hub(tmp_path))
     assert result.exit_code == 0, result.output
-    assert not [c for c in launched if c["cmd"][0] == "/fake/open-webui"]
+    assert not [c for c in launched if "open-webui" in " ".join(map(str, c["cmd"]))]
     assert len(launched) == 2
     edge = _edge(launched)
     assert edge["env"]["HUBZOID_EDGE_DEFAULT"] == "http://127.0.0.1:3802"  # every path to the bridge

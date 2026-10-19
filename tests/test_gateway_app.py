@@ -5,7 +5,6 @@ web app mode, all of them intact in Open WebUI mode)."""
 from __future__ import annotations
 
 import json
-import os
 import stat
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,7 +13,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from starlette.testclient import TestClient as StarletteClient
 from typer.testing import CliRunner
 
@@ -78,22 +77,12 @@ class _Run:
             proc.poll.return_value = None
             return proc
 
-        def no_owui(**_kw):
-            raise AssertionError("the web app gateway must not start Open WebUI")
-
-        def no_provision(**_kw):
-            raise AssertionError("the web app gateway must not provision Open WebUI")
-
-        from hubzoid import gateway_provision, webui
-
         monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
         monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
         monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
         monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
         monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-        monkeypatch.setattr(webui, "start_gateway", no_owui)
-        monkeypatch.setattr(gateway_provision, "provision", no_provision)
 
     def invoke(self, *args):
         return CliRunner().invoke(cli.app, ["gateway", *map(str, args)], catch_exceptions=False)
