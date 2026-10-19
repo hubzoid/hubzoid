@@ -414,7 +414,8 @@ class CodexRuntime:
                         log.exception("Codex tool %s failed", name)
                     # 1.0.x printed nothing for a Codex tool result, failed or not.
                     finished = run_events.ToolResult(id=call_id, name=name, ok=success,
-                                                     message=None if success else run_events.TOOL_FAILED)
+                                                     message=None if success else run_events.TOOL_FAILED,
+                                                     card=_request_ctx.take_card(result) if success else None)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
                 if tool is not None:
@@ -538,7 +539,9 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     ctx = HubContext(hub_dir=hub_dir, output_dir=memory.session_output_dir(hub_dir, session), session_id=session,
                      settings=config, skills=_with_core_skills(skills), knowledge=knowledge.load_all(hub_dir), delegates=delegates)
     connections.attach(ctx)
-    registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir),
+                                                          **(extra_tools or {})}))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import handover

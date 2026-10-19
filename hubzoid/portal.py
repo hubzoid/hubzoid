@@ -1478,6 +1478,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     # Sandboxes: metadata for viewers, controls for managers.
     from .sandbox import routes as sandbox_routes
     sandbox_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    # Cards (MCP Apps): settings for administrators, instances for their requester.
+    from .apps import routes as app_routes
+    app_routes.register(router, require_person, lambda actor, hub: deployment.hub_path(hub_dir, hub))
     return router
 
 

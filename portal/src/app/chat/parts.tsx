@@ -13,6 +13,7 @@ import { formatBytes, truncate } from "../lib/format";
 import { cx } from "../components/ui";
 import { fileRefOf, fileUrl } from "./convert";
 import { safeStringify } from "./stream";
+import { CardEntry, cardOf } from "./cards/cards";
 
 /** Where this thread's files live, for previews and downloads. */
 export const FilesContext = createContext<{ conversationId: string | null; apiBase: string }>({
@@ -83,7 +84,26 @@ const stateIcon: Record<ToolState, ReactNode> = {
   stopped: <CircleSlash size={13} className="flex-none text-mute" aria-hidden />,
 };
 
-export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
+export const ToolEntry: ToolCallMessagePartComponent = (props) => {
+  if (!props.isError && cardOf(props.result)) {
+    const label = toolLabel(props.toolName);
+    return (
+      <CardEntry
+        {...props}
+        header={
+          <span className="hz-act-row is-static">
+            {stateIcon.done}
+            <span className="flex-none text-secondary">{humanTool(label.tool)}</span>
+            {label.server && <span className="hz-tag is-quiet">{label.server}</span>}
+          </span>
+        }
+      />
+    );
+  }
+  return <PlainToolEntry {...props} />;
+};
+
+const PlainToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   let state: ToolState;
@@ -141,7 +161,11 @@ export function ToolGroup({ startIndex, endIndex, children }: { startIndex: numb
   const failed = useAuiState((s) =>
     s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && (p as { isError?: boolean }).isError),
   );
-  if (count < 2) return <>{children}</>;
+  // A card is a result to look at, so a group holding one is never folded.
+  const hasCard = useAuiState((s) =>
+    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && !!cardOf((p as { result?: unknown }).result)),
+  );
+  if (count < 2 || hasCard) return <>{children}</>;
   const busy = running && pending > 0;
   return (
     <div className="hz-act" data-testid="tool-group">

@@ -68,6 +68,12 @@ _current_tool_results: ContextVar[dict | None] = ContextVar("hubzoid_tool_result
 
 RESULT_KEEP_CHARS = 2000
 
+# Cards a tool presented this request (`hubzoid.apps.cards.present`): each is
+# the text the model got plus the card, until the runtime adapter that emits
+# the tool's result takes it (`take_card`). A list mutated in place, like
+# artifacts, so the tool's write survives the SDK's context copies.
+_current_cards: ContextVar[list | None] = ContextVar("hubzoid_cards", default=None)
+
 # One id per chat request (one turn of the conversation), so a tool can tell a
 # yes the person typed in a later message from a call the model made in the
 # same turn. None outside a chat request (MCP calls, CLI, tests).
@@ -261,6 +267,39 @@ def _result_text(output: object, limit: int = RESULT_KEEP_CHARS) -> str:
         return str(output)[:limit]
 
 
+def record_card(text: str, card: dict) -> None:
+    """Note that a tool's result ``text`` shows ``card``. No-op outside a scope
+    (a CLI call shows no chat)."""
+    items = _current_cards.get()
+    if items is not None:
+        items.append((text, card))
+
+
+def take_card(output: object) -> dict | None:
+    """The card for a tool result the runtime is about to emit, matched on the
+    exact text the tool returned (oldest first), or None."""
+    items = _current_cards.get()
+    if not items:
+        return None
+    shown = _result_text(output, limit=10**7)
+    for i, (text, card) in enumerate(items):
+        if text == shown:
+            del items[i]
+            return card
+    return None
+
+
+@contextmanager
+def card_scope() -> Iterator[list]:
+    """A fresh card registry for a block (an MCP tool call)."""
+    items: list = []
+    token = _current_cards.set(items)
+    try:
+        yield items
+    finally:
+        _current_cards.reset(token)
+
+
 @contextmanager
 def tool_result_recorder() -> Iterator[dict]:
     """Record what each tool call returned inside the block, as
@@ -298,9 +337,11 @@ def chat_scope(chat_id: str | None) -> Iterator[None]:
     art_token = _current_artifacts.set([])
     usage_token = _current_usage.set({})
     failure_token = _current_failure.set({})
+    cards_token = _current_cards.set([])
     try:
         yield
     finally:
+        _current_cards.reset(cards_token)
         _current_chat_id.reset(token)
         _current_turn.reset(turn_token)
         _current_artifacts.reset(art_token)

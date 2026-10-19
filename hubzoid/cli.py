@@ -3737,6 +3737,12 @@ app.add_typer(sandbox_app, name="sandbox",
               help="Sandboxes for agents: doctor, profiles, probes and cleanup.",
               rich_help_panel="Commands")
 
+from .apps.cli import apps_app  # noqa: E402
+
+app.add_typer(apps_app, name="apps",
+              help="Cards: tool results shown as MCP Apps in chat, Claude and ChatGPT.",
+              rich_help_panel="Commands")
+
 
 if __name__ == "__main__":
     app()

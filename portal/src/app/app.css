@@ -1681,6 +1681,36 @@
   .hz-act-steps .hz-act {
     margin: 0;
   }
+  /* Cards (MCP Apps): host chrome around a sandboxed frame. */
+  .hz-card {
+    margin: 2px 0 10px;
+  }
+  .hz-card-chrome {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0 6px;
+  }
+  .hz-card-review {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--hz-accent, var(--hz-secondary));
+    text-decoration: underline;
+  }
+  .hz-card-frame {
+    border: 1px solid var(--hz-line);
+    border-radius: 10px;
+    overflow: hidden;
+    min-height: 48px;
+  }
+  .hz-card-text {
+    border: 1px dashed var(--hz-line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
   .hz-act-detail {
     margin: 2px 0 6px 6px;
     padding: 4px 0 4px 12px;

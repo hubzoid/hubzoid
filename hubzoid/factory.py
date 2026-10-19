@@ -176,7 +176,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
     # has no restricted/ folder, so existing hubs are unchanged.
     from . import access  # deferred to avoid circular import via __init__.py
-    registry = access.apply(hub_dir, registry)
+    from .apps import cards
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
 
