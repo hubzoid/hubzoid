@@ -24,6 +24,18 @@ def root(hub_dir: Path) -> Path:
     return Path(hub_dir)
 
 
+def state_root(hub_dir: Path) -> Path:
+    """Where the deployment's own files are written (settings files, branding
+    assets, staged uploads, imports): the manifest's folder in a gateway, else
+    the hub's data root (``HUBZOID_DATA_DIR``, or the hub folder)."""
+    from .. import datadir
+
+    manifest = deployment.manifest_path(Path(hub_dir))
+    if manifest is not None:
+        return manifest.parent
+    return datadir.root(hub_dir)
+
+
 _ids: dict[tuple, str] = {}
 
 

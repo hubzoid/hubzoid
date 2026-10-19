@@ -148,7 +148,10 @@ def for_settings(hub_dir: Path, storage: dict):
                          addressing_style=storage.get("s3_addressing_style") or "auto")
     from ..control import deploy
 
-    base = deploy.root(Path(hub_dir)) if storage.get("local_root", "").startswith(".hubzoid/") else Path(hub_dir)
+    from .. import datadir
+
+    base = (deploy.state_root(Path(hub_dir)) if storage.get("local_root", "").startswith(".hubzoid/")
+            else datadir.root(Path(hub_dir)))
     return LocalStorage(base / storage["local_root"] / (storage.get("prefix") or "hubzoid"))
 
 

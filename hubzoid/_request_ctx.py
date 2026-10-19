@@ -105,7 +105,9 @@ def schedule_read_scope(hub_dir: Path, scratch_rel: str) -> Iterator[None]:
     File tools still enforce containment, symlink and private-content checks.
     """
     hub = Path(hub_dir).resolve()
-    token = _schedule_read_scope.set((hub, hub / scratch_rel))
+    from .datadir import resolve
+
+    token = _schedule_read_scope.set((hub, resolve(hub, scratch_rel)))
     try:
         yield
     finally:

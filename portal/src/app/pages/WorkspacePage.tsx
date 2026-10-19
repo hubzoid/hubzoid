@@ -46,11 +46,13 @@ function Files({ agent }: { agent: string | null }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<null | "skill" | "prompt">(null);
+  const [readOnly, setReadOnly] = useState(false);
   const load = useCallback(async () => {
     try {
-      const got = await get<{ items: FileItem[]; hub?: string }>(`${A}/files`);
+      const got = await get<{ items: FileItem[]; hub?: string; read_only?: boolean }>(`${A}/files`);
       setFiles(got.items);
       setHub(got.hub ?? null);
+      setReadOnly(!!got.read_only);
       setDrafts((await get<{ items: Draft[] }>(`${A}/drafts`)).items);
       // From an agent's page: its instructions, when this hub is that agent.
       if (agent && got.hub && agent.toLowerCase() === got.hub) {
@@ -72,13 +74,14 @@ function Files({ agent }: { agent: string | null }) {
     <>
     {hub && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
     {elsewhere && <Notice tone="info" className="mb-4">{t.workspace.elsewhere}</Notice>}
+    {readOnly && <Notice tone="info" className="mb-4">{t.workspace.readOnly}</Notice>}
     <div className="hz-workspace-files">
       <div className="space-y-4">
         {(["agent", "skill", "prompt"] as const).map((kind) => (
           <div key={kind}>
             <div className="mb-1 flex items-center justify-between">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-mute">{t.workspace.kinds[kind]}</div>
-              {kind !== "agent" && (
+              {kind !== "agent" && !readOnly && (
                 <button type="button" className="hz-icon-link" aria-label={t.workspace.newOf(kind)} title={t.workspace.newOf(kind)}
                   onClick={() => setCreating(kind)}><Plus size={14} aria-hidden /></button>
               )}
@@ -101,7 +104,7 @@ function Files({ agent }: { agent: string | null }) {
       <div className="min-w-0">
         {selected ? (
           <Editor key={selected} path={selected} draft={drafts.find((d) => d.path === selected && d.state !== "published") ?? null}
-            onChanged={load} />
+            readOnly={readOnly} onChanged={load} />
         ) : (
           <div className="flex min-h-48 items-center justify-center px-6 py-10 text-center text-[13px] text-mute">{t.workspace.pick}</div>
         )}
@@ -146,7 +149,9 @@ function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"
   );
 }
 
-function Editor({ path, draft: initial, onChanged }: { path: string; draft: Draft | null; onChanged: () => Promise<void> | void }) {
+function Editor({ path, draft: initial, readOnly = false, onChanged }: {
+  path: string; draft: Draft | null; readOnly?: boolean; onChanged: () => Promise<void> | void;
+}) {
   const [draft, setDraft] = useState<Draft | null>(initial);
   const [text, setText] = useState(initial?.content ?? "");
   const [busy, setBusy] = useState(false);
@@ -173,15 +178,18 @@ function Editor({ path, draft: initial, onChanged }: { path: string; draft: Draf
       setBusy(false);
     }
   };
-  if (!draft)
+  if (!draft || readOnly)
     return (
       <div className="hz-card p-4">
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{path}</span>
-          <Button size="sm" variant="primary" icon={<FilePlus2 size={13} aria-hidden />} loading={busy}
-            onClick={() => act(() => post<Draft>(`${A}/drafts`, { path }))}>{t.workspace.startDraft}</Button>
+          {!readOnly && (
+            <Button size="sm" variant="primary" icon={<FilePlus2 size={13} aria-hidden />} loading={busy}
+              onClick={() => act(() => post<Draft>(`${A}/drafts`, { path }))}>{t.workspace.startDraft}</Button>
+          )}
         </div>
-        <Versions versions={versions} onRollback={(v) => act(() => post<Draft>(`${A}/rollbacks`, { path, version_id: v }), t.workspace.rollbackDraft)} />
+        <Versions versions={versions} onRollback={readOnly ? undefined
+          : (v) => act(() => post<Draft>(`${A}/rollbacks`, { path, version_id: v }), t.workspace.rollbackDraft)} />
       </div>
     );
   const dirty = text !== draft.content;
@@ -258,7 +266,7 @@ function Diff({ text }: { text: string }) {
   );
 }
 
-function Versions({ versions, onRollback }: { versions: Version[]; onRollback: (id: string) => void }) {
+function Versions({ versions, onRollback }: { versions: Version[]; onRollback?: (id: string) => void }) {
   if (!versions.length) return null;
   return (
     <div className="mt-2">
@@ -271,7 +279,7 @@ function Versions({ versions, onRollback }: { versions: Version[]; onRollback: (
             <span className="font-mono text-[11.5px] text-ink">{v.sha256.slice(0, 12)}</span>
             <span className="flex-1 text-[11.5px] text-mute">{new Date(v.published_at * 1000).toLocaleString()}</span>
             {v.current ? <span className="hz-pill hz-pill-ready">{t.workspace.current}</span>
-              : <button type="button" className="hz-artifact-edit" onClick={() => onRollback(v.version_id)}>{t.workspace.rollback}</button>}
+              : onRollback && <button type="button" className="hz-artifact-edit" onClick={() => onRollback(v.version_id)}>{t.workspace.rollback}</button>}
           </li>
         ))}
       </ul>

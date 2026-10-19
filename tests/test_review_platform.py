@@ -164,7 +164,9 @@ def test_backup_of_a_plain_postgresql_deployment(plain_pg, tmp_path, monkeypatch
     monkeypatch.setenv("DATABASE_URL", plain_pg)
     monkeypatch.setattr(bk, "running_runs", lambda plan, unknown=None: [])
     index = bk.backup(hub, tmp_path / "b.tar.gz", wait=0)
-    assert (tmp_path / "b.tar.gz").is_file() and index["not_included"]
+    # The database is dumped into the archive and verified with it.
+    assert (tmp_path / "b.tar.gz").is_file() and index["postgres"] and not index["not_included"]
+    assert index["verified"]["ok"] and index["verified"]["postgres"] == 1
     assert [k for (k,) in _pg_rows(plain_pg, "SELECT k FROM hz_meta")] == ["backup:last"]
 
 

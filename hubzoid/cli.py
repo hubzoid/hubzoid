@@ -31,7 +31,10 @@ import sys
 import time
 from pathlib import Path
 
+from . import datadir
+
 import typer
+from typer.core import TyperGroup
 from rich.console import Console
 from rich.markup import escape
 
@@ -1254,7 +1257,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
                    path=str(b.hub_dir), model_id=b.model_label, slug=b.slug,
                    dbos_url=deployment_env.get('HUBZOID_DBOS_DB') or
                        (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL', '').startswith('postgres')
-                        else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
+                        else f"sqlite:///{datadir.state(b.hub_dir) / 'dbos.db'}")) for b in gp.backends],
         operational_url=shared_op_url,
         # A gateway that ran Open WebUI on 1.x keeps where its database is:
         # `hubzoid migrate openwebui` and the upgrade guard find the people and
@@ -1390,7 +1393,29 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
 # ---------------------------------------------------------------------------
 # backup / restore
 # ---------------------------------------------------------------------------
-@app.command("backup")
+class _BackupGroup(TyperGroup):
+    """`hubzoid backup [HUB]` takes a backup (the `create` command); `verify` and
+    `list` are the group's other commands."""
+
+    def parse_args(self, ctx, args):
+        if not args or (args[0] not in self.commands and args[0] not in ("--help", "-h")):
+            args = ["create", *args]
+        return super().parse_args(ctx, args)
+
+
+backup_app = typer.Typer(
+    cls=_BackupGroup, no_args_is_help=False,
+    help="Save a deployment's state to one verified archive: `hubzoid backup [HUB]`. "
+         "Also `hubzoid backup verify ARCHIVE` and `hubzoid backup list [HUB]`. Scheduled backups "
+         "run weekly by default (HUBZOID_BACKUPS=weekly|daily|off).")
+app.add_typer(backup_app, name="backup", rich_help_panel="Commands")
+
+from .deploy.cli import deploy_app  # noqa: E402
+
+app.add_typer(deploy_app, name="deploy", rich_help_panel="Commands")
+
+
+@backup_app.command("create")
 def backup_cmd(
     hub: Path = typer.Argument(Path("."), help="A hub directory. A hub in a gateway backs up the whole gateway."),
     out: Path = typer.Option(None, "--out", "-o", help="Archive path. Default: ./hubzoid-backup-<time>.tar.gz"),
@@ -1399,9 +1424,10 @@ def backup_cmd(
 ) -> None:
     """Save a deployment's state to one archive while it keeps serving chat.
 
-    New scheduled runs are held and running ones finish first. Hub content
-    (AGENTS.md, skills, knowledge) belongs in git and is not included, nor are
-    PostgreSQL databases (see docs/BACKUP.md)."""
+    New scheduled runs are held and running ones finish first. PostgreSQL
+    databases are saved with pg_dump. The archive is verified before it counts.
+    Hub content (AGENTS.md, skills, knowledge) belongs in git and is not
+    included (see docs/BACKUP.md)."""
     from datetime import datetime as _dt
 
     from . import backup as backup_lib
@@ -1413,8 +1439,10 @@ def backup_cmd(
     except (backup_lib.BackupError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
-    console.print(f"[green]Backup written:[/green] {out.resolve()} "
-                  f"({len(index['roots'])} locations, {len(index['sqlite'])} databases)")
+    checked = index["verified"]
+    console.print(f"[green]Backup written and verified:[/green] {out.resolve()} "
+                  f"({checked['files']} files, {len(index['sqlite'])} databases"
+                  + (f", {len(index['postgres'])} PostgreSQL" if index["postgres"] else "") + ")")
     if any(r["kind"] == "ui" for r in index["roots"]):
         console.print("The archive holds user accounts, chats and the chat UI's connection settings. "
                       "Store it like a secret.")
@@ -1429,7 +1457,54 @@ def backup_cmd(
         console.print("Left out: .env files, deployment encryption keys, signing keys and database "
                       "passwords. Keep protected copies separately (see docs/BACKUP.md).")
     for url in index["not_included"]:
-        console.print(f"[yellow]Not included (PostgreSQL):[/yellow] {url}. Back it up with pg_dump.")
+        console.print(f"[yellow]Not included:[/yellow] {url}.")
+
+
+@backup_app.command("verify")
+def backup_verify(
+    archive: Path = typer.Argument(..., exists=True, dir_okay=False, help="An archive from hubzoid backup."),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as JSON."),
+) -> None:
+    """Check an archive: every file's checksum, each database's integrity and each PostgreSQL dump.
+
+    Exits 1 when it fails."""
+    from . import backup as backup_lib
+
+    result = backup_lib.verify(archive)
+    if as_json:
+        print(json.dumps(result, indent=2))
+    else:
+        mark = "[green]✓ Verified[/green]" if result["ok"] else "[red]✗ Not verified[/red]"
+        console.print(f"{mark} {archive}: {result['files']} files, {result['databases']} databases"
+                      + (f", {result['postgres']} PostgreSQL" if result["postgres"] else ""))
+        for line in result["problems"]:
+            console.print(f"  [red]✗[/red] {escape(line)}")
+        for line in result["warnings"]:
+            console.print(f"  [yellow]![/yellow] {escape(line)}")
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@backup_app.command("list")
+def backup_list(
+    hub: Path = typer.Argument(Path("."), help="A hub directory."),
+    as_json: bool = typer.Option(False, "--json", help="Print the list as JSON."),
+) -> None:
+    """The scheduled backups kept for this deployment, newest first."""
+    from . import backup_schedule
+
+    hub = hub.resolve()
+    items = backup_schedule.archives(hub)
+    folder = backup_schedule.folder(hub)
+    if as_json:
+        print(json.dumps({"folder": str(folder), "schedule": os.environ.get(backup_schedule.SETTING) or "weekly",
+                          "archives": items}, indent=2))
+        return
+    console.print(f"[dim]{folder} · schedule {os.environ.get(backup_schedule.SETTING) or 'weekly'}[/dim]")
+    if not items:
+        console.print("No scheduled backups yet.")
+    for a in items:
+        console.print(f"{a['created']}  {a['bytes'] / 1e6:8.1f} MB  {a['path']}")
 
 
 @app.command("restore")
@@ -1437,12 +1512,54 @@ def restore_cmd(
     archive: Path = typer.Argument(..., exists=True, dir_okay=False, help="An archive from hubzoid backup."),
     move: list[str] = typer.Option([], "--move", help="OLD=NEW: restore paths under OLD to NEW instead. Repeatable."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show where everything would go and stop."),
+    rehearse: bool = typer.Option(False, "--rehearse", help="Restore into a scratch folder, upgrade the copies, "
+                                                            "report and clean up. Touches nothing else."),
+    postgres: bool = typer.Option(False, "--postgres", help="Also load the archive's PostgreSQL dump into the "
+                                                            "database named by --postgres-env."),
+    postgres_env: str = typer.Option(None, "--postgres-env", help="The environment variable holding that "
+                                     "database's URL (default DATABASE_URL). With --rehearse: a server "
+                                     "where a temporary database is created and dropped."),
+    as_json: bool = typer.Option(False, "--json", help="With --rehearse: print the report as JSON."),
 ) -> None:
     """Put a backup back. Stop the hub or gateway first.
 
     Everything returns to its original path unless moved with --move. What is
-    at a target now is kept beside it as <name>.pre-restore-<time>."""
+    at a target now is kept beside it as <name>.pre-restore-<time>. The URL of a
+    PostgreSQL database is read from an environment variable, never given on
+    the command line."""
     from . import backup as backup_lib
+
+    def _pg_url(name: str | None) -> str | None:
+        if not name:
+            return None
+        value = (os.environ.get(name) or "").strip()
+        if not value:
+            console.print(f"[red]{name} is not set.[/red]")
+            raise typer.Exit(2)
+        return value
+
+    if rehearse:
+        report = backup_lib.rehearse(archive, postgres_url=_pg_url(postgres_env), say=lambda _m: None)
+        if as_json:
+            print(json.dumps(report, indent=2))
+        else:
+            mark = "[green]✓ Rehearsal passed[/green]" if report["ok"] else "[red]✗ Rehearsal failed[/red]"
+            console.print(f"{mark} for {archive} ({report.get('seconds', 0)} s). Nothing was changed.")
+            for d in report["databases"] + report["postgres"]:
+                name = d.get("database") or d.get("dump")
+                if d.get("skipped"):
+                    console.print(f"  [yellow]![/yellow] {name}: skipped ({d['skipped']}; pass --postgres-env)")
+                elif d.get("problems"):
+                    console.print(f"  [red]✗[/red] {name}: {escape('; '.join(d['problems']))}")
+                else:
+                    rows = ", ".join(f"{v} {k.removeprefix('hz_')}" for k, v in (d.get("rows") or {}).items())
+                    console.print(f"  [green]✓[/green] {name}" + (" upgraded" if d.get("upgraded") else "")
+                                  + (f": {rows}" if rows else ""))
+            for line in report["problems"] if not report["databases"] else []:
+                console.print(f"  [red]✗[/red] {escape(line)}")
+        if not report["ok"]:
+            raise typer.Exit(1)
+        return
 
     moves = []
     for m in move:
@@ -1457,14 +1574,18 @@ def restore_cmd(
             for root, target in planned:
                 console.print(f"{root['path']} -> {target}" + (" (exists; kept aside)" if target.exists() else ""))
             return
-        result = backup_lib.restore(archive, moves, say=console.print)
+        result = backup_lib.restore(archive, moves, say=console.print,
+                                    postgres_url=_pg_url(postgres_env or "DATABASE_URL") if postgres else None)
     except backup_lib.BackupError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
     for aside in result["kept"]:
         console.print(f"Previous state kept at {aside}")
     for url in result["not_included"]:
-        console.print(f"[yellow]Not in this archive (PostgreSQL):[/yellow] {url}. Restore it with pg_restore.")
+        console.print(f"[yellow]Not in this archive:[/yellow] {url}.")
+    if result.get("postgres") and not result.get("postgres_restored"):
+        console.print("[yellow]The archive's PostgreSQL dump was not loaded.[/yellow] Pass --postgres to load it "
+                      "into the database named by --postgres-env (default DATABASE_URL).")
     for path in result.get("redacted", []):
         console.print(f"[yellow]Database passwords in {path} were saved as ***.[/yellow] "
                       "`hubzoid gateway` rewrites this file from its environment when it starts, "

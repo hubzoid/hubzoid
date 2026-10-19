@@ -202,7 +202,7 @@ def check_schema(hub: Path) -> Result:
 
 
 def check_disk(hub: Path) -> Result:
-    usage = shutil.disk_usage(deploy.root(hub))
+    usage = shutil.disk_usage(deploy.state_root(hub))
     free_gb = usage.free / 1e9
     details = {"free_gb": round(free_gb, 1), "total_gb": round(usage.total / 1e9, 1)}
     if free_gb < 0.5:
@@ -492,7 +492,7 @@ class DiagnosticsService:
         from .. import db, migrations
 
         self.hub_dir = Path(hub_dir)
-        self.root = deploy.root(self.hub_dir)
+        self.root = deploy.state_root(self.hub_dir)
         self.deployment_id = deploy.deployment_id(self.hub_dir)
         if engine is None:
             engine = db.operational_engine(self.hub_dir)

@@ -199,7 +199,7 @@ class BrandingService:
             engine = db.operational_engine(self.hub_dir)
             migrations.upgrade(engine, "operational")
         self.engine = engine
-        self.asset_dir = self.root / ".hubzoid" / "branding" / "assets"
+        self.asset_dir = deploy.state_root(self.hub_dir) / ".hubzoid" / "branding" / "assets"
 
     # -- assets -------------------------------------------------------------------
     def _store_asset(self, conn, checked: assets_mod.Checked) -> dict:

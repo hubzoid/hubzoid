@@ -150,6 +150,8 @@ def configure_cmd(
             result["revision"] = hs.write(hub_dir, candidate.model_dump(), expected_revision=expected)
         except HubFileError as exc:
             _fail("validation_failed", str(exc), 2, as_json)
+        except hs.ReadOnly as exc:
+            _fail("hub_read_only", str(exc), 2, as_json)
         except hs.Conflict as exc:
             _fail("revision_conflict", "The hub's settings changed since you read them. Check again.", 4, as_json,
                   current_revision=exc.current)

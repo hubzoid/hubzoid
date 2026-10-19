@@ -171,6 +171,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     Slugs are de-duplicated so two hubs never collide on an artifact prefix.
     Raises ValueError if two hubs share a bridge port (they'd race).
     """
+    from . import datadir
+
     backends: list[GatewayBackend] = []
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
@@ -183,9 +185,17 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         inherited_env = os.environ.copy()
         try:
             s = load(hub_dir)
+            data = datadir.configured()  # as this hub sees it, its .env included
         finally:
             os.environ.clear()
             os.environ.update(inherited_env)
+        if data is not None:
+            # Other processes of a gateway (the edge, backups, the other bridges)
+            # find a hub's state in its folder. HUBZOID_DATA_DIR is for one
+            # hosted hub (`hubzoid run`), not a gateway.
+            raise ValueError(f"gateway: hub {hub_dir.name} sets {datadir.ENV}={data}. A gateway keeps each "
+                             f"hub's state in that hub's folder and its own in --data-dir. Unset "
+                             f"{datadir.ENV}, or run this hub on its own with `hubzoid run`.")
         if s.bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[s.bridge_port].name} and "

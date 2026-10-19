@@ -42,12 +42,13 @@
 # not start.
 FROM python:3.12-slim-trixie
 
-# The image needs no system packages: every dependency ships wheels for amd64
-# and arm64.
-
-# Non-root user.
-RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
-USER hubzoid
+# Every Python dependency ships wheels for amd64 and arm64. The one system
+# package is the PostgreSQL client, for `hubzoid backup` of a deployment on
+# PostgreSQL: pg_dump must be the server's major version or newer (Debian 13
+# ships 17).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/home/hubzoid/.local/bin:$PATH \
     PIP_NO_CACHE_DIR=1 \
@@ -57,14 +58,25 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
     HUBZOID_HOST=0.0.0.0
 
 # Reviewed dependencies first (cached layer), then the package itself.
-COPY --chown=hubzoid requirements.lock /tmp/hubzoid-src/
-RUN pip install --user -r /tmp/hubzoid-src/requirements.lock
-COPY --chown=hubzoid pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
-COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
-RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
+# Installed for every user, so the image also runs as root where a provider's
+# volume needs it (Railway: RAILWAY_RUN_UID=0).
+COPY requirements.lock /tmp/hubzoid-src/
+RUN pip install -r /tmp/hubzoid-src/requirements.lock
+COPY pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
+COPY hubzoid /tmp/hubzoid-src/hubzoid
+RUN pip install --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
 
+# Non-root user. /data, the durable folder a hosted hub writes to
+# (HUBZOID_DATA_DIR), is theirs: a volume mounted there starts with that owner.
+# /hub, where a hosted hub's own files are, stays root's: they are only read.
+RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid \
+    && mkdir -p /data && chown hubzoid:hubzoid /data
 WORKDIR /hub
+USER hubzoid
 EXPOSE 3080
+# The public health check, on the port the provider gives (PORT).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','3080'),timeout=4)"
 
 ENTRYPOINT ["hubzoid"]
 CMD ["run", "/hub"]

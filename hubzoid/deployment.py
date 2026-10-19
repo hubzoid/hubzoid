@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 
+from . import datadir
+
 
 def _validate_hub_keys(hubs: list[dict]) -> None:
     keys = [h["key"].strip().lower() for h in hubs]
@@ -22,7 +24,7 @@ def _validate_hub_keys(hubs: list[dict]) -> None:
 def read(hub_dir: Path, env=None, *, require_hub: bool = True) -> dict:
     env = os.environ if env is None else env
     manifest = env.get("HUBZOID_DEPLOYMENT")
-    pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+    pointer = datadir.state(hub_dir) / "deployment.json"
     if not manifest and pointer.exists():
         manifest = json.loads(pointer.read_text())["manifest"]
     if not manifest:
@@ -44,7 +46,7 @@ def manifest_path(hub_dir: Path, env=None) -> Path | None:
     holds it), or None for a standalone hub."""
     env = os.environ if env is None else env
     manifest = env.get("HUBZOID_DEPLOYMENT")
-    pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+    pointer = datadir.state(hub_dir) / "deployment.json"
     if not manifest and pointer.exists():
         try:
             manifest = json.loads(pointer.read_text()).get("manifest")
@@ -124,7 +126,7 @@ def save(
     _write(path, data)
     for hub in hubs:
         _write(
-            Path(hub["path"]) / ".hubzoid" / "deployment.json", {"manifest": str(path)}
+            datadir.state(Path(hub["path"])) / "deployment.json", {"manifest": str(path)}
         )
 
 

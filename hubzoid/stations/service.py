@@ -477,14 +477,15 @@ def _keep_or_release(hub_dir, sandbox_id: str | None, call_id: str) -> None:
 
 def _export(hub_dir, sandbox_id: str, item_id: str, call_id: str) -> None:
     """Each checkout's new commits as a patch in the hub's output."""
+    from .. import datadir
     from ..sandbox import service as sandbox_service
 
     box = sandbox_service.get(hub_dir, sandbox_id)
     if not box or not box.get("checkouts_json"):
         return
     try:
-        sandbox_service.export_patches(hub_dir, sandbox_id, Path(hub_dir) / "output" / "work-items" / item_id
-                                       / call_id)
+        sandbox_service.export_patches(hub_dir, sandbox_id,
+                                       datadir.resolve(hub_dir, Path("output") / "work-items" / item_id / call_id))
     except WorkItemError as exc:
         code = exc.code if exc.code == "sandbox_lost" else "export_failed"
         _finish(hub_dir, call_id, "failed", error_code=code, error=exc.message[:4000])

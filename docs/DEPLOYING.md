@@ -24,8 +24,9 @@ deployments get short notes at the end.
 | A. Native venv + systemd + a reverse proxy of your choice | 1-3 agents on a single Linux box. Cheapest and simplest. |
 | B. Docker | `pip install` fails on your target OS (Python-version traps, missing system libraries), or you want the reviewed dependency set. |
 | C. ECS / Kubernetes / other orchestrators | Your org mandates IaC or a managed orchestrator. The image from Path B is the entry point; the wiring is yours. |
+| D. A hosting provider (Railway, Maritime) | You want no server of your own. `hubzoid deploy init railway\|maritime` writes the files, and [deploy/](deploy/README.md) has each provider's steps. Not yet verified on either provider's live service. |
 
-If you don't have a reason to pick B or C, pick A.
+If you don't have a reason to pick B, C or D, pick A.
 
 ## Supported topologies
 
@@ -578,9 +579,15 @@ is on per [docs/auth.md](auth.md)).
 
 ### 7. Backup
 
-`hubzoid backup` saves each agent's databases, chat UI data and runtime
-state to one archive while chat keeps working. The hub markdown (AGENTS.md,
-skills/, knowledge/) is in git and is not included. Drop the following at
+Each agent takes a verified backup weekly by itself, into its
+`.hubzoid/backups` (`HUBZOID_BACKUPS=weekly|daily|off`, see
+[BACKUP.md](BACKUP.md#scheduled-backups)). Copy those archives off the
+machine.
+
+For your own schedule instead, turn that off and use cron: `hubzoid backup`
+saves each agent's databases, chat UI data and runtime state to one verified
+archive while chat keeps working. The hub markdown (AGENTS.md, skills/,
+knowledge/) is in git and is not included. Drop the following at
 `/etc/cron.daily/hubzoid-backup` (`chmod +x`):
 
 ```bash

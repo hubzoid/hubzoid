@@ -18,6 +18,10 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 # policy on themselves (tests/test_auth_mfa.py).
 os.environ.setdefault("HUBZOID_MFA_REQUIRED", "none")
 
+# Every bridge takes a weekly backup by default. Tests that build an app are
+# about something else; tests/test_backup_verify.py runs the schedule itself.
+os.environ.setdefault("HUBZOID_BACKUPS", "off")
+
 # A test must never signal "every process I own": os.kill(-1) or os.killpg(0/1)
 # (killpg(1) is kill(-1)). On a CI runner that kills the runner itself, and the
 # job hangs with no log. A stand-in process (MagicMock pid == 1) is the usual way in.

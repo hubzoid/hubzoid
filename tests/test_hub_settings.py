@@ -204,6 +204,14 @@ def test_writes_guard_their_revision_and_notice_hand_edits(hub):
     assert hs.write(hub, doc, expected_revision=2) == 3
 
 
+def test_an_image_built_hubs_settings_file_comes_from_git(hub, tmp_path, monkeypatch):
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))
+    with pytest.raises(hs.ReadOnly):
+        hs.write(hub, {"version": 1, "values": {"FACTORY_REPO": "acme/widgets"}, "secrets": {}},
+                 expected_revision="absent")
+    assert not (hub / "hub.settings.yaml").exists()
+
+
 # ---------------------------------------------------------------------------
 # The hub's own checks
 # ---------------------------------------------------------------------------

@@ -609,7 +609,9 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     started_dt = datetime.now()
     state = ScheduleState(hub_dir)
 
-    scratch = hub_dir / task.scratch_rel
+    from .datadir import resolve
+
+    scratch = resolve(hub_dir, task.scratch_rel)
     log_path = scratch / "runs" / f"{started_dt.strftime('%Y%m%dT%H%M%S')}.jsonl"
     rlog = RunLog(log_path)
     result = RunResult(task=task.name, run_log=log_path, result="error")
