@@ -164,6 +164,8 @@ def test_a_publication_is_one_commit_like_a_hub_change(client, hub):
     body = git("log", "-1", "--format=%B")
     assert f"Hubzoid-Workspace-Draft: {hub.name.lower()}#{d['id']}" in body
     assert git("status", "--porcelain", "--", "AGENTS.md") == ""  # nothing left uncommitted
+    author = git("log", "-1", "--format=%ae").strip()        # W28: by the person who published it
+    assert "@" in author and author != "hub-changes@hubzoid.invalid"
 
 
 def test_flat_and_differently_spelt_skill_folders_are_listed(client, hub):

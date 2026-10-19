@@ -356,25 +356,51 @@ def _git(top: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
 
 
 def _commit_message(ch: dict, approver: str) -> str:
-    body = (ch.get("reason") or "").strip()
-    return (f"{ch['title']}\n\n" + (body + "\n\n" if body else "")
-            + f"Hubzoid-Change: {ch['hub_id']}#{ch['id']}\nHubzoid-Proposed-By: {ch['proposed_by']}\n"
+    # Only what the reviewer approved goes into shared history: the title and
+    # the trailers. The agent-written reason stays in Hubzoid (it can quote a
+    # person's own notes, which must never reach the hub's Git history).
+    return (f"{ch['title']}\n\nReviewed and applied in Hubzoid as change #{ch['id']}.\n\n"
+            f"Hubzoid-Change: {ch['hub_id']}#{ch['id']}\nHubzoid-Proposed-By: {ch['proposed_by']}\n"
             f"Hubzoid-Approved-By: {approver}\n")
 
 
-def _find_commit(top: Path, ch: dict) -> str | None:
-    r = _git(top, "log", "--format=%H", "-n", "1", "--fixed-strings",
-             f"--grep=Hubzoid-Change: {ch['hub_id']}#{ch['id']}", check=False)
-    return r.stdout.strip() or None
+def git_identity(hub_dir: Path, email: str) -> tuple[list[str], dict]:
+    """Who a hub commit is by: the approving or publishing person as author; as committer
+    the identity configured for this checkout, else ``HUBZOID_GIT_COMMITTER``
+    ("Name <email>"), else Hubzoid. Returns (git -c options, env)."""
+    import re as _re
+
+    env: dict = {}
+    if email and "@" in email:  # no person given: the committer is the author too
+        name = email.split("@")[0]
+        try:
+            from ..auth import users
+
+            name = ((users.find_by_email(Path(hub_dir), email) or {}).get("name") or name).strip() or name
+        except Exception:  # noqa: BLE001 - the address alone is enough
+            pass
+        env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
+    configured = os.environ.get("HUBZOID_GIT_COMMITTER") or ""
+    m = _re.match(r"\s*(.+?)\s*<([^>]+)>\s*$", configured)
+    if m:
+        env.update(GIT_COMMITTER_NAME=m.group(1), GIT_COMMITTER_EMAIL=m.group(2))
+        return [], env
+    from ..schedule_runner import repo_toplevel
+
+    top = repo_toplevel(Path(hub_dir))
+    has_own = top is not None and _git(top, "config", "user.email", check=False).stdout.strip()
+    return ([] if has_own else ["-c", "user.name=Hubzoid", "-c", "user.email=hub-changes@hubzoid.invalid"]), env
 
 
-def commit_files(hub_dir: Path, paths: list[Path], message: str, trailer: str) -> str | None:
+def commit_files(hub_dir: Path, paths: list[Path], message: str, trailer: str, *,
+                 author_email: str | None = None) -> str | None:
     """Commit exactly ``paths`` (files on disk under the hub) with ``message``,
     whose ``trailer`` line identifies the change. Nothing staged means it was
     committed already (a retry after a crash): that commit is found by its
     trailer. None when the hub is not in a Git repository. Every web-app change
     to hub files (hub changes, Workspace publications) commits this way, under
-    ``write_lock``."""
+    ``write_lock``. ``author_email``: the person the commit is by (see
+    ``git_identity``); the committer is this checkout's identity."""
     from ..schedule_runner import repo_toplevel
 
     top = repo_toplevel(Path(hub_dir))
@@ -385,20 +411,23 @@ def commit_files(hub_dir: Path, paths: list[Path], message: str, trailer: str) -
     if not _git(top, "diff", "--cached", "--quiet", "--", *specs, check=False).returncode:
         r = _git(top, "log", "--format=%H", "-n", "1", "--fixed-strings", f"--grep={trailer}", check=False)
         return r.stdout.strip() or None
-    _git(top, "-c", "user.name=Hubzoid", "-c", "user.email=hub-changes@hubzoid.invalid", "commit", "-q",
-         "-m", message, "--", *specs)
+    opts, env = git_identity(hub_dir, author_email or "")
+    subprocess.run(["git", "-C", str(top), *opts, "commit", "-q", "-m", message, "--", *specs],
+                   capture_output=True, text=True, check=True, env={**os.environ, **env})
     return _git(top, "rev-parse", "HEAD").stdout.strip()
 
 
 def _commit(hub_dir: Path, ch: dict, approver: str) -> str | None:
     return commit_files(hub_dir, [_disk(hub_dir, f["path"]) for f in ch["files"]], _commit_message(ch, approver),
-                        f"Hubzoid-Change: {ch['hub_id']}#{ch['id']}")
+                        f"Hubzoid-Change: {ch['hub_id']}#{ch['id']}", author_email=approver)
 
 
 def _publish(hub_dir: Path) -> tuple[str | None, str | None]:
-    """Push the current branch as it is. Never rebases or forces."""
+    """Push the current branch as it is. Never rebases or forces. Without
+    ``HUBZOID_HUB_CHANGES_PUSH=1`` the commit stays on this server ("local"):
+    shown in Hub changes, and someone pushes it from the hub folder."""
     if (os.environ.get("HUBZOID_HUB_CHANGES_PUSH") or "").strip().lower() not in ("1", "true", "yes", "on"):
-        return None, None
+        return "local", None
     from ..schedule_runner import _push_args, repo_toplevel
 
     top = repo_toplevel(Path(hub_dir))
@@ -486,6 +515,12 @@ def undo(hub_dir: Path, change_id: int, *, actor: str, via: str = "api") -> dict
         edits.append({"path": f["path"], "old_text": f["text"], "new_text": f["base_text"]})
     return propose(hub_dir, title=f"Undo #{ch['id']}: {ch['title']}"[:300], edits=edits, actor=actor, via=via,
                    reason=f"Puts back the files as they were before #{ch['id']}.", present=False, undoes=ch["id"])
+
+
+def needs_reload(ch: dict) -> bool:
+    """Whether a change touched what a runtime reads only when it is built."""
+    return any(p == "AGENTS.md" or p.startswith("skills/") for p in ch.get("paths") or
+               [f["path"] for f in ch.get("files") or []])
 
 
 def public(ch: dict, *, with_diff: bool = True) -> dict:

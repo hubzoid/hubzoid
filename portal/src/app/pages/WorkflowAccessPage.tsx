@@ -14,7 +14,7 @@ import { PageFrame } from "./PageFrame";
 
 type Grant = { subject: string; workflow: string; action: string; source?: string };
 type Policy = { revision: number; yaml: string; grants: Grant[]; effective: Grant[]; actions: string[] };
-type Resource = { key: string; kind: string; source?: string; allowed_actions: string[] };
+type Resource = { key: string; kind: string; source?: string; title?: string; allowed_actions: string[] };
 
 const W = t.workflowAccess;
 
@@ -176,7 +176,9 @@ function WorkflowBlock({
   return (
     <section className="hz-wa-block" data-testid={`wa-${resource.key}`}>
       <div className="flex items-baseline gap-2">
-        <h3 className="m-0 text-[14px] font-medium text-ink">{all ? W.allWorkflows : resource.key}</h3>
+        <h3 className="m-0 text-[14px] font-medium text-ink" title={all ? undefined : resource.key}>
+          {all ? W.allWorkflows : resource.title || resource.key}
+        </h3>
         <span className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : resource.kind === "builtin" ? W.builtin : W.code}</span>
       </div>
       {bySubject.size === 0 && earlier.length === 0 && <p className="m-0 text-[13px] text-mute">{W.nobody}</p>}
@@ -305,7 +307,7 @@ function Explain({ base, people, resources, actions }: { base: string; people: s
         <select className="hz-input !w-auto" value={workflow} onChange={(e) => setWorkflow(e.target.value)} aria-label={W.workflow} data-testid="wa-explain-workflow">
           {resources.map((r) => (
             <option key={r.key} value={r.key}>
-              {r.key}
+              {r.title || r.key}
             </option>
           ))}
         </select>

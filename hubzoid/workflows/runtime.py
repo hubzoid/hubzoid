@@ -495,7 +495,7 @@ def workflow(
             if item_id:
                 wi_service.finished(_HUB_DIR, item_id, run_id, result=result)
             outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
-                              published=published, tool_wait=chat["tool_wait"])
+                              published=published, tool_wait=chat["tool_wait"], result=result)
             return result
 
 

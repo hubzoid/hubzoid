@@ -436,7 +436,8 @@ class AuthoringService:
         message = (f"Update {d.path} (reviewed in Settings → Agent instructions)\n\n{trailer}\n"
                    f"Hubzoid-Published-By: {who}\n")
         try:
-            return hub_files.commit_files(self.hub_dir, [self._path(d.path)], message, trailer)
+            return hub_files.commit_files(self.hub_dir, [self._path(d.path)], message, trailer,
+                                          author_email=getattr(actor, "email", None))
         except Exception as exc:  # noqa: BLE001
             # The draft stays "publishing": publishing again finds the file
             # already written and finishes (commit, then record).
