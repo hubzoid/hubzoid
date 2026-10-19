@@ -24,8 +24,7 @@ def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str 
     hub's own `read_file` and `list_files` are listed as `read_hub_file` and
     `list_hub_files`. `sandbox_id` binds them to a live sandbox; without it
     they are the same tools, refusing to run (for checks and digests)."""
-    import dataclasses
-
+    from .. import tool_classes
     from ..sandbox import tools as sandbox_tools
     from ..work_items.errors import WorkItemError
 
@@ -48,7 +47,12 @@ def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str 
         elif name in box:
             out[name] = box[name]
         elif name in sandbox_tools.HUB_ALIASES and sandbox_tools.HUB_ALIASES[name] in registry:
-            out[name] = dataclasses.replace(registry[sandbox_tools.HUB_ALIASES[name]], name=name)
+            # The alias keeps the original's class (a built-in is classed by its own
+            # name, which the alias does not have) and its source, for the digest.
+            original = registry[sandbox_tools.HUB_ALIASES[name]]
+            out[name] = tool_classes.declare(tool_classes.copy_tool(original, name=name),
+                                             tool_classes.classify(original),
+                                             action=tool_classes.action_of(original))
         elif name in registry:
             out[name] = registry[name]
         else:

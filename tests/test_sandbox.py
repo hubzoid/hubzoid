@@ -101,6 +101,9 @@ def test_sandbox_tools_need_a_sandbox(hub_dir):
     boxed = tools.for_station(hub_dir, ["exec_command", "read_file", "read_hub_file"], sandbox=True)
     assert list(boxed) == ["exec_command", "read_file", "read_hub_file"]
     assert boxed["read_file"] is not boxed["read_hub_file"]          # the hub's file tool keeps working
+    from hubzoid import tool_classes
+
+    assert tool_classes.classify(boxed["read_hub_file"]) == "read"     # the alias is still a read
 
 
 class FakeSandboxes:
