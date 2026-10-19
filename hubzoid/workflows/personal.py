@@ -215,6 +215,10 @@ def last_words(s: Schedule) -> str:
     if s.last_status == "updated":
         return f"Updated {_when(s.last_at, s.timezone)}"
     if s.last_status == "no_change":
+        from .builtin import NAMES
+
+        if s.workflow in NAMES:  # a repeated request answers in a new chat
+            return f"Answered in a new chat {_when(s.last_at, s.timezone)}"
         return f"No change {_when(s.last_at, s.timezone)}"
     if s.last_status == "failed":
         return f"Failed {_when(s.last_at, s.timezone)}: {CAUSES.get(s.last_cause or '', CAUSES['error'])}"

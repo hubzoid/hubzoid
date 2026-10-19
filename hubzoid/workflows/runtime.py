@@ -976,11 +976,14 @@ def load_definitions(hub_dir) -> list[WorkflowDef]:
     until a workflow file changes."""
     from .._fs import resolve_bucket
 
+    from .builtin import files as builtin_files
+
     root = resolve_bucket(Path(hub_dir), "workflows")
-    if root is None or not root.is_dir():
-        return []
     files = sorted(p for d in root.iterdir() if d.is_dir() for p in d.glob("*.py")
-                   if not p.name.startswith("_"))
+                   if not p.name.startswith("_")) if root is not None and root.is_dir() else []
+    files = builtin_files() + files
+    if not files:
+        return []
     import hashlib
 
     digest = hashlib.sha256()
@@ -1182,14 +1185,25 @@ def load_workflows(hub_dir) -> int:
     from .._fs import resolve_bucket
 
     root = resolve_bucket(Path(hub_dir), "workflows")
+    before = len(_REGISTRY)
+    from .builtin import files as builtin_files
+
+    for py in builtin_files():  # workflows that ship with Hubzoid
+        mod_name = f"_hubzoid_builtin_wf_{py.stem}"
+        if mod_name in sys.modules:
+            continue
+        spec = importlib.util.spec_from_file_location(mod_name, py)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
     if root is None or not root.is_dir():
-        return 0
+        return len(_REGISTRY) - before
     from .observe import definitions
 
     errors = [r for r in definitions(hub_dir) if r["error"]]
     if errors:
         raise ValueError(str(errors))
-    before = len(_REGISTRY)
     for wf_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for py in sorted(wf_dir.glob("*.py")):
             if py.name.startswith("_"):

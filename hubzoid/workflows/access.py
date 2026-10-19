@@ -121,6 +121,9 @@ def resources(hub_dir: Path) -> list[dict]:
     except Exception:  # noqa: BLE001 - a broken task file is reported elsewhere
         tasks = []
     out += [{"key": f"md:{t.name}", "kind": "markdown", "source": f"schedule/{t.name}.md"} for t in tasks]
+    from .builtin import files as builtin_files
+
+    out += [{"key": p.stem, "kind": "builtin", "source": "built in"} for p in builtin_files()]
     return sorted(out, key=lambda r: r["key"])
 
 
@@ -382,7 +385,7 @@ def explain(hub_dir: Path, *, asker: str, subject: str, workflow: str, action: s
     return {"subject": subject, "workflow": wf, "action": action, **d.as_dict(), "revision": revision(hub_dir)}
 
 
-def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces):
+def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces, action: str = "run"):
     """A workflow's own chat tool ("run it for me"): shown and allowed to the
     people who may ``run`` it, on the surfaces it allows. Same audit as the
     access guard: no audit row, no run."""
@@ -399,10 +402,10 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces):
 
     def decide() -> tuple[bool, str]:
         ident = current_identity()
-        ok, reason = is_allowed(ident, f"workflow:{workflow}:run", allowed_surfaces=surfaces, can=lambda: True)
+        ok, reason = is_allowed(ident, f"workflow:{workflow}:{action}", allowed_surfaces=surfaces, can=lambda: True)
         if not ok:
             return False, reason
-        d = authorize(hub_dir, ident.user, workflow, "run")
+        d = authorize(hub_dir, ident.user, workflow, action)
         return d.allowed, d.reason
 
     async def invoke(ctx, input_str):
@@ -411,7 +414,7 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces):
         recorded = await asyncio.to_thread(audit.record, hub_dir, user=ident.user, surface=ident.surface,
                                            tool=ft.name, decision="allow" if allowed else "deny", reason=reason)
         if not allowed:
-            return f"[access denied: you can't run {workflow}. An admin can give you access in Workflow access.]"
+            return f"[access denied: you can't {action} {workflow}. An admin can give you access in Workflow access.]"
         if not recorded:
             return f"[access denied: '{ft.name}' could not be recorded in the access log, so it was not run.]"
         return await original(ctx, input_str)
@@ -419,6 +422,6 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces):
     def enabled(*_a, **_k) -> bool:
         return decide()[0]
 
-    enabled.hubzoid_permission = f"workflow:{workflow}:run"
-    enabled.hubzoid_key = ("workflow-run", str(hub_dir), workflow, surfaces)
+    enabled.hubzoid_permission = f"workflow:{workflow}:{action}"
+    enabled.hubzoid_key = ("workflow-" + action, str(hub_dir), workflow, surfaces)
     return dataclasses.replace(ft, on_invoke_tool=invoke, is_enabled=enabled)

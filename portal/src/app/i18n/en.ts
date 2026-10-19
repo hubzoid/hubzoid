@@ -883,6 +883,7 @@ export const en = {
     allWorkflows: "All workflows",
     allHelp: "Applies to every workflow, including new ones",
     code: "Code workflow",
+    builtin: "Built in: repeated requests (\"repeat this every Monday\"). Give Run and Schedule.",
     markdown: "Markdown workflow",
     nobody: "Nobody has access given here.",
     everyone: "Everyone in this agent",

@@ -167,7 +167,7 @@ function WorkflowBlock({
     <section className="hz-wa-block" data-testid={`wa-${resource.key}`}>
       <div className="flex items-baseline gap-2">
         <h3 className="m-0 text-[14px] font-medium text-ink">{all ? W.allWorkflows : resource.key}</h3>
-        <span className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : W.code}</span>
+        <span className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : resource.kind === "builtin" ? W.builtin : W.code}</span>
       </div>
       {bySubject.size === 0 && earlier.length === 0 && <p className="m-0 text-[13px] text-mute">{W.nobody}</p>}
       {[...bySubject.entries()].map(([who, acts]) => (

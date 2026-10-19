@@ -1345,6 +1345,29 @@ class ChatEngine:
             email = ((users.get(self.hub_dir, author_id) or {}).get("email") or "").lower()
         return Actor(id=author_id, email=email, groups=frozenset(self.groups_for(email)))
 
+    # -- results of personal workflows -----------------------------------------------------
+    def deliver(self, actor: Actor, *, agent: str, title: str, prompt: str, answer: str) -> str:
+        """A new private conversation for ``actor`` holding a request and the
+        answer a workflow run produced. Returns its id."""
+        conv = self.create_conversation(actor, agent=agent)
+        cid = conv["conversation_id"]
+        with self.engine.begin() as conn:
+            c = self._conv(conn, cid)
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == conv["branch"]["id"])
+                             .with_for_update()).first()
+            uid = self._insert(conn, conv_id=cid, mid=None, parent_id=None, role="user",
+                               content=[{"type": "text", "text": prompt}], branch_id=b.id, actor=actor)
+            aid = self._insert(conn, conv_id=cid, mid=None, parent_id=uid, role="assistant",
+                               content=[{"type": "text", "text": answer}], branch_id=b.id, actor=actor)
+            g.move_head(conn, b.id, b.revision, aid)
+            self._touch(conn, cid, aid)
+            g.set_view(conn, cid, actor.id, b.id, aid)
+            conn.execute(conversations.update().where(conversations.c.id == cid)
+                         .values(title=title[:200], title_source="manual"))
+            del c
+        self.notify(cid)
+        return cid
+
     # -- approvals and questions (hubzoid.hitl) ---------------------------------------------
     class Busy(Exception):
         """The reply that asked is still being written: continue when it ends."""
