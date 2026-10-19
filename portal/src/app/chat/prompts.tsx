@@ -1,6 +1,7 @@
 // Saved prompts in the composer: pick a shared or personal prompt, fill its
 // variables, and its text (rendered and checked by the server) is placed in
 // the message box. Nothing is sent until you send it.
+import { Select } from "../components/Select";
 import { useEffect, useState, type ReactNode } from "react";
 import { Popover } from "radix-ui";
 import { useAui } from "@assistant-ui/react";
@@ -73,10 +74,7 @@ export function PromptPicker({ open, onOpenChange: setOpen, children }: { open: 
                 <label key={v.name} className="block">
                   <span className="hz-label">{v.label || v.name}{v.required ? "" : " (optional)"}</span>
                   {v.options?.length ? (
-                    <select className="hz-input" value={values[v.name] ?? ""} onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}>
-                      <option value="" />
-                      {v.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
+                    <Select aria-label={v.label || v.name} value={values[v.name] ?? ""} onValueChange={value => setValues({ ...values, [v.name]: value })} options={[{value: "", label: "—"}, ...v.options.map(o => ({value: o, label: o}))]} />
                   ) : (
                     <input className="hz-input" value={values[v.name] ?? ""} onChange={(e) => setValues({ ...values, [v.name]: e.target.value })} />
                   )}

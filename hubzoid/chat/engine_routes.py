@@ -183,7 +183,8 @@ class Orchestrator:
             # The credential that started the reply goes with it: B's per-call check
             # stops the run when that session or key is revoked.
             user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email,
-                                   credential=plan.credential, credential_id=plan.credential_id)
+                                   credential=plan.credential, credential_id=plan.credential_id,
+                                   hubs=plan.key_hubs)
             from .. import _request_ctx
             from .history import user_text
 
@@ -203,8 +204,10 @@ class Orchestrator:
             if opts.get("tool_allowlist") is not None:
                 slot.tool_allowlist = list(opts["tool_allowlist"])
             # Who this reply acts for, for approvals and questions (hubzoid.hitl).
-            slot.hitl = {"account_id": plan.actor_id, "email": plan.actor_email, "present": True,
-                         "origin": "chat", "conversation_id": plan.conversation_id, "branch_id": plan.branch_id,
+            via_key = plan.credential == "api_key"
+            slot.hitl = {"account_id": plan.actor_id, "email": plan.actor_email, "present": not via_key,
+                         "origin": "api" if via_key else "chat",
+                         "conversation_id": plan.conversation_id, "branch_id": plan.branch_id,
                          "message_id": plan.message_id, "run_id": plan.run_id}
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
@@ -318,6 +321,16 @@ class Orchestrator:
         if request.get("origin") != "chat" or not request.get("conversation_id") \
                 or request.get("status") not in ("approved", "rejected", "answered"):
             return False
+        # The reply resumes for the person who asked, on the session or key
+        # that reply ran with: if that one was revoked (or they were signed
+        # out everywhere) since, it doesn't resume.
+        credential = await db(_origin_credential, self.ctx.hub_dir, request["message_id"])
+        from ..access.evaluator import still_valid
+
+        if credential and not await db(lambda: still_valid(self.ctx.hub_dir, request["requester_id"],
+                                                           credential, expired_ok=True)):
+            log.info("chat: request %s not continued: its sign-in ended", request["id"])
+            return False
         if not await db(service.mark_continued, self.ctx.hub_dir, request["id"]):
             return False
         parts = [{"type": "text", "text": service.visible_outcome(request) or "OK"},
@@ -326,7 +339,7 @@ class Orchestrator:
         try:
             plan = await db(self.engine.continue_after_request, request["conversation_id"],
                             actor_id=request["requester_id"], branch_id=request["branch_id"],
-                            after_message_id=request["message_id"], parts=parts)
+                            after_message_id=request["message_id"], parts=parts, credential=credential)
         except self.engine.Busy:
             await db(_unclaim, self.ctx.hub_dir, request["id"])  # retried when that reply ends
             return False
@@ -516,7 +529,12 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
 
     @app.get("/api/conversations/{cid}/events")
     async def events(cid: str, request: Request):
+        from .common import check_use_hub
+
         actor = await actor_of(request)
+        # Agent access is checked before anything is replayed, as it is again
+        # before each later delivery.
+        await asyncio.to_thread(check_use_hub, ctx.hub_dir, actor.email)
         await call(engine.readable, cid, actor)
         raw = request.headers.get("last-event-id") or request.query_params.get("after") or "0"
         try:
@@ -549,11 +567,25 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
                     # may read now: their session still valid and their current
                     # grants and groups (re-resolved, never the ones at connect).
                     try:
+                        from ..auth import sessions as sessionlib
+                        from .common import check_use_hub
+
+                        # The answer cached on this request at connect time is
+                        # dropped, so a signed-out device, revoked key, block
+                        # or deletion is seen at the next delivery.
+                        sessionlib.forget(request)
                         now_actor = await actor_of(request)
                         if now_actor.id != actor.id:
                             raise g.GraphError(403, "permission_denied", "The signed-in person changed.")
+                        await asyncio.to_thread(check_use_hub, ctx.hub_dir, now_actor.email)
                         await asyncio.to_thread(engine.readable, cid, now_actor)
-                    except (g.GraphError, HTTPException):
+                    except HTTPException as exc:
+                        # The account store briefly unavailable isn't a
+                        # revocation: close, and the browser reconnects.
+                        if exc.status_code < 500:
+                            yield _sse({"type": "access.revoked"}, None)
+                        return
+                    except g.GraphError:
                         yield _sse({"type": "access.revoked"}, None)
                         return
                     if item is _WAKE:
@@ -567,6 +599,21 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     return orch
+
+
+def _origin_credential(hub_dir: Path, message_id: str) -> dict | None:
+    """The session or key, and credential counter, the asking reply ran with
+    (its run identity record), or None when there's no such record."""
+    from ..access import run_identity
+
+    for kind in ("chat", "api"):
+        rec = run_identity.for_run(Path(hub_dir), kind, message_id)
+        if rec is not None:
+            scope = rec.get("scope") or {}
+            return {"kind": rec.get("credential_kind") or "", "id": rec.get("credential_id") or "",
+                    "hubs": scope.get("hubs") if isinstance(scope, dict) else None,
+                    "epoch": rec.get("auth_epoch")}
+    return None
 
 
 def _unclaim(hub_dir: Path, request_id: str) -> None:

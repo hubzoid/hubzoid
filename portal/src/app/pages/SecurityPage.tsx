@@ -1,5 +1,6 @@
 // Settings > Preferences > Security: two-step sign-in, where you're signed in,
 // personal API keys, sign-in methods, and "sign out everywhere".
+import { Select } from "../components/Select";
 import { useEffect, useState, type FormEvent } from "react";
 import { Copy, KeyRound, LogOut, MonitorSmartphone, ShieldCheck } from "lucide-react";
 import { t } from "../i18n/en";
@@ -8,7 +9,7 @@ import { useApp } from "../lib/app-context";
 import { describeError } from "../lib/errors";
 import { formatDate, formatRelative, displayName } from "../lib/format";
 import { toast } from "../components/toast";
-import { Button, Field, Notice, PageSpinner } from "../components/ui";
+import { Button, ConfirmDialog, Field, Notice, PageSpinner } from "../components/ui";
 import { RecoveryCodes, SetupPanel, useReauth, type Setup } from "../components/Security";
 import { Section } from "./SettingsFrame";
 
@@ -249,8 +250,28 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
   const [picked, setPicked] = useState<string[]>([]);
   const [days, setDays] = useState(90);
   const [busy, setBusy] = useState(false);
-  const [made, setMade] = useState<string | null>(null);
+  const [made, setMade] = useState<{ id: string; key: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<Key | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const revoke = async () => {
+    if (!revoking) return;
+    setRevokeBusy(true);
+    setRevokeError(null);
+    try {
+      await del(`/api/me/api-keys/${revoking.id}`);
+      // The key shown once is useless now: take it off the screen.
+      if (made?.id === revoking.id) setMade(null);
+      setRevoking(null);
+      toast(S.keyRevoked);
+      reload();
+    } catch (err) {
+      setRevokeError(describeError(err));
+    } finally {
+      setRevokeBusy(false);
+    }
+  };
   const agents = app.agents.list ?? [];
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -260,8 +281,8 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
     try {
       const body: Record<string, unknown> = { name: name.trim(), preset, expires_in_days: days };
       if (preset === "chat" && scope === "some") body.hubs = picked;
-      const res = await run(() => post<{ key: string }>("/api/me/api-keys", body));
-      setMade(res.key);
+      const res = await run(() => post<{ key: string; api_key: { id: string } }>("/api/me/api-keys", body));
+      setMade({ id: res.api_key.id, key: res.key });
       setOpen(false);
       setName("");
       reload();
@@ -277,10 +298,10 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
         <Notice tone="success" title={S.keyMade} onDismiss={() => setMade(null)}>
           <p className="m-0">{S.keyOnce}</p>
           <div className="mt-2 flex items-center gap-2">
-            <code className="select-all break-all rounded bg-raised px-2 py-1 text-[12.5px] text-ink" data-testid="new-key">{made}</code>
+            <code className="select-all break-all rounded bg-raised px-2 py-1 text-[12.5px] text-ink" data-testid="new-key">{made.key}</code>
             <Button size="sm" icon={<Copy size={13} aria-hidden />} onClick={async () => {
               try {
-                await navigator.clipboard.writeText(made);
+                await navigator.clipboard.writeText(made.key);
                 toast(S.copied);
               } catch {
                 toast(S.copyFailed, "error");
@@ -291,6 +312,16 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
           </div>
         </Notice>
       )}
+      <ConfirmDialog
+        open={!!revoking}
+        onOpenChange={(o) => !o && !revokeBusy && setRevoking(null)}
+        title={S.revokeKeyTitle(revoking?.name ?? "")}
+        body={S.revokeKeyBody}
+        confirmLabel={S.revoke}
+        onConfirm={() => void revoke()}
+        busy={revokeBusy}
+        error={revokeError}
+      />
       {keys.length === 0 && !open && <p className="m-0 text-mute">{S.noKeys}</p>}
       {keys.length > 0 && (
         <ul className="m-0 list-none divide-y divide-line-soft p-0" data-testid="keys">
@@ -312,7 +343,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
                 </div>
               </div>
               {k.state === "active" && (
-                <Button size="sm" variant="ghost" onClick={() => void del(`/api/me/api-keys/${k.id}`).then(reload)}>
+                <Button size="sm" variant="ghost" onClick={() => setRevoking(k)}>
                   {S.revoke}
                 </Button>
               )}
@@ -363,11 +394,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
           )}
           <label className="block">
             <span className="hz-label">{S.expires}</span>
-            <select className="hz-input" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {[30, 90, 365].map((d) => (
-                <option key={d} value={d}>{S.days(d)}</option>
-              ))}
-            </select>
+            <Select value={String(days)} onValueChange={value => setDays(Number(value))} aria-label={S.expires} options={[30, 90, 365].map(d => ({value: String(d), label: S.days(d)}))} />
           </label>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>{t.cancel}</Button>

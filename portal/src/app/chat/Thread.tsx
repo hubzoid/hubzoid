@@ -741,6 +741,41 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
     history.replaceState(null, "", location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The unsent text is kept for this person and this chat (or new-chat page
+  // and agent) in this tab, so a sign-out mid-message (session ended, signed
+  // out elsewhere) doesn't lose it: it's back after signing in again. Signing
+  // out clears it (clearDeviceCache).
+  const me = useApp().user?.id ?? "local";
+  const draftKey = `hz.draft:${me}:${location.pathname}${location.search}`;
+  const text = useAuiState((s) => s.composer.text);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(draftKey);
+      if (saved && aui.composer().getState().isEmpty) aui.composer().setText(saved);
+    } catch {
+      /* no storage: nothing to restore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  useEffect(() => {
+    try {
+      if (text) sessionStorage.setItem(draftKey, text);
+    } catch {
+      /* no storage: the draft just isn't kept */
+    }
+    if (text) return;
+    // Sending empties the composer before the server answers. The kept text
+    // goes only once the send has stood for a moment: a send refused because
+    // the sign-in ended leaves this page first, and the text is still there.
+    const timer = setTimeout(() => {
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {
+        /* no storage */
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [text, draftKey]);
   const running = useAuiState((s) => s.thread.isRunning);
   const hasDraft = useAuiState((s) => !s.composer.isEmpty);
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);

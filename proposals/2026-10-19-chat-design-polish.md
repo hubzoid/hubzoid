@@ -56,3 +56,9 @@ ambiguous hub context in Agent instructions. Recompose the embedded views with
 existing controls, preserve standalone defaults and all review/actions, and
 verify populated sources, member permissions and mobile layouts. Test fixtures
 remain fictional and outside the repository.
+
+## Approved Studio implementation · 2026-10-20
+
+The founder approved the Studio reference and requested applying it to the actual app with a PR to main. Implement orange principal actions, neutral routine actions, explicit readable hover/active/disabled states, underline tabs, consistent geometry and keyboard focus, and neutral dropdown selection. Reuse the existing Radix Select and Ant Design controls; keep their behavior, permission checks, API contracts and custom theme overrides. No new dependencies or component-library migration are needed.
+
+Files: shared control styles/components, native select consumers, embedded management component tokens, and the existing server palette contract plus matching first-paint CSS. Validate light/dark/OLED and branded themes, populated management sections, menus/dialogs, owner/member views, keyboard and phone targets. Use Vite source checks while developing. The founder subsequently requested no build or heavy unit runs because of RAM pressure; production bundles remain unchanged and unfinished checks are recorded at handoff. User authorization covers implementation and opening the PR; a human merges it.

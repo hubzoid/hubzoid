@@ -138,6 +138,9 @@ export const en = {
       linked_elsewhere: "That sign-in already belongs to another account.",
       sign_in_first: "Sign in first.",
       not_you: "That sign-in belongs to a different person.",
+      session_ended:
+        "You were signed out: your session ended, or it was signed out from another device or by an administrator. " +
+        "Sign in again to continue. A message you were writing is kept.",
       confirm_first: "Confirm it's you first, then add the sign-in.",
       use_code: "Your account uses two-step sign-in: confirm with a code from your authenticator app.",
       not_fresh: "Your provider didn't ask you to sign in again. Try once more.",
@@ -223,6 +226,9 @@ export const en = {
     copyKeyValue: "Copy key",
     noKeys: "No API keys yet.",
     revoke: "Revoke",
+    revokeKeyTitle: (name: string) => `Revoke “${name}”?`,
+    revokeKeyBody: "Anything using this key stops working at once. This can't be undone.",
+    keyRevoked: "Key revoked.",
     revoked: "Revoked",
     expired: "Expired",
     active: "Active",
@@ -452,7 +458,7 @@ export const en = {
     signOutFailed: "Couldn't sign out. Check your connection and try again. You are still signed in.",
     local: "Local mode",
     admin: "Administrator",
-    member: "Member",
+    member: "User",  // the same word People uses (User or Administrator)
     title: "Account",
     profile: "Profile",
     profileHelp: "Your name appears on chats you share.",

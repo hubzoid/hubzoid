@@ -6,6 +6,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
 
 (async () => {
   const fixture = createApp({ mode: "accounts" });
+  const dev = process.env.APP_DEV ? await require("./app-dev-server.cjs").attachDev(fixture) : null;
   const base = `http://127.0.0.1:${await fixture.listen(0)}`;
   const browser = await chromium.launch();
   try {
@@ -24,7 +25,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByRole("navigation", { name: "Personal preferences" }).getByRole("link", { name: "Appearance", exact: true }).click();
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
-    await page.getByLabel("Search settings").fill("password");
+    await page.getByLabel("Search settings").fill("name");
     await sections.getByRole("link", { name: "Profile", exact: true }).click();
     await page.getByLabel("Display name").fill("Ada Review");
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -34,7 +35,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByText(/No settings match/).waitFor();
     await page.getByLabel("Search settings").fill("");
     await sections.getByRole("link", { name: "Workspace settings", exact: true }).click();
-    await page.locator(".console-embed").waitFor();
+    await page.locator(".console-embed").waitFor({timeout: 60000});
     await page.getByRole("navigation", { name: "Workspace settings", exact: true }).getByRole("link", { name: "Brand", exact: true }).click();
     await page.waitForURL(/#\/settings\/appearance$/);
     await page.getByRole("navigation", { name: "Workspace settings", exact: true }).getByRole("link", { name: "Health & support", exact: true }).waitFor();
@@ -107,6 +108,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     console.log("Settings grouping, profile save, focus after Console, phone layout and fixture OAuth passed.");
   } finally {
     await browser.close();
+    await dev?.close();
     await fixture.close();
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

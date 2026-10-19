@@ -270,8 +270,10 @@ def test_other_paths_go_to_the_default_upstream_but_never_the_bridge_api(edge_ur
         r = httpx.get(base + path, timeout=10)
         assert r.status_code == 200
         assert r.text == f"OWUI:{path}", path
-    for path in ("/v1/models", "/uploads/x"):
-        assert httpx.get(base + path, timeout=10).status_code == 404, path
+    # The chat API needs a personal key (401 without one); the rest of the
+    # bridge's own API is never reachable from the public port.
+    assert httpx.get(base + "/v1/models", timeout=10).status_code == 401
+    assert httpx.get(base + "/uploads/x", timeout=10).status_code == 404
 
 
 def test_sse_streams_through(edge_url):

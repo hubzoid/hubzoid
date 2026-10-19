@@ -2,6 +2,7 @@
 // workflow. Every change goes through the same API and file format as
 // `hubzoid workflow-access` (workflows/access.yaml), with the revision it read,
 // so two people editing at once never overwrite each other.
+import { Select } from "../components/Select";
 import { displayName } from "../lib/format";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, X } from "lucide-react";
@@ -101,13 +102,7 @@ export default function WorkflowAccessPage() {
         {agents.length > 1 && (
           <label className="flex items-center gap-2 text-[13px] text-secondary">
             {W.agent}
-            <select className="hz-input !w-auto" value={agent?.id ?? ""} onChange={(e) => setAgentId(e.target.value)}>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {displayName(a.name)}
-                </option>
-              ))}
-            </select>
+            <Select className="!w-auto" aria-label={W.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: displayName(a.name)}))} />
           </label>
         )}
         {error && <Notice tone="error">{error}</Notice>}
@@ -297,20 +292,8 @@ function Explain({ base, people, resources, actions }: { base: string; people: s
             <option key={p} value={p} />
           ))}
         </datalist>
-        <select className="hz-input !w-auto" value={action} onChange={(e) => setAction(e.target.value)} aria-label={W.actionsLabel} data-testid="wa-explain-action">
-          {actions.map((a) => (
-            <option key={a} value={a}>
-              {actionLabel(a)}
-            </option>
-          ))}
-        </select>
-        <select className="hz-input !w-auto" value={workflow} onChange={(e) => setWorkflow(e.target.value)} aria-label={W.workflow} data-testid="wa-explain-workflow">
-          {resources.map((r) => (
-            <option key={r.key} value={r.key}>
-              {r.title || r.key}
-            </option>
-          ))}
-        </select>
+        <Select className="!w-auto" value={action} onValueChange={setAction} aria-label={W.actionsLabel} data-testid="wa-explain-action" options={actions.map(a => ({value: a, label: actionLabel(a)}))} />
+        <Select className="!w-auto" value={workflow} onValueChange={setWorkflow} aria-label={W.workflow} data-testid="wa-explain-workflow" options={resources.map(r => ({value: r.key, label: r.title || r.key}))} />
         <Button size="sm" onClick={ask} disabled={!subject.trim() || !workflow} data-testid="wa-explain-ask">
           {W.checkButton}
         </Button>

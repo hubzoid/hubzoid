@@ -1655,7 +1655,22 @@ def _account_flags(gs, subject: str) -> dict:
         suspended = gs._meta_get(conn, "suspended:" + subject) == "1"  # noqa: SLF001
         unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"  # noqa: SLF001
     return dict(suspended=suspended, account_unavailable=unavailable,
-                blocked=suspended or unavailable)
+                blocked=suspended or unavailable,
+                directory_disabled=directory_disabled(gs.engine, subject))
+
+
+def directory_disabled(engine, subject: str) -> bool:
+    """Whether a company directory (SCIM) turned this person's account off:
+    their Hubzoid account is ``disabled`` (``auth.directory.store``)."""
+    import sqlalchemy as sa
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sa.text("SELECT status FROM hz_users WHERE email = :e"),
+                               {"e": normalize(subject)}).first()
+    except Exception:  # noqa: BLE001 - no account table (an older store): not disabled
+        return False
+    return bool(row) and row[0] == "disabled"
 
 
 def _account_status(subject: str, identity: dict, flags: dict) -> str:
@@ -1665,6 +1680,8 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
     reported as `blocked` with `account_unavailable=true` alongside."""
     if flags["suspended"]:
         return "blocked"
+    if flags.get("directory_disabled"):
+        return "disabled"
     if subject == EVERYONE:
         return "everyone"
     if subject.startswith("workflow:"):

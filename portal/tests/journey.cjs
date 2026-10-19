@@ -1266,7 +1266,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Delete user" }).waitFor();
     assert.equal(await page.getByRole("menuitem", { name: "Reactivate" }).count(), 0, "offered only while blocked");
-    assert.equal(await page.getByRole("menuitem", { name: /Block/ }).count(), 0, "Block isn't offered");
+    await page.getByRole("menuitem", { name: /Block/ }).waitFor(); // an active person can be blocked again (B7)
     await drawer().getByRole("button", { name: "More actions" }).click();
     await drawer().getByRole("combobox", { name: "Add an agent" }).click();
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Finance Assistant" }).click();
