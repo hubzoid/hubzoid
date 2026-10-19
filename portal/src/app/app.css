@@ -2273,6 +2273,12 @@
     max-width: 768px;
     margin-top: 14px;
   }
+  /* Text the agent wrote just before a tool step is narration ("I'll check the
+     stock first"), not the answer: quieter, so the answer stands out. */
+  .hz-assistant .hz-md:has(+ .hz-act) {
+    color: var(--hz-secondary);
+    font-size: 0.95em;
+  }
   .hz-search-mark {
     background: transparent;
     color: var(--hz-ink);
