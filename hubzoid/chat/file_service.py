@@ -682,13 +682,24 @@ class FileService:
         return {**part, "id": file_id, "reference_id": rid}
 
     def references_of(self, actor, file_id: str) -> list[dict]:
+        """Where the file is used. Its owner also sees uses in conversations they
+        can't read (someone reused it), without naming them, and may remove them."""
         with self.engine.connect() as conn:
-            self._readable(conn, file_id, actor)
+            row = self._readable(conn, file_id, actor)
+            owner = row.owner_principal_id == actor.id
             rows = conn.execute(sa.select(references).where(references.c.file_id == file_id,
                                                             references.c.deleted_at.is_(None))).all()
-            return [{"reference_id": r.reference_id, "resource_type": r.resource_type, "resource_id": r.resource_id,
-                     "conversation_id": r.conversation_id, "created_at": r.created_at} for r in rows
-                    if r.conversation_id is None or self._readable_conversation(conn, r.conversation_id, actor)]
+            out = []
+            for r in rows:
+                if r.conversation_id is None or self._readable_conversation(conn, r.conversation_id, actor):
+                    out.append({"reference_id": r.reference_id, "resource_type": r.resource_type,
+                                "resource_id": r.resource_id, "conversation_id": r.conversation_id,
+                                "created_at": r.created_at})
+                elif owner:
+                    out.append({"reference_id": r.reference_id, "resource_type": r.resource_type,
+                                "resource_id": None, "conversation_id": None, "created_at": r.created_at,
+                                "elsewhere": True})
+            return out
 
     def detach(self, actor, file_id: str, reference_id: str) -> None:
         with self.engine.begin() as conn:
@@ -697,7 +708,8 @@ class FileService:
                                                          references.c.file_id == file_id)).first()
             if r is None or r.deleted_at is not None:
                 return
-            if r.conversation_id and not self._writable_conversation(conn, r.conversation_id, actor):
+            owner = self._row(conn, file_id).owner_principal_id == actor.id
+            if r.conversation_id and not owner and not self._writable_conversation(conn, r.conversation_id, actor):
                 raise Err(403, "permission_denied", "Only someone who can write in that conversation removes it.")
             conn.execute(references.update().where(references.c.reference_id == reference_id).values(deleted_at=_now()))
             if r.conversation_id:
@@ -712,13 +724,24 @@ class FileService:
                 return {"file_id": file_id, "state": "deleted"}
             if expected_revision is not None and expected_revision != row.revision:
                 raise Err(409, "revision_conflict", "This file changed. Reload it.", current_revision=row.revision)
-            in_use = conn.execute(sa.select(sa.func.count()).select_from(references).where(
-                references.c.file_id == file_id, references.c.deleted_at.is_(None))).scalar() or 0
+            refs = conn.execute(sa.select(references).where(
+                references.c.file_id == file_id, references.c.deleted_at.is_(None))).all()
+            # The owner's own uses ask them to remove it there first. Someone
+            # else's reuse never keeps the owner from deleting their file: those
+            # references end with it.
+            mine = [r for r in refs if r.conversation_id is None
+                    or self._readable_conversation(conn, r.conversation_id, actor)]
+            in_use = len(mine)
             used_by_artifact = conn.execute(sa.select(artifact_versions.c.version_id).where(
                 artifact_versions.c.file_id == file_id).limit(1)).first()
             if in_use or used_by_artifact:
                 raise Err(409, "file_in_use", "This file is still attached somewhere. Remove it there first.",
                           references=in_use)
+            for r in refs:
+                conn.execute(references.update().where(references.c.reference_id == r.reference_id)
+                             .values(deleted_at=_now()))
+                if r.conversation_id:
+                    g.emit(conn, r.conversation_id, "file_reference.changed", file_id, {"action": "removed"})
             conn.execute(files.update().where(files.c.file_id == file_id).values(
                 state="deleted", deleted_at=_now(), revision=row.revision + 1))
         try:

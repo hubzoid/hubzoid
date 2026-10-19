@@ -87,7 +87,9 @@ RETIRED: dict[str, Retired] = {
     **_group("DEFAULT_USER_ROLE", False, "New accounts follow the web app's own sign-up rules "
              "(ENABLE_SIGNUP and ENABLE_OAUTH_SIGNUP, docs/auth.md). Remove it."),
     **_group("WEBUI_NAME", False, "Still read as the deployment's name until you set one in "
-             "Settings → Brand; then remove it."),
+             "Settings → Brand. To keep it as this hub's agent name, add `display_name:` with "
+             "that name to the frontmatter of AGENTS.md. Then remove it."),
+    **_group("LICENSE_KEY", False, "Open WebUI's licence key is not used. Remove it."),
     **_group("WEBUI_SECRET_KEY", False, "Open WebUI's session key is no longer used. Remove it."),
     **_group("HUBZOID_OWUI_DB", False, "Only `hubzoid migrate openwebui` reads it, to find the "
              "Open WebUI database. Remove it once the move is done."),

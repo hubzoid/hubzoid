@@ -192,6 +192,9 @@ def _user_view(hub_dir: Path, user: AuthUser) -> dict:
             "password_enabled": bool(row.get("password_enabled")),
             "has_password": bool(row.get("has_password")),
             "console": console, "hub_changes": console or _hub_changes(hub_dir, user),
+            # The Open WebUI parity ledger is maintainers' tooling, not a customer page.
+            "parity": console and (os.environ.get("HUBZOID_PARITY_LEDGER") or "").strip().lower()
+            in ("1", "true", "yes", "on"),
             **({"version": __version__} if console else {})}
 
 

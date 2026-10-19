@@ -15,9 +15,11 @@ shape of what it is given and the expected revision.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -288,17 +290,27 @@ def values(hub_dir, *, scope: str, target: str = "", eng=None) -> list[Stored]:
     return out
 
 
-def value(hub_dir, *, scope: str, target: str = "", name: str) -> str | None:
+def value(hub_dir, *, scope: str, target: str = "", name: str,
+          env: Mapping[str, str] | None = None) -> str | None:
     """One decrypted value, for ``secret:`` references. None when absent.
-    Raises SecretError ``secret_unreadable`` when the key cannot decrypt it."""
+    Raises SecretError ``secret_rebind`` when the value is bound to a
+    destination that ``env`` (default: the process environment) no longer
+    names, as the start-up layer does, and ``secret_unreadable`` when the key
+    cannot decrypt it."""
     eng = existing_engine(hub_dir)
     if eng is None:
         return None
     with eng.connect() as conn:
-        row = conn.execute(text("SELECT value_enc FROM hz_secrets WHERE scope = :s AND target = :t "
-                                "AND name = :n" + _LIVE), {"s": scope, "t": target, "n": name}).first()
+        row = conn.execute(text("SELECT value_enc, destination FROM hz_secrets WHERE scope = :s "
+                                "AND target = :t AND name = :n" + _LIVE),
+                           {"s": scope, "t": target, "n": name}).first()
     if row is None:
         return None
+    if row[1] is not None and names.destination(name, os.environ if env is None else env) != row[1]:
+        keys = names.BINDINGS.get(name, ())
+        changed = f" ({' or '.join(keys)} changed)" if keys else ""
+        raise SecretError("secret_rebind", f"The stored secret {name} was set for a different "
+                          f"destination{changed}. Set it again for this one with hubzoid secrets set.", 503)
     try:
         return secretbox.decrypt_text(Path(hub_dir), row[0])
     except secretbox.SecretKeyError:
