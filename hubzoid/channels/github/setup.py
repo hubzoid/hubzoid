@@ -279,7 +279,7 @@ def configure(conn, *, expected_revision: int, actor: str, repositories_: list[s
 
 
 def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], actor: str,
-                expected_revision, any_secret: bool = True) -> dict:
+                expected_revision) -> dict:
     """Local only: a fine-grained personal token. The replies use the
     token owner's account."""
     hub = config_lib.hub_of(hub_dir)
@@ -311,7 +311,7 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
                                "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
                                "repositories": repos, "token_ref": f"secret:channel/{hub}/{cid}/token"}
     return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
-                            actor=actor, expected_id=cid, any_secret=any_secret)
+                            actor=actor, expected_id=cid)
 
 
 def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:

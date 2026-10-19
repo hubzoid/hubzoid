@@ -367,7 +367,7 @@ def test_mcp_servers_called_directly_are_gated(hub):
     assert calls == [] and "waiting" in out.content[0].text
 
 
-def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub):
+def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub, monkeypatch):
     # The same rule, by the tool's own name, on the Agents SDK path and in
     # Claude's PreToolUse hook (which sees mcp__<server>__<tool>).
     import asyncio
@@ -403,6 +403,13 @@ def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub):
         assert decision("mcp__erp__delete_order", {"id": 1}) == "deny"  # a full-name rule still applies
         assert decision("mcp__github__list_issues", {}) == "allow"
     assert gate.mcp_parts(hub, "mcp__github__create_issue") == ("github", "create_issue")
+    from types import SimpleNamespace as NS
+
+    from hubzoid.connectors import registry
+
+    # A personal connector whose id has __ in it.
+    monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme__github")])
+    assert gate.mcp_parts(hub, "mcp__my_acme__github__create_issue") == ("my_acme__github", "create_issue")
 
 
 def test_only_a_persons_session_decides_never_a_key():

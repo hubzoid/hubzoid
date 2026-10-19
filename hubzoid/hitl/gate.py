@@ -177,17 +177,26 @@ def apply(hub_dir: Path, registry: dict, *, connector: str | None = None) -> dic
 def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
     """``mcp__<server>__<tool>`` as ``(server, tool)``, the bare tool name the
     other runtimes evaluate, so one hitl.yaml rule applies on all three. A
-    server key with ``__`` in it is matched against the hub's own servers. A
-    rule written with the full name still applies to that name."""
+    server key with ``__`` in it is matched against the hub's own servers and
+    its personal connectors'. A rule written with the full name still applies
+    to that name."""
     from . import config as cfglib
 
     rest = name[len("mcp__"):] if name.startswith("mcp__") else name
-    try:
-        from ..personal_mcp import _hub_server_keys
+    servers: set[str] = set()
+    if rest.count("__") > 1:  # which separator ends the server's key
+        try:
+            from ..personal_mcp import _hub_server_keys
 
-        servers = _hub_server_keys(hub_dir)
-    except Exception:  # noqa: BLE001 - fall back to the first separator
-        servers = set()
+            servers |= _hub_server_keys(hub_dir)
+        except Exception:  # noqa: BLE001 - fall back to the first separator
+            pass
+        try:  # the personal connectors' servers (my_<id>)
+            from ..connectors import per_user, registry
+
+            servers |= {per_user.server_key(c.id) for c in registry.list_all(hub_dir)}
+        except Exception:  # noqa: BLE001
+            pass
     server = max((s for s in servers if rest.startswith(f"{s}__")), key=len, default=None)
     if server is not None:
         tool = rest[len(server) + 2:]
