@@ -136,6 +136,8 @@ def build_router(hub_dir: Path):
             revision = hs.write(hub_dir, values.model_dump(), expected_revision=expected)
         except HubFileError as exc:
             raise error(413, "validation_failed", str(exc)) from None
+        except hs.ReadOnly as exc:
+            raise error(409, "hub_read_only", str(exc)) from None
         except hs.Conflict as exc:
             raise error(409, "revision_conflict", "Someone changed these settings since you loaded them. "
                         "Reload and apply again.", current_revision=exc.current) from None

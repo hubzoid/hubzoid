@@ -392,6 +392,13 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)
+    from .. import datadir
+
+    # An image-built hub's channel files come from Git: apply one as committed,
+    # never a change that a redeploy would undo.
+    committed = datadir.hub_read_only(hub_dir)
+    if committed and not (path.is_file() and _same(path, norm, hub_dir, cfg.id)):
+        raise ChannelError("hub_read_only", f"{datadir.READ_ONLY} ({path.name})", status=409)
     status = "enabled" if cfg.enabled else "disabled"
     with store.locked(hub_dir, f"channel:{hub}:{cfg.id}") as conn:
         out = store.put_connection(conn, hub=hub, cid=cfg.id, provider=cfg.provider, config=norm,
@@ -399,13 +406,20 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
                                    file_path=str(path.relative_to(hub_dir)) if path.is_relative_to(hub_dir)
                                    else str(path), actor=actor)
         try:
-            _write_atomic(path, body)
+            if not committed:
+                _write_atomic(path, body)
         except OSError as exc:
             raise ChannelError("hub_read_only", f"Cannot write {path}: {exc.strerror}. The hub folder must "
                                "be writable to apply channel changes.", status=503) from exc
     audit(hub_dir, actor, "channel_apply", f"{cfg.id}@{out['revision']}")
     return {"id": cfg.id, "revision": out["revision"], "status": status, "created": out["created"],
             "file": str(path), "digest": digest}
+
+
+def _same(path: Path, norm: dict, hub_dir, cid: str) -> bool:
+    """Whether the file on disk holds this configuration."""
+    v = load_file(hub_dir, path, expected_id=cid)
+    return bool(v.valid) and canonical.digest(normalized(v.config, v.settings)) == canonical.digest(norm)
 
 
 def export(hub_dir, cid: str) -> dict:

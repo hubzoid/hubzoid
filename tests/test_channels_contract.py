@@ -105,6 +105,23 @@ def test_apply_writes_file_and_checks_revision(hub_dir):
     assert "enabled: false" in path.read_text()
 
 
+def test_an_image_built_hub_applies_only_its_committed_channel_file(hub_dir, tmp_path, monkeypatch):
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))      # its files come from Git
+    data = config.load_text(hub_dir, yaml_for()).data
+    with pytest.raises(ChannelError) as exc:                            # a change a redeploy would undo
+        config.apply(hub_dir, data, expected_revision="absent", actor="t")
+    assert exc.value.code == "hub_read_only" and exc.value.status == 409
+    assert not (hub_dir / "channels").exists()
+    (hub_dir / "channels").mkdir()
+    (hub_dir / "channels" / "fake-main.yaml").write_text(yaml_for())   # committed in Git
+    out = config.apply(hub_dir, data, expected_revision="absent", actor="t")
+    assert out["revision"] == 1 and config.export(hub_dir, "fake-main")["file_matches"] is True
+    with pytest.raises(ChannelError) as exc:
+        config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="t")
+    assert exc.value.code == "hub_read_only"
+    assert "enabled: true" in (hub_dir / "channels" / "fake-main.yaml").read_text()
+
+
 def test_secret_value_never_exported(hub_dir):
     applied(hub_dir)
     blob = json.dumps(config.export(hub_dir, "fake-main"))

@@ -8,8 +8,8 @@ Maritime runs the `Dockerfile` in this folder from your Git repository: the
 released Hubzoid image ({{image}}) plus this hub's files. Each agent gets its
 own small machine, and its `/data` disk keeps everything the hub writes:
 accounts, chats, uploads, keys, workflow state and backups. The hub's own
-files come from Git and are read-only in Settings. Change them in Git and
-deploy again.
+files (instructions, setting values, channels, budgets) come from Git and
+are read-only in Settings. Change them in Git and deploy again.
 
 ## Before you begin
 

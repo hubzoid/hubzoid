@@ -539,7 +539,9 @@ def _locked(hub_dir: Path):
     """One writer at a time for this hub's values file, across processes."""
     from .._file_lock import lock, unlock
 
-    path = Path(hub_dir) / ".hubzoid" / "hub.settings.lock"
+    from .. import datadir
+
+    path = datadir.state(hub_dir) / "hub.settings.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:
@@ -583,6 +585,10 @@ def revision(hub_dir: Path, conn=None) -> int:
         return run(c)
 
 
+class ReadOnly(Exception):
+    """An image-built hub: hub.settings.yaml comes from Git (``datadir.READ_ONLY``)."""
+
+
 class Conflict(Exception):
     def __init__(self, current: int):
         super().__init__(f"current revision {current}")
@@ -592,7 +598,8 @@ class Conflict(Exception):
 def write(hub_dir: Path, document: Mapping, *, expected_revision: int | str | None) -> int:
     """Write hub.settings.yaml from a validated document and return its new
     revision. ``expected_revision`` is an integer, ``"absent"`` (create only)
-    or None. Raises Conflict when it does not match."""
+    or None. Raises Conflict when it does not match, and ReadOnly for a hub
+    whose files come from its image."""
     import yaml
     from sqlalchemy import text
 
@@ -600,6 +607,10 @@ def write(hub_dir: Path, document: Mapping, *, expected_revision: int | str | No
 
     from .yamlfile import MAX_BYTES
 
+    from .. import datadir
+
+    if datadir.hub_read_only(hub_dir):
+        raise ReadOnly(datadir.READ_ONLY)
     path = Path(hub_dir) / VALUES
     body = yaml.safe_dump(dict(document), sort_keys=False, allow_unicode=True)
     header = "# Hub setting values. Secrets are references only (secret:... or env:...).\n"

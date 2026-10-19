@@ -9,8 +9,9 @@
 Railway builds the `Dockerfile` in this folder from your Git repository: the
 released Hubzoid image (ghcr.io/hubzoid/hubzoid:<version>) plus this hub's files. One volume at
 `/data` keeps everything the hub writes: accounts, chats, uploads, keys,
-workflow state and backups. The hub's own files come from Git and are
-read-only in Settings. Change them in Git and Railway redeploys.
+workflow state and backups. The hub's own files (instructions, setting
+values, channels, budgets) come from Git and are read-only in Settings.
+Change them in Git and Railway redeploys.
 
 ## Before you begin
 
