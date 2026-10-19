@@ -39,7 +39,8 @@ def pending_in_chat(hub_dir: Path, chat_id: str, email: str, *, since: float | N
         q = q.where(r.created_at >= since)
     with service.engine(hub_dir).connect() as conn:
         rows = [store.row_dict(x) for x in conn.execute(q.order_by(r.created_at)).fetchall()]
-    return [x for x in rows if service.eligible(x, "", email)]
+    account_id = _account_for(hub_dir, email)
+    return [x for x in rows if service.eligible(x, account_id, email)]
 
 
 def describe(req: dict) -> str:
@@ -55,6 +56,18 @@ def describe(req: dict) -> str:
     args = json.dumps(req.get("arguments") or {}, ensure_ascii=False, indent=1, default=str)
     return (f"Approval needed: {req['title']}\n{args}\n"
             f"Reply {APPROVE} to approve or {REJECT} to reject.")
+
+
+def _account_for(hub_dir: Path, email: str | None) -> str:
+    """The account that holds this channel sender's email now. A request an
+    account made is decided by that account only, so a new account that reuses
+    a deleted one's email can't decide the old one's requests."""
+    from ..auth import users
+
+    try:
+        return ((users.find_by_email(Path(hub_dir), email) or {}).get("id") or "") if email else ""
+    except Exception:  # noqa: BLE001 - no account store: an email-only sender
+        return ""
 
 
 def answer_by_reply(hub_dir: Path, *, chat_id: str, email: str, text: str, via: str) -> dict | None:
@@ -77,10 +90,10 @@ def answer_by_reply(hub_dir: Path, *, chat_id: str, email: str, text: str, via: 
                 reply = options[int(reply) - 1]["label"]
             if not reply:
                 return None
-            return service.decide(hub_dir, _hub(hub_dir), req["id"], account_id="", email=email, decision="answer",
+            return service.decide(hub_dir, _hub(hub_dir), req["id"], account_id=_account_for(hub_dir, email), email=email, decision="answer",
                                   expected_revision=req["revision"], digest=req["digest"], answer=reply, via=via)
         if reply in (APPROVE, REJECT):
-            return service.decide(hub_dir, _hub(hub_dir), req["id"], account_id="", email=email,
+            return service.decide(hub_dir, _hub(hub_dir), req["id"], account_id=_account_for(hub_dir, email), email=email,
                                   decision="approve" if reply == APPROVE else "reject",
                                   expected_revision=req["revision"], digest=req["digest"], via=via)
     except service.RequestError:
@@ -155,10 +168,10 @@ def slack_decide(hub_dir: Path, *, action_id: str, value: str, email: str | None
         idx = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else -1
         if not 0 <= idx < len(options):
             raise service.RequestError(422, "validation_failed", "That option is no longer offered.")
-        return service.decide(Path(hub_dir), _hub(hub_dir), rid, account_id="", email=email, decision="answer",
+        return service.decide(Path(hub_dir), _hub(hub_dir), rid, account_id=_account_for(hub_dir, email), email=email, decision="answer",
                               expected_revision=revision, digest=digest, answer=options[idx]["label"], via="slack")
     decision = {"approve": "approve", "reject": "reject"}.get(kind)
     if decision is None:
         raise service.RequestError(400, "invalid_request", "Unknown action.")
-    return service.decide(Path(hub_dir), _hub(hub_dir), rid, account_id="", email=email, decision=decision,
+    return service.decide(Path(hub_dir), _hub(hub_dir), rid, account_id=_account_for(hub_dir, email), email=email, decision=decision,
                           expected_revision=revision, digest=digest, via="slack")
