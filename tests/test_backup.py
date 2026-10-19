@@ -519,6 +519,43 @@ def test_running_runs_sees_a_live_scheduled_run(tmp_path):
         proc.wait(timeout=30)
 
 
+def test_a_run_waiting_for_a_person_does_not_hold_a_backup(tmp_path, monkeypatch):
+    # A workflow parked on an approval stays PENDING in DBOS for as long as
+    # the person takes; the weekly backup must not wait (and fail) for it.
+    import time
+    from types import SimpleNamespace
+
+    import dbos
+
+    from hubzoid import db, migrations
+    from hubzoid.hitl import store as hitl_store
+
+    hub = _hub(tmp_path)
+    migrations.upgrade(db.operational_engine(hub), "operational")
+    with db.operational_engine(hub).begin() as c:
+        c.execute(hitl_store.requests.insert().values(
+            id="r1", hub_id="hub", kind="approval", status="pending", revision=1, origin="workflow",
+            requester_id="u1", approvers_json="[]", title="Send it", digest="d", allow_chat=True,
+            allow_always=False, continued=False, created_at=time.time(), workflow_id="wf-parked"))
+
+    class Client:
+        def __init__(self, **kw):
+            pass
+
+        def list_workflows(self, **kw):
+            return [SimpleNamespace(workflow_id="wf-parked"), SimpleNamespace(workflow_id="wf-busy")]
+
+        def destroy(self):
+            pass
+
+    monkeypatch.setattr(dbos, "DBOSClient", Client)
+    p = bk.plan(hub)
+    for _name, url in p.dbos:
+        bk._sqlite_path(url).parent.mkdir(parents=True, exist_ok=True)
+        bk._sqlite_path(url).touch()
+    assert bk.running_runs(p) == ["hub: wf-busy"]
+
+
 def test_backing_up_an_older_release_changes_no_schema(tmp_path):
     """The upgrade guide backs up with the new release before its first start.
     The copy must be of the old databases as they are: nothing is migrated."""

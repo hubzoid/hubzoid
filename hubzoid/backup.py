@@ -327,14 +327,42 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
         source.close()
 
 
+def _waiting_for_people(hub_dir: Path) -> set[str]:
+    """Runs parked until a person decides: a pending approval or question, or
+    work waiting for input or an approval. They write nothing until then and
+    may wait for days, so a backup does not wait for them. Read with plain
+    SQL; a store without those tables has none."""
+    import sqlalchemy as sa
+
+    from . import db
+
+    out: set[str] = set()
+    engine = sa.create_engine(db.operational_url(hub_dir))
+    try:
+        with engine.connect() as conn:
+            for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending'",
+                        "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input')"):
+                try:
+                    out |= {r[0] for r in conn.execute(sa.text(sql)) if r[0]}
+                except Exception:  # noqa: BLE001 - an older store without the table
+                    conn.rollback()
+    except Exception:  # noqa: BLE001 - unknown: the backup waits for every run
+        log.warning("backup: could not read what waits for people in %s", hub_dir, exc_info=True)
+    finally:
+        engine.dispose()
+    return out
+
+
 def running_runs(p: Plan, unknown: list[str] | None = None) -> list[str]:
-    """Scheduled runs that are queued or running, across the deployment. A hub
-    whose run history cannot be read (for example a DBOS database from an older
-    release, before the upgrade) is added to `unknown` instead."""
+    """Scheduled runs that are queued or running, across the deployment, not
+    counting runs parked until a person decides. A hub whose run history cannot
+    be read (for example a DBOS database from an older release, before the
+    upgrade) is added to `unknown` instead."""
     from dbos import DBOSClient
 
     from .workflows.runtime import _app_name
 
+    paths = {path.name: path for _key, path in p.hubs}
     busy: list[str] = []
     for hub_name, url in p.dbos:
         path = _sqlite_path(url)
@@ -353,7 +381,8 @@ def running_runs(p: Plan, unknown: list[str] | None = None) -> list[str]:
             if unknown is not None and hub_name not in unknown:
                 unknown.append(hub_name)
             continue
-        busy += [f"{hub_name}: {r.workflow_id}" for r in rows]
+        parked = _waiting_for_people(paths[hub_name]) if rows and hub_name in paths else set()
+        busy += [f"{hub_name}: {r.workflow_id}" for r in rows if r.workflow_id not in parked]
     return sorted(set(busy))
 
 
