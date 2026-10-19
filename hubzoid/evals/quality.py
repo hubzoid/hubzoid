@@ -14,8 +14,9 @@
 
 A result counts only for what it tested: each case result records the digest
 of its case file, and each run the digest of the hub's instructions, skills,
-knowledge, tools, workflows, settings and non-secret configuration. A pending
-case never counts as passing, and doctor is not ok until it passes.
+knowledge, tools, workflows, settings, approval rules, budgets, sandboxes,
+write modes and non-secret configuration. A pending case never counts as
+passing, and doctor is not ok until it passes.
 """
 from __future__ import annotations
 
@@ -29,6 +30,11 @@ import yaml
 MANIFEST = Path("quality") / "manifest.yaml"
 _HUB_PARTS = ("AGENTS.md", "agents", "skills", "knowledge", "tools_local", "restricted", "workflows",
               "connectors", "settings.yaml", "hub.settings.yaml")
+# Read by their exact names: approval rules (hitl.yaml), usage limits and turn
+# caps (budgets.yaml), the sandboxes stations run in (sandbox.yaml and
+# sandboxes/<id>.yaml) and the write modes that decide which actions are
+# offered (work-items.yaml). Each changes what the agent may do or is told.
+_BEHAVIOUR_FILES = ("hitl.yaml", "budgets.yaml", "sandbox.yaml", "sandboxes", "work-items.yaml")
 _ENV_FILES = (".env", "restricted/.env")      # names and non-secret values only
 _SKIP_DIRS = {"__pycache__", ".hubzoid", "output", "logs", ".git"}
 _MAX_FILES = 100_000
@@ -76,16 +82,17 @@ def _configuration(hub_dir: Path, model: str | None) -> bytes:
 
 def hub_digest(hub_dir: Path, *, model: str | None = None) -> str:
     """One digest of what a hub's answers depend on: its instructions, skills,
-    knowledge, tools, workflows, settings and non-secret configuration. File
-    order, paths and every byte count. A hub with more than 100,000 such files
-    gets a digest marked incomplete, which no result can match."""
+    knowledge, tools, workflows, settings, approval rules, budgets, sandboxes,
+    write modes and non-secret configuration. File order, paths and every
+    byte count. A hub with more than 100,000 such files gets a digest marked
+    incomplete, which no result can match."""
     from .._fs import resolve_bucket
 
     hub_dir = Path(hub_dir)
     files: list[Path] = []
-    for part in _HUB_PARTS:
+    for part in _HUB_PARTS + _BEHAVIOUR_FILES:
         path = hub_dir / part
-        if not path.exists() and "." not in part:
+        if not path.exists() and part in _HUB_PARTS and "." not in part:
             path = resolve_bucket(hub_dir, part) or path
         if path.is_file():
             files.append(path)

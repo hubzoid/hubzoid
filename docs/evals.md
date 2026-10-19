@@ -426,7 +426,7 @@ fake_tools:
   - tool: create_refund
     output: {refund_id: R-1, status: queued}
   - tool: send_email
-    error: SMTP is down             # the call fails with this message
+    error: SMTP is down             # the call fails, as a tool that raised this
 real_tools: [read_knowledge]        # may still run for real in this case
 expect_tools: [create_refund]
 ---
@@ -442,7 +442,11 @@ How a faked case runs:
 - **Every other call is blocked.** A call of a hub tool with no matching fake,
   and not in `real_tools`, is blocked. The agent reads "Blocked in this eval",
   nothing runs, and the case fails with a `fake_tools` check naming the call.
-  A missing fake can never cause a real effect.
+  A missing fake can never cause a real effect. This includes the tools a
+  station adds (sandbox commands and handoffs) when a real tool calls one.
+- **An error fake is a failed call.** The agent reads the text a tool that
+  raised returns, and the case's tool list shows the call as failed with
+  that message, on every runtime.
 - **Access checks and approval rules still apply.** A restricted tool's access
   check runs before its fake, so a person who may not use the tool is still
   refused. A tool whose approval rule asks first waits for approval, as in any
@@ -478,7 +482,11 @@ required_tags: [safety]                  # every case with one of these tags
 Configuration means the names in the hub's `.env` and `restricted/.env`, the
 values of the ones that are not secret, and the model the hub runs on (`MODEL`
 from the environment or `.env`, or the run's `--model`): switching the model
-makes results pending, rotating an API key does not.
+makes results pending, rotating an API key does not. It also means the files
+that change what the agent may do: approval rules (`hitl.yaml`), budgets
+(`budgets.yaml`), sandboxes (`sandbox.yaml`, `sandboxes/`) and write modes
+(`work-items.yaml`). Other files, such as branding or saved output, do not
+make results pending.
 
 A requirement that matches no case fails the `evals.quality` row, so a typo
 never reads as satisfied. A pending case never counts as passing: doctor

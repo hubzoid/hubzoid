@@ -391,12 +391,14 @@ def guard_run(ft, hub_dir: Path, workflow: str, *, surfaces, action: str = "run"
     access guard: no audit row, no run."""
     import asyncio
 
+    from .. import tool_fakes
     from ..access import audit
     from ..access.identity import current_identity
     from ..access.policy import is_allowed
 
     hub_dir = Path(hub_dir)
     surfaces = frozenset(surfaces)
+    ft = tool_fakes.wrap(ft)      # an eval's fake answers only after this check allows the call
     original = ft.on_invoke_tool
 
     def decide() -> tuple[bool, str]:

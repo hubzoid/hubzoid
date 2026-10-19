@@ -142,7 +142,8 @@ def test_fakes_answer_matching_calls_and_block_everything_else(tmp_path, monkeyp
     suite = run(hub, rt, monkeypatch)
     case = suite.cases[0]
     assert real == [("read_knowledge", '{"name": "policy"}')]          # only the allowed real tool ran
-    assert '{"status": "cancelled"} | Error: SMTP is down | REAL read_knowledge | Blocked in this eval' in case.response
+    failed = tool_fakes.TOOL_ERROR.format(error="SMTP is down")
+    assert f'{{"status": "cancelled"}} | {failed} | REAL read_knowledge | Blocked in this eval' in case.response
     check = next(c for c in case.checks if c.kind == "fake_tools")
     assert not check.passed and "blocked 2 call(s)" in check.detail and "create_refund" in check.detail
     assert not case.passed
@@ -220,6 +221,99 @@ def test_an_approval_layer_keeps_fakes_inside_it_and_its_added_tools_are_faked()
         assert asyncio.run(registry["send_email"].on_invoke_tool(None, "{}")) == "sent"
         assert asyncio.run(registry["ask_question"].on_invoke_tool(None, "{}")).startswith("Blocked in this eval")
     assert seen == ["send_email"] and real == []   # the gate ran first; nothing real ran
+
+
+RESTRICTED_ERP = """
+from agents import function_tool
+
+@function_tool
+def erp_post(amount: int = 1) -> str:
+    "Post to the ERP."
+    return "posted for real"
+"""
+
+
+def test_every_access_check_runs_and_is_audited_before_a_fake(tmp_path, monkeypatch):
+    """A restricted tool, a curator tool and a workflow's chat tool, through the
+    factories' layers (access, fakes, approvals): a refused person gets the
+    refusal, audited, never a canned success."""
+    from hubzoid import access, hitl
+    from hubzoid.access import guard
+    from hubzoid.hub_changes.tools import gate
+    from hubzoid.workflows import access as wf_access
+
+    hub = make_hub(tmp_path, {})
+    (hub / "restricted").mkdir()
+    (hub / "restricted" / "erp.py").write_text(RESTRICTED_ERP)
+    real: list = []
+    audited: list = []
+    monkeypatch.setattr(guard, "decide", lambda *a, **k: (False, "no grant"))   # revoked since discovery
+    monkeypatch.setattr(guard.audit, "record", lambda *a, **k: audited.append((k["tool"], k["decision"])) or True)
+    registry = access.apply(hub, {"run_report": wf_access.guard_run(tool("run_report", real), hub, "report",
+                                                                    surfaces={"web"})})
+    registry["remember"] = guard.run_checked(gate(tool("remember", real), hub, access, "curator"), hub)
+    registry = tool_fakes.wrap_registry(registry)
+    registry = tool_fakes.wrap_added(registry, hitl.equip(hub, registry, questions=False))
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool=n, output="faked") for n in registry])
+    with tool_fakes.scope(session):
+        answers = {n: asyncio.run(registry[n].on_invoke_tool(None, "{}")) for n in ("erp_post", "remember", "run_report")}
+    assert all(a.startswith("[access denied") for a in answers.values()), answers
+    assert session.used == [] and real == []
+    assert audited == [("erp_post", "deny"), ("remember", "deny"), ("run_report", "deny")]
+
+
+def test_the_tools_a_station_adds_are_faked_or_blocked(tmp_path):
+    """Sandbox and handoff tools reach a station after the hub's (already
+    faked) tools; in a faked case they are faked or blocked too, as Codex calls
+    them and through the Claude adapter. Their pinned digest is unchanged."""
+    from hubzoid.factory_claude import _to_claude_tool
+    from hubzoid.stations import tools as station_tools
+
+    hub = make_hub(tmp_path, {})
+    registry = station_tools.for_station(hub, ["exec_command", "save_handoff"], sandbox=True)
+    assert station_tools.digest(registry) == station_tools.digest(
+        {"exec_command": registry["exec_command"], "save_handoff": station_tools._save_handoff_tool()})
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="exec_command", output="faked ls")])
+    with tool_fakes.scope(session):
+        assert asyncio.run(registry["exec_command"].on_invoke_tool(None, '{"cmd": "ls"}')) == "faked ls"
+        out = asyncio.run(_to_claude_tool(registry["save_handoff"]).handler(
+            {"kind": "analysis", "title": "t", "markdown": "m"}))
+    assert out["content"][0]["text"].startswith("Blocked in this eval")
+    assert session.used == ["exec_command"] and [n for n, _ in session.blocked] == ["save_handoff"]
+    # Outside a case it is the real tool (here without a sandbox, so it refuses).
+    assert "sandbox_unavailable" in asyncio.run(registry["exec_command"].on_invoke_tool(None, '{"cmd": "ls"}'))
+
+
+def test_an_error_fake_answers_as_a_tool_that_raised_on_every_runtime(monkeypatch):
+    from agents.tool import default_tool_error_function
+
+    from hubzoid import run_events
+    from tests import run_event_scenarios as scenarios
+
+    text = tool_fakes.Fake(tool="send_email", error="SMTP is down").result()
+    assert text == default_tool_error_function(None, RuntimeError("SMTP is down"))
+    monkeypatch.setitem(scenarios.OPENAI_SCENARIOS, "fake_error", [
+        ("call", "send_email", "{}", "call_1"), ("output", "call_1", text), ("delta", "Mail is down.")])
+    monkeypatch.setitem(scenarios.CLAUDE_SCENARIOS, "fake_error", [
+        ("tool_use", "t1", "mcp__hubzoid__send_email", {}), ("tool_result", "t1", False, text),
+        ("text", "Mail is down."), ("result", False, "success", "Mail is down.")])
+    for items in (scenarios.run_openai(monkeypatch, "fake_error", tool_mode="compact", typed=True),
+                  scenarios.run_claude(monkeypatch, "fake_error", tool_mode="compact", thinking_mode="off",
+                                       typed=True)):
+        assert [r.ok for r in items if isinstance(r, run_events.ToolResult)] == [False]
+
+
+def test_an_error_fake_is_a_failed_call_in_the_eval_report(tmp_path, monkeypatch):
+    from tests import run_event_scenarios as scenarios
+
+    hub = make_hub(tmp_path, {"mail.md": CASE.replace("{prompt}", "Mail the customer")})
+    real: list = []
+    rt = scenarios.codex_runtime(monkeypatch, tmp_path, [scenarios._codex_call("send_email", "c1", {"to": "x"}),
+                                                        scenarios._delta("Mail is down.")],
+                                 {"send_email": tool_fakes.wrap(tool("send_email", real))})
+    case = run(hub, rt, monkeypatch).cases[0]
+    (call,) = case.tools
+    assert (call.name, call.ok) == ("send_email", False) and "SMTP is down" in call.error and real == []
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +449,30 @@ def test_the_hub_digest_covers_every_byte_of_large_files(tmp_path, monkeypatch):
     assert quality.hub_digest(hub) != before
     monkeypatch.setattr(quality, "_MAX_FILES", 0)
     assert quality.hub_digest(hub) == quality.INCOMPLETE
+
+
+def test_approval_budget_sandbox_and_write_mode_changes_make_results_pending(tmp_path, monkeypatch):
+    from hubzoid import doctor
+
+    monkeypatch.delenv("MODEL", raising=False)
+    hub = make_hub(tmp_path, {"refund.md": "Refund?"})
+    (hub / "quality").mkdir()
+    (hub / "quality" / "manifest.yaml").write_text("version: 1\nrequired: [refund]\n")
+    (case,) = cases_lib.discover(hub)
+    suite = suite_with(CaseResult(name="refund", case_digest=case.digest))
+    suite.hub_digest = quality.hub_digest(hub)
+    report.save(hub, suite)
+    for unrelated in ("branding.yaml", "output/s1/report.md", "prompts/hello.md"):
+        (hub / unrelated).parent.mkdir(parents=True, exist_ok=True)
+        (hub / unrelated).write_text("x")
+    assert [r.status for r in doctor._eval_checks(hub)] == ["ok"]
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  send_email: {ask: always}\n")
+    assert [r.status for r in doctor._eval_checks(hub)] == ["pending"]
+    for name in ("budgets.yaml", "sandbox.yaml", "sandboxes/analysis.yaml", "work-items.yaml"):
+        before = quality.hub_digest(hub)
+        (hub / name).parent.mkdir(exist_ok=True)
+        (hub / name).write_text("version: 1\n")
+        assert quality.hub_digest(hub) != before, name
 
 
 def test_a_requirement_that_matches_nothing_fails(tmp_path, monkeypatch):
