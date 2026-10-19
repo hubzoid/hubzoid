@@ -33,11 +33,12 @@ def _err(exc: service.RequestError):
     return error(exc.status, exc.code, exc.message, **exc.extra)
 
 
-def human_only(request: Request) -> None:
-    """Only a person's own session decides. A bearer credential (an API key or
-    an MCP token) is automation, whatever it is allowed to read."""
-    auth = request.headers.get("authorization") or ""
-    if auth.lower().startswith("bearer "):
+def human_only(request: Request, user=None) -> None:
+    """Only a person's own session decides (milestone B's credential kinds:
+    "session" or "local"). A personal API key or any bearer token is
+    automation, whatever it is allowed to read."""
+    auth = (request.headers.get("authorization") or "").lower()
+    if auth.startswith("bearer ") or getattr(user, "via_key", False):
         raise error(403, "human_action_required",
                     "A person must decide this in Hubzoid. Open the request page and decide there.")
 
@@ -78,8 +79,9 @@ def mount(app: FastAPI, ctx) -> None:
 
     @app.post("/api/requests/{rid}/decisions")
     async def decide(rid: str, request: Request):
-        human_only(request)
-        uid, email = await who(request, mutation=True)
+        user = await ctx.mutation(request)
+        human_only(request, user)
+        uid, email = user.id, (getattr(user, "email", "") or "").lower()
         body = await read_json(request)
         try:
             out = await db(service.decide, hub_dir, hub, rid, account_id=uid, email=email,

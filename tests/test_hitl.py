@@ -347,3 +347,18 @@ def test_mcp_servers_called_directly_are_gated(hub):
     with identity_scope(Identity.make("ana@example.org", surface="web")):
         out = asyncio.run(s.call_tool("create_order", {"qty": 1}))
     assert calls == [] and "waiting" in out.content[0].text
+
+
+def test_only_a_persons_session_decides_never_a_key():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from hubzoid.hitl.routes import human_only
+
+    req = lambda h: SimpleNamespace(headers=h)  # noqa: E731
+    human_only(req({}), SimpleNamespace(via_key=False))                      # a browser session
+    for headers, user in (({"authorization": "Bearer hzp_x"}, None), ({}, SimpleNamespace(via_key=True))):
+        with pytest.raises(HTTPException) as exc:
+            human_only(req(headers), user)
+        assert exc.value.status_code == 403

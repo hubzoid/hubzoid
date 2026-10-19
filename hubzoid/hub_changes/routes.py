@@ -72,8 +72,9 @@ def mount(app: FastAPI, ctx) -> None:
 
     @app.post("/api/hub-changes/{cid}/decision")
     async def decide(cid: int, request: Request):
-        human_only(request)
-        _uid, email = await who(request, mutation=True)
+        user = await ctx.mutation(request)
+        human_only(request, user)
+        email = (getattr(user, "email", "") or "").lower()
         body = await read_json(request)
         try:
             ch = await db(service.decide, hub_dir, cid, actor=email, decision=str(body.get("decision") or ""),
