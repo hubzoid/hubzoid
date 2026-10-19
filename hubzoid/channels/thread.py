@@ -58,8 +58,12 @@ class Thread:
         if not isinstance(key, str) or not key.strip() or len(key) > 200:
             raise ValueError("key names the post, 1 to 200 characters")
         conn = config_lib.active(self._hub_dir, self.channel)
-        if kind == "progress" and not conn.config.progress:
-            return []
+        if kind == "progress" and (not conn.config.progress or conn.adapter.customer_facing):
+            return []                   # customers get answers, never progress chatter
+        if conn.adapter.customer_facing:
+            # A message to someone outside always performs the adapter's send
+            # action, so the hub's write mode for it applies.
+            actions = actions or getattr(conn.adapter, "send_action", None)
         draft = getattr(conn.adapter, "draft", None)
         return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
                             draft=draft)

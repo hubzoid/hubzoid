@@ -3732,6 +3732,12 @@ app.add_typer(channels_app, name="channels",
               help="Channels: Slack, GitHub, Linear, email and WhatsApp threads for this hub.",
               rich_help_panel="Commands")
 
+from .intake.cli import intake_app  # noqa: E402
+
+app.add_typer(intake_app, name="intake",
+              help="Intake: review email and WhatsApp messages before work starts.",
+              rich_help_panel="Commands")
+
 from .stations.cli import handoffs_app, stations_app  # noqa: E402
 
 app.add_typer(stations_app, name="stations",
