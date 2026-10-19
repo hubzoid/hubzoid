@@ -12,6 +12,9 @@ When frontmatter is missing, defaults are derived:
 
 Frontmatter schema when present:
   name:        agent identifier (optional)
+  display_name: the name people see in the web app, kept as written ("IRS Hub").
+               Optional; without it the app shows `name` (a slug like irs-hub
+               becomes "Irs Hub").
   description: one-line summary used as handoff trigger for sub-agents (optional)
   model:       optional LiteLLM model id; overrides .env MODEL
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents
@@ -43,6 +46,7 @@ from .._fs import agent_read_refusal
 class AgentSpec(BaseModel):
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    display_name: str | None = Field(default=None, max_length=80)
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
     # Quick-start prompts shown on the empty new-chat screen as click-to-send
@@ -62,6 +66,16 @@ class LoadedAgent:
     spec: AgentSpec
     instructions: str
     source_path: Path
+
+
+def display_name(hub_dir: Path, fallback: str | None = None) -> str:
+    """The main agent's name for people: ``display_name``, else ``name``, else
+    ``fallback`` or the folder name (a broken AGENTS.md still gets a name)."""
+    try:
+        spec = load_main(Path(hub_dir)).spec
+    except Exception:  # noqa: BLE001 — naming never fails a page
+        return fallback or Path(hub_dir).name
+    return (spec.display_name or "").strip() or spec.name
 
 
 def load_main(hub_dir: Path) -> LoadedAgent:

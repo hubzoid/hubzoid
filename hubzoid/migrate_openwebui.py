@@ -8,7 +8,7 @@ read-only transaction). What moves into the operational store:
   are, so nobody has to reset a password; the web app verifies them and
   upgrades bcrypt at the next sign-in. Google, Microsoft and OpenID Connect
   links move to ``hz_user_identities``; ``hz_identities.owui_id`` keeps the id.
-* **Access** stays as it is: it is managed in the Console in both modes, so
+* **Access** stays as it is: it is managed in Settings → People & access, so
   every grant already lives in the operational store. Open WebUI groups decide
   nothing and are not imported.
 * **Chats.** Every conversation keeps its id, owner, branches, current branch,
@@ -22,12 +22,11 @@ A dry run (the default) changes nothing, not even the target's schema.
 nothing. Re-running is safe: rows are matched by id, changes made in Hubzoid since the previous
 import are kept, and what was deleted in Hubzoid is not brought back.
 
-Rehearse first. ``--rehearse <empty folder>`` copies a single hub (with its
-Open WebUI data and operational store) and migrates the copy. For a gateway:
-``hubzoid backup <hub> -o state.tar.gz``, then ``hubzoid restore state.tar.gz
---move <old folder>=<scratch folder>``, then copy each hub's content
-(``AGENTS.md``, ``restricted/``, ``identity/``; backups leave it to git) into
-the restored hub folders, and run this command on the restored copy.
+Rehearse first. ``--rehearse <empty folder>`` copies the hub, or for a gateway
+every hub folder plus the gateway's Open WebUI database, uploads and
+operational store (with a manifest naming the copies), and migrates the copy.
+Both databases must be SQLite for a rehearsal; for PostgreSQL restore a dump
+into scratch databases and pass ``--owui-db`` and ``HUBZOID_OPERATIONAL_DB``.
 """
 from __future__ import annotations
 
@@ -603,6 +602,7 @@ class TargetState:
         self.identities: dict[str, dict] = {}
         self.conversations: dict[str, dict] = {}
         self.shares: dict[str, dict] = {}
+        self.grants: list[tuple[str, str, str]] = []  # (subject, hub, permission)
 
     @classmethod
     def load(cls, engine: Engine | None) -> "TargetState":
@@ -618,7 +618,7 @@ class TargetState:
                 state.revision = conn.execute(text("SELECT version_num FROM hz_alembic_operational")).scalar()
             for r in rows("hz_meta", "SELECT k, v FROM hz_meta WHERE "
                                      "k LIKE 'suspended:%' OR k LIKE 'account_unavailable:%' "
-                                     "OR k LIKE 'openwebui_migration:%'"):
+                                     "OR k LIKE 'openwebui_migration:%' OR k LIKE 'account_deleted:%'"):
                 state.meta[r["k"]] = r["v"]
             for r in rows("hz_users", "SELECT id, email, name, role, status, password_hash, "
                                       "password_enabled, source, created_at, updated_at, last_login_at "
@@ -635,6 +635,8 @@ class TargetState:
                 state.conversations[r["id"]] = dict(r)
             for r in rows("hz_shares", "SELECT id, conversation_id, created_at FROM hz_shares"):
                 state.shares[r["id"]] = dict(r)
+            for r in rows("hz_grants", "SELECT subject, hub, permission FROM hz_grants"):
+                state.grants.append((_email(r["subject"]) or str(r["subject"]), str(r["hub"]), str(r["permission"])))
         return state
 
     def previous(self, fingerprint: str) -> dict | None:
@@ -682,6 +684,7 @@ class People:
     skipped_ids: set[str] = field(default_factory=set)           # not imported (retried next run)
     not_restored: set[str] = field(default_factory=set)          # deleted in Hubzoid (ids)
     removed_emails: set[str] = field(default_factory=set)        # their emails: never re-granted
+    owner_missing: bool = False                                  # HUBZOID_ADMIN_EMAIL has no account
 
 
 def _issuer(provider: str, setup: Setup) -> tuple[str, bool]:
@@ -719,9 +722,14 @@ def _oauth_links(user: dict) -> list[tuple[str, str]]:
 
 def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], target: TargetState,
                 prev: dict | None, report: Report) -> People:
+    from . import appmode
+
     people = People()
     seen: set[str] = set()
     service = _email(setup.env.get("HUBZOID_GATEWAY_ADMIN_EMAIL"))
+    # With sign-in on (any gateway, or HUBZOID_AUTH), Open WebUI's sign-in-off
+    # account belongs to nobody: it keeps its chats but can't sign in.
+    signing_in = setup.kind == "gateway" or appmode.auth_enabled(setup.entry, setup.env)
     for user in sorted(users.values(), key=lambda u: (_ts(u.get("created_at")) or 0, u["id"])):
         uid, email = user["id"], _email(user.get("email"))
         report.bump("users", "in_open_webui")
@@ -755,11 +763,18 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
         if hashed and not (_BCRYPT_RE.match(hashed) or _ARGON2_RE.match(hashed)):
             report.bump("users", "password_format_unrecognized")
             hashed = None
-        if hashed and email == LOCAL_OWNER_EMAIL:
-            # Open WebUI's sign-in-off account carries the published password "admin".
-            report.note("The local owner account of sign-in-off mode was imported without its "
-                        "default password.")
+        local = email == LOCAL_OWNER_EMAIL or email.endswith("@localhost")
+        if local:
+            # Open WebUI's account for running without sign-in, with the published password "admin".
             hashed = None
+            role = "user"
+            if signing_in:
+                report.note("Open WebUI's account for running without sign-in (…@localhost) was imported "
+                            "blocked, without a password and not as an administrator: its chats are "
+                            "kept. Delete it in Settings → People & access if nobody needs them.")
+            else:
+                report.note("Open WebUI's account for running without sign-in (…@localhost) was imported "
+                            "without its default password.")
         created = _ts(user.get("created_at"), time.time())
         row = dict(id=uid, email=email, name=(user.get("name") or "").strip() or email.split("@")[0],
                    role=role, status=status, password_hash=hashed, password_enabled=1 if hashed else 0,
@@ -794,19 +809,22 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
         if bound and bound != uid:
             report.block("The access store links an email to a different Open WebUI account than "
                          "the one in this database (the account was re-created). Refresh accounts "
-                         "in the Console and review that person's access, then run the migration again.")
+                         "in Settings → People & access and review that person's access, then run the migration again.")
             report.skip("users", "access store bound to another account", uid)
             people.skipped_ids.add(uid)
             continue
         reactivated = False
         if email in people.inactive:
             # Deactivated in Open WebUI: blocked, on a re-run too (deactivated
-            # since). Only an administrator's reactivation in the Console
+            # since). Only an administrator's reactivation in Settings
             # (suspended:<email> = "0") outlives it.
             block = target.meta.get("suspended:" + final_email)
             if action == "insert" or block is None:
                 people.to_block.add(final_email)
             reactivated = action != "insert" and block == "0"
+        elif local and signing_in and (action == "insert" or
+                                       target.meta.get("suspended:" + final_email) is None):
+            people.to_block.add(final_email)
         people.action[uid] = action
         people.rows[uid] = row
         people.email_of[uid] = final_email
@@ -820,13 +838,14 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
         report.bump("users", "with_password" if row.get("password_hash") else "without_password")
         if reactivated:
             report.bump("users", "deactivated_in_open_webui_reactivated_in_hubzoid")
-            report.note("Some people deactivated in Open WebUI were reactivated in the Console. "
-                        "They stay active; block them in the Console if they should not be.")
+            report.note("Some people deactivated in Open WebUI were reactivated in Settings → People & "
+                        "access. They stay active; block them there if they should not be.")
         elif email in people.inactive:
             report.bump("users", "deactivated_in_open_webui_blocked")
         if service and email == service:
             report.note("The gateway's service account (HUBZOID_GATEWAY_ADMIN_EMAIL) was imported "
-                        "as an administrator. Remove it in the Console if nobody signs in with it.")
+                        "as an administrator. Remove it in Settings → People & access if nobody signs "
+                        "in with it.")
         links = _oauth_links(user)
         if links:
             report.bump("users", "with_external_identity")
@@ -858,13 +877,47 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
                                              user_id=uid, email=final_email, created_at=row["created_at"]))
             report.bump("identities", "to_import")
     known = set(users)
+    # Only people this same Open WebUI gave us last time: a deployment that
+    # merged several hubs' databases has others' imports in the store too.
+    before = set((prev or {}).get("users") or ())
     for uid, row in target.users.items():
-        if row.get("source") == MIGRATED and uid not in known:
+        if row.get("source") == MIGRATED and uid not in known and uid in before:
             report.bump("users", "imported_earlier_not_in_open_webui_now")
             report.listed("users", "no longer in Open WebUI", uid)
     if report.counts["users"].get("imported_earlier_not_in_open_webui_now"):
         report.warn("Some people imported earlier no longer exist in Open WebUI. They keep their "
-                    "Hubzoid account; remove them in the Console if they should not have access.")
+                    "Hubzoid account; remove them in Settings → People & access if they should not have access.")
+    # 2.0 decides access by grants only (Open WebUI's BYPASS_MODEL_ACCESS_CONTROL
+    # does nothing). Say who would sign in to an empty app.
+    hub_keys = {h.key for h in setup.hubs} | {"*"}
+    can_use = {sub for sub, hub, perm in target.grants if hub in hub_keys and perm in ("use_hub", "*")}
+    blocked = {e for e in people.to_block} | {k.split(":", 1)[1] for k, v in target.meta.items()
+                                              if k.startswith("suspended:") and v == "1"}
+    no_access = [e for uid, e in people.email_of.items()
+                 if people.rows[uid]["role"] != "admin" and people.rows[uid]["status"] == "active"
+                 and e not in blocked and "*" not in can_use and e not in can_use]
+    if no_access:
+        report.bump("users", "active_without_agent_access", len(no_access))
+        report.warn(f"{len(no_access)} imported people have no agent access, so they would sign in to "
+                    "\"No agents yet\". 2.0 decides access by grants only: Open WebUI's "
+                    "BYPASS_MODEL_ACCESS_CONTROL and groups give none. Grant access in Settings → "
+                    "People & access before people move.")
+    owner = _email(_setting(setup, "HUBZOID_ADMIN_EMAIL", setup.env))
+    if owner and target.meta.get("account_deleted:" + owner):
+        report.note("The configured owner (HUBZOID_ADMIN_EMAIL) was deleted in Hubzoid, so it is not "
+                    "created again. Remove HUBZOID_ADMIN_EMAIL and HUBZOID_ADMIN_PASSWORD.")
+    elif owner and owner not in set(people.email_of.values()) and owner not in target.users_by_email:
+        # The start creates the configured owner only while no account exists,
+        # and after this migration accounts exist.
+        people.owner_missing = True
+        if _setting(setup, "HUBZOID_ADMIN_PASSWORD", setup.env):
+            report.note("The configured owner (HUBZOID_ADMIN_EMAIL) is not an Open WebUI account; "
+                        "--apply creates it as an administrator with HUBZOID_ADMIN_PASSWORD.")
+        else:
+            report.warn("The configured owner (HUBZOID_ADMIN_EMAIL) is not an Open WebUI account and "
+                        "HUBZOID_ADMIN_PASSWORD is not set, so it won't exist after the migration. "
+                        "Sign in as an imported administrator, or after --apply run "
+                        "`hubzoid admin create <email> --owner --password`.")
     # hz_identities: owui_id is the account id; pending mirrors the resulting status.
     for uid, row in people.rows.items():
         email = people.email_of[uid]
@@ -1880,6 +1933,7 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
                 "source": {"database": setup.source_url.get_backend_name(),
                            "schema_revision": source.revision()},
                 "counts": {k: v for k, v in report.counts.items() if v},
+                "users": sorted(plan.people.rows),
                 "skipped": {
                     "users": sorted(plan.people.skipped_ids),
                     "conversations": sorted(importer.skipped["conversations"]),
@@ -1888,8 +1942,32 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
             })
         store._refresh_if_stale()  # noqa: SLF001 — identity bindings changed the revision
         report.applied = True
+        if plan.people.owner_missing:
+            _create_owner(setup, report)
     finally:
         engine.dispose()
+
+
+def _create_owner(setup: Setup, report: Report) -> None:
+    from .auth import users
+
+    from . import db
+
+    env = {k: v for k in ("HUBZOID_ADMIN_EMAIL", "HUBZOID_ADMIN_PASSWORD", "HUBZOID_ADMIN_NAME")
+           if (v := _setting(setup, k, setup.env))}
+    try:
+        # The account store the hub will use must be the one just migrated
+        # (not so with --owui-db/HUBZOID_OPERATIONAL_DB overrides of a rehearsal).
+        same = make_url(db.operational_url(setup.entry)) == make_url(setup.operational_url)
+        made = users.create_configured_owner(setup.entry, env) if same else None
+    except Exception as exc:  # noqa: BLE001 — the migration itself is committed
+        log.warning("migrate: the configured owner was not created (%s)", type(exc).__name__)
+        made = None
+    if made:
+        report.note("Created the configured owner (HUBZOID_ADMIN_EMAIL) as an administrator.")
+    elif env.get("HUBZOID_ADMIN_PASSWORD"):
+        report.warn("The configured owner (HUBZOID_ADMIN_EMAIL) could not be created (see the log). "
+                    "Run `hubzoid admin create <email> --owner --password`.")
 
 
 # ---------------------------------------------------------------------------
@@ -1934,14 +2012,9 @@ def _copy_tree(src: Path, dst: Path) -> None:
 
 
 def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
-    """Copy a single hub (with its Open WebUI data and operational store) into
-    ``dest`` and point the migration at the copy. The original is only read."""
-    if setup.kind != "hub":
-        raise MigrationBlocked(
-            "--rehearse copies a single hub. For a gateway, rehearse on a restored copy: "
-            "hubzoid backup <hub> -o state.tar.gz, then hubzoid restore state.tar.gz --move "
-            "<old folder>=<scratch folder>, copy each hub's content (AGENTS.md, restricted/, "
-            "identity/) into the restored hub folders, then run this command on the copy.")
+    """Copy the hub, or every hub of a gateway, with the Open WebUI data and the
+    operational store, into ``dest`` and point the migration at the copy. The
+    original is only read."""
     if setup.source_url.get_backend_name() != "sqlite":
         raise MigrationBlocked("--rehearse needs the Open WebUI database in SQLite. For PostgreSQL, "
                                "restore a dump into a scratch database and pass --owui-db.")
@@ -1952,6 +2025,8 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
     dest = Path(dest).expanduser().resolve()
     if dest.exists() and any(dest.iterdir()):
         raise MigrationBlocked(f"{dest} is not empty. Choose an empty scratch folder.")
+    if setup.kind == "gateway":
+        return _gateway_rehearsal(setup, dest, make_url(setup.operational_url))
     hub = setup.hubs[0]
     if dest.is_relative_to(hub.path.resolve()):
         raise MigrationBlocked("Choose a rehearsal folder outside the original hub.")
@@ -1975,6 +2050,76 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
     return replace(setup, entry=copy, hubs=[replace(hub, path=copy)],
                    source_url=URL.create("sqlite", database=str(new_owui)),
                    uploads_dir=uploads if uploads.is_dir() else None,
+                   operational_url=f"sqlite:///{new_op}", write_root=dest)
+
+
+def _gateway_rehearsal(setup: Setup, dest: Path, op: URL) -> Setup:
+    """A gateway's rehearsal: each hub folder copied to ``dest/<hub key>``, the
+    gateway's databases, uploads and each bridge's workflow database to
+    ``dest/gateway-data/<kind>/``, and a manifest there that names the copies, so the copy can be migrated again or started
+    (``hubzoid gateway`` with the copied folders and ``--data dest/gateway-data``)."""
+    from . import deployment
+
+    for hub in setup.hubs:
+        if dest.is_relative_to(hub.path.resolve()):
+            raise MigrationBlocked("Choose a rehearsal folder outside every hub folder.")
+    dest.mkdir(parents=True, exist_ok=True)
+    data = dest / "gateway-data"
+    copies = []
+    for hub in setup.hubs:
+        copy = dest / hub.key
+        _copy_tree(hub.path, copy)
+        copies.append(replace(hub, path=copy))
+
+    def mapped(path: Path, label: str) -> Path:
+        """Where ``path`` lives in the copy: inside a copied hub, or under its
+        own label in gateway-data (two databases may share a file name)."""
+        path = path.expanduser().resolve()
+        for hub, copy in zip(setup.hubs, copies):
+            if hub.path.resolve() in path.parents:
+                return copy.path / path.relative_to(hub.path.resolve())
+        target = data / label / path.name
+        if path.is_file():
+            _sqlite_copy(path, target)
+        elif path.is_dir():
+            shutil.copytree(path, target, dirs_exist_ok=True)
+        return target
+
+    new_owui = mapped(Path(setup.source_url.database), "openwebui")
+    new_uploads = mapped(setup.uploads_dir, "uploads") if setup.uploads_dir is not None else None
+    new_op = mapped(Path(op.database), "operational")
+    original = deployment.manifest_path(setup.entry, setup.env)
+    manifest = json.loads(original.read_text()) if original and original.is_file() else dict(setup.manifest)
+    hubs_out = []
+    for h, c in zip(manifest.get("hubs") or [], copies):
+        entry = {**h, "path": str(c.path)}
+        if h.get("dbos_url"):
+            # Each bridge's workflow database: copied too, never left pointing at
+            # the original (a copy's `schedule cancel` would cancel real runs).
+            dbos = make_url(h["dbos_url"])
+            if dbos.get_backend_name() != "sqlite":
+                raise MigrationBlocked(f"Hub {h.get('key')} keeps its workflow runs in PostgreSQL. For a "
+                                       "rehearsal, restore a dump into a scratch database and point "
+                                       "the copy's dbos_url at it.")
+            entry["dbos_url"] = f"sqlite:///{mapped(Path(dbos.database), 'workflows-' + str(h.get('key')))}"
+        hubs_out.append(entry)
+    manifest["hubs"] = hubs_out
+    manifest["operational_url"] = f"sqlite:///{new_op}"
+    for key in ("owui_db", "owui_database_url"):
+        if manifest.get(key):
+            manifest[key] = str(new_owui) if key == "owui_db" else f"sqlite:///{new_owui}"
+    if manifest.get("branding_dir"):
+        branding = Path(manifest["branding_dir"]).resolve()
+        manifest["branding_dir"] = str(next(
+            (c.path / branding.relative_to(h.path.resolve()) for h, c in zip(setup.hubs, copies)
+             if h.path.resolve() in branding.parents or h.path.resolve() == branding), branding))
+    manifest_file = data / "deployment.json"
+    deployment._write(manifest_file, manifest)
+    for copy in copies:
+        deployment._write(copy.path / ".hubzoid" / "deployment.json", {"manifest": str(manifest_file)})
+    return replace(setup, entry=copies[0].path, hubs=copies, manifest=manifest,
+                   source_url=URL.create("sqlite", database=str(new_owui)),
+                   uploads_dir=new_uploads if new_uploads is not None and new_uploads.is_dir() else None,
                    operational_url=f"sqlite:///{new_op}", write_root=dest)
 
 
@@ -2031,7 +2176,7 @@ def render(report: Report, verbose: bool = False) -> str:
     elif report.applied and data.get("rehearsal_copy"):
         lines.append(f"Migrated the rehearsal copy in {data['rehearsal_copy']}. The original was not changed.")
     elif report.applied:
-        lines.append("Migrated. Start the deployment in the default mode (HUBZOID_UI=hubzoid).")
+        lines.append("Migrated. Start the deployment (hubzoid run or hubzoid gateway), then sign in as the owner.")
     else:
         lines.append("Dry run: nothing was changed. Stop the deployment, take a backup "
                      "(hubzoid backup), then run again with --apply.")
@@ -2060,11 +2205,11 @@ def openwebui(
     apply: bool = typer.Option(False, "--apply", help="Write the migration. Without it: a dry run that changes nothing."),
     as_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
     verbose: bool = typer.Option(False, "--verbose", help="Also list the ids of skipped and conflicting items."),
-    rehearse: Path = typer.Option(None, "--rehearse", help="Copy the hub into this empty folder and migrate the copy. The original is only read."),
+    rehearse: Path = typer.Option(None, "--rehearse", help="Copy the hub (or every hub of a gateway) into this empty folder and migrate the copy. The original is only read."),
     model_alias: list[str] = typer.Option(None, "--model-alias", help="OLD=AGENT: import conversations of an old model id into this agent (model id or hub key). Repeatable."),
 ) -> None:
     """Move accounts, conversations and share links from Open WebUI to the
-    Hubzoid web app. Access is already in the Console and stays as it is. Open
+    Hubzoid web app. Access grants (Settings → People & access) stay as they are. Open
     WebUI is read, never changed. The default is a dry run; stop the deployment
     and take a backup before --apply."""
     from rich.console import Console

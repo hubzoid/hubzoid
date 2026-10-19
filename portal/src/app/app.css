@@ -724,6 +724,10 @@
     padding: 7px 12px;
     border-bottom: 1px solid var(--hz-line-soft);
     vertical-align: top;
+    /* `anywhere` (inherited from .hz-md) lets a column shrink to one character,
+       so "R-1001" broke into "R-/100/1". `break-word` still wraps a long URL
+       without narrowing the column; a wide table scrolls in .hz-table-wrap. */
+    overflow-wrap: break-word;
   }
   .hz-md tr:last-child td {
     border-bottom: 0;
@@ -2269,8 +2273,21 @@
     max-width: 768px;
     margin-top: 14px;
   }
-  .hz-pill {
+  /* Text the agent wrote just before a tool step is narration ("I'll check the
+     stock first"), not the answer: quieter, so the answer stands out. */
+  .hz-assistant .hz-md:has(+ .hz-act) {
+    color: var(--hz-secondary);
+    font-size: 0.95em;
+  }
+  .hz-search-mark {
+    background: transparent;
+    color: var(--hz-ink);
+    font-weight: 600;
+  }
+  .hz-suggestion {
+    display: inline-block;
     height: 30px;
+    line-height: 28px;
     max-width: 320px;
     padding: 0 12px;
     border-radius: 999px;
@@ -2282,7 +2299,7 @@
     text-overflow: ellipsis;
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
-  .hz-pill:hover {
+  .hz-suggestion:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
   }
@@ -2528,7 +2545,7 @@
     }
   }
   .hz-set-backlink {
-    display: none;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
     height: 28px;
@@ -2542,11 +2559,6 @@
   .hz-set-backlink:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
-  }
-  @media (min-width: 1024px) {
-    .hz-set-backlink {
-      display: inline-flex;
-    }
   }
   .hz-set-nav .hz-nav {
     display: flex;

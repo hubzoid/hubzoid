@@ -67,6 +67,16 @@ def test_links_use_the_public_url_or_the_port(hub, monkeypatch):
     assert "https://hub.example.com/auth/set-password?token=" in out
 
 
+def test_links_use_the_gateways_recorded_public_url(hub, monkeypatch):
+    # Run from a shell next to a gateway started with --public-url: the shell
+    # has no HUBZOID_PUBLIC_URL, the deployment record does.
+    from hubzoid import deployment
+
+    monkeypatch.setattr(deployment, "read", lambda *a, **k: {"public_url": "http://localhost:3750"})
+    out = run("create", "c@example.com", str(hub))[1]
+    assert "http://localhost:3750/auth/set-password?token=" in out
+
+
 def test_create_an_administrator_and_an_owner(hub):
     code, out = run("create", "boss@example.com", str(hub), "--admin")
     assert code == 0 and "Created administrator" in out

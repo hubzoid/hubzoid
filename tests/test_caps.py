@@ -48,7 +48,7 @@ def test_overflow_path_is_hub_relative_when_hub_dir_given(tmp_path: Path):
         hub_dir=tmp_path,
     )
     # Hint shows path relative to hub_dir, not absolute.
-    assert "output/session-1/grep-overflow-" in body
+    assert "output/session-1/tool-output/grep-overflow-" in body
     assert str(tmp_path) not in body  # no leaked absolute path
 
 
@@ -65,3 +65,9 @@ def test_two_calls_do_not_collide(tmp_path: Path):
     _, b = truncate_with_overflow("b" * 500, cap=10, overflow_dir=tmp_path, label="read")
     assert a != b
     assert a.is_file() and b.is_file()
+
+
+def test_overflow_stays_out_of_the_chats_documents(tmp_path: Path):
+    """Files directly in the artifacts folder become documents; overflow doesn't."""
+    _, overflow = truncate_with_overflow("z" * 500, cap=10, overflow_dir=tmp_path, label="read")
+    assert overflow.parent != tmp_path and not any(p.is_file() for p in tmp_path.iterdir())

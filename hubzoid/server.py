@@ -73,8 +73,9 @@ def build_app() -> FastAPI:
     # `hubzoid run` and `hubzoid doctor` do, for a bridge started on its own.
     for retired in appmode.retired_settings(hub_dir):
         if not retired.fatal:
-            log.warning("%s is an Open WebUI setting Hubzoid 2.0 no longer uses. %s",
-                        retired.name, retired.advice)
+            # Named with the hub: behind a gateway every bridge logs to one place.
+            log.warning("%s: %s is an Open WebUI setting Hubzoid 2.0 no longer uses. %s",
+                        Path(hub_dir).name, retired.name, retired.advice)
     # Bring Hubzoid's own tables to the current schema before serving anything;
     # a schema this version can't use stops the bridge here, loudly.
     from . import db as dblib
@@ -88,7 +89,7 @@ def build_app() -> FastAPI:
     # (which itself defaults to the main agent's name).
     model_label = settings.model_label or _slugify(rt.name)
     api_keys = set(settings.bridge_api_keys)
-    if "dev" in api_keys:
+    if "dev" in api_keys and os.environ.get("HUBZOID_GATEWAY") != "1":  # a gateway says it once, for all hubs
         log.warning(
             "BRIDGE_API_KEYS includes the public default key 'dev'. Set a random "
             "key in the hub's .env for any shared or deployed install."
@@ -163,6 +164,12 @@ def build_app() -> FastAPI:
                 log.exception("hub changes: recovery failed")
         from .sandbox import service as sandbox_service
         reaper_task = asyncio.create_task(sandbox_service.reaper_loop(hub_dir))  # idle when sandboxes are off
+        reload_task = None
+        if chat_ctx is not None:
+            # Published instructions rebuild the chat's runtime here, in this
+            # long-lived task (open and close in one task), not in a request.
+            from .chat.authoring_routes import runtime_reloader
+            reload_task = asyncio.create_task(runtime_reloader(chat_ctx, hub_dir, rt, inflight.busy))
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -178,6 +185,12 @@ def build_app() -> FastAPI:
                 await reaper_task
             except asyncio.CancelledError:
                 pass
+            if reload_task is not None:
+                reload_task.cancel()
+                try:
+                    await reload_task
+                except asyncio.CancelledError:
+                    pass
             if hitl_task is not None:
                 hitl_task.cancel()
             if wf_dispatcher is not None:
