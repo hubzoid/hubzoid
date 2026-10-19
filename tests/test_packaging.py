@@ -167,3 +167,6 @@ def test_locks_pin_this_release_line(lock):
     pins = _pins(lock)
     assert pins["pwdlib"].startswith("0.3.")
     assert pins["python-multipart"].startswith("0.0.")
+    # The image installs the lock, then the package with --no-deps: a dependency
+    # missing here is missing there (openapi-spec-validator was).
+    assert set(_requirement_names(PYPROJECT["project"]["dependencies"])) - set(pins) == set()
