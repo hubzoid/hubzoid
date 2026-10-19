@@ -254,13 +254,16 @@ def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
         if ft.name in registry:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
-        registry[ft.name] = gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION)
+        # Added after access.apply, so the per-call run check is applied here.
+        registry[ft.name] = access.guard.run_checked(
+            gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION), ctx.hub_dir)
     # Personal memory: each person's own notes. No grant needed; a call with
-    # nobody signed in is refused by the tool itself.
+    # nobody signed in is refused by the tool itself. Like every tool, it stops
+    # when the run's account loses the hub or its credential ends.
     from . import personal_memory
 
     for ft in personal_memory.make(ctx.hub_dir):
-        registry.setdefault(ft.name, ft)
+        registry.setdefault(ft.name, access.guard.run_checked(ft, ctx.hub_dir))
 
 
 def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
@@ -276,7 +279,8 @@ def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
         if ft.name in registry:
             log.info("hub tool %r overrides the core call_jev tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir)
+        registry[ft.name] = access.guard.run_checked(
+            access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir), ctx.hub_dir)
 
 
 def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):

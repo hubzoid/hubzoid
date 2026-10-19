@@ -41,6 +41,7 @@ assert.deepEqual(parseRoute("/auth", new URLSearchParams("redirect=%2F%09%2Fevil
   name: "signin",
   redirect: "/",
   error: null,
+  step: null,
 });
 // What comes back is the normalised path on this site.
 assert.equal(safeRedirect("/c/../account"), "/account");
@@ -54,6 +55,9 @@ assert.deepEqual(parseRoute("/auth", new URLSearchParams("redirect=%2Fmcp%2Foaut
   name: "signin",
   redirect: "/mcp/oauth/consent?ticket=t",
   error: null,
+  step: null,
 });
+// The sign-in step (two-step sign-in) is carried in the address.
+assert.equal((parseRoute("/auth", new URLSearchParams("step=code")) as { step: string | null }).step, "code");
 
 console.log("router checks passed");

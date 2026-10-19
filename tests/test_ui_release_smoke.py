@@ -42,7 +42,7 @@ def test_real_interface_signin_stream_and_restart(tmp_path):
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR", "USER")}
     env.update(PATH=str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", ""),
                PYTHONPATH=str(REPO), MODEL="hubzoid-test/scripted", HUBZOID_TEST_RUNTIME="1",
-               HUBZOID_AUTH="true",
+               HUBZOID_AUTH="true", HUBZOID_MFA_REQUIRED="none",  # two-step sign-in has its own tests
                HUBZOID_ADMIN_EMAIL=EMAIL, HUBZOID_ADMIN_PASSWORD=PASSWORD,
                HUBZOID_PUBLIC_URL=base,
                BRIDGE_API_KEYS="release-smoke-bridge", MCP_SERVER="false",

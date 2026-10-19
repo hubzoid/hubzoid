@@ -30,6 +30,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 
 from . import graph as g
 from .common import db, error
@@ -55,11 +56,16 @@ async def read_json(request: Request, limit: int = SMALL_BODY_LIMIT) -> dict:
     if declared and declared.isdigit() and int(declared) > limit:
         raise error(413, "request_too_large", "That request is too large.")
     chunks, size = [], 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > limit:
-            raise error(413, "request_too_large", "That request is too large.")
-        chunks.append(chunk)
+    try:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise error(413, "request_too_large", "That request is too large.")
+            chunks.append(chunk)
+    except ClientDisconnect:
+        # The browser left (a page change, a closed tab): nobody reads the
+        # answer, so end quietly rather than log a server error.
+        raise error(400, "client_disconnected", "The request ended before its body arrived.") from None
     raw = b"".join(chunks)
     if not raw:
         return {}
@@ -174,7 +180,10 @@ class Orchestrator:
                 from .. import server
 
                 turns_prompt = "\n\n".join(x for x in (turns_prompt, server._flatten_messages(plan.extra_turns)) if x)
-            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email)
+            # The credential that started the reply goes with it: B's per-call check
+            # stops the run when that session or key is revoked.
+            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email,
+                                   credential=plan.credential, credential_id=plan.credential_id)
             from .. import _request_ctx
             from .history import user_text
 
