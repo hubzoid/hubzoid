@@ -41,15 +41,17 @@ def resolve(ref: str | Ref, hub_dir, *, env: Mapping[str, str] | None = None) ->
     ``env:`` reads the layered configuration (``env``, default the process
     environment). ``secret:`` reads the store. A hub or channel reference must
     name this hub. Raises SecretError ``secret_unavailable`` when nothing is
-    set, ``secret_unreadable`` when the deployment key cannot decrypt it, and
-    ``permission_denied`` for another hub's secret."""
+    set, ``secret_unreadable`` when the deployment key cannot decrypt it,
+    ``secret_rebind`` when it was stored for a destination (``AZURE_API_BASE``
+    for an Azure key) that ``env`` no longer names, and ``permission_denied``
+    for another hub's secret."""
     from ..assertions import hub_key
     from . import store
     from .store import SecretError
 
     parsed = parse(ref) if isinstance(ref, str) else ref
+    source = os.environ if env is None else env
     if parsed.provider == "env":
-        source = os.environ if env is None else env
         value = (source.get(parsed.name) or "").strip()
         if not value:
             raise SecretError("secret_unavailable", f"{parsed.name} is not set. Set it with hubzoid "
@@ -57,7 +59,7 @@ def resolve(ref: str | Ref, hub_dir, *, env: Mapping[str, str] | None = None) ->
         return value
     if parsed.scope in ("hub", "channel") and parsed.hub != hub_key(Path(hub_dir)):
         raise SecretError("permission_denied", "A hub can read only its own secrets.", 403)
-    value = store.value(hub_dir, scope=parsed.scope, target=parsed.target, name=parsed.name)
+    value = store.value(hub_dir, scope=parsed.scope, target=parsed.target, name=parsed.name, env=source)
     if not value:
         raise SecretError("secret_unavailable", f"No secret is stored for {parsed}. Set it with "
                           "hubzoid secrets set.", 503)

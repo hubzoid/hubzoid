@@ -833,20 +833,17 @@ def test_personal_history_limits_after_account_filter_and_merges_workflows(hub, 
 
 
 def test_repeat_a_request_is_a_personal_workflow_with_its_own_access(hub, engine):
-    """"Repeat this every Monday" saves the built-in repeated_request workflow,
-    which needs run and schedule on it (Workflow access) and is never offered
-    as a "run for me" tool of its own."""
+    """"Repeat this every Monday" saves the built-in repeated_request workflow.
+    Everyone who uses the agent may run and schedule their own out of the box;
+    it is never offered as a "run for me" tool of its own."""
     from hubzoid.workflows import access as wf_access
 
     tools = _tools(hub)
     assert "repeat_request" in tools and "repeated_request" not in tools
     ask = {"prompt": "Summarise low stock items", "cadence": "every monday at 09:00", "timezone": "Europe/London"}
-    assert "access denied" in _call(tools["repeat_request"], ask)
-    store_for(hub).grant("owner@co.org", "*", "manage_access", actor="t")
-    store_for(hub).grant("owner@co.org", "irs", "use_hub", actor="t")
-    wf_access.apply(hub, "version: 1\ndefault: deny\ngrants:\n  - subject: meera@co.org\n"
-                         "    workflow: repeated_request\n    actions: [run, schedule]\n",
-                    expected_revision=0, actor="owner@co.org")
+    d = wf_access.authorize(hub, RAVI, "repeated_request", "schedule")
+    assert d.allowed and "everyone who uses this agent" in d.sources[0]
+    assert not wf_access.authorize(hub, "stranger@co.org", "repeated_request", "run").allowed
     proposal = _call(tools["repeat_request"], ask)
     assert proposal.startswith("Not saved yet. Mondays at 09:00 (Europe/London)")
     assert 'exactly: "Summarise low stock items"' in proposal and not engine.started

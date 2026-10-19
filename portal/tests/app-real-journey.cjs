@@ -1064,7 +1064,11 @@ journey("account", "Account: display name, password change ends other sessions, 
   await first.page.getByLabel("Display name").fill("Lee P. Park");
   await first.page.getByRole("button", { name: "Save", exact: true }).click();
   await first.page.getByText("Name saved.").waitFor();
+  // Settings has no chat list; back in chat the sidebar shows the new name.
+  await first.page.getByRole("button", { name: "Back to chat" }).first().click();
   await first.page.getByRole("navigation", { name: "Conversations" }).getByText("Lee P. Park").waitFor();
+  await first.page.goto(`${ctx.BASE}/account`);
+  await first.page.getByRole("heading", { name: "Settings", level: 1 }).waitFor();
   const me = (await ctx.apiGet(first.context, "/api/auth/session")).json;
   assert.equal(me.user.name, "Lee P. Park");
 

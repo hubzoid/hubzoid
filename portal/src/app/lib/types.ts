@@ -13,6 +13,8 @@ export type SessionUser = {
   console?: boolean;
   /** May read this hub's proposed changes (curators as well as managers). */
   hub_changes?: boolean;
+  /** The Open WebUI parity ledger tab (HUBZOID_PARITY_LEDGER, maintainers only). */
+  parity?: boolean;
   /** The Hubzoid version; sent only to people the Console opens for. */
   version?: string;
 };

@@ -233,7 +233,7 @@ function EmptyThread(props: ThreadProps) {
         <section aria-label={t.agents.suggestions} className="hz-pills">
           {pills.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
-              <button type="button" className="hz-pill">
+              <button type="button" className="hz-suggestion" title={s.label}>
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -298,7 +298,17 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
     s.message.content.some((p) => p.type === "text" && (p as { text: string }).text.trim() !== ""),
   );
   const isLast = useAuiState((s) => s.message.isLast);
+  const decision = useAuiState((s) => !!(s.message.metadata?.custom as { decision?: boolean } | undefined)?.decision);
   const del = useDelete();
+  if (decision)
+    // The answer to a card: a quiet line under it, not a chat bubble.
+    return (
+      <MessagePrimitive.Root className="hz-message hz-decision" data-role="user" role="note" data-testid="decision-line">
+        <span className="hz-decision-line">
+          <MessagePrimitive.Parts components={{ Text: UserText }} />
+        </span>
+      </MessagePrimitive.Root>
+    );
   return (
     <MessagePrimitive.Root
       className="hz-message hz-user"
@@ -1122,7 +1132,8 @@ function ContextNote() {
 
 // ---- feedback and follow-ups ----------------------------------------------------
 
-const REASONS = ["accurate", "useful", "missing_source", "incorrect", "other"] as const;
+// What can be wrong with an answer (the deployment also accepts "accurate" and "useful").
+const REASONS = ["incorrect", "missing_source", "other"] as const;
 
 /** Rate this answer. A rating belongs to you and to this exact answer. */
 function FeedbackActions() {

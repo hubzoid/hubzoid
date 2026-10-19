@@ -701,10 +701,40 @@ def test_gateway_data_folder_is_accepted(gateway):
     assert setup.kind == "gateway" and [h.key for h in setup.hubs] == ["finance", "ops"]
 
 
-def test_rehearse_refuses_a_gateway(gateway, tmp_path):
-    result = CliRunner().invoke(mig.migrate_app, ["openwebui", str(gateway.entry), "--rehearse",
-                                                 str(tmp_path / "x")])
-    assert result.exit_code == 2 and "restored copy" in result.output
+def test_gateway_rehearsal_on_a_copy(gateway, tmp_path):
+    import sqlite3
+
+    # A bridge's own workflow database, outside the hub: the copy must not point at it.
+    wf = gateway.root / "wf" / "dbos.sqlite"
+    wf.parent.mkdir()
+    sqlite3.connect(wf).close()
+    manifest_file = gateway.owui.parent / "deployment.json"
+    manifest = json.loads(manifest_file.read_text())
+    manifest["hubs"][0]["dbos_url"] = f"sqlite:///{wf}"
+    manifest_file.write_text(json.dumps(manifest))
+    original = _tree(gateway.root)
+    scratch = tmp_path.parent / (tmp_path.name + "-rehearsal")
+    result = CliRunner().invoke(mig.migrate_app, ["openwebui", str(gateway.owui.parent), "--rehearse",
+                                                 str(scratch), "--apply", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["applied"] is True
+    assert _tree(gateway.root) == original and not gateway.op.exists()
+    copied = json.loads((scratch / "gateway-data" / "deployment.json").read_text())
+    assert [h["path"] for h in copied["hubs"]] == [str(scratch / "finance"), str(scratch / "ops")]
+    assert copied["operational_url"] == f"sqlite:///{scratch / 'gateway-data' / 'operational' / 'operational.db'}"
+    assert copied["owui_database_url"] == f"sqlite:///{scratch / 'gateway-data' / 'openwebui' / 'webui.db'}"
+    assert copied["hubs"][0]["dbos_url"].startswith(f"sqlite:///{scratch}")
+    pointer = json.loads((scratch / "finance" / ".hubzoid" / "deployment.json").read_text())
+    assert pointer["manifest"] == str(scratch / "gateway-data" / "deployment.json")
+    # Both agents' conversations moved, in the copy's store.
+    engine = create_engine(copied["operational_url"])
+    with engine.connect() as conn:
+        hubs = {r[0] for r in conn.execute(text("SELECT DISTINCT hub FROM hz_conversations"))}
+    engine.dispose()
+    assert hubs == {"finance", "ops"}
+    # The copy migrates again as a gateway of its own (a second apply changes nothing).
+    again = CliRunner().invoke(mig.migrate_app, ["openwebui", str(scratch / "gateway-data"), "--json"])
+    assert again.exit_code == 0, again.output
 
 
 def test_postgres_operational_store(gateway, postgres_url):
@@ -1028,3 +1058,92 @@ def test_rehearsal_writes_outside_the_copy_are_refused(tmp_path):
     with pytest.raises(mig.MigrationBlocked):
         mig.Attachments._write(root / "uploads", "a.txt", b"x", None, "text/plain", write_root=root)
     assert list(outside.iterdir()) == []
+
+
+def _clone_user(owui: Path, source_id: str, new_id: str, **values) -> None:
+    """Add an Open WebUI account copied from another (and its password row)."""
+    import sqlite3
+
+    con = sqlite3.connect(owui)
+    con.row_factory = sqlite3.Row
+    try:
+        for table in ("user", "auth"):
+            row = con.execute(f'SELECT * FROM "{table}" WHERE id=?', (source_id,)).fetchone()
+            if row is None:
+                continue
+            data = dict(row, id=new_id, **{k: v for k, v in values.items() if k in row.keys()})
+            cols = ", ".join(f'"{c}"' for c in data)
+            con.execute(f'INSERT INTO "{table}" ({cols}) VALUES ({", ".join("?" * len(data))})',
+                        list(data.values()))
+        con.commit()
+    finally:
+        con.close()
+
+
+def test_the_sign_in_off_account_is_imported_blocked_and_not_an_admin(gateway):
+    _clone_user(gateway.owui, gateway.uid("admin"), "local-owner-0001", email="admin@localhost")
+    report = _run(gateway, apply=True)
+    assert report.applied
+    row = gateway.rows("SELECT role, password_hash FROM hz_users WHERE id='local-owner-0001'")[0]
+    assert row == {"role": "user", "password_hash": None}
+    assert gateway.store().is_suspended("admin@localhost")
+    assert any("running without sign-in" in n for n in report.notes)
+
+
+def test_the_configured_owner_exists_after_apply(gateway, monkeypatch):
+    from hubzoid.auth import passwords, users
+
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "Owner@Example.com")
+    monkeypatch.setenv("HUBZOID_ADMIN_PASSWORD", "the owner's long password")
+    dry = _run(gateway)
+    assert any("--apply creates it" in n for n in dry.notes)
+    report = _run(gateway, apply=True)
+    owner = users.find_by_email(gateway.entry, "owner@example.com")
+    assert owner and owner["role"] == "admin" and owner["status"] == "active"
+    assert passwords.verify("the owner's long password", users.store(gateway.entry).password_hash(owner["id"]))
+    assert any("Created the configured owner" in n for n in report.notes)
+    assert gateway.store().can("owner@example.com", "finance", "use_hub")
+
+
+def test_people_from_another_hubs_database_are_not_reported_missing(gateway):
+    import sqlite3
+
+    _run(gateway, apply=True)
+    eng = gateway.engine()
+    with eng.begin() as conn:  # someone a second Open WebUI database brought in
+        conn.execute(text("INSERT INTO hz_users (id, email, name, role, status, password_enabled, source, "
+                          "created_at, updated_at) VALUES ('other-hub-user-1', 'zed@example.com', 'Zed', "
+                          "'user', 'active', 0, 'migrated', 1, 1)"))
+    eng.dispose()
+    assert not any("no longer exist" in w for w in _run(gateway).warnings)
+    # Someone this Open WebUI had last time and has no longer: still reported.
+    con = sqlite3.connect(gateway.owui)
+    con.execute('DELETE FROM "user" WHERE id=?', (gateway.uid("erin"),))
+    con.commit()
+    con.close()
+    report = _run(gateway)
+    assert any("no longer exist" in w for w in report.warnings)
+    assert report.counts["users"]["imported_earlier_not_in_open_webui_now"] == 1
+
+
+def test_people_who_would_have_no_agent_access_are_named_before_the_move(gateway):
+    report = _run(gateway)
+    assert report.counts["users"]["active_without_agent_access"] >= 1
+    assert any("No agents yet" in w and "BYPASS_MODEL_ACCESS_CONTROL" in w for w in report.warnings)
+    store = gateway.store()
+    for name in ("alice", "bob", "dave", "erin", "olivia"):
+        store.grant(f"{name}@example.com", "finance", "use_hub", actor="console")
+    report = _run(gateway)
+    assert "active_without_agent_access" not in report.counts["users"]
+
+
+def test_a_deleted_configured_owner_is_not_created_again(gateway, monkeypatch):
+    from hubzoid.access.service import DELETED_PREFIX
+    from hubzoid.auth import users
+
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "owner@example.com")
+    monkeypatch.setenv("HUBZOID_ADMIN_PASSWORD", "the owner's long password")
+    gateway.store().set_metadata(DELETED_PREFIX + "owner@example.com", "old-id")
+    report = _run(gateway, apply=True)
+    assert users.find_by_email(gateway.entry, "owner@example.com") is None
+    assert any("was deleted in Hubzoid" in n for n in report.notes)

@@ -393,3 +393,19 @@ def test_both_web_tools_disabled(ctx, monkeypatch):
     monkeypatch.setenv("HUBZOID_DISABLE_WEB_SEARCH", "true")
     tools = web_mod.make(ctx)
     assert tools == []
+
+
+def test_a_chats_overflow_is_readable_but_not_a_document(ctx):
+    import re
+
+    from hubzoid import _request_ctx, memory
+
+    (ctx.hub_dir / "big.txt").write_text("x" * 40_000 + "TAIL", encoding="utf-8")
+    read_file = _by_name(files_mod.make(ctx), "read_file")
+    with _request_ctx.chat_scope("web-overflow-chat"):
+        out = _call(read_file, path="big.txt")
+        spill = re.search(r"saved to `([^`]+)`", out).group(1)
+        assert "/tool-output/" in spill
+        assert _call(read_file, path=spill, offset=40_000, limit=10) == "TAIL"
+    artifacts = memory.chat_artifact_dir(ctx.hub_dir, "web-overflow-chat")
+    assert not [p for p in artifacts.iterdir() if p.is_file()]  # only top-level files become documents
