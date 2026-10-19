@@ -319,7 +319,9 @@ class Hub:
 
         ctx = _ctx()
         run = re.sub(r"[^A-Za-z0-9._-]+", "-", ctx.run_id or "local").strip("-.") or "local"
-        path = Path(ctx.hub_dir) / ".hubzoid" / "runs" / ctx.workflow / run
+        from ..datadir import state
+
+        path = state(ctx.hub_dir) / "runs" / ctx.workflow / run
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -692,7 +694,9 @@ def data_dir(hub_dir=None) -> Path:
     """A private folder for a hub's own data files: `<hub>/.hubzoid/data/`.
     Agent file tools can't read it and backups include it. Workflows reach the
     same folder as `hub.data_dir`."""
-    path = _hub_dir_here(hub_dir) / ".hubzoid" / "data"
+    from ..datadir import state
+
+    path = state(_hub_dir_here(hub_dir)) / "data"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

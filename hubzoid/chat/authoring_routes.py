@@ -41,11 +41,25 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         if not p.can(capability, ctx.hub):
             raise authz.denied(capability)
 
+    def writable() -> None:
+        """A hosted hub's files come from its image (HUBZOID_DATA_DIR): an edit
+        here would be lost on the next deploy, so it is made in Git instead."""
+        from fastapi import HTTPException
+
+        from ..datadir import hub_read_only
+
+        if hub_read_only(ctx.hub_dir):
+            raise HTTPException(409, detail={
+                "code": "hub_read_only",
+                "message": "This agent's files come from its Git repository. Change them there and redeploy."})
+
     @app.get(f"{A}/files")
     async def files(request: Request):
         user, _ = await actor_of(request)
         await need(user, "authoring.draft")
-        return {"items": await call(svc.files), "hub": ctx.hub}
+        from ..datadir import hub_read_only
+
+        return {"items": await call(svc.files), "hub": ctx.hub, "read_only": hub_read_only(ctx.hub_dir)}
 
     @app.get(f"{A}/files/versions")
     async def versions(request: Request):
@@ -58,6 +72,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.draft")
         body = await er.read_json(request, er.MESSAGE_BODY_LIMIT)
+        writable()
         return await call(svc.create_draft, actor, str(body.get("path") or ""), body.get("content"))
 
     @app.get(f"{A}/drafts")
@@ -77,6 +92,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.draft")
         body = await er.read_json(request, er.MESSAGE_BODY_LIMIT)
+        writable()
         return await call(svc.update_draft, actor, did, str(body.get("content") or ""), body.get("expected_revision"))
 
     @app.post(f"{A}/drafts/{{did}}/submit")
@@ -84,6 +100,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.draft")
         body = await er.read_json(request)
+        writable()
         return await call(svc.submit, actor, did, body.get("expected_revision"))
 
     @app.post(f"{A}/drafts/{{did}}/review")
@@ -91,6 +108,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.publish")
         body = await er.read_json(request)
+        writable()
         return await call(svc.review, actor, did, decision=str(body.get("decision") or ""),
                           digest=str(body.get("digest") or ""), note=body.get("note"))
 
@@ -99,6 +117,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.publish")
         body = await er.read_json(request)
+        writable()
         out = await call(svc.publish, actor, did, str(body.get("digest") or ""))
         if out["path"].endswith(("AGENTS.md", "SKILL.md")) or out["path"].startswith("skills/"):
             out["runtime_reloaded"] = await _reload_runtime(ctx)
@@ -109,6 +128,7 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.draft")
         body = await er.read_json(request)
+        writable()
         return await call(svc.rollback_draft, actor, str(body.get("path") or ""), str(body.get("version_id") or ""))
 
     @app.post(f"{A}/openapi/preview")

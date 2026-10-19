@@ -47,11 +47,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from . import datadir
+
 log = logging.getLogger(__name__)
 
 FORMAT = 1
 INDEX = "hubzoid-backup.json"
-STATE_DIRS = (".hubzoid", ".inbound", "logs", "output")
+STATE_DIRS = datadir.WRITTEN
 UI_DIR = ".openwebui-data"
 SECRET_FILES = {".env", "artifact_secret", "secret.key", ".webui_secret_key", ".admin_token"}
 _TEMP_SUFFIXES = (".tmp", ".part")
@@ -124,9 +126,10 @@ def plan(hub_dir: Path, *, include_secrets: bool = False) -> Plan:
         roots.append(Root(f"r{len(roots)}", path, kind, hub))
 
     for key, path in hubs:
+        state_root = datadir.root(path)          # HUBZOID_DATA_DIR, or the hub folder
         for name in STATE_DIRS:
-            if (path / name).is_dir():
-                add(path / name, "state", key)
+            if (state_root / name).is_dir():
+                add(state_root / name, "state", key)
         if (path / UI_DIR).is_dir():
             add(path / UI_DIR, "ui", key)
         if include_secrets and (path / ".env").is_file():

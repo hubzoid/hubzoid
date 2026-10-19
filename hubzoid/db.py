@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import datadir
+
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -22,7 +24,7 @@ def resolve_url(hub_dir, env=None) -> str:
     url = (env.get("DATABASE_URL") or "").strip()
     if url:
         return url
-    db_path = Path(hub_dir) / ".hubzoid" / "hub.db"
+    db_path = datadir.state(hub_dir) / "hub.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{db_path}"
 
@@ -128,7 +130,7 @@ def dbos_url(hub_dir, env=None) -> str:
     dl = (env.get("DATABASE_URL") or "").strip()
     if dl and not dl.startswith("sqlite"):
         return dl
-    db_path = Path(hub_dir) / ".hubzoid" / "dbos.db"
+    db_path = datadir.state(hub_dir) / "dbos.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{db_path}"
 

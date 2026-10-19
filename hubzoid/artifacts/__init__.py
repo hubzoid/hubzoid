@@ -256,8 +256,10 @@ def content_path(hub_dir, art: Artifact) -> Path:
         hub_root = deployment.hub_path(Path(hub_dir), art.hub)
     except KeyError:
         raise ArtifactError(404, "This artifact is not available.")
-    base = (Path(hub_root) / STORE_DIR).resolve()
-    target = (Path(hub_root) / art.storage).resolve()
+    from ..datadir import resolve
+
+    base = resolve(hub_root, STORE_DIR).resolve()
+    target = resolve(hub_root, art.storage).resolve()
     if base not in target.parents or not target.is_file():
         raise ArtifactError(404, "This artifact is not available.")
     return target
@@ -336,7 +338,9 @@ def _store_copy(hub_dir, *, hub: str, owner: str, owner_account: str | None, sou
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     artifact_id = "a" + secrets.token_urlsafe(18)
     rel = f"{STORE_DIR}/{artifact_id}/{filename}"
-    target = Path(hub_dir) / rel
+    from ..datadir import resolve
+
+    target = resolve(hub_dir, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     tmp = target.with_name(f".{filename}.{os.getpid()}.tmp")

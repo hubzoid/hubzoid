@@ -162,6 +162,12 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     Slugs are de-duplicated so two hubs never collide on an artifact prefix.
     Raises ValueError if two hubs share a bridge port (they'd race).
     """
+    from . import datadir
+
+    if datadir.configured() is not None and len(hub_dirs) > 1:
+        raise ValueError(f"gateway: {datadir.ENV} holds one hub's state, and this gateway has "
+                         f"{len(hub_dirs)} hubs. Run one hub per service with its own data folder, "
+                         f"or unset {datadir.ENV}.")
     backends: list[GatewayBackend] = []
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}

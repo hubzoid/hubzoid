@@ -31,6 +31,8 @@ import sys
 import time
 from pathlib import Path
 
+from . import datadir
+
 import typer
 from rich.console import Console
 from rich.markup import escape
@@ -1232,7 +1234,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
                    path=str(b.hub_dir), model_id=b.model_label, slug=b.slug,
                    dbos_url=deployment_env.get('HUBZOID_DBOS_DB') or
                        (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL', '').startswith('postgres')
-                        else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
+                        else f"sqlite:///{datadir.state(b.hub_dir) / 'dbos.db'}")) for b in gp.backends],
         operational_url=shared_op_url,
         # A gateway that ran Open WebUI on 1.x keeps where its database is:
         # `hubzoid migrate openwebui` and the upgrade guard find the people and

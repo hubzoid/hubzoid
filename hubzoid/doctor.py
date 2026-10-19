@@ -191,6 +191,30 @@ def _versions() -> Check:
     return Check("deps.versions", "info", f"hubzoid {found.get('hubzoid')}", found)
 
 
+def _data_dir(hub: Path) -> Check | None:
+    """Where this hub's state lives, when HUBZOID_DATA_DIR keeps it apart from
+    the hub folder. Nothing for a hub that keeps its state in its own folder."""
+    import os
+
+    from . import datadir
+
+    data = datadir.configured()
+    if data is None or data == hub.resolve():
+        return None
+    fix = {"recovery": f"Set {datadir.ENV} to a folder on a durable volume (for example /data) that this "
+                       "process can write."}
+    if not data.is_dir() or not os.access(data, os.W_OK):
+        return Check("data.dir", "fail", f"{datadir.ENV}={data} is not a folder this process can write", fix)
+    if (hub / datadir.STATE / "hub.db").is_file():
+        return Check("data.dir", "warn",
+                     f"State lives in {data}, but {hub / datadir.STATE} still holds an older copy. Move it into "
+                     f"{data} or remove it, so only one copy is used.",
+                     {"recovery": f"Stop the hub, move {hub / datadir.STATE} to {data / datadir.STATE}, start it."})
+    return Check("data.dir", "info",
+                 f"State lives in {data} ({datadir.ENV}). This hub's own files are read from {hub} "
+                 "and are read-only in Settings: change them in Git and redeploy.")
+
+
 def _sqlite(hub: Path) -> Check | None:
     import sqlite3
 
@@ -569,6 +593,9 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         checks[2:2] = config
         settingslib.load(hub)
         checks.append(_versions())
+        data_check = _data_dir(hub)
+        if data_check:
+            checks.append(data_check)
         sqlite_check = _sqlite(hub)
         if sqlite_check:
             checks.append(sqlite_check)

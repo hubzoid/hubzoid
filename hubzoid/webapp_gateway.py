@@ -228,7 +228,9 @@ def _manifest_with_dir(hub_dir: Path) -> dict:
     if manifest:
         path = os.environ.get("HUBZOID_DEPLOYMENT")
         if not path:
-            pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+            from .datadir import state
+
+            pointer = state(hub_dir) / "deployment.json"
             try:
                 path = json.loads(pointer.read_text()).get("manifest")
             except (OSError, ValueError):

@@ -218,7 +218,9 @@ def _message(row) -> dict:
 def remove_chat_files(hub_dir: Path, key: str) -> None:
     """Delete the conversation's files folder (its ``store.chat_key``), only
     ever inside the hub's chats folder."""
-    base = (Path(hub_dir) / memlib.CHATS_DIRNAME).resolve()
+    from ..datadir import root
+
+    base = (root(Path(hub_dir)) / memlib.CHATS_DIRNAME).resolve()
     target = memlib.chat_root(Path(hub_dir), key)
     if not target.exists():
         return

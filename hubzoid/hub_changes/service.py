@@ -326,7 +326,9 @@ def write_lock(hub_dir: Path):
     """The hub write lock: hub changes and scheduled-task commits take turns."""
     from .. import _file_lock
 
-    path = Path(hub_dir) / ".hubzoid" / "hub-write.lock"
+    from ..datadir import state
+
+    path = state(hub_dir) / "hub-write.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+b") as fh:
         _file_lock.lock(fh)

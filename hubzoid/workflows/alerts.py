@@ -113,7 +113,8 @@ def _email(hub_dir, row, recipient, payload):
     msg.set_content(json.dumps(payload,indent=2))
     if cfg.mode == 'preview':
         from pathlib import Path
-        directory = Path(hub_dir)/'.hubzoid'/'alert-preview'
+        from ..datadir import state
+        directory = state(hub_dir)/'alert-preview'
         directory.mkdir(parents=True,exist_ok=True,mode=0o700)
         fd = os.open(directory/(row['id'].split(':')[-1]+'.eml'),os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600)
         with os.fdopen(fd,'wb') as stream:

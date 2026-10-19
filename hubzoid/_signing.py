@@ -50,7 +50,9 @@ def _secret(hub_dir=None) -> bytes:
             "artifact links need the hub directory (HUBZOID_HUB_DIR) or "
             "HUBZOID_ARTIFACT_SECRET"
         )
-    path = hub.resolve() / ".hubzoid" / _SECRET_FILE
+    from .datadir import state
+
+    path = state(hub.resolve()) / _SECRET_FILE
     key = str(path)
     with _lock:
         cached = _cache.get(key)

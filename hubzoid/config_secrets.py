@@ -361,7 +361,9 @@ class Pointer:
 
 def registered(hub_dir: Path, env: Mapping[str, str], hub_file: Mapping[str, str] | None = None) -> bool:
     """Whether the hub belongs to a gateway deployment (has a manifest)."""
-    if (Path(hub_dir) / ".hubzoid" / "deployment.json").exists():
+    from .datadir import state
+
+    if (state(hub_dir) / "deployment.json").exists():
         return True
     return bool(env.get("HUBZOID_DEPLOYMENT") or (hub_file or {}).get("HUBZOID_DEPLOYMENT"))
 
