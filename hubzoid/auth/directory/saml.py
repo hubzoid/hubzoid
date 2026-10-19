@@ -21,7 +21,6 @@ import logging
 import shutil
 from pathlib import Path
 
-import httpx
 
 log = logging.getLogger("hubzoid.auth.saml")
 
@@ -48,17 +47,21 @@ def available() -> tuple[bool, str]:
 
 
 def fetch_metadata(url: str) -> str:
-    if not url.startswith("https://") and not url.startswith("http://localhost") \
-            and not url.startswith("http://127.0.0.1"):
-        raise SamlRefused("metadata_url", "Give the metadata URL over https.")
+    """The identity provider's metadata from a public https address. Every
+    redirect is checked again and the connection is pinned to the checked
+    address (the fetcher used for sources), so an administrator's URL can't
+    reach this server's own network. A provider on a private address pastes
+    its metadata XML instead."""
+    from ...chat.retrieval import safe_fetch
+
+    if not (url or "").startswith("https://"):
+        raise SamlRefused("metadata_url", "Give the metadata URL over https, or paste the metadata XML.")
     try:
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            r = client.get(url)
-    except httpx.HTTPError as exc:
-        raise SamlRefused("metadata_unreachable", f"Could not fetch the metadata ({type(exc).__name__}).")
-    if r.status_code != 200 or len(r.content) > METADATA_MAX:
-        raise SamlRefused("metadata_unreachable", f"The metadata URL answered HTTP {r.status_code}.")
-    return r.text
+        _, _, body = safe_fetch(url, {"timeout_seconds": 10, "redirects": 3, "bytes": METADATA_MAX})
+    except Exception as exc:  # noqa: BLE001 - every refusal reads the same to the admin
+        message = getattr(exc, "message", "") or type(exc).__name__
+        raise SamlRefused("metadata_unreachable", f"Could not fetch the metadata: {message}") from exc
+    return body.decode("utf-8", "replace")
 
 
 def idp_summary(metadata_xml: str) -> dict:

@@ -211,13 +211,14 @@ def forget(request: Request) -> None:
 
 def bearer_token(request: Request) -> str:
     """A personal API key sent as ``Authorization: Bearer hzp_...``, else ""."""
-    from .api_keys import looks_like_key
-
     raw = request.headers.get("authorization") or ""
     if not raw.lower().startswith("bearer "):
         return ""
     token = raw[7:].strip()
-    return token if looks_like_key(token) else ""
+    # Anything that claims to be a personal key is judged as one: a malformed
+    # or overlong ``hzp_`` value is refused, never answered by the cookie or
+    # the local owner instead.
+    return token if token.startswith("hzp_") else ""
 
 
 def _key_user(request: Request, hub_dir: Path, token: str) -> AuthUser | None:
