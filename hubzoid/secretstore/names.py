@@ -30,6 +30,26 @@ _OPERATOR_PREFIXES = (
 _OPERATOR_KEYS = (cs.SECRET_NAME_KEYS | cs.SERVICE_SECRET_KEYS | cs.BRIDGE_DEPLOYMENT_KEYS
                   | {cs.INHERITED_MARKER, "PATH", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
                      "NODE_OPTIONS", "HOME", "USER", "SHELL", "MODEL", "PORT", "UI_PORT"})
+# Process control: a stored value joins the environment every subprocess of
+# the bridge inherits (git for scheduled commits and hub changes, the claude
+# and codex CLIs, shells), so these would let whoever writes a secret choose
+# what runs (git config and hooks, a shell's start file, interpreter
+# options), whom to trust (CA bundles, proxies) or where the operator's model
+# keys are sent (provider base URLs). Compared upper-cased.
+_PROCESS_PREFIXES = (
+    "GIT_", "SSH_", "BASH_", "PYTHON", "PERL", "RUBY", "JAVA_", "_JAVA_", "JDK_", "NODE_", "NPM_CONFIG_",
+    "CLAUDE_CODE_", "CLAUDE_CONFIG", "CODEX_", "SSL_CERT", "CURL_", "REQUESTS_",
+)
+_PROCESS_KEYS = {
+    "ENV", "BROWSER", "EDITOR", "VISUAL", "PAGER", "PROMPT_COMMAND", "PS4", "SHELLOPTS", "IFS", "TMPDIR",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL",
+    "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENROUTER_API_BASE",
+}
+# Credentials under those prefixes that people do store (a Claude
+# subscription token for unattended work).
+_PROCESS_ALLOWED = {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_SECONDARY",
+                    "CLAUDE_CODE_OAUTH_TOKEN_TERTIARY"}
 
 # A value that is sent somewhere only the named settings decide. Storing it
 # records where they point, and a changed destination stops it being used.
@@ -56,8 +76,11 @@ def env_name(name: str) -> bool:
 def operator_only(name: str) -> bool:
     """A name only an operator source may set."""
     upper = (name or "").upper()
+    if upper in _PROCESS_ALLOWED:
+        return False
     # A retired Open WebUI name would stop the hub at start (appmode.RETIRED).
-    return upper in _OPERATOR_KEYS or upper.startswith(_OPERATOR_PREFIXES) or upper in appmode.RETIRED
+    return (upper in _OPERATOR_KEYS or upper.startswith(_OPERATOR_PREFIXES) or upper in appmode.RETIRED
+            or upper in _PROCESS_KEYS or upper.startswith(_PROCESS_PREFIXES))
 
 
 def problem(name: str) -> str | None:

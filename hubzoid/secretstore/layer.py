@@ -64,6 +64,13 @@ def _read(hub_dir: Path, env: Mapping[str, str], operator: frozenset) -> Snapsho
         if meta.name in operator:
             snap.status[status_key] = OVERRIDDEN
             continue
+        if names.operator_only(meta.name):
+            # Stored before the name became operator-only (or restored from
+            # an older backup): it never joins the environment.
+            snap.status[status_key] = OVERRIDDEN
+            log.warning("hub %s: the stored secret %s is set by the operator only; it is not used.",
+                        hub_dir.name, meta.name)
+            continue
         if item.value is None:
             snap.status[status_key] = UNREADABLE
             log.warning("hub %s: the stored secret %s cannot be read with this deployment key. Set it "
