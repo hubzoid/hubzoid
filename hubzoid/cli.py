@@ -3218,5 +3218,41 @@ app.add_typer(
 )
 
 
+from .work_items.cli import operations_app, work_items_app  # noqa: E402
+
+app.add_typer(work_items_app, name="work-items",
+              help="Durable work items: start, watch, cancel and restart.",
+              rich_help_panel="Commands")
+app.add_typer(operations_app, name="operations",
+              help="Recorded external writes: approve, deny and resolve.",
+              rich_help_panel="Commands")
+
+from .stations.cli import handoffs_app, stations_app  # noqa: E402
+
+app.add_typer(stations_app, name="stations",
+              help="Isolated agents (stations): validate them and inspect their calls.",
+              rich_help_panel="Commands")
+app.add_typer(handoffs_app, name="handoffs",
+              help="Handoff documents between stations of a work item.",
+              rich_help_panel="Commands")
+
+from .budgets_cli import budgets_app  # noqa: E402
+from .sandbox.cli import sandbox_app  # noqa: E402
+
+app.add_typer(budgets_app, name="budgets",
+              help="Usage limits: budgets.yaml, this month's usage and open reservations.",
+              rich_help_panel="Commands")
+
+app.add_typer(sandbox_app, name="sandbox",
+              help="Sandboxes for agents: doctor, profiles, probes and cleanup.",
+              rich_help_panel="Commands")
+
+from .apps.cli import apps_app  # noqa: E402
+
+app.add_typer(apps_app, name="apps",
+              help="Cards: tool results shown as MCP Apps in chat, Claude and ChatGPT.",
+              rich_help_panel="Commands")
+
+
 if __name__ == "__main__":
     app()
