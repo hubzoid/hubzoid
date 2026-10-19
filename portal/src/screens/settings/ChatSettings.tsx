@@ -146,7 +146,7 @@ export function ChatSettings() {
       )}
       {done && <Alert type="success" showIcon title={done} />}
 
-      <Card title="Appearance for everyone" size="small">
+      <Card title="Default appearance" size="small">
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <div>
             <Text strong>Default appearance</Text>
@@ -210,12 +210,12 @@ export function ChatSettings() {
               value={draft.presentation.timezone}
               onChange={(e) => edit((c) => (c.presentation.timezone = e.target.value))}
             />
-            <Paragraph type="secondary" style={{ margin: 0 }}>An IANA name such as UTC or America/New_York.</Paragraph>
+            <Paragraph type="secondary" style={{ margin: 0 }}>For example: UTC or America/New_York.</Paragraph>
           </div>
         </Space>
       </Card>
 
-      <Card title="What people may change for themselves" size="small">
+      <Card title="Personal overrides" size="small">
         <Space direction="vertical">
           {(["mode", "text_scale", "density", "timezone"] as const).map((k) => (
             <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
