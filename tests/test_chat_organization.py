@@ -189,6 +189,34 @@ def test_portable_zip_traversal_and_corrupt_blob_rejected(client):
     assert any(o["reason"] == "size_mismatch" and o["disposition"] == "reject" for o in pv["objects"])
 
 
+def test_an_imported_file_part_never_names_a_path_the_export_reads(client, tmp_path):
+    import hashlib
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("NOT-YOURS")
+    for file_id in (str(outside), "../" * 12 + str(outside).lstrip("/")):
+        records = [{"version": 1, "type": "conversation", "source_id": "c1", "data": {"title": "x"}, "refs": {}},
+                   {"version": 1, "type": "message", "source_id": "m1",
+                    "data": {"conversation": "c1", "parent": None, "role": "user", "status": "complete",
+                             "content": [{"type": "file", "file_id": file_id, "name": "n"}]}, "refs": {}}]
+        body = "\n".join(json.dumps(r) for r in records).encode()
+        manifest = {"version": 1, "format": "hubzoid-exchange", "records_sha256": hashlib.sha256(body).hexdigest(),
+                    "record_count": 2, "blobs": []}
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("manifest.json", json.dumps(manifest))
+            zf.writestr("records.jsonl", body)
+        pv = _preview(client, buf.getvalue()).json()
+        applied = client.post("/api/chat/imports", headers=ORIGIN, json={"preview_id": pv["id"], "digest": pv["digest"]})
+        assert applied.status_code == 201, applied.text
+        new_cid = next(iter(applied.json()["conversations"].values()))
+        stored = [p for m in snap(client, new_cid)["messages"] for p in m["content"] if p.get("type") == "file"]
+        assert stored and all("/" not in p["file_id"] for p in stored)
+        exp = client.post("/api/chat/exports", headers=ORIGIN, json={"resource_ids": [new_cid]}).json()
+        with zipfile.ZipFile(io.BytesIO(client.get(exp["download_url"]).content)) as zf:
+            assert not any(b"NOT-YOURS" in zf.read(n) for n in zf.namelist())
+
+
 def test_openwebui_and_librechat_imports(client):
     owui = [{"id": "o1", "title": "From OWUI", "chat": {"history": {"currentId": "b", "messages": {
         "a": {"id": "a", "parentId": None, "role": "user", "content": "hi"},

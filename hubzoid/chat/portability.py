@@ -53,7 +53,7 @@ def _sha(data: bytes) -> str:
 def export_package(engine, hub_dir: Path, *, actor_id: str, conversation_ids: list[str], readable,
                    organization: dict | None = None) -> bytes:
     """A deterministic package of the conversations this person can read."""
-    from .. import memory as memlib
+    from .files import stored_file
     from .store import chat_key
 
     records: list[dict] = []
@@ -69,7 +69,7 @@ def export_package(engine, hub_dir: Path, *, actor_id: str, conversation_ids: li
                             "data": {"title": conv_row.get("title"), "agent": conv_row.get("agent"),
                                      "created_at": conv_row.get("created_at"), "head_id": view.get("view_head_id")},
                             "refs": {}})
-            upload_dir = memlib.chat_upload_dir(Path(hub_dir), chat_key(conv_row))
+            key = chat_key(conv_row)
             for m in msgs:
                 refs: dict = {}
                 content = []
@@ -77,8 +77,10 @@ def export_package(engine, hub_dir: Path, *, actor_id: str, conversation_ids: li
                     if not isinstance(p, dict):
                         continue
                     if p.get("type") in ("file", "image") and p.get("file_id"):
-                        f = upload_dir / str(p["file_id"])
-                        if f.is_file() and not f.is_symlink() and f.stat().st_size <= MAX_BLOB:
+                        # Only a file stored in this conversation's uploads,
+                        # never a path a message names.
+                        f = stored_file(Path(hub_dir), key, p["file_id"])
+                        if f is not None and not f.is_symlink() and f.stat().st_size <= MAX_BLOB:
                             data = f.read_bytes()
                             h = _sha(data)
                             blobs[h] = data
@@ -316,8 +318,8 @@ def apply(engine, hub_dir: Path, hub: str, *, actor_id: str, actor_email: str, a
                 ref = (r.get("refs") or {}).get(f"/content/{i}")
                 if not (ref and ref.get("blob") in blobs and p.get("type") in ("file", "image")):
                     continue
-                name = Path(str(p.get("file_id"))).name
-                if not name or name.startswith("."):
+                name = _imported_name(p)
+                if not name:
                     continue
                 target = memlib.chat_upload_dir(Path(hub_dir), chat_key({"id": conv_map[r["data"]["conversation"]],
                                                                          "source": "web"}))
@@ -349,6 +351,31 @@ def apply(engine, hub_dir: Path, hub: str, *, actor_id: str, actor_email: str, a
     return out.body
 
 
+def _imported_name(part: dict) -> str:
+    """The name an imported attachment is stored under in its new
+    conversation: a plain file name, never a path ("" when there is none)."""
+    from .. import uploads as uploads_lib
+    from .files import safe_upload_name
+
+    raw = part.get("file_id")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    name = safe_upload_name(raw)
+    return "" if uploads_lib.is_sidecar(name) else name
+
+
+def _imported_part(part: dict) -> dict:
+    """A message part as history: an attachment names only its stored file."""
+    if part.get("type") in ("file", "image"):
+        part = {k: part.get(k) for k in ("type", "file_id", "name", "mime", "size") if k in part}
+        name = _imported_name(part)
+        if name:
+            part["file_id"] = name
+        else:
+            part.pop("file_id", None)
+    return part
+
+
 def _apply_graph(conn, hub: str, *, actor_id: str, actor_email: str, agent: str, convs: dict, msgs: list,
                  conv_map: dict, operation_id: str, files: int) -> dict:
     mapping: dict[str, str] = {}
@@ -377,7 +404,7 @@ def _apply_graph(conn, hub: str, *, actor_id: str, actor_email: str, agent: str,
         d = r["data"]
         nid = new_id("m_")
         mapping[r["source_id"]] = nid
-        content = list(d.get("content") or [])
+        content = [_imported_part(p) for p in d.get("content") or [] if isinstance(p, dict)]
         text = "\n\n".join(str(p.get("text") or "") for p in content if p.get("type") == "text")
         conn.execute(messages.insert().values(
             id=nid, conversation_id=conv_map[d["conversation"]], parent_id=mapping.get(d.get("parent")),
