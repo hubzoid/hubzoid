@@ -1403,6 +1403,36 @@ class ChatEngine:
     class Busy(Exception):
         """The reply that asked is still being written: continue when it ends."""
 
+    def post_from_run(self, conversation_id: str, *, branch_id: str, actor_id: str, message_id: str,
+                      parts: list, unless_mentioned: str | None = None) -> str:
+        """A workflow the person started from this chat reports back (it asks
+        them something, or it finished after the chat stopped waiting): one
+        assistant message after the branch head. Returns "posted", "exists"
+        (already posted: replays are no-ops), "busy" (a reply is being
+        written; try again) or "gone" (the chat or branch is no longer there)."""
+        with self.engine.begin() as conn:
+            conv = self._conv(conn, conversation_id)
+            if conv is None or conv.get("deleted_at"):
+                return "gone"
+            if conn.execute(sa.select(messages.c.id).where(messages.c.id == message_id)).first() is not None:
+                return "exists"
+            if unless_mentioned and conn.execute(sa.select(messages.c.id).where(
+                    messages.c.conversation_id == conversation_id,
+                    messages.c.content.contains(unless_mentioned)).limit(1)).first() is not None:
+                return "exists"  # the chat already shows it (the reply that started the run did)
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == branch_id).with_for_update()).first()
+            if b is None or b.conversation_id != conversation_id:
+                return "gone"
+            if b.head_id is not None and self._message_in(conn, conversation_id, b.head_id)["status"] == "running":
+                return "busy"
+            actor = self._author(conv, actor_id)
+            mid = self._insert(conn, conv_id=conversation_id, mid=message_id, parent_id=b.head_id,
+                               role="assistant", content=parts, branch_id=b.id, actor=actor)
+            g.move_head(conn, b.id, b.revision, mid)
+            self._touch(conn, conversation_id, mid)
+        self.notify(conversation_id)
+        return "posted"
+
     def continue_after_request(self, conversation_id: str, *, actor_id: str, branch_id: str,
                                after_message_id: str, parts: list) -> RunPlan | None:
         """The person answered a request the agent made in this branch: add

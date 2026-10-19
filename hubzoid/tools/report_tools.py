@@ -87,6 +87,18 @@ def _ago(ts: float | None, tz: str = "UTC") -> str:
     return f"{then:%a} {then.day} {then:%b}"
 
 
+
+def _person_timezone(hub_dir, email: str) -> str:
+    """The person's own time zone (Settings, Preferences), else the deployment's, else UTC."""
+    try:
+        from ..chat.config import service_for
+        from ..workflows.personal import current_account
+
+        account = current_account(hub_dir, email) or email
+        return service_for(Path(hub_dir)).get_preferences(account)["effective"]["timezone"]["value"] or "UTC"
+    except Exception:  # noqa: BLE001 - unknown: UTC, shown in the proposal for the person to correct
+        return "UTC"
+
 def make(ctx) -> list:
     from ..workflows import runtime
     from ..workflows.boot import schedules_enabled
@@ -352,9 +364,15 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
         return (f"That report is already running for you (run {active[0]}). "
                 'Ask me "is it ready?" any time.')
     run_id = prefix + secrets.token_hex(4)
+    from .. import _request_ctx
+    from ..workflows import chat_link
+
     env = {"trigger": "tool", "scope": "personal", "acts_as": actor,
            "acts_as_account": account, "started_by": actor, "inputs": data,
            "inputs_display": shown, "started_at": time.time()}
+    chat = chat_link.origin(_request_ctx.native_session())
+    if chat:
+        env["chat"] = chat  # its questions and result come back to this chat
     try:
         await asyncio.to_thread(runtime.start_run, wf.name, env, workflow_id=run_id)
     except Exception:  # noqa: BLE001
@@ -372,8 +390,9 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
             gate.note_waiting(wf.name, req)
             return _json.dumps({"status": "waiting", "request_id": req["id"], "kind": req["kind"],
                                 "message": f"{wf.title} is waiting for the person's answer, shown to them now. Tell "
-                                           "them in one sentence and end your turn. The run continues once they "
-                                           "answer, and its result follows in their reports."})
+                                           "them in one short sentence, with no sign-off, and end your turn. The "
+                                           "run continues once they answer, and its next question or its result "
+                                           "comes back to this chat."})
     if status == "SUCCESS":
         refusal, answer = await asyncio.to_thread(_output, run_id)
         if refusal:
@@ -394,8 +413,9 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
                 "maintains this agent if it keeps happening.")
     if status == "CANCELLED":
         return "That run was cancelled. Check your reports for any partial result."
-    tail = ("It keeps going, and I'll email you the links when it's done." if _email_on(hub_dir)
-            else 'Ask me "is it ready?" any time.')
+    tail = ("Its result comes back to this chat when it's done" + (", and by email." if _email_on(hub_dir) else ".")
+            if chat else ("It keeps going, and I'll email you the links when it's done." if _email_on(hub_dir)
+                          else 'Ask me "is it ready?" any time.'))
     return f"Still running after {int(wf.tool_wait)} seconds (run {run_id}). {tail}"
 
 
@@ -601,7 +621,8 @@ def _schedule_tools(hub_dir: Path) -> list:
             out = await asyncio.to_thread(
                 personal.propose_create, hub_dir, hub, actor, workflow="repeated_request",
                 inputs={"prompt": prompt}, cadence=(args.get("cadence") or "").strip(),
-                timezone_name=(args.get("timezone") or "").strip() or "UTC", name=args.get("name"))
+                timezone_name=(args.get("timezone") or "").strip() or _person_timezone(hub_dir, actor),
+                name=args.get("name"))
         except personal.ScheduleError as exc:
             return str(exc)
         return (f'{out["text"]} The saved request is exactly: "{prompt}". This confirmation is relayed by the agent; '
@@ -620,7 +641,9 @@ def _schedule_tools(hub_dir: Path) -> list:
         params_json_schema={"type": "object", "properties": {
             "prompt": {"type": "string", "description": "Exactly what to do each time."},
             "cadence": {"type": "string", "description": "When, in plain words: 'every monday at 09:00', 'daily at 18:00'."},
-            "timezone": {"type": "string", "description": "A city time zone such as Europe/London. Optional, default UTC."},
+            "timezone": {"type": "string", "description": "Only when the person named a time zone in this request "
+                         "(a city zone such as Europe/London). Leave it out otherwise: their own time zone from "
+                         "Settings is used. Never guess one from notes or context."},
             "name": {"type": "string", "description": "A short name. Optional."},
             "confirm": {"type": "string", "description": "The code from the first call, after the person said yes."},
         }, "additionalProperties": False},

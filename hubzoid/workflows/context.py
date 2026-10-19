@@ -570,15 +570,20 @@ class Hub:
         create = _HITL_CREATE_STEP or _hitl_create
         read = _HITL_READ_STEP or _hitl_read
         req = create(payload)
+        if req["status"] == "pending":
+            from .chat_link import post_request
+
+            post_request(ctx.hub_dir, ctx.run or {}, ctx.workflow, req)  # the card, in the chat that started the run
         if req["status"] == "pending" and spec["approvers"] == ["requester"]:
             # Nobody watches a scheduled run: email the person a link to answer.
-            from ..appmode import public_url
+            from ..hitl.service import requests_url
+            from .runtime import title_for
 
-            base = (public_url() or "").rstrip("/")
             what = spec.get("question") or spec["title"]
+            who = f"{title_for(ctx.workflow)} on {ctx.hub}"
             self.send_email(f"Waiting for you: {spec['title'][:150]}",
-                            f"{ctx.workflow} is waiting for your answer:\n\n{what}\n\n"
-                            f"Answer it in Hubzoid: {base}/requests\n", raise_on_failure=False)
+                            f"{who} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {requests_url()}\n", raise_on_failure=False)
         while req["status"] == "pending":
             if not _hitl_receive(req["id"]):
                 import time
