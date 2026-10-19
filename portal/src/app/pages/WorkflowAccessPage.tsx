@@ -2,6 +2,7 @@
 // workflow. Every change goes through the same API and file format as
 // `hubzoid workflow-access` (workflows/access.yaml), with the revision it read,
 // so two people editing at once never overwrite each other.
+import { displayName } from "../lib/format";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, X } from "lucide-react";
 import { ApiError, get, hubUrl, post, put } from "../lib/api";
@@ -103,7 +104,7 @@ export default function WorkflowAccessPage() {
             <select className="hz-input !w-auto" value={agent?.id ?? ""} onChange={(e) => setAgentId(e.target.value)}>
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {displayName(a.name)}
                 </option>
               ))}
             </select>
