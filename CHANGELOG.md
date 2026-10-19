@@ -40,7 +40,7 @@ All notable changes to Hubzoid. Versions follow the package version in
 - Tool overflow files stay internal instead of opening as documents.
 - Agent instructions shows flat `skills/<name>.md` skills; publishing commits
   under the hub write lock.
-- `hubzoid --version`; the package reports `2.0.0.dev0` until release.
+- `hubzoid --version` prints the installed version.
 
 ### Added
 - `display_name:` in `AGENTS.md` sets the agent's name as people see it.
