@@ -459,14 +459,18 @@ def test_a_failed_lease_renewal_keeps_the_heartbeat_and_an_expired_lease_fences(
         return real(*a, **kw)
 
     monkeypatch.setattr(graph, "renew_lease", flaky)
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "30")  # still writing throughout
     cid, b = new_conv(client)
     first = send(client, cid, "slow", b)
-    time.sleep(2.5)
+    eng = client.app.state.chat.engine
+    deadline = time.monotonic() + 20
+    while len(calls) < 2 and time.monotonic() < deadline:
+        time.sleep(0.2)
     beat = client.app.state.chat.orchestrator._beat
     assert len(calls) >= 2 and not beat.done()  # renewed again after the failure
+    assert eng.run_state(first["run_id"], b["id"], 1) == "ok"
     deleted = client.request("DELETE", f"/api/conversations/{cid}", headers=ORIGIN, json={})
     assert deleted.status_code == 409, deleted.text  # still busy: its lease is held
-    eng = client.app.state.chat.engine
     with eng.engine.begin() as conn:
         conn.execute(graph.leases.update().where(graph.leases.c.run_id == first["run_id"]).values(expires_at=1))
     assert eng.run_state(first["run_id"], b["id"], 1) == "lost"  # an expired lease writes nothing more
