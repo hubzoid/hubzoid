@@ -261,8 +261,9 @@ dependencies, API or permission changes are included.
   has not been rerun. Later tablet/member sections of this new audit were not
   reached. This is partial coverage, not a complete pass of the new audit.
 - A broader backend run was stopped at the founder's request to free RAM. Its
-  partial output included a failure without a completed failure report; it is
-  not counted as passing. No additional heavy tests or build were run after
+  interrupted result was 369 passed and one failure: SCIM conformance could not
+  bind a local port in the sandbox (PermissionError). The full run is not
+  counted as passing. No additional heavy tests or build were run after
   that instruction. Generated bundles are unchanged.
 - Real Google sign-in, customer connectors and production bundles were not
   validated in this pass. Source preview fixtures use fictional data only.
