@@ -805,6 +805,29 @@ def bootstrap_admin_from_env(hub_dir: Path, env: Mapping[str, str] | None = None
         return None
     st = store(hub_dir)
     if st.count(exclude_local=True):
+        if st.find_by_email(email) is None:
+            # Only the first administrator comes from settings: a later change
+            # (or a deleted owner) never mints one at start. Say so, though.
+            log.warning("auth: HUBZOID_ADMIN_EMAIL has no account, and other accounts exist, so it "
+                        "was not created. Create it once with `hubzoid admin create %s --owner --password`, or "
+                        "sign in as an existing administrator.", email)
+        return None
+    return create_configured_owner(hub_dir, env)
+
+
+def create_configured_owner(hub_dir: Path, env: Mapping[str, str] | None = None) -> dict | None:
+    """Create the administrator named by ``HUBZOID_ADMIN_EMAIL`` and
+    ``HUBZOID_ADMIN_PASSWORD`` when no account has that email, with the owner's
+    grants. For explicit operator steps (the first start, ``hubzoid migrate
+    openwebui --apply``); returns None when nothing was created."""
+    env = os.environ if env is None else env
+    hub_dir = Path(hub_dir)
+    email = normalize_email(env.get("HUBZOID_ADMIN_EMAIL"))
+    password = env.get("HUBZOID_ADMIN_PASSWORD") or ""
+    if not email or not password:
+        return None
+    st = store(hub_dir)
+    if st.find_by_email(email) is not None:
         return None
     try:
         passwords.check(password)
