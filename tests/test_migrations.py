@@ -28,7 +28,8 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals"}
 
 
-# Tables added after op_0019, dropped when a test rewinds to op_0016.
+# Tables added after op_0019, dropped when a test rewinds to op_0016 and when
+# _reset_pg empties the shared PostgreSQL database.
 LATER_TABLES = ("hz_directory_providers", "hz_directory_accounts", "hz_scim_tokens",
                 "hz_saml_replay", "hz_mfa_factors", "hz_mfa_recovery", "hz_auth_challenges", "hz_api_keys",
                 "hz_auth_settings", "hz_run_identities", "hz_authoring_drafts", "hz_authoring_versions", "hz_personal_prompts", "hz_chat_presets", "hz_knowledge_collections", "hz_knowledge_sources", "hz_knowledge_generations",
@@ -169,7 +170,8 @@ def test_many_bridges_starting_at_once(tmp_path):
 def _reset_pg(url):
     eng = create_engine(url)
     with eng.begin() as c:
-        for t in sorted(OPERATIONAL) + ["hz_alembic_operational", "hz_inbound_history", "hz_alembic_hub"]:
+        for t in sorted(OPERATIONAL) + list(LATER_TABLES) + ["hz_alembic_operational", "hz_inbound_history",
+                                                             "hz_alembic_hub"]:
             c.execute(text(f"DROP TABLE IF EXISTS {t} CASCADE"))
     eng.dispose()
 
