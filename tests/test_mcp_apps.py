@@ -207,6 +207,15 @@ def test_a_result_that_breaks_its_card_keeps_the_tools_own_text(hub):
     assert out["card"] is None and json.loads(out["text"])["rows"] == [{"a": "not a number"}]
 
 
+def test_a_call_waiting_for_approval_makes_no_card(hub):
+    # On the MCP server, as in chat, the card wrapper sits inside the approval gate.
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  order_summary: {ask: always}\n")
+    _apply(hub)
+    out = asyncio.run(_call(hub, "order_summary"))
+    assert json.loads(out["text"])["status"] == "waiting" and out["card"] is None
+    assert cards.present(hub, "order_summary", "{}", out["text"]) is None
+
+
 def test_the_runtime_takes_the_card_of_its_own_call(hub):
     with _request_ctx.chat_scope("c1"):
         _request_ctx.record_card("same", {"instance_id": "i1", "tool": "a"}, call_id="call-1")
@@ -278,6 +287,40 @@ def test_every_card_request_is_rechecked(hub):
     with pytest.raises(WorkItemError) as exc:
         _dispatch(hub, inst, "mcp-apps/read-resource")
     assert exc.value.code == "revoked" and exc.value.status == 410
+
+
+def test_a_card_call_carries_the_session_that_asked(hub, monkeypatch, tmp_path):
+    # A card request runs as an admitted run with its session: one that waits
+    # past a sign-out is refused like any other run.
+    from starlette.requests import Request
+
+    from hubzoid.access import store_for
+    from hubzoid.apps import routes
+    from hubzoid.auth import sessions, users
+
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    sessions.reset_cache()
+    ana = users.create(hub, email="ana@example.com", name="ana", role="user")
+    token = sessions.create_session(hub, ana, method="password")
+    store_for(hub).grant("ana@example.com", "cardhub", "use_hub")
+    _apply(hub)
+    request = Request({"type": "http", "method": "POST", "path": "/", "query_string": b"", "scheme": "http",
+                       "server": ("127.0.0.1", 3080),
+                       "headers": [(b"host", b"localhost:3080"), (b"cookie", f"hz_session={token}".encode())]})
+    ident = routes._request_identity(hub, request, "card:test")
+    assert asyncio.run(mcp_call(hub, "order_summary", ident))["card"] is not None
+    sessions.revoke(hub, token)
+    sessions.reset_cache()
+    out = asyncio.run(mcp_call(hub, "order_summary", ident))
+    assert out["text"].startswith("[access ended") and out["card"] is None
+
+
+async def mcp_call(hub: Path, name: str, ident) -> dict:
+    from hubzoid import mcp_server
+
+    with _request_ctx.chat_scope("c1"):
+        return await mcp_server.call_registry_tool(hub, name, {}, ident, None)
 
 
 def test_every_kind_of_card_request_counts_toward_its_limit(hub):

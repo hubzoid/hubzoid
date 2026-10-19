@@ -187,15 +187,16 @@ def _op_requester(hub_dir, op: dict) -> str | None:
 
 
 def link(hub: str, item_id: str) -> str:
-    """Where a person acts on a work item: its page in Hub. Absolute when the
-    deployment has a public URL (an external host needs one), else a path."""
+    """Where a person acts on a work item: its page under their own work in
+    Hub (only the person who asked decides). Absolute when the deployment has
+    a public URL (an external host needs one), else a path."""
     from .. import appmode
 
     base = appmode.public_url()
     if not base:
         mcp_url = (os.environ.get("MCP_PUBLIC_URL") or "").strip()
         base = appmode.normalize_origin(mcp_url) if mcp_url else ""
-    return f"{base}/settings#/work/{hub}/{item_id}"
+    return f"{base}/settings#/me/work/{hub}/{item_id}"
 
 
 _ARGS_MAX = 20_000
@@ -207,8 +208,10 @@ def present(hub_dir: Path, tool: str, args_json: str, result: Any, *, call_id: s
     found = card_for_tool(hub_dir, tool)
     if found is None:
         return None
-    if isinstance(result, str) and result.startswith("[access denied"):
+    if isinstance(result, str) and result.startswith(("[access denied", "[access ended")):
         return None
+    if _waiting(result):
+        return None   # the approval gate's answer, not the tool's result
     row, res, card = found
     try:
         checked = check_result(hub_dir, card, result, res.limits)
@@ -243,6 +246,17 @@ def present(hub_dir: Path, tool: str, args_json: str, result: Any, *, call_id: s
     _request_ctx.record_card(text, envelope(hub, card, instance["id"], checked, text, arguments=args),
                              call_id=call_id)
     return text
+
+
+def _waiting(result: Any) -> bool:
+    """Whether ``result`` is the approval gate's "waiting for a person" answer."""
+    value = result
+    if isinstance(result, str) and result.startswith('{"status": "waiting"'):
+        try:
+            value = json.loads(result)
+        except ValueError:
+            return False
+    return isinstance(value, dict) and value.get("status") == "waiting" and "request_id" in value
 
 
 def _custom_text(checked: dict) -> str:

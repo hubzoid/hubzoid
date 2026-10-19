@@ -111,11 +111,12 @@ def build_registry(
 
     builtin = make_builtin_tools(ctx)
     local = tools_local_loader.load_all(hub_dir)
-    registry = access.apply(hub_dir, {**builtin, **local})
+    # As in the chat runtimes: the card wrapper inside the approval gate, so a
+    # call waiting for a person never reaches a card.
     from . import hitl
-    registry = hitl.equip(hub_dir, registry, questions=False)
     from .apps import cards
-    registry = cards.wrap(hub_dir, registry)
+    registry = cards.wrap(hub_dir, access.apply(hub_dir, {**builtin, **local}))
+    registry = hitl.equip(hub_dir, registry, questions=False)
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).

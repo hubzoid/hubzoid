@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -54,9 +55,29 @@ class RevokeBody(BaseModel):
 
 
 def _identity(hub_dir: Path, subject: str):
+    """The local operator's identity, for the CLI."""
     from ..chat.runs import web_identity
 
     return web_identity(hub_dir, subject)
+
+
+def _request_identity(hub_dir: Path, request: Request, run_id: str):
+    """The signed-in person as an admitted run (``access.run_identity``), with
+    the session or key that made this request: every later check sees it, so
+    a sign-out or a revoked key stops a card's call too."""
+    from .. import access, auth
+    from ..access import run_identity
+
+    user = auth.require_user(request, hub_dir)
+    try:
+        record = run_identity.admit_or_refuse(
+            hub_dir, run_kind="chat", run_id=run_id, acts_as_id=user.id, acts_as_email=user.email,
+            started_from="chat", person_present=user.credential != "api_key",
+            credential_kind=user.credential, credential_id=user.credential_id)
+    except run_identity.NotAdmitted as exc:
+        raise WorkItemError("unavailable", str(exc), status=503, retryable=True) from None
+    groups = access.effective_groups(hub_dir, email=user.email, surface="web", header_groups=None)
+    return run_identity.identity(record, "web", groups)
 
 
 def register(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:
@@ -97,9 +118,10 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
         key = request.headers.get("Idempotency-Key")
         if not key:
             raise HTTPException(400, detail={"code": "invalid_request", "message": "Send an Idempotency-Key."})
+        ident = await _call(_request_identity, hub_dir, request, f"card-invoke:{uuid.uuid4().hex}")
         status, payload = await _call(wi_store.idempotent, hub_dir, actor.subject, f"{hub}:apps.invoke", key,
                                       body.model_dump(),
-                                      lambda: (200, asyncio.run(_invoke(hub_dir, actor.subject, body))))
+                                      lambda: (200, asyncio.run(_invoke(hub_dir, actor.subject, body, ident))))
         response.status_code = status
         return payload
 
@@ -115,8 +137,8 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
     async def instance(hub: str, instance_id: str, actor=Depends(require_person)):
         return await _call(cards.view, hub_for(actor, hub), instance_id, actor.subject)
 
-    async def _dispatch(hub_dir: Path, instance_id: str, actor, body: DispatchBody):
-        ident = await asyncio.to_thread(_identity, hub_dir, actor.subject)
+    async def _dispatch(hub_dir: Path, instance_id: str, actor, body: DispatchBody, request: Request):
+        ident = await _call(_request_identity, hub_dir, request, f"card:{instance_id[:36]}:{uuid.uuid4().hex}")
 
         async def call_tool(name, args, identity, classes):
             return await mcp_server.call_registry_tool(hub_dir, name, args, identity, classes)
@@ -128,17 +150,17 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
             _raise(exc)
 
     @router.post("/hubs/{hub}/apps/instances/{instance_id}/dispatch")
-    async def dispatch(hub: str, instance_id: str, body: DispatchBody, actor=Depends(writer)):
-        return await _dispatch(hub_for(actor, hub), instance_id, actor, body)
+    async def dispatch(hub: str, instance_id: str, body: DispatchBody, request: Request, actor=Depends(writer)):
+        return await _dispatch(hub_for(actor, hub), instance_id, actor, body, request)
 
     @router.post("/hubs/{hub}/apps/host")
-    async def host(hub: str, body: DispatchBody, actor=Depends(writer)):
+    async def host(hub: str, body: DispatchBody, request: Request, actor=Depends(writer)):
         params = dict(body.params)
         instance_id = params.pop("serverId", None)
         if not isinstance(instance_id, str) or not instance_id:
             raise HTTPException(400, detail={"code": "invalid_request", "message": "Name the card (serverId)."})
         return await _dispatch(hub_for(actor, hub), instance_id, actor, DispatchBody(method=body.method,
-                                                                                     params=params))
+                                                                                     params=params), request)
 
     @router.post("/hubs/{hub}/apps/instances/{instance_id}/revoke")
     async def revoke(hub: str, instance_id: str, body: RevokeBody = Body(default_factory=RevokeBody),
@@ -207,15 +229,17 @@ def _frame_html(parent: str) -> str:
     return page.replace('"__HZ_PARENT_ORIGIN__"', json.dumps(parent))
 
 
-async def _invoke(hub_dir: Path, subject: str, body: InvokeBody) -> dict:
-    """Run a card's tool as ``subject`` and return the instance it made."""
+async def _invoke(hub_dir: Path, subject: str, body: InvokeBody, identity=None) -> dict:
+    """Run a card's tool as ``subject`` (``identity``, the admitted run of the
+    request; the CLI passes none and runs as the local operator) and return
+    the instance it made."""
     from .. import mcp_server
 
     _row, res = await asyncio.to_thread(cards.active, hub_dir, fresh=True)
     card = res.cards.get(body.card_id) if res and res.enabled else None
     if card is None:
         raise WorkItemError("not_found", "No such active card here.", status=404)
-    ident = await asyncio.to_thread(_identity, hub_dir, subject)
+    ident = identity if identity is not None else await asyncio.to_thread(_identity, hub_dir, subject)
     out = await mcp_server.call_registry_tool(hub_dir, card.tool, body.arguments, ident, None)
     if out.get("refused"):
         raise WorkItemError("tool_unknown", out["message"], status=404)
