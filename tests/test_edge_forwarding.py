@@ -108,6 +108,8 @@ def test_double_encoding_cannot_reach_the_bridges_internal_api(web_app_edge, met
     ("/b/sales/api/files/50%2525off.pdf", "/api/files/50%25off.pdf"),
     ("/b/sales/api/files/caf%C3%A9%20menu.pdf", "/api/files/café menu.pdf"),
     ("/b/sales/api/a%3Fb", "/api/a?b"),                         # an escaped ? stays in the path
+    ("/b/sales/api/a%23b", "/api/a#b"),                         # so do # and a backslash, which Starlette 1.9
+    ("/b/sales/api/a%5Cb", "/api/a\\b"),                        # re-escapes the same way
     ("/b/sales/api/a%3Fb?c=%3F&d", "/api/a?b query:c=%3F&d"),   # and the query passes as sent
 ])
 def test_routes_forward_the_path_they_matched(web_app_edge, path, seen):
