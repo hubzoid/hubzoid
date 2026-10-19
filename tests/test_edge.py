@@ -412,3 +412,26 @@ def test_edge_client_never_carries_one_visitors_cookie_to_another(monkeypatch):
         browser.get("/api/v1/auths/")
         browser.get("/api/models")
     assert len(seen) >= 3 and all(cookie is None for cookie in seen[1:])
+
+
+def _peer_request(peer: str, headers: list[tuple[bytes, bytes]]) -> Request:
+    return Request({"type": "http", "method": "POST", "path": "/api/auth/login", "query_string": b"",
+                    "headers": headers, "client": (peer, 5000)})
+
+
+@pytest.mark.parametrize("peer,sent,trusted,seen", [
+    ("8.8.4.4", b"127.0.0.1", "", "8.8.4.4"),                  # a forged address is replaced
+    ("8.8.4.4", b"1.2.3.4, 5.6.7.8", "", "8.8.4.4"),
+    ("10.0.0.5", b"34.120.0.7", "", "34.120.0.7"),                  # a private-network proxy appends
+    ("10.0.0.5", b"9.9.9.9, 34.120.0.7, 10.0.0.4", "", "34.120.0.7"),
+    ("104.16.0.1", b"34.120.0.7", "104.16.0.0/13", "34.120.0.7"),  # a listed CDN
+    ("104.16.0.1", b"34.120.0.7", "", "104.16.0.1"),                  # an unlisted one is the client
+    ("104.16.0.1", b"34.120.0.7", "*", "34.120.0.7"),
+])
+def test_the_edge_decides_the_client_address(monkeypatch, peer, sent, trusted, seen):
+    monkeypatch.setenv("HUBZOID_TRUSTED_PROXIES", trusted)
+    req = _peer_request(peer, [(b"x-forwarded-for", sent), (b"x-real-ip", b"1.1.1.1"),
+                               (b"forwarded", b"for=1.1.1.1")])
+    out = edge._request_headers(req)
+    assert [v for k, v in out if k == b"x-forwarded-for"] == [seen.encode()]
+    assert not any(k in (b"x-real-ip", b"forwarded") for k, _ in out)

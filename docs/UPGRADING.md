@@ -32,6 +32,12 @@ describe those releases as they were.
   access in Settings → People & access before they move.
 - **Administrators set up two-step sign-in** at their first 2.0 sign-in (an
   authenticator app), unless Settings → Security says otherwise.
+- **Behind a CDN, list it.** The public port believes `X-Forwarded-For` only
+  from loopback, private networks and `HUBZOID_TRUSTED_PROXIES`. With
+  Cloudflare (or another CDN) in front, set `HUBZOID_TRUSTED_PROXIES` to its
+  address ranges, or to `*` if the port is reachable only through it.
+  Otherwise everyone counts as one of the CDN's few addresses, and ten failed
+  sign-ins there lock sign-in for everyone behind it for 15 minutes.
 - **Open WebUI settings are named, never ignored.** At start, and in
   `hubzoid doctor`, Hubzoid lists every Open WebUI setting it finds in the
   environment or a hub's `.env`.
