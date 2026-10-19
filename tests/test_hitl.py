@@ -240,3 +240,44 @@ def test_questions_can_be_turned_off(hub):
     from hubzoid.hitl import tools
 
     assert tools.ask_question_tool(hub) is None
+
+
+# -- channels ---------------------------------------------------------------------
+def test_whatsapp_numbered_reply_answers_only_the_one_waiting_request(hub):
+    from hubzoid.hitl import channels
+
+    (hub / "hitl.yaml").write_text(RULES)
+    wa = caller(origin="whatsapp", conversation_id="whatsapp-15550001")
+    v = service.check(hub, hub.name, wa, tool="reserve_stock", arguments={"sku": "SKU-12"})
+    assert "Reply 1 to approve or 2 to reject." in channels.describe(v.request)
+    assert channels.answer_by_reply(hub, chat_id="whatsapp-15550001", email="ben@example.org", text="1",
+                                    via="whatsapp") is None        # not the requester
+    done = channels.answer_by_reply(hub, chat_id="whatsapp-15550001", email="ana@example.org", text="1",
+                                    via="whatsapp")
+    assert done["status"] == "approved" and done["decided_via"] == "whatsapp"
+    assert channels.answer_by_reply(hub, chat_id="whatsapp-15550001", email="ana@example.org", text="1",
+                                    via="whatsapp") is None        # a repeat answers nothing
+    w = service.check(hub, hub.name, wa, tool="reserve_stock", arguments={"sku": "SKU-99"})
+    assert channels.answer_by_reply(hub, chat_id="whatsapp-15550001", email="ana@example.org",
+                                    text="what does it cost?", via="whatsapp") is None
+    assert service.get(hub, hub.name, w.request["id"])["status"] == "cancelled"   # writing steers
+
+
+def test_slack_button_is_honoured_only_for_the_requester_and_fresh_card(hub):
+    from hubzoid.hitl import channels
+
+    (hub / "hitl.yaml").write_text(RULES)
+    v = service.check(hub, hub.name, caller(origin="slack", conversation_id="slack-C1-1.0"), tool="reserve_stock",
+                      arguments={"sku": "SKU-12"})
+    blocks = channels.slack_blocks(v.request)
+    value = blocks[2]["elements"][0]["value"]
+    with pytest.raises(service.RequestError):
+        channels.slack_decide(hub, action_id="hz_hitl_approve", value=value, email=None)   # unlinked Slack user
+    with pytest.raises(service.RequestError):
+        channels.slack_decide(hub, action_id="hz_hitl_approve", value=value, email="ben@example.org")
+    stale = value.replace("|1|", "|9|")
+    with pytest.raises(service.RequestError) as exc:
+        channels.slack_decide(hub, action_id="hz_hitl_approve", value=stale, email="ana@example.org")
+    assert exc.value.code == "revision_conflict"
+    assert channels.slack_decide(hub, action_id="hz_hitl_approve", value=value,
+                                 email="ana@example.org")["status"] == "approved"

@@ -2,9 +2,11 @@
 // Workspace; folders; chats grouped by agent (or listed by date) with pin and
 // options on hover and an unread dot; the account menu and the bell at the
 // foot. On wide screens it can be hidden; on narrow screens it is a drawer.
+import { usePendingCount } from "../pages/RequestsPage";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Dialog as RDialog, DropdownMenu as Menu } from "radix-ui";
 import {
+  Hand,
   Archive,
   ArchiveRestore,
   ArrowLeft,
@@ -423,6 +425,7 @@ function SidebarBody({
           testId="new-chat"
         />
         <NavRow icon={<Search size={16} aria-hidden />} label={t.sidebar.searchPlaceholder} onClick={sidebarState.openSearch} hint={mac ? "⌘K" : "Ctrl K"} testId="open-search" />
+        <WaitingRow current={route === "requests"} />
       </div>
 
       <div className="hz-side-scroll" aria-busy={list.loading || undefined}>
@@ -974,5 +977,21 @@ function AccountMenu({ onArchived }: { onArchived: () => void }) {
         </Menu.Content>
       </Menu.Portal>
     </Menu.Root>
+  );
+}
+
+/** "Waiting for you": shown only while something waits for this person's answer. */
+function WaitingRow({ current }: { current: boolean }) {
+  const count = usePendingCount();
+  if (!count && !current) return null;
+  return (
+    <NavRow
+      icon={<Hand size={16} aria-hidden />}
+      label={t.requests.inboxTitle}
+      href="/requests"
+      current={current}
+      hint={count ? String(count) : undefined}
+      testId="nav-requests"
+    />
   );
 }

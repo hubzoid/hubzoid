@@ -158,3 +158,37 @@ async def _continue_chat(ctx, request: dict) -> None:
         await orch.continue_request(request)
     except Exception:  # noqa: BLE001 - the decision is saved; the chat continues on the next view
         log.exception("hitl: could not continue the chat after %s", request.get("id"))
+
+
+RECOVERY_SECONDS = 5.0
+
+
+async def recovery_loop(ctx) -> None:
+    """Continue chats whose request was decided elsewhere (the CLI, a
+    channel, another bridge) or whose continuation a restart interrupted."""
+    import asyncio
+
+    import sqlalchemy as sa
+
+    from . import store
+
+    r = store.requests.c
+    while True:
+        await asyncio.sleep(RECOVERY_SECONDS)
+        orch = getattr(ctx, "orchestrator", None)
+        if orch is None:
+            continue
+        try:
+            def due():
+                with service.engine(ctx.hub_dir).connect() as conn:
+                    rows = conn.execute(sa.select(store.requests).where(
+                        r.hub_id == ctx.hub, r.origin == "chat", r.continued.is_(False),
+                        r.status.in_(("approved", "rejected", "answered"))).limit(20)).fetchall()
+                return [store.row_dict(x) for x in rows]
+
+            for req in await db(due):
+                await orch.continue_request(req)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - tried again on the next tick
+            log.warning("hitl: recovery pass failed", exc_info=True)

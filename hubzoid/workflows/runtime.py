@@ -636,6 +636,26 @@ def _wrap_seams_as_steps() -> None:
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._AGENT_STEP = _last_error(_agent_step)
+    if context._HITL_CREATE_STEP is None:
+
+        @_DBOS.step(name="hz_hitl_create")
+        def _hitl_create_step(payload: dict) -> dict:
+            return context._hitl_create(payload)
+
+        @_DBOS.step(name="hz_hitl_read")
+        def _hitl_read_step(hub_dir_str: str, hub: str, request_id: str) -> dict:
+            return context._hitl_read(hub_dir_str, hub, request_id)
+
+        context._HITL_CREATE_STEP = _hitl_create_step
+        context._HITL_READ_STEP = _hitl_read_step
+
+        from ..hitl import service as hitl_service
+
+        def _wake(_hub_dir, request: dict) -> None:
+            if request.get("workflow_id"):
+                _DBOS.send(request["workflow_id"], {"status": request["status"]}, topic=f"hitl:{request['id']}")
+
+        hitl_service.register_continuer("workflow", _wake)
     if raw_jev is not None and context._JEV_STEP is None:
 
         @_DBOS.step()
@@ -898,6 +918,8 @@ def shutdown(*, completion_timeout_sec: float = 5.0, only_for=None) -> None:
             context._LLM_STEP = None
             context._AGENT_STEP = None
             context._JEV_STEP = None
+            context._HITL_CREATE_STEP = None
+            context._HITL_READ_STEP = None
             log.info("workflows: DBOS shut down")
 
 

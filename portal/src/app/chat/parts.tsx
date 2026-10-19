@@ -13,6 +13,7 @@ import { formatBytes, truncate } from "../lib/format";
 import { cx } from "../components/ui";
 import { fileRefOf, fileUrl } from "./convert";
 import { safeStringify } from "./stream";
+import { RequestCard } from "./RequestCard";
 
 /** Where this thread's files live, for previews and downloads. */
 export const FilesContext = createContext<{ conversationId: string | null; apiBase: string }>({
@@ -83,7 +84,20 @@ const stateIcon: Record<ToolState, ReactNode> = {
   stopped: <CircleSlash size={13} className="flex-none text-mute" aria-hidden />,
 };
 
-export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
+/** A call that stopped to ask a person carries {status: "waiting", request_id}. */
+function waitingRequest(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as { status?: unknown; request_id?: unknown };
+  return r.status === "waiting" && typeof r.request_id === "string" ? r.request_id : null;
+}
+
+export const ToolEntry: ToolCallMessagePartComponent = (props) => {
+  const requestId = waitingRequest(props.result);
+  if (requestId) return <RequestCard requestId={requestId} toolName={props.toolName} args={props.args} />;
+  return <ToolActivity {...props} />;
+};
+
+const ToolActivity: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   let state: ToolState;

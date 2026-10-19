@@ -57,7 +57,7 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$)/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$|requests$)/.test(path);
 }
 
 let leaveGuard: (() => boolean) | null = null;
@@ -106,6 +106,7 @@ export type Route =
   | { name: "account" }
   | { name: "sources" }
   | { name: "workspace" }
+  | { name: "requests" }
   | { name: "settings"; section: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
@@ -132,6 +133,7 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   }
   if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
   if (parts[0] === "workspace" && parts.length === 1) return { name: "workspace" };
+  if (parts[0] === "requests" && parts.length === 1) return { name: "requests" };
   if (parts[0] === "settings" && parts.length === 1) return { name: "settings", section: search.get("section") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };

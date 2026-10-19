@@ -151,6 +151,9 @@ def build_app() -> FastAPI:
             log.error("scheduled markdown tasks are not running: the workflow engine "
                       "did not start (see the error above)")
         app.state.scheduler = sched
+        chat_ctx = getattr(app.state, "chat", None)
+        from .hitl import routes as hitl_routes
+        hitl_task = asyncio.create_task(hitl_routes.recovery_loop(chat_ctx)) if chat_ctx is not None else None
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -161,6 +164,8 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            if hitl_task is not None:
+                hitl_task.cancel()
             if wf_dispatcher is not None:
                 await wf_dispatcher.stop()
             await sched.stop()
