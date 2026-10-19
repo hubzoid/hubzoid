@@ -189,6 +189,14 @@ def resolve(hub_dir: Path, token: str) -> dict | None:
     if (m["revoked_at"] is not None or (m["expires_at"] and m["expires_at"] <= now)
             or m["status"] != "active" or int(m["current_epoch"] or 0) != int(m["auth_epoch"])):
         return None
+    from .. import appmode
+    from .users import is_local_address
+
+    if is_local_address(m["email"]) and appmode.auth_enabled(Path(hub_dir)):
+        # Made by whoever reached the server while sign-in was off, with no
+        # proof of who they were: nobody can sign in as that owner to see or
+        # revoke it, so it stops once sign-in is on.
+        return None
     if not m["last_used_at"] or now - m["last_used_at"] > TOUCH_SECONDS:
         with engine.begin() as conn:
             conn.execute(api_keys.update().where(api_keys.c.id == m["id"])
