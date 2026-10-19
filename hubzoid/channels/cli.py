@@ -284,8 +284,7 @@ def deliveries_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID")
 @channels_app.command("redrive")
 def redrive_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"),
                 delivery: str = typer.Argument(...), as_json: bool = JSON):
-    """Route a failed, denied or paused delivery again, under its original
-    identity and today's permissions. Never accepts new bytes."""
+    """Route a failed, denied or paused delivery again, under its original identity and today's permissions. Never accepts new bytes."""
     from . import config, routes
 
     hub = _hub(hub, as_json)
@@ -319,8 +318,7 @@ def reconcile_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"),
                   evidence: str = typer.Option(None, "--evidence", help="Where you confirmed it (for done)."),
                   accept_duplicate_risk: bool = typer.Option(False, "--accept-duplicate-risk"),
                   as_json: bool = JSON):
-    """Settle an uncertain reply. `check` only looks; nothing is resent unless
-    you choose retry and accept the duplicate risk."""
+    """Settle an uncertain reply. `check` only looks; nothing is resent unless you choose retry and accept the duplicate risk."""
     from . import config, replies
 
     hub = _hub(hub, as_json)
@@ -403,3 +401,18 @@ def links_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"), as_
         console.print(t)
 
     _out(data, as_json, show)
+
+
+def _providers() -> None:
+    """Provider command groups: `hubzoid channels slack ...` and the rest."""
+    import importlib
+
+    for name, module in (("slack", "hubzoid.channels.slack.cli"),):
+        try:
+            mod = importlib.import_module(module)
+        except ImportError:
+            continue
+        channels_app.add_typer(getattr(mod, f"{name}_app"), name=name)
+
+
+_providers()
