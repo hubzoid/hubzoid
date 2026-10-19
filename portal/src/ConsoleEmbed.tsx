@@ -13,7 +13,23 @@ import { consoleScreen, SchedulesScreen } from "./consoleScreens";
 import "./portal.css";
 
 export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
-  const { config } = useThemeMode();
+  const { config: base } = useThemeMode();
+  // Inside Settings the screens use the chat app's quieter scale: 13px text,
+  // neutral tabs, ink as the selected colour.
+  const css = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  const ink = v("--hz-ink", "#ececec");
+  const mute = v("--hz-mute", "#9b9b9b");
+  const config = {
+    ...base,
+    token: { ...base.token, fontSize: 13, fontSizeHeading2: 19, fontSizeHeading3: 15, borderRadius: 8, controlHeight: 30 },
+    components: {
+      ...base.components,
+      Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 },
+      Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
+      Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 },
+    },
+  };
   // Leaving Settings for another page asks first when a screen has unsaved changes.
   useEffect(() => {
     setLeaveGuard(() => !hasPendingChanges() || window.confirm("Leave without saving? Your changes here are discarded."));

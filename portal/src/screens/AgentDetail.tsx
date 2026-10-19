@@ -1,7 +1,7 @@
 import { Button, Breadcrumb, Tabs } from "antd";
 import type { Hub, Me } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
-import { AgentAvatar, PageHeader, InfoHelp } from "../components/common";
+import { AgentAvatar, PageHeader } from "../components/common";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
@@ -31,18 +31,18 @@ export function AgentDetail({
       />
       <PageHeader
         title={
-          <span className="agent-title">
-            <AgentAvatar size={40} />
+          <span className="agent-title" title={hub.key}>
+            <AgentAvatar size={32} />
             <span>{hub.name}</span>
           </span>
         }
-        description={
-          <>
-            <span className="identity">{hub.key}</span> <InfoHelp text="Manage agent access and connections, check workflows and evals, and review activity." />
-          </>
+        description="Who can use it, what it connects to, its workflows, quality checks and activity."
+        extra={
+          hub.can_chat && hub.model_id ? (
+            <Button href={`/?models=${encodeURIComponent(hub.model_id)}`}>Open chat</Button>
+          ) : undefined
         }
       />
-      {hub.can_chat && hub.model_id && <Button href={`/?models=${encodeURIComponent(hub.model_id)}`} style={{ marginBottom: 16 }}>Open chat with {hub.name} ↗</Button>}
       <Tabs
         activeKey={tab}
         onChange={(key) => navigate(`/agents/${encodeURIComponent(hub.key)}/${key}`)}

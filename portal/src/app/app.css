@@ -2150,21 +2150,53 @@
 
 /* ==== Settings ======================================================================= */
 @layer components {
+  /* Settings sits against the app's sidebar, like a native preferences window:
+     the section list on the left, the section beside it, both from the top. */
   .hz-set {
     display: grid;
-    grid-template-columns: 200px minmax(0, 1fr);
-    gap: 40px;
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 20px 24px 64px;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 100%;
+  }
+  .hz-set-title {
+    margin: 0 0 12px;
+    padding: 0 8px;
+    font-size: 1.3571rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--hz-ink);
   }
   .hz-set-nav {
     position: sticky;
-    top: 20px;
+    top: 0;
     align-self: start;
     display: flex;
     flex-direction: column;
     gap: 1px;
+    height: 100dvh;
+    overflow-y: auto;
+    padding: 14px 12px 24px 16px;
+    border-right: 1px solid var(--hz-line-soft);
+  }
+  .hz-set-backlink {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    margin: 0 0 10px;
+    padding: 0 8px;
+    border-radius: 7px;
+    font-size: 0.8929rem;
+    color: var(--hz-secondary);
+    align-self: flex-start;
+  }
+  .hz-set-backlink:hover {
+    background: var(--hz-hover);
+    color: var(--hz-ink);
+  }
+  @media (min-width: 1024px) {
+    .hz-set-backlink {
+      display: inline-flex;
+    }
   }
   .hz-set-nav .hz-nav {
     display: flex;
@@ -2210,6 +2242,11 @@
   }
   .hz-set-main {
     min-width: 0;
+    max-width: 960px;
+    padding: 56px 40px 64px;
+  }
+  .hz-set-main .hz-input {
+    max-width: 420px;
   }
   .hz-set-back {
     display: none;
@@ -2251,10 +2288,15 @@
   @media (max-width: 767px) {
     .hz-set {
       display: block;
+    }
+    .hz-set-main {
       padding: 12px 14px 48px;
     }
     .hz-set-nav {
       position: static;
+      height: auto;
+      border-right: 0;
+      padding: 8px 14px 24px;
     }
     .hz-set:not(.is-index) .hz-set-nav {
       display: none;
@@ -2485,4 +2527,91 @@
 }
 .console-embed .save-bar > .ant-space-item:first-child {
   flex: 1;
+}
+
+/* Native-feeling management screens inside Settings. */
+.console-embed .ant-breadcrumb {
+  margin-bottom: 10px;
+}
+.console-embed .page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px !important;
+}
+.console-embed .page-header > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.console-embed .agent-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.console-embed .agent-title .agent-avatar,
+.console-embed .agent-title > :first-child {
+  width: 32px !important;
+  height: 32px !important;
+}
+.console-embed .ant-tabs-nav {
+  margin-bottom: 18px !important;
+}
+.console-embed .ant-tabs-tab a {
+  color: inherit !important;
+  font-weight: 500 !important;
+}
+.console-embed .ant-tabs-content h2.ant-typography,
+.console-embed .ant-tabs-content .panel-heading h2.ant-typography {
+  font-size: 15px !important;
+}
+.console-embed .ant-tag {
+  background: var(--hz-sunken) !important;
+  color: var(--hz-secondary) !important;
+}
+.console-embed .ant-tag-green,
+.console-embed .ant-tag-success {
+  background: transparent !important;
+  color: var(--hz-success) !important;
+  padding-inline: 0 !important;
+}
+.console-embed .ant-tag-gold,
+.console-embed .ant-tag-warning,
+.console-embed .ant-tag-orange {
+  background: var(--hz-warning-soft) !important;
+  color: var(--hz-warning) !important;
+}
+.console-embed .ant-tag-red,
+.console-embed .ant-tag-error {
+  background: var(--hz-danger-soft) !important;
+  color: var(--hz-danger) !important;
+}
+.console-embed .ant-btn-default {
+  background: transparent !important;
+  border-color: var(--hz-line) !important;
+}
+.console-embed .ant-btn-default:hover {
+  background: var(--hz-hover) !important;
+  color: var(--hz-ink) !important;
+}
+.console-embed .ant-input-affix-wrapper,
+.console-embed .ant-select-selector,
+.console-embed .ant-input {
+  background: transparent !important;
+}
+
+.console-embed h2.ant-typography:not(.page-header h2) {
+  font-size: 15px !important;
+}
+.console-embed .page-header h1.ant-typography {
+  font-size: 19px !important;
+}
+.console-embed .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+.console-embed .ant-typography code,
+.console-embed code {
+  font-size: 12px;
+  background: var(--hz-sunken);
+  border: 0;
+  border-radius: 5px;
 }

@@ -29,7 +29,6 @@ import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
 import { Button, IconButton, Notice, PageSpinner, cx } from "../components/ui";
-import { SidebarToggle } from "../components/Sidebar";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
@@ -155,21 +154,22 @@ export default function SettingsPage({ section }: { section: string | null }) {
   return (
     <InSettings.Provider value>
       <div className="flex min-h-0 flex-1 flex-col">
-        <header className="hz-chat-header">
-          <div className="lg:hidden">
-            <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
-              <MenuIcon size={19} aria-hidden />
-            </IconButton>
-          </div>
-          <SidebarToggle />
+        <header className="hz-chat-header lg:!hidden">
+          <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
+            <MenuIcon size={19} aria-hidden />
+          </IconButton>
           <Button size="sm" variant="ghost" icon={<ArrowLeft size={14} aria-hidden />} onClick={() => navigate("/")}>
             {S.backToChat}
           </Button>
-          <h1 className="hz-chat-title">{t.account.settings}</h1>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto" data-testid="settings">
           <div className={cx("hz-set", !current && "is-index")}>
             <nav className="hz-set-nav" aria-label={S.sections}>
+              <button type="button" className="hz-set-backlink" onClick={() => navigate("/")}>
+                <ArrowLeft size={14} aria-hidden />
+                {S.backToChat}
+              </button>
+              <h1 className="hz-set-title">{t.account.settings}</h1>
               <label className="hz-set-find">
                 <Search size={14} aria-hidden className="text-mute" />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={S.search} aria-label={S.search} />
