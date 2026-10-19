@@ -53,7 +53,7 @@ def team(tmp_path, monkeypatch, mail):
     eng = h.isolated_store(tmp_path, monkeypatch)
     for k in ("HUBZOID_RESTRICTED_SURFACES", "HUBZOID_WORKFLOW_USER", "HUBZOID_DEPLOYMENT"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("WEBUI_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
     monkeypatch.setenv("MODEL", "openai/gpt-4o-mini")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-used")
     # A Console-managed hub: each person holds Use this agent + connector_mail.
