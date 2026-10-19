@@ -84,11 +84,13 @@ def test_scope_reserved_paths_secrets_and_exact_edits(hub):
     assert secret.value.code == "secret_detected"
 
 
-def test_a_manager_knowledge_change_from_chat_applies_at_once_but_not_instructions(hub):
-    direct = hc.propose(hub, title="Fix", edits=RULE, actor=OWNER, via="chat")
-    assert direct["status"] == "applied"
+def test_only_a_person_applies_never_a_tool_call(hub):
+    # An agent's tool call, even for a manager, only proposes (prompt injection can't apply).
+    assert hc.propose(hub, title="Fix", edits=RULE, actor=OWNER, via="chat")["status"] == "pending"
+    direct = hc.propose(hub, title="Fix", edits=RULE, actor=OWNER, via="cli")
+    assert direct["status"] == "applied"           # a manager in their own terminal, knowledge only
     agents = hc.propose(hub, title="Tone", edits=[{"path": "AGENTS.md", "append": "Be brief."}], actor=OWNER,
-                        via="chat")
+                        via="cli")
     assert agents["status"] == "pending"
     unattended = hc.propose(hub, title="w", edits=[{"path": "knowledge/new.md", "content": "x"}], actor=OWNER,
                             via="workflow", present=False)
@@ -136,7 +138,8 @@ def test_remember_edits_the_topic_file_through_a_proposal(hub):
     assert "Refunds over 30 days" in path.read_text() and "name: learned/billing" in path.read_text()
     fix = call(OWNER, topic="Billing", text="Refunds over 60 days need a manager.",
                replace="Refunds over 30 days need a manager.")
-    assert fix["hub_change"]["status"] == "applied"           # a manager, knowledge only, from chat
+    assert fix["hub_change"]["status"] == "pending"           # even a manager's note waits for a click
+    hc.decide(hub, fix["hub_change"]["id"], actor=OWNER, decision="approve")
     assert "60 days" in path.read_text() and "30 days" not in path.read_text()
 
 
@@ -155,3 +158,21 @@ def test_personal_memory_is_per_person_and_feeds_the_chat(hub):
     assert stale.value.code == "revision_conflict"
     pm.put(hub, "acct-ana", ANA, "", expected_revision=mem["revision"])
     assert pm.prompt_block(hub, "acct-ana") == ""
+
+
+def test_folder_names_are_canonical_and_prompts_are_out_of_scope(hub):
+    assert hc.check_path("Knowledge/pricing.md") == "knowledge/pricing.md"
+    assert "Orders over" in hc.read_text(hub, "Knowledge/pricing.md")
+    with pytest.raises(hc.ChangeError):
+        hc.check_path("prompts/tone.md")
+
+
+def test_deleted_notes_keep_their_revision_so_a_stale_editor_fails(hub):
+    from hubzoid import personal_memory as pm
+
+    first = pm.put(hub, "acct-ana", ANA, "one")
+    pm.put(hub, "acct-ana", ANA, "", expected_revision=first["revision"])
+    again = pm.put(hub, "acct-ana", ANA, "two", expected_revision=2)
+    assert again["revision"] == 3
+    with pytest.raises(pm.MemoryError_):
+        pm.put(hub, "acct-ana", ANA, "stale", expected_revision=first["revision"])

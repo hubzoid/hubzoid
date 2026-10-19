@@ -2,7 +2,7 @@
 // workflow. Every change goes through the same API and file format as
 // `hubzoid workflow-access` (workflows/access.yaml), with the revision it read,
 // so two people editing at once never overwrite each other.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, X } from "lucide-react";
 import { ApiError, get, hubUrl, post, put } from "../lib/api";
 import { useApp } from "../lib/app-context";
@@ -46,14 +46,23 @@ export default function WorkflowAccessPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // The agent whose policy is on screen: a reply for another agent is dropped,
+  // so switching agents can never send one agent's grants to the other.
+  const current = useRef(base);
   const load = useCallback(async () => {
     setError(null);
+    if (current.current !== base) {
+      current.current = base;
+      setPolicy(null);
+      setResources([]);
+    }
     try {
       const [p, r, s] = await Promise.all([
         get<Policy>(hubUrl(base, "/api/workflow-access")),
         get<{ items: Resource[] }>(hubUrl(base, "/api/workflow-access/resources")),
         get<{ items: { subject: string }[] }>(hubUrl(base, "/api/workflow-access/subjects")),
       ]);
+      if (current.current !== base) return;
       setPolicy(p);
       setResources(r.items);
       setPeople(s.items.map((x) => x.subject));
@@ -66,7 +75,7 @@ export default function WorkflowAccessPage() {
   }, [load]);
 
   const save = async (next: Grant[], note: string) => {
-    if (!policy) return;
+    if (!policy || current.current !== base) return;
     setSaving(true);
     try {
       await put(hubUrl(base, "/api/workflow-access"), { yaml: toYaml(next, policy.actions), expected_revision: policy.revision });

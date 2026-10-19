@@ -13,7 +13,7 @@ without touching the shared hub.
 
 ## What should happen
 - An agent can read and propose exact edits to `AGENTS.md` and Markdown under
-  `knowledge/`, `skills/` and `prompts/` (`read_hub_file`,
+  `knowledge/` and `skills/` (`read_hub_file`,
   `propose_hub_change`, `hub_change_status`). Each edit replaces text that
   appears once, appends, or creates a new file.
 - A proposal records each file's bytes when proposed. Applying writes the
@@ -21,8 +21,11 @@ without touching the shared hub.
   conflict and nothing is written.
 - Proposing needs Save shared knowledge (`curator`) or managing the hub.
   Applying or rejecting needs managing the hub, checked when deciding, from a
-  person's own session (never an API key or a script). A manager's change to
-  `knowledge/` from chat applies at once.
+  person's own session (never an API key or a script). A change an agent
+  proposes never applies itself, even for a manager, so a prompt-injected
+  call can't change shared knowledge: a manager applies it with one click on
+  the chat card. A manager's knowledge change from their own terminal applies
+  at once.
 - Applying holds a hub write lock shared with scheduled-task commits and, in
   a Git repository, commits only those files with `Hubzoid-Change`,
   `Hubzoid-Proposed-By` and `Hubzoid-Approved-By` trailers. A crash part way is
@@ -35,7 +38,7 @@ without touching the shared hub.
 - Access, approval and run settings, workflow code, tools, `.env` and
   anything that looks like a secret are never proposable.
 - `remember` is hub memory: it adds to or corrects the topic's file in
-  `knowledge/_learned/` through the same path.
+  `knowledge/_learned/` through the same path, so it is applied from the card.
 - Personal memory: one short note per person per hub in the operational
   database. `save_memory` and `remove_memory` change it from chat; Settings,
   Memory shows, edits and deletes it. Each chat starts with it, and the hub's

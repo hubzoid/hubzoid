@@ -130,6 +130,45 @@ def wrap(ft, hub_dir: Path, *, connector: str | None = None, read_only: bool | N
     return out
 
 
+def guard_mcp_server(server, hub_dir: Path):
+    """Gate every call an MCP server object receives (the OpenAI Agents SDK
+    calls servers directly, not through FunctionTools). Same rules as ``wrap``,
+    with the server's readOnlyHint for ``ask: writes``."""
+    if getattr(server, "hitl_guarded", False):
+        return server
+    from mcp.types import CallToolResult, TextContent
+
+    original = server.call_tool
+    hub_dir = Path(hub_dir)
+    connector = getattr(server, "name", None)
+    hints: dict = {}
+
+    async def call_tool(tool_name, arguments=None, *args, **kwargs):
+        if not hints.get("_listed"):
+            try:
+                for tool in await server.list_tools() or []:
+                    a = getattr(tool, "annotations", None)
+                    if a is not None and getattr(a, "readOnlyHint", None) is not None:
+                        hints[tool.name] = bool(a.readOnlyHint)
+            except Exception:  # noqa: BLE001 - no hints: every tool counts as a write
+                pass
+            hints["_listed"] = True
+        verdict = await asyncio.to_thread(evaluate, hub_dir, tool_name, arguments or {}, connector=connector,
+                                          read_only=hints.get(tool_name))
+        if verdict.action == "allow":
+            return await original(tool_name, arguments, *args, **kwargs)
+        if verdict.action == "refuse":
+            text = verdict.message
+        else:
+            note_waiting(tool_name, verdict.request)
+            text = waiting_text(verdict)
+        return CallToolResult(content=[TextContent(type="text", text=text)], isError=False)
+
+    server.call_tool = call_tool
+    server.hitl_guarded = True
+    return server
+
+
 def apply(hub_dir: Path, registry: dict, *, connector: str | None = None) -> dict:
     return {name: wrap(ft, hub_dir, connector=connector) for name, ft in registry.items()}
 

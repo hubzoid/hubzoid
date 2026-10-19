@@ -182,7 +182,10 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     from . import hitl
     registry = hitl.equip(hub_dir, registry)
 
-    mcp_servers = [access.guard.checked_server(s, hub_dir)
+    from .hitl import gate as hitl_gate
+
+    # The access check per call (milestone B) first, then the approval gate.
+    mcp_servers = [access.guard.checked_server(hitl_gate.guard_mcp_server(s, hub_dir), hub_dir)
                    for s in load_mcp_servers(mcp_loader.load_all_raw(hub_dir))]
 
     # Delegates run as within-turn subagents the main agent calls (as_tool),

@@ -97,6 +97,12 @@ def mark_continued(hub_dir: Path, request: dict) -> None:
 ACTION_PREFIX = "hz_hitl_"
 
 
+def _page() -> str:
+    from ..appmode import public_url
+
+    return (public_url() or "").rstrip("/") + "/requests"
+
+
 def slack_blocks(req: dict) -> list[dict]:
     """Block Kit for one request: the exact action, then its controls. The
     button value names the request, revision and fingerprint it was shown with."""
@@ -109,9 +115,16 @@ def slack_blocks(req: dict) -> list[dict]:
         if buttons:
             body.append({"type": "actions", "elements": buttons})
         body.append({"type": "context", "elements": [{"type": "mrkdwn",
-                                                      "text": "Or reply in this thread with your own answer."}]})
+                                                      "text": f"To give another answer, open <{_page()}|Hubzoid>."}]})
         return body
-    args = json.dumps(req.get("arguments") or {}, ensure_ascii=False, indent=1, default=str)[:2800]
+    args = json.dumps(req.get("arguments") or {}, ensure_ascii=False, indent=1, default=str)
+    if len(args) > 2800:
+        # Never approve what the card can't show: decide in Hubzoid, where it is shown in full.
+        return [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*Approval needed:* {req['title']}"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"```{args[:1500]}…```\nThis is too long "
+                                         f"to show here. Review and decide it in <{_page()}|Hubzoid>."}},
+        ]
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Approval needed:* {req['title']}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"```{args}```"}},

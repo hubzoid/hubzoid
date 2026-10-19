@@ -61,12 +61,12 @@ def mount(app: FastAPI, ctx) -> None:
 
     @app.get("/api/requests/events")
     async def request_events(request: Request):
-        await who(request)
+        uid, email = await who(request)
         try:
             after = int(request.query_params.get("after") or 0)
         except ValueError:
             raise error(400, "invalid_request", "after is an event sequence number.")
-        return {"items": await db(service.events_after, hub_dir, hub, after)}
+        return {"items": await db(service.events_after, hub_dir, hub, after, account_id=uid, email=email)}
 
     @app.get("/api/requests/{rid}")
     async def get_request(rid: str, request: Request):
@@ -179,6 +179,8 @@ async def recovery_loop(ctx) -> None:
         if orch is None:
             continue
         try:
+            await db(release_lost_continuations, ctx.hub_dir, ctx.hub)
+
             def due():
                 with service.engine(ctx.hub_dir).connect() as conn:
                     rows = conn.execute(sa.select(store.requests).where(
@@ -192,3 +194,28 @@ async def recovery_loop(ctx) -> None:
             raise
         except Exception:  # noqa: BLE001 - tried again on the next tick
             log.warning("hitl: recovery pass failed", exc_info=True)
+
+
+def release_lost_continuations(hub_dir, hub: str) -> int:
+    """A claim (``continued``) whose continuation message never got written,
+    because the process died or the write failed: release it for recovery.
+    Only claims older than a minute, so a continuation in flight is left alone."""
+    import time
+
+    import sqlalchemy as sa
+
+    from . import store
+
+    r = store.requests.c
+    with service.engine(hub_dir).connect() as conn:
+        rows = conn.execute(sa.select(r.id, r.conversation_id).where(
+            r.hub_id == hub, r.origin == "chat", r.continued.is_(True),
+            r.status.in_(("approved", "rejected", "answered")),
+            r.decided_at < time.time() - 60, r.decided_at > time.time() - 86400)).fetchall()
+        lost = [x.id for x in rows if not conn.execute(sa.text(
+            "SELECT 1 FROM hz_messages WHERE conversation_id = :c AND content LIKE :p LIMIT 1"),
+            {"c": x.conversation_id, "p": f'%{x.id}%'}).first()]
+    if lost:
+        with service.engine(hub_dir).begin() as conn:
+            conn.execute(store.requests.update().where(r.id.in_(lost)).values(continued=False))
+    return len(lost)

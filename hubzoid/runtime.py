@@ -457,8 +457,10 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
         server = make(srv)
         if hub_dir is not None:
             from .access.guard import checked_server
+            from .hitl import gate as hitl_gate
 
-            server = checked_server(server, hub_dir)
+            # The access check (milestone B) first, then the approval gate.
+            server = checked_server(hitl_gate.guard_mcp_server(server, hub_dir), hub_dir)
         try:
             await stack.enter_async_context(server)
             tools = await MCPUtil.get_function_tools(

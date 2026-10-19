@@ -294,3 +294,56 @@ def test_each_plan_review_in_a_run_is_a_new_version_with_its_digest(hub):
     first, second = ask("sha256:aa"), ask("sha256:bb")
     assert (first["subject"]["version"], second["subject"]["version"]) == (1, 2)
     assert second["subject"]["digest"] == "sha256:bb" and first["id"] != second["id"]
+
+
+def test_events_show_only_your_own_requests(hub):
+    (hub / "hitl.yaml").write_text(RULES)
+    service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"sku": "secret"})
+    mine = service.events_after(hub, hub.name, 0, account_id="u_ana", email="ana@example.org")
+    assert mine and service.events_after(hub, hub.name, 0, account_id="u_ben", email="ben@example.org") == []
+
+
+def test_a_slack_card_never_offers_approve_for_arguments_it_cannot_show(hub):
+    from hubzoid.hitl import channels
+
+    (hub / "hitl.yaml").write_text(RULES)
+    v = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"note": "x" * 5000})
+    blocks = channels.slack_blocks(v.request)
+    assert not any(b["type"] == "actions" for b in blocks) and "Hubzoid" in blocks[-1]["text"]["text"]
+
+
+def test_a_replayed_workflow_request_is_found_not_asked_twice(hub):
+    from hubzoid.workflows.context import _hitl_create
+
+    payload = {"hub_dir": str(hub), "requester": "owner@example.org", "kind": "approval", "title": "Plan",
+               "approvers": ["requester"], "workflow_id": "wf-9",
+               "subject": {"name": "Plan", "url": "/a", "digest": "sha256:cc", "plan": True}}
+    first, replay = _hitl_create(dict(payload)), _hitl_create(dict(payload))
+    assert replay["id"] == first["id"] and replay["subject"]["version"] == 1
+
+
+def test_mcp_servers_called_directly_are_gated(hub):
+    import asyncio
+    from types import SimpleNamespace
+
+    from hubzoid.hitl import gate
+
+    (hub / "hitl.yaml").write_text("version: 1\nconnectors:\n  erp:\n    ask: always\n")
+    calls = []
+
+    class Server:
+        name = "erp"
+
+        async def list_tools(self):
+            return [SimpleNamespace(name="create_order", annotations=None)]
+
+        async def call_tool(self, tool_name, arguments=None):
+            calls.append(tool_name)
+            return "done"
+
+    from hubzoid.access import Identity, identity_scope
+
+    s = gate.guard_mcp_server(Server(), hub)
+    with identity_scope(Identity.make("ana@example.org", surface="web")):
+        out = asyncio.run(s.call_tool("create_order", {"qty": 1}))
+    assert calls == [] and "waiting" in out.content[0].text

@@ -1,7 +1,7 @@
 """Chat tools for hub changes and hub memory.
 
-* ``read_hub_file``: read AGENTS.md or a Markdown file under knowledge/,
-  skills/ or prompts/, exactly, before proposing an edit to it.
+* ``read_hub_file``: read AGENTS.md or a Markdown file under knowledge/
+  or skills/, exactly, before proposing an edit to it.
 * ``propose_hub_change``: propose exact edits. The result is a card the
   reviewer opens; a hub manager's knowledge-only change applies at once.
 * ``hub_change_status``: where a proposal is.
@@ -32,7 +32,8 @@ def _caller():
     c = caller()
     if c is None:
         return None, "chat", False, None
-    via = {"chat": "chat", "workflow": "workflow", "mcp": "mcp"}.get(c.origin, "api")
+    # A tool call is an agent acting, never a person's own API or CLI call.
+    via = c.origin if c.origin in ("workflow", "mcp", "slack", "whatsapp") else "chat"
     return c.email, via, bool(c.present), c.conversation_id
 
 
@@ -54,7 +55,8 @@ def _message(ch: dict) -> str:
                 + (f" {ch['problem']}" if ch.get("problem") else ""))
     if ch["status"] == "pending":
         return (f"Proposed as change #{ch['id']}. Nothing changed yet: someone who manages this hub reviews "
-                "the diff and applies it. Tell the person that, in one sentence.")
+                "the diff and applies it (a manager can apply it from the card above). Tell the person that, "
+                "in one sentence.")
     if ch["status"] == "conflict":
         return f"Change #{ch['id']} conflicts: {ch['problem']}"
     return f"Change #{ch['id']} is {ch['status']}." + (f" {ch['problem']}" if ch.get("problem") else "")
@@ -126,15 +128,15 @@ def make(hub_dir) -> list[FunctionTool]:
     obj = {"type": "object", "additionalProperties": False}
     read_tool = FunctionTool(
         name="read_hub_file",
-        description=("Read one of this hub's own files exactly: AGENTS.md, or a Markdown file under knowledge/, "
-                     "skills/ or prompts/. Read a file before proposing an edit to it."),
+        description=("Read one of this hub's own files exactly: AGENTS.md, or a Markdown file under knowledge/ "
+                     "or skills/. Read a file before proposing an edit to it."),
         params_json_schema={**obj, "properties": {"path": {"type": "string", "description": "e.g. AGENTS.md or "
                                                             "knowledge/pricing.md"}}, "required": ["path"]},
         on_invoke_tool=read_invoke, strict_json_schema=False)
     propose_tool = FunctionTool(
         name="propose_hub_change",
         description=("Propose a change to this hub's own instructions or knowledge (AGENTS.md, Markdown under "
-                     "knowledge/, skills/, prompts/), only when the person asks for the hub itself to change "
+                     "knowledge/ and skills/), only when the person asks for the hub itself to change "
                      "('add a rule', 'update the pricing doc'). Each edit is exact: {path, old_text, new_text} "
                      "where old_text appears once in the file as read_hub_file returned it; {path, append}; or "
                      "{path, content} for a new file. Someone who manages the hub reviews and applies it. Never "
@@ -156,8 +158,8 @@ def make(hub_dir) -> list[FunctionTool]:
                      "remember it for the team ('remember that...', 'note for everyone'). For something only "
                      "about this person, use save_memory instead. It goes in knowledge/_learned/<topic>.md: "
                      "new text is added to the topic's file, or give `replace` (exact text from that file, as "
-                     "read_hub_file shows it) to correct it. A hub manager's note applies at once; anyone "
-                     "else's is reviewed first."),
+                     "read_hub_file shows it) to correct it. It is a proposal: a hub manager applies it "
+                     "from the card."),
         params_json_schema={**obj, "properties": {
             "topic": {"type": "string", "description": "Short subject, e.g. 'billing edge cases'."},
             "text": {"type": "string", "description": "What to remember, as Markdown."},

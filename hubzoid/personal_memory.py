@@ -55,8 +55,8 @@ def get(hub_dir, account_id: str) -> dict:
     with _engine(hub_dir).connect() as c:
         r = c.execute(sa.select(notes).where(notes.c.hub_id == _hub(hub_dir),
                                              notes.c.account_id == account_id)).first()
-    if r is None:
-        return {"text": "", "revision": 0, "updated_at": None}
+    if r is None or not r.text:
+        return {"text": "", "revision": r.revision if r is not None else 0, "updated_at": None}
     return {"text": r.text, "revision": r.revision,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r.updated_at))}
 
@@ -74,14 +74,19 @@ def put(hub_dir, account_id: str, email: str, text: str, *, expected_revision: i
         if expected_revision is not None and int(expected_revision) != (cur or 0):
             raise MemoryError_("Your notes changed in another window. Reload them and try again.",
                                code="revision_conflict", status=409, current_revision=cur or 0)
-        if not text:
-            c.execute(notes.delete().where(notes.c.hub_id == hub, notes.c.account_id == account_id))
-        elif cur is None:
-            c.execute(notes.insert().values(hub_id=hub, account_id=account_id, email=email.lower(), text=text,
-                                            revision=1, updated_at=now))
+        # Deleting keeps the row (empty text), so revisions only ever go up and a
+        # stale editor can't overwrite notes made after a delete.
+        if cur is None:
+            if text:
+                c.execute(notes.insert().values(hub_id=hub, account_id=account_id, email=email.lower(),
+                                                text=text, revision=1, updated_at=now))
         else:
-            c.execute(notes.update().where(notes.c.hub_id == hub, notes.c.account_id == account_id)
-                      .values(text=text, email=email.lower(), revision=cur + 1, updated_at=now))
+            done = c.execute(notes.update().where(notes.c.hub_id == hub, notes.c.account_id == account_id,
+                                                  notes.c.revision == cur)
+                             .values(text=text, email=email.lower(), revision=cur + 1, updated_at=now))
+            if done.rowcount != 1:
+                raise MemoryError_("Your notes changed in another window. Reload them and try again.",
+                                   code="revision_conflict", status=409)
     return get(hub_dir, account_id)
 
 

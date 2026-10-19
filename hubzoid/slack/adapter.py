@@ -395,7 +395,9 @@ def build_app(
         writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
         stream_reply(bridge_url=bridge_url, api_key=api_key, model=model_label, messages=msgs,
                      on_delta=writer.feed, chat_id=chat_id, hub_dir=hub_dir,
-                     user_email=request.get("requester_email"), surface="slack-dm")
+                     user_email=request.get("requester_email"),
+                     # A DM channel id starts with D; anything else is a shared channel thread.
+                     surface="slack-dm" if channel.startswith("D") else "slack-channel")
         writer.done()
 
     import re as _re

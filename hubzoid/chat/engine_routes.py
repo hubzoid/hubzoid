@@ -321,8 +321,9 @@ class Orchestrator:
         except self.engine.Busy:
             await db(_unclaim, self.ctx.hub_dir, request["id"])  # retried when that reply ends
             return False
-        except Exception:  # noqa: BLE001 - the decision stands; the person can continue by writing
+        except Exception:  # noqa: BLE001 - the decision stands; recovery tries again
             log.exception("chat: could not continue after request %s", request["id"])
+            await db(_unclaim, self.ctx.hub_dir, request["id"])
             return False
         await self.launch(plan)
         return plan is not None

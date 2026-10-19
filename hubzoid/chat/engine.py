@@ -1346,14 +1346,25 @@ class ChatEngine:
         return Actor(id=author_id, email=email, groups=frozenset(self.groups_for(email)))
 
     # -- results of personal workflows -----------------------------------------------------
-    def deliver(self, actor: Actor, *, agent: str, title: str, prompt: str, answer: str) -> str:
+    def deliver(self, actor: Actor, *, agent: str, title: str, prompt: str, answer: str,
+                conversation_id: str | None = None) -> str:
         """A new private conversation for ``actor`` holding a request and the
-        answer a workflow run produced. Returns its id."""
-        conv = self.create_conversation(actor, agent=agent)
-        cid = conv["conversation_id"]
+        answer a workflow run produced. Returns its id. With a fixed
+        ``conversation_id`` (from the run), delivering again is a no-op."""
+        if conversation_id:
+            with self.engine.connect() as conn:
+                row = conn.execute(sa.select(conversations.c.head_id).where(
+                    conversations.c.id == conversation_id)).first()
+            if row is not None and row.head_id is not None:
+                return conversation_id  # already delivered
+        if not conversation_id or row is None:
+            conv = self.create_conversation(actor, agent=agent, conversation_id=conversation_id)
+            cid = conv["conversation_id"]
+        else:
+            cid = conversation_id
         with self.engine.begin() as conn:
             c = self._conv(conn, cid)
-            b = conn.execute(sa.select(g.branches).where(g.branches.c.id == conv["branch"]["id"])
+            b = conn.execute(sa.select(g.branches).where(g.branches.c.conversation_id == cid)
                              .with_for_update()).first()
             uid = self._insert(conn, conv_id=cid, mid=None, parent_id=None, role="user",
                                content=[{"type": "text", "text": prompt}], branch_id=b.id, actor=actor)

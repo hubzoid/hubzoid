@@ -25,4 +25,9 @@ def to_private_chat(prompt: str, answer: str) -> str | None:
     agent = getattr(settings, "model_label", None) or hub_dir.name
     title = (prompt.strip().splitlines() or ["Repeated request"])[0][:70]
     stamp = time.strftime("%d %b %H:%M", time.gmtime())
-    return engine.deliver(actor, agent=agent, title=f"{title} · {stamp}", prompt=prompt, answer=answer)
+    import hashlib
+
+    # One conversation per run: a run recovered after a crash finds it instead of making another.
+    cid = "c_" + hashlib.sha256(f"{ctx.hub}:{ctx.run_id}".encode()).hexdigest()[:22]
+    return engine.deliver(actor, agent=agent, title=f"{title} · {stamp}", prompt=prompt, answer=answer,
+                          conversation_id=cid)

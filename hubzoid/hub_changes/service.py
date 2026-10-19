@@ -1,7 +1,7 @@
 """Proposing, reviewing and applying changes to a hub's own files.
 
-What may change: ``AGENTS.md`` and Markdown files under ``knowledge/``,
-``skills/`` and ``prompts/``. Access, approval and run settings, workflow code,
+What may change: ``AGENTS.md`` and Markdown files under ``knowledge/`` and
+``skills/`` (found under any accepted spelling of those folders). Access, approval and run settings, workflow code,
 local tools, secrets and anything outside the hub are never proposable.
 
 A proposal stores, per file, the SHA-256 of the bytes it had when proposed
@@ -11,8 +11,9 @@ the same base conflicts once the first is applied, and nothing is written.
 
 Who: anyone holding ``curator`` (Save shared knowledge) or managing the hub
 may propose. Only someone managing the hub, checked when they decide, may
-apply or reject. A manager proposing from chat a change to ``knowledge/`` only
-is applied at once ("trusted direct apply"); everything else waits for review.
+apply or reject, by a person's own click or command. A change an agent
+proposes never applies itself, even for a manager: they apply it from the
+chat card. A manager's knowledge-only change from the CLI or API applies at once.
 
 Applying holds the hub write lock (shared with scheduled-task commits), writes
 each file atomically and, when the hub is in a Git repository, commits exactly
@@ -66,7 +67,7 @@ changes = sa.Table(
     sa.Column("updated_at", sa.Float, nullable=False),
 )
 
-ROOTS = ("knowledge", "skills", "prompts")
+ROOTS = ("knowledge", "skills")
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 20
 REVIEW_PERMISSION = "manage_access"
@@ -134,8 +135,8 @@ def check_path(path: str) -> str:
         return "AGENTS.md"
     if p.parts[0].lower() not in ROOTS or len(p.parts) < 2 or p.suffix.lower() != ".md":
         raise ChangeError(f"{rel} can't be changed this way. You can change AGENTS.md and Markdown files "
-                          "under knowledge/, skills/ and prompts/.", code="outside_scope")
-    return rel
+                          "under knowledge/ and skills/.", code="outside_scope")
+    return str(PurePosixPath(p.parts[0].lower(), *p.parts[1:]))  # the folder by its canonical name
 
 
 def _disk(hub_dir: Path, rel: str) -> Path:
@@ -285,7 +286,11 @@ def propose(hub_dir: Path, *, title: str, edits: list[dict], actor: str, via: st
             revision=1, files_json=json.dumps(files), digest=digest, proposed_by=actor, proposed_via=via,
             conversation_id=conversation_id, undoes=undoes, created_at=now, updated_at=now)).inserted_primary_key[0]
     log.info("hub change #%s proposed by %s: %s", cid, actor, ", ".join(f["path"] for f in files))
-    trusted = (present and via in ("chat", "api", "cli") and can_review(hub_dir, actor)
+    # A model's tool call never applies anything, even for a manager (a
+    # prompt-injected call must not change shared knowledge). A manager applies
+    # it with one click on the chat card. A person proposing from their own
+    # terminal or session may apply knowledge directly.
+    trusted = (present and via in ("api", "cli") and can_review(hub_dir, actor)
                and all(f["path"].lower().startswith("knowledge/") for f in files))
     if trusted:
         return apply(hub_dir, cid, actor=actor, note="Applied directly by a hub manager (knowledge only).")

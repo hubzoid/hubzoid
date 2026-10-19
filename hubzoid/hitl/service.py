@@ -180,6 +180,21 @@ def check(hub_dir: Path, hub_id: str, caller: Caller, *, tool: str, arguments: A
 
 
 
+def pending_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, kind: str, title: str,
+                         digest: str | None) -> dict | None:
+    """The pending request a workflow run already made with this kind, title and subject digest."""
+    r = st.requests.c
+    with engine(hub_dir).connect() as conn:
+        rows = conn.execute(sa.select(st.requests).where(
+            r.hub_id == hub_id, r.workflow_id == workflow_id, r.kind == kind, r.title == title,
+            r.status == "pending")).fetchall()
+    for row in rows:
+        req = st.row_dict(row)
+        if (req.get("subject") or {}).get("digest") == digest:
+            return req
+    return None
+
+
 def count_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, title: str) -> int:
     """How many requests a workflow run already made with this title (plan versions)."""
     with engine(hub_dir).connect() as conn:
@@ -439,10 +454,20 @@ def visible_outcome(request: dict) -> str:
     return "Rejected" + (f": {request['note']}" if request.get("note") else "")
 
 
-def events_after(hub_dir: Path, hub_id: str, after: int, limit: int = 200) -> list[dict]:
+def events_after(hub_dir: Path, hub_id: str, after: int, limit: int = 200, *,
+                 account_id: str | None = None, email: str | None = None) -> list[dict]:
+    """Events after ``after``, only for requests the caller may see."""
     e = st.events.c
     with engine(hub_dir).connect() as conn:
         rows = conn.execute(sa.select(st.events).where(e.hub_id == hub_id, e.sequence > after)
                             .order_by(e.sequence).limit(limit)).fetchall()
-    return [{"sequence": x.sequence, "request_id": x.request_id, "type": x.type, "revision": x.revision,
-             "payload": json.loads(x.payload_json)} for x in rows]
+    seen: dict[str, bool] = {}
+    out = []
+    for x in rows:
+        if x.request_id not in seen:
+            req = get(hub_dir, hub_id, x.request_id)
+            seen[x.request_id] = bool(req) and visible_to(req, account_id or "", email or "")
+        if seen[x.request_id]:
+            out.append({"sequence": x.sequence, "request_id": x.request_id, "type": x.type,
+                        "revision": x.revision, "payload": json.loads(x.payload_json)})
+    return out

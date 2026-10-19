@@ -24,6 +24,7 @@ export default function MemoryPage() {
 
   const load = useCallback(async () => {
     setError(null);
+    setMem(null); // another agent's notes never stay on screen to be saved here
     try {
       const m = await get<Memory>(url);
       setMem(m);
