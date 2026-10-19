@@ -90,7 +90,7 @@ def _named(hub_dir: Path, permission: str) -> str:
 
 
 def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
-               surfaces: "frozenset[str] | None" = None, also: tuple[str, ...] = ()) -> FunctionTool:
+               surfaces: "frozenset[str] | None" = None) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
     The original is left untouched (`dataclasses.replace` copies it). The
@@ -100,24 +100,14 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     `surfaces` replaces the restricted-tool surface policy for this tool (a
     tool family with its own rule, e.g. the management tools'
     `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
-
-    `also` names other permissions that allow the call as well (``remember``:
-    ``curator``, or managing the hub).
     """
     surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 
-    def _decide(ident):
-        allowed, reason = decide(hub_dir, ident, permission, surfaces)
-        for other in also if not allowed else ():
-            if decide(hub_dir, ident, other, surfaces)[0]:
-                return True, reason
-        return allowed, reason
-
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()
-        allowed, reason = _decide(ident)
+        allowed, reason = decide(hub_dir, ident, permission, surfaces)
         recorded = await asyncio.to_thread(
             audit.record, hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
             decision=("allow" if allowed else "deny"), reason=reason,
@@ -141,13 +131,13 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     def _is_enabled(*_args, **_kwargs) -> bool:
         # The SDK calls this with (run_context, agent); we only need the
         # request-scoped identity, so accept anything and ignore it.
-        allowed, _ = _decide(current_identity())
+        allowed, _ = decide(hub_dir, current_identity(), permission, surfaces)
         return allowed
 
     _is_enabled.hubzoid_permission = permission
     # Tools sharing a permission and surface rule share one decision per turn
     # (`visible_map`).
-    _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces, also)
+    _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
 
 

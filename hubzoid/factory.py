@@ -243,14 +243,14 @@ def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
     restricted/ tools). A hub that already defines its own tool of the same
     name keeps it — hub wins over the core tool.
     """
+    from .hub_changes.tools import gate
     from .tools import curator as curator_tool
 
     for ft in curator_tool.make(ctx):
         if ft.name in registry:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
-                                               ctx.hub_dir, also=("manage_access",))
+        registry[ft.name] = gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION)
     # Personal memory: each person's own notes. No grant needed; a call with
     # nobody signed in is refused by the tool itself.
     from . import personal_memory

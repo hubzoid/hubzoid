@@ -479,9 +479,15 @@ class Hub:
         wrote, published as an artifact version). Editing the plan makes a new
         version, which needs its own approval. Returns ``{"approved": bool,
         "note": str | None, "by": email}``; a request for changes is not approved."""
+        import hashlib
+
+        source = Path(path) if Path(path).is_absolute() else Path(_ctx().hub_dir) / path
+        digest = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
         art = self.publish_artifact(path, title=title)
+        # The version number is assigned when the request is created (a
+        # durable step): 1 + the earlier plans this run asked about.
         subject = {"name": title or Path(str(path)).name, "url": art.get("share_url") or art.get("url"),
-                   "version": art.get("version"), "digest": art.get("sha256") or art.get("digest")}
+                   "digest": digest, "plan": True}
         req = self._wait_for(kind="approval", title=subject["name"], subject=subject, approvers=approvers)
         return {"approved": req["status"] == "approved", "note": req.get("note"),
                 "by": req.get("decided_by_email")}
@@ -537,6 +543,12 @@ class Hub:
 
 def _hitl_create(payload: dict) -> dict:
     from ..hitl import service
+
+    subject = payload.get("subject")
+    if subject and subject.get("plan") and payload.get("workflow_id"):
+        earlier = service.count_for_workflow(Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower(),
+                                             payload["workflow_id"], payload["title"])
+        payload["subject"] = {**subject, "version": earlier + 1}
 
     caller = service.Caller(account_id=payload.get("account_id") or payload["requester"],
                             email=payload["requester"], present=True, origin="workflow")

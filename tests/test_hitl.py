@@ -281,3 +281,16 @@ def test_slack_button_is_honoured_only_for_the_requester_and_fresh_card(hub):
     assert exc.value.code == "revision_conflict"
     assert channels.slack_decide(hub, action_id="hz_hitl_approve", value=value,
                                  email="ana@example.org")["status"] == "approved"
+
+
+def test_each_plan_review_in_a_run_is_a_new_version_with_its_digest(hub):
+    from hubzoid.workflows.context import _hitl_create
+
+    def ask(digest):
+        return _hitl_create({"hub_dir": str(hub), "requester": "owner@example.org", "kind": "approval",
+                             "title": "Order plan", "approvers": ["requester"], "workflow_id": "wf-1",
+                             "subject": {"name": "Order plan", "url": "/a", "digest": digest, "plan": True}})
+
+    first, second = ask("sha256:aa"), ask("sha256:bb")
+    assert (first["subject"]["version"], second["subject"]["version"]) == (1, 2)
+    assert second["subject"]["digest"] == "sha256:bb" and first["id"] != second["id"]

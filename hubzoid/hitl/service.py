@@ -179,6 +179,14 @@ def check(hub_dir: Path, hub_id: str, caller: Caller, *, tool: str, arguments: A
     return Verdict("ask", request=req)
 
 
+
+def count_for_workflow(hub_dir: Path, hub_id: str, workflow_id: str, title: str) -> int:
+    """How many requests a workflow run already made with this title (plan versions)."""
+    with engine(hub_dir).connect() as conn:
+        return int(conn.execute(sa.select(sa.func.count()).select_from(st.requests).where(
+            st.requests.c.hub_id == hub_id, st.requests.c.workflow_id == workflow_id,
+            st.requests.c.title == title)).scalar() or 0)
+
 # -- requests ----------------------------------------------------------------------
 def create(hub_dir: Path, hub_id: str, caller: Caller, *, kind: str, title: str, tool: str | None = None,
            arguments: Any = None, digest: str | None = None, question: str | None = None,

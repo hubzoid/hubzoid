@@ -166,3 +166,24 @@ def make(hub_dir) -> list[FunctionTool]:
         }, "required": ["topic", "text"]},
         on_invoke_tool=remember_invoke, strict_json_schema=False)
     return [read_tool, propose_tool, status_tool, remember_tool]
+
+
+def gate(ft: FunctionTool, hub_dir, access, permission: str) -> FunctionTool:
+    """``permission`` (Save shared knowledge) or managing the hub: the access
+    guard for each, and the call goes through whichever allows it."""
+    import dataclasses
+    from pathlib import Path
+
+    cur = access.guard_tool(ft, permission, hub_dir)
+    mgr = access.guard_tool(ft, service.REVIEW_PERMISSION, hub_dir)
+
+    def enabled(*args, **kwargs) -> bool:
+        return bool(cur.is_enabled(*args, **kwargs) or mgr.is_enabled(*args, **kwargs))
+
+    enabled.hubzoid_permission = permission
+    enabled.hubzoid_key = ("curator-or-manager", str(Path(hub_dir)))
+
+    async def invoke(ctx, input_str):
+        return await (mgr if mgr.is_enabled() else cur).on_invoke_tool(ctx, input_str)
+
+    return dataclasses.replace(cur, is_enabled=enabled, on_invoke_tool=invoke)
