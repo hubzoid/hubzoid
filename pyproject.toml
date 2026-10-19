@@ -89,6 +89,7 @@ dependencies = [
   "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
+  "githubkit[auth-app]>=0.16.1,<0.17",  # hubzoid.channels.github: App tokens narrowed to one repository (MIT)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
 ]
 
