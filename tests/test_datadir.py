@@ -93,6 +93,30 @@ def test_hub_changes_are_refused_for_a_hosted_hub(tmp_path, monkeypatch):
     assert caught.value.code == "hub_read_only"
 
 
+def test_budgets_cards_and_station_patches_respect_a_hosted_hub(tmp_path, monkeypatch):
+    from hubzoid import budgets
+    from hubzoid.apps import cards
+    from hubzoid.sandbox import service as sandbox_service
+    from hubzoid.stations import service as stations
+    from hubzoid.work_items.errors import WorkItemError
+
+    hub, data = tmp_path / "hub", tmp_path / "data"
+    hub.mkdir()
+    monkeypatch.setenv(datadir.ENV, str(data))
+    with pytest.raises(WorkItemError) as caught:                     # budgets.yaml is a hub file
+        budgets.apply(hub, "version: 1\n", expected_revision="absent", actor="a@example.org")
+    assert caught.value.code == "hub_read_only" and not (hub / budgets.FILE).exists()
+    with pytest.raises(WorkItemError) as caught:                     # so is mcp-apps.yaml
+        cards.apply(hub, expected=None, actor="a@example.org", apps_doc={"version": 1})
+    assert caught.value.code == "hub_read_only"
+
+    went = []
+    monkeypatch.setattr(sandbox_service, "get", lambda hub_dir, sid: {"checkouts_json": [{"path": "repo"}]})
+    monkeypatch.setattr(sandbox_service, "export_patches", lambda hub_dir, sid, out: went.append(out))
+    stations._export(hub, "sbx-1", "item-1", "call-1")                # a station's patches
+    assert went == [data / "output" / "work-items" / "item-1" / "call-1"]
+
+
 def test_session_output_and_deleted_chats_live_in_the_data_folder(tmp_path, monkeypatch):
     from hubzoid import memory
     from hubzoid.chat import store
@@ -129,7 +153,7 @@ def test_doctor_says_where_state_lives(tmp_path, monkeypatch):
     assert row.status == "warn" and "older copy" in row.summary
 
 
-def test_a_gateway_refuses_one_data_folder_for_several_hubs(tmp_path, monkeypatch):
+def test_a_gateway_refuses_a_data_folder(tmp_path, monkeypatch):
     from hubzoid import gateway
 
     def hub(name, port, data):
@@ -140,11 +164,15 @@ def test_a_gateway_refuses_one_data_folder_for_several_hubs(tmp_path, monkeypatc
         return h
 
     monkeypatch.delenv(datadir.ENV, raising=False)
-    shared = tmp_path / "data"
-    with pytest.raises(ValueError, match="One hub per data folder"):           # set in each hub's .env
-        gateway.plan([hub("a", 8001, shared), hub("b", 8002, shared)])
+    with pytest.raises(ValueError, match="A gateway keeps each hub's state"):  # set in one hub's .env
+        gateway.plan([hub("a", 8001, ""), hub("b", 8002, tmp_path / "own")])
     assert datadir.ENV not in os.environ                                       # each hub's env is put back
-    assert len(gateway.plan([tmp_path / "a", hub("c", 8003, tmp_path / "own")]).backends) == 2
+    assert len(gateway.plan([tmp_path / "a", hub("c", 8003, "")]).backends) == 2
+    d = hub("d", 8004, "")
+    (d / ".env").write_text("BRIDGE_PORT=8004\nMODEL=claude-local\n")
+    monkeypatch.setenv(datadir.ENV, str(tmp_path / "data"))                    # or the gateway's own
+    with pytest.raises(ValueError, match="A gateway keeps each hub's state"):
+        gateway.plan([d])
 
 
 def test_a_backup_copies_the_data_folder(tmp_path, monkeypatch):

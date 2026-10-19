@@ -25,8 +25,9 @@ and are baked into the image, and state goes to `/data`.
   with the same layout as today: `.hubzoid/` (databases, keys, chats,
   artifacts, evals, outbox), `output/`, `logs/` and `.inbound/`. The hub
   folder is only read. Unset, nothing changes.
-  - One hub per data folder. A gateway with several hubs refuses a shared
-    `HUBZOID_DATA_DIR`.
+  - One hub per data folder, run with `hubzoid run`. A gateway refuses
+    `HUBZOID_DATA_DIR`: its edge, backups and other bridges find each hub's
+    state in that hub's folder.
   - With it set, the hub's files come from the image: Settings shows agent
     instructions read-only, with a note to change them in Git and redeploy.
   - Doctor shows where state lives, and warns when state is split between the

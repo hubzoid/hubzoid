@@ -165,7 +165,6 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     from . import datadir
 
     backends: list[GatewayBackend] = []
-    seen_data: dict[Path, Path] = {}  # data folder -> the hub using it
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
     seen_inbound_ports: dict[int, Path] = {}
@@ -181,12 +180,13 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         finally:
             os.environ.clear()
             os.environ.update(inherited_env)
-        if data is not None and data in seen_data:
-            raise ValueError(f"gateway: hubs {seen_data[data].name} and {hub_dir.name} both keep their "
-                             f"state in {datadir.ENV}={data}. One hub per data folder: give each its own, "
-                             f"or unset {datadir.ENV}.")
         if data is not None:
-            seen_data[data] = hub_dir
+            # Other processes of a gateway (the edge, backups, the other bridges)
+            # find a hub's state in its folder. HUBZOID_DATA_DIR is for one
+            # hosted hub (`hubzoid run`), not a gateway.
+            raise ValueError(f"gateway: hub {hub_dir.name} sets {datadir.ENV}={data}. A gateway keeps each "
+                             f"hub's state in that hub's folder and its own in --data-dir. Unset "
+                             f"{datadir.ENV}, or run this hub on its own with `hubzoid run`.")
         if s.bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[s.bridge_port].name} and "

@@ -8,9 +8,9 @@ The bridge looks every half hour (the first look a minute after it starts) and
 takes a backup when the last verified one is older than the schedule. A
 service that slept through its slot backs up soon after it wakes. Only one
 bridge of a gateway takes them: the first hub in the deployment manifest.
-Every archive is verified before it counts (`backup.verify`), the oldest ones
-beyond HUBZOID_BACKUP_KEEP are removed, and a failure is recorded for
-`hubzoid doctor`.
+Every archive is verified before it counts (`backup.verify`), archives older
+than the newest HUBZOID_BACKUP_KEEP that still verify are removed, and a
+failure is recorded for `hubzoid doctor`.
 
 The archives sit on the same disk as the data, which protects against a bad
 change or a corrupted file, not a lost volume: copy them elsewhere too
@@ -82,13 +82,39 @@ def archives(hub_dir: Path) -> list[dict]:
     return sorted(out, key=lambda a: a["name"], reverse=True)
 
 
-def prune(hub_dir: Path, count: int) -> list[str]:
-    """Remove the oldest scheduled archives beyond ``count``."""
-    removed = []
-    for a in archives(hub_dir)[count:]:
-        Path(a["path"]).unlink(missing_ok=True)
-        removed.append(a["path"])
+def prune(hub_dir: Path, count: int, *, fresh: str | None = None) -> list[str]:
+    """Remove the scheduled archives older than the newest ``count`` that pass
+    verification. An archive that no longer verifies is never counted, so a
+    good one is never removed while a broken one is kept in its place.
+    ``fresh`` is the archive just written and verified."""
+    from . import backup
+
+    removed, good = [], 0
+    for a in archives(hub_dir):
+        if good >= count:
+            Path(a["path"]).unlink(missing_ok=True)
+            removed.append(a["path"])
+        elif a["path"] == fresh or backup.verify(Path(a["path"]))["ok"]:
+            good += 1
+        else:
+            log.warning("backup: %s no longer passes verification and is not counted as a kept backup",
+                        a["path"])
     return removed
+
+
+def _record_failure(hub_dir: Path, exc: Exception) -> None:
+    """For doctor and the retry delay, when a backup was refused before it
+    began (a bad setting): a backup that began records its own failure."""
+    from . import backup, db
+
+    try:
+        store = backup._Store(db.operational_url(Path(hub_dir)))
+        try:
+            store.put("backup:failed", {"at": time.time(), "by": "schedule", "error": str(exc)[:500]})
+        finally:
+            store.engine.dispose()
+    except Exception:  # noqa: BLE001 — the failure itself is what is raised
+        log.warning("backup: could not record the failure", exc_info=True)
 
 
 def responsible(hub_dir: Path) -> bool:
@@ -143,8 +169,14 @@ def run_once(hub_dir: Path, *, say=log.info) -> dict:
     base = folder(hub_dir)
     base.mkdir(parents=True, exist_ok=True, mode=0o700)
     out = base / f"hubzoid-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
-    index = backup.backup(Path(hub_dir), out, actor="schedule", say=say)
-    removed = prune(hub_dir, keep())
+    try:
+        index = backup.backup(Path(hub_dir), out, actor="schedule", say=say)
+    except backup.BackupBusy:
+        raise
+    except backup.BackupError as exc:
+        _record_failure(hub_dir, exc)
+        raise
+    removed = prune(hub_dir, keep(), fresh=str(out))
     log.info("backup: scheduled backup written to %s (%d older removed)", out, len(removed))
     return {"path": str(out), "removed": removed, "files": index["verified"]["files"]}
 
@@ -165,6 +197,11 @@ async def loop(hub_dir: Path, *, first: float = FIRST_LOOK, every: float = EVERY
                 await asyncio.to_thread(run_once, hub_dir)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — recorded as backup:failed; tried again later
-            log.exception("backup: the scheduled backup failed")
+        except Exception as exc:  # noqa: BLE001 — recorded as backup:failed; tried again later
+            from .backup import BackupBusy
+
+            if isinstance(exc, BackupBusy):
+                log.info("backup: another backup of this deployment is running; trying again later")
+            else:
+                log.exception("backup: the scheduled backup failed")
         await asyncio.sleep(every)

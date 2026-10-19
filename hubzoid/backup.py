@@ -88,6 +88,10 @@ class BackupError(RuntimeError):
     pass
 
 
+class BackupBusy(BackupError):
+    """Another backup of the deployment is running. Not a failure."""
+
+
 @dataclass
 class Root:
     """One saved directory or file, stored in the archive under `id`."""
@@ -116,7 +120,7 @@ class Plan:
 
 def _redact(url: str) -> str:
     url = re.sub(r"//([^:/@]+):[^@]*@", r"//\1:***@", url)
-    return re.sub(r"([?&]password=)[^&]*", r"\1***", url)
+    return re.sub(r"([?&][^=&]*pass[^=&]*=)[^&]*", r"\1***", url, flags=re.IGNORECASE)
 
 
 def _sqlite_path(url: str) -> Path | None:
@@ -171,8 +175,13 @@ def plan(hub_dir: Path, *, include_secrets: bool = False) -> Plan:
 
     from . import backup_schedule
 
-    out = Plan(hubs=hubs, roots=roots, stores=[], dbos=[],
-               exclude_dirs={backup_schedule.folder(hub_dir).resolve()})
+    archives = backup_schedule.folder(hub_dir).resolve()
+    for r in roots:
+        if r.kind != "file" and (r.path.resolve() == archives or archives in r.path.resolve().parents):
+            raise BackupError(f"{backup_schedule.DIR_SETTING}={archives} holds {r.path}, which a backup "
+                              "saves. Give the archives a folder of their own, or unset it to use "
+                              f"{datadir.STATE}/{BACKUPS_DIR} in the data folder.")
+    out = Plan(hubs=hubs, roots=roots, stores=[], dbos=[], exclude_dirs={archives})
     urls: list[tuple[str, str, str]] = []
     for key, path in hubs:
         op = db.operational_url(path)
@@ -381,6 +390,15 @@ class _Store:
 HOLD_KEY = "maintenance:hold"  # read by GrantStore.schedule_hold
 
 
+def _drop_hold(url: str) -> None:
+    """Remove the schedule hold a dump taken during a backup carries."""
+    store = _Store(url)
+    try:
+        store.drop(HOLD_KEY)
+    finally:
+        store.engine.dispose()
+
+
 def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: float = 600,
            actor: str = "cli", poll: float = 2.0, settle: float = _SETTLE, say=log.info) -> dict:
     """Write one archive of the deployment containing `hub_dir` to `out`.
@@ -389,6 +407,33 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
     out = Path(out).resolve()
     if out.exists():
         raise BackupError(f"{out} already exists")
+    with _one_at_a_time(p):
+        return _hold_and_take(p, out, include_secrets, wait, poll, settle, say, actor)
+
+
+@contextlib.contextmanager
+def _one_at_a_time(p: Plan):
+    """One backup of a deployment at a time: two would share the schedule
+    hold, and the first to finish would lift it while the other still reads."""
+    from . import _file_lock
+    from .control import deploy
+
+    path = deploy.state_root(p.hubs[0][1]) / datadir.STATE / "backup.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as fh:
+        try:
+            _file_lock.lock(fh, blocking=False)
+        except BlockingIOError:
+            raise BackupBusy("Another backup of this deployment is running. Try again when it "
+                             "finishes.") from None
+        try:
+            yield
+        finally:
+            _file_lock.unlock(fh)
+
+
+def _hold_and_take(p: Plan, out: Path, include_secrets: bool, wait: float, poll: float, settle: float, say,
+                   actor: str) -> dict:
     stores = [_Store(url) for url in p.stores if _sqlite_path(url) is None or _sqlite_path(url).exists()]
     try:
         for s in stores:
@@ -656,7 +701,20 @@ def _scratch_database(url: str):
         raise BackupError(f"Could not create a scratch database on {_redact(url)}: the role needs "
                           f"permission to create databases ({type(exc).__name__}).") from None
     try:
-        yield name, make_url(db.sqlalchemy_url(url)).set(database=name).render_as_string(hide_password=False)
+        u = make_url(db.sqlalchemy_url(url))
+        # dbname= or service= in the query would win over the URL's path.
+        u = u.difference_update_query([k for k in u.query if k.lower() in ("dbname", "database", "service")])
+        scratch = u.set(database=name).render_as_string(hide_password=False)
+        probe = create_engine(scratch)
+        try:
+            with probe.connect() as c:
+                landed = c.execute(text("SELECT current_database()")).scalar()
+        finally:
+            probe.dispose()
+        if landed != name:
+            raise BackupError(f"The scratch database URL reached {landed}, not {name}. Give a URL whose "
+                              "database is named only in its path.")
+        yield name, scratch
     finally:
         try:
             with admin.connect() as c:
@@ -1014,6 +1072,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, postgres_url: s
             dump = Path(tmp) / "pg.dump"
             dump.write_bytes(tar.extractfile(dumps[0]["arc"]).read())
             _pg_restore(dump, postgres_url)
+        _drop_hold(postgres_url)
         say(f"Restored the PostgreSQL database into {_redact(postgres_url)}")
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

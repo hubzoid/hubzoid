@@ -222,9 +222,23 @@ def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatc
             return set(c.execute(text("SELECT datname FROM pg_database")).scalars())
 
     before = databases()
-    report = bk.rehearse(archive, postgres_url=scratch)
+    upgraded_in = []
+    real_upgrade = bk._upgrade_and_count
+
+    def upgrade(engine, *a):
+        with engine.connect() as c:
+            upgraded_in.append(c.execute(text("SELECT current_database()")).scalar())
+        return real_upgrade(engine, *a)
+
+    monkeypatch.setattr(bk, "_upgrade_and_count", upgrade)
+    live = postgres_url.rsplit("/", 1)[1].split("?", 1)[0]
+    joined = "&" if "?" in postgres_url else "?"
+    # The live database named twice, in the path and the query: the query would
+    # win over the scratch database's name.
+    report = bk.rehearse(archive, postgres_url=f"{postgres_url}{joined}dbname={live}")
     assert report["ok"], report["problems"]
     assert report["postgres"][0]["upgraded"]
+    assert upgraded_in and all(n.startswith("hubzoid_rehearsal_") for n in upgraded_in)
     assert databases() == before                       # its temporary database is gone
 
     engine = create_engine(postgres_url)
@@ -233,6 +247,7 @@ def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatc
     bk.restore(archive, [(str(tmp_path / "live"), str(tmp_path / "moved"))], postgres_url=postgres_url)
     with engine.connect() as c:
         assert c.execute(text("SELECT COUNT(*) FROM hz_grants WHERE subject='pg@example.org'")).scalar_one() == 1
+        assert c.execute(text("SELECT COUNT(*) FROM hz_meta WHERE k='maintenance:hold'")).scalar_one() == 0
     engine.dispose()
 
 
@@ -323,9 +338,18 @@ def test_waiting_on_busy_work_is_recorded_as_a_failure(tmp_path, monkeypatch):
     assert "still in progress" in _meta(hub, "backup:failed")["error"]
 
 
-def test_a_backups_folder_that_is_a_saved_folder_is_never_archived(tmp_path, monkeypatch):
+def test_a_backups_folder_that_holds_the_state_is_refused_and_recorded(tmp_path, monkeypatch):
     hub = _standalone(tmp_path)
     monkeypatch.setenv(sched.DIR_SETTING, str(hub / ".hubzoid"))      # the state folder itself
+    with pytest.raises(bk.BackupError, match="holds"):
+        sched.run_once(hub)
+    assert "holds" in _meta(hub, "backup:failed")["error"]           # doctor says why
+
+
+def test_a_backups_folder_inside_a_saved_folder_is_never_archived(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.delenv(sched.DIR_SETTING, raising=False)              # <state>/backups, inside .hubzoid
+    monkeypatch.delenv("HUBZOID_DATA_DIR", raising=False)
     names = iter(["hubzoid-backup-20261011-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz"])
     real_backup = bk.backup
     monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
@@ -334,3 +358,36 @@ def test_a_backups_folder_that_is_a_saved_folder_is_never_archived(tmp_path, mon
     sched.run_once(hub)
     with tarfile.open(sched.archives(hub)[0]["path"]) as tar:
         assert not any(n.endswith(".tar.gz") for n in tar.getnames())
+
+
+def test_one_backup_at_a_time_and_a_busy_one_is_not_a_failure(tmp_path):
+    hub = _standalone(tmp_path)
+    with bk._one_at_a_time(bk.plan(hub)):
+        with pytest.raises(bk.BackupBusy, match="Another backup"):
+            bk.backup(hub, tmp_path / "second.tar.gz", wait=0)
+    assert _meta(hub, "backup:failed") is None and not (tmp_path / "second.tar.gz").exists()
+    bk.backup(hub, tmp_path / "after.tar.gz", wait=0)                  # the lock is released
+
+
+def test_every_password_parameter_is_redacted():
+    url = "postgresql://u:secret1@db/app?sslpassword=secret2&sslmode=require&Password=secret3"  # gitleaks:allow
+    out = bk._redact(url)
+    assert "secret" not in out and "sslmode=require" in out and "sslpassword=***" in out
+
+
+def test_pruning_never_keeps_a_broken_archive_over_a_verified_one(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.KEEP_SETTING, "2")
+    monkeypatch.setenv(sched.DIR_SETTING, str(tmp_path / "backups"))
+    names = iter(["hubzoid-backup-20261011-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz",
+                  "hubzoid-backup-20261014-030000.tar.gz"])
+    real_backup = bk.backup
+    monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
+        hub_dir, out.with_name(next(names)), wait=0, **{k: v for k, v in kw.items() if k != "wait"}))
+    sched.run_once(hub)
+    sched.run_once(hub)
+    (tmp_path / "backups" / "hubzoid-backup-20261013-030000.tar.gz").write_bytes(b"not an archive")
+    sched.run_once(hub)
+    kept = [a["name"] for a in sched.archives(hub)]
+    assert kept == ["hubzoid-backup-20261014-030000.tar.gz", "hubzoid-backup-20261013-030000.tar.gz",
+                    "hubzoid-backup-20261012-030000.tar.gz"]        # the 12th still counts; the 11th goes

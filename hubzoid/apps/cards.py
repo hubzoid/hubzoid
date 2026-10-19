@@ -516,7 +516,12 @@ def apply(hub_dir, *, expected: int | None, actor: str, apps_doc: dict | None = 
     """Make the checked configuration the next revision. With ``apps_doc``
     (the API's body), that document is checked in memory and written to
     ``mcp-apps.yaml`` only once its revision is set, so a stale or invalid
-    request never changes the file."""
+    request never changes the file. An image-built hub applies only its own
+    file: its files come from Git."""
+    from .. import datadir
+
+    if apps_doc is not None and datadir.hub_read_only(hub_dir):
+        raise WorkItemError("hub_read_only", datadir.READ_ONLY, status=409)
     res = validate(hub_dir, apps_doc)
     if not res.present:
         raise WorkItemError("config_invalid", "There is no mcp-apps.yaml to apply.", status=422)

@@ -6,7 +6,7 @@ chats, artifacts, evals, outbox), ``output/``, ``logs/`` and ``.inbound/``.
 With ``HUBZOID_DATA_DIR`` set, the same layout lives under that folder instead
 and the hub folder is only read. That is how a hosted hub runs: its own files
 are baked into the image from Git, and one durable volume (``/data``) holds its
-state. One hub per data folder.
+state. One hub per data folder, run on its own: a gateway refuses it.
 """
 from __future__ import annotations
 
