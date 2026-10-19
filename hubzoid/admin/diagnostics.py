@@ -306,7 +306,17 @@ def check_branding(hub: Path) -> Result:
     svc = branding_store.service_for(hub)
     src = svc.active_source()
     if src is None:
-        return Result("info", "No brand activated: the default brand shows.")
+        from ..webapp_gateway import _LOGO_CANDIDATES, _find, branding_scope
+
+        try:
+            scope = branding_scope(hub, None)
+            logo = _find(scope.folder, _LOGO_CANDIDATES, custom=True) if scope.folder else None
+        except Exception:  # noqa: BLE001
+            scope, logo = None, None
+        if scope is not None and (logo or scope.name != "Hubzoid"):
+            where = f" with the logo in {scope.folder.parent.name}/branding" if logo else ""
+            return Result("info", f"No brand published in Settings → Brand; people see “{scope.name}”{where}.")
+        return Result("info", "No brand published: the Hubzoid brand shows.")
     missing = [a["key"] for a in src["assets"] if svc.asset_bytes(a["digest"]) is None]
     if missing:
         return Result("fail", f"{len(missing)} brand file(s) of the active revision are missing.", {"missing": missing},
@@ -327,6 +337,86 @@ def check_access(hub: Path) -> Result:
                       remediation="Run `hubzoid access bootstrap --admin you@example.com`.",
                       remediation_code="no_admin")
     return Result("ok", f"{len(admins)} organization administrator(s).", {"admins": len(admins)})
+
+
+def check_people_access(hub: Path) -> Result:
+    """Active people who can use no agent (they sign in to "No agents yet")."""
+    from .. import deployment
+    from ..access import store_for
+    from ..access.store import USE_HUB
+    from ..auth import users
+
+    try:
+        keys = [str(h["key"]).lower() for h in deployment.hubs(hub)] or [hub.name.lower()]
+        gs = store_for(hub)
+        people = [u for u in users.list_users(hub) if u.get("status") == "active" and u.get("role") != "admin"
+                  and not str(u.get("email") or "").endswith("@localhost")]
+        stuck = [u for u in people if not gs.is_suspended(u["email"])
+                 and not any(gs.can(u["email"], k, USE_HUB) for k in keys)]
+    except Exception as exc:  # noqa: BLE001
+        return Result("warn", f"Access could not be checked ({type(exc).__name__}).")
+    if stuck:
+        return Result("warn", f"{len(stuck)} active people can use no agent, so they see \"No agents yet\".",
+                      {"people": len(stuck)},
+                      "Give them an agent in Settings → People & access, or remove the accounts.", "people_without_access")
+    return Result("ok", f"Everyone active can use at least one agent ({len(people)} people).")
+
+
+def check_unowned_admins(hub: Path) -> Result:
+    """Active administrator accounts nobody can own (Open WebUI's sign-in-off account)."""
+    from .. import appmode
+    from ..auth import users
+
+    if not appmode.auth_enabled(hub):
+        return Result("skipped", "Sign-in is off: the local owner is expected.")
+    try:
+        odd = [u for u in users.list_users(hub) if u.get("role") == "admin" and u.get("status") == "active"
+               and str(u.get("email") or "").endswith("@localhost")]
+    except Exception as exc:  # noqa: BLE001
+        return Result("warn", f"Accounts could not be checked ({type(exc).__name__}).")
+    if odd:
+        return Result("warn", f"{len(odd)} administrator account(s) use a @localhost address nobody receives mail at.",
+                      {"accounts": len(odd)}, "Delete them in Settings → People & access if nobody uses them.",
+                      "unowned_admin")
+    return Result("ok", "Every administrator has a real address.")
+
+
+def check_workflow_failures(hub: Path) -> Result:
+    """Workflow runs that failed in the last day, by workflow."""
+    from ..workflows import observe
+
+    try:
+        failed = observe.runs(hub, statuses=["failed"], start=time.time() - 86400, limit=200, trusted=True)
+    except Exception as exc:  # noqa: BLE001
+        return Result("info", f"Workflow runs could not be read ({type(exc).__name__}).")
+    if not failed:
+        return Result("ok", "No workflow run failed in the last day.")
+    by: dict[str, int] = {}
+    for r in failed:
+        name = str(r.get("name") or r.get("workflow") or "?").removeprefix("md:")
+        by[name] = by.get(name, 0) + 1
+    top = ", ".join(f"{n} ({c})" for n, c in sorted(by.items(), key=lambda x: -x[1])[:5])
+    return Result("warn", f"{len(failed)}{'+' if len(failed) >= 200 else ''} workflow run(s) failed in the last day: {top}.",
+                  {"by_workflow": by}, "Open the agent's Runs & schedules to see why.", "workflow_failures")
+
+
+def check_alert_delivery(hub: Path) -> Result:
+    """Workflow alerts that could not be sent."""
+    from .. import db
+
+    try:
+        with db.operational_engine(hub).connect() as conn:
+            rows = conn.execute(sa.text(
+                "SELECT state, error FROM hz_workflow_alerts WHERE hub=:h AND (state='failed' OR "
+                "(state='pending' AND attempt>0)) AND created>:t"),
+                {"h": hub.name.lower(), "t": time.time() - 7 * 86400}).all()
+    except Exception:  # noqa: BLE001
+        return Result("info", "No workflow alerts yet.")
+    if not rows:
+        return Result("ok", "Workflow alerts are being delivered.")
+    reasons = sorted({scrub(str(r.error or "unknown"))[:120] for r in rows})[:3]
+    return Result("warn", f"{len(rows)} workflow alert(s) could not be sent: {'; '.join(reasons)}.",
+                  {"alerts": len(rows)}, "Check the alert destination (docs/workflows.md).", "alert_delivery")
 
 
 def check_connector_reachability(hub: Path) -> Result:
@@ -366,6 +456,11 @@ CHECKS: tuple[CheckDef, ...] = (
     CheckDef("auth.signin", "passive", "How people sign in.", "HUB-86", check_signin),
     CheckDef("exposure.bind", "passive", "Which address the app listens on.", "HUB-86", check_exposure),
     CheckDef("access.admins", "passive", "Someone can administer the deployment.", "HUB-39", check_access),
+    CheckDef("access.people", "passive", "Everyone active can use an agent.", "HUB-39", check_people_access),
+    CheckDef("access.unowned_admins", "passive", "Every administrator is a real person.", "HUB-86",
+             check_unowned_admins),
+    CheckDef("workflows.failures", "passive", "Workflow runs are succeeding.", "HUB-91", check_workflow_failures),
+    CheckDef("workflows.alerts", "passive", "Workflow alerts are delivered.", "HUB-91", check_alert_delivery),
     CheckDef("scheduler.state", "passive", "Schedules are running.", "HUB-91", check_scheduler),
     CheckDef("connectors.registry", "passive", "Connectors are registered.", "HUB-102", check_connectors),
     CheckDef("telemetry.config", "passive", "Telemetry export is set up.", "HUB-109", check_telemetry),
@@ -723,7 +818,8 @@ class DiagnosticsService:
                 raise AdminError(410, "report_expired", "That report expired. Run a fresh one.")
             rows = conn.execute(sa.select(checks_table).where(checks_table.c.report_id == report_id)).all()
         order = {c.id: i for i, c in enumerate(CHECKS)}
-        checks = sorted(({"check_id": r.check_id, "status": r.status, "summary": r.summary,
+        checks = sorted(({"check_id": r.check_id, "label": BY_ID[r.check_id].purpose if r.check_id in BY_ID
+                          else r.check_id, "status": r.status, "summary": r.summary,
                           "details": json.loads(r.safe_details_json or "{}"), "duration_ms": r.duration_ms,
                           "remediation": r.remediation, "remediation_code": r.remediation_code,
                           "owner": r.owner_domain} for r in rows), key=lambda c: order.get(c["check_id"], 99))
