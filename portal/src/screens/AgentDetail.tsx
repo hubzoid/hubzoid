@@ -51,7 +51,13 @@ export function AgentDetail({
           </Space>
         }
       />
-      <Tabs
+      {embedded ? (
+        <nav className="hz-agent-tabs" aria-label="Agent sections">
+          {([['access', 'Access'], ['connectors', 'Connectors'], ['runs', 'Runs & schedules'], ['evals', 'Evals'], ['activity', 'Activity']] as const).map(([key, label]) => (
+            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? 'page' : undefined}>{label}</a>
+          ))}
+        </nav>
+      ) : <Tabs
         activeKey={tab}
         onChange={(key) => navigate(`/agents/${encodeURIComponent(hub.key)}/${key}`)}
         items={[
@@ -61,12 +67,12 @@ export function AgentDetail({
           { key: "evals", label: <a href={agentHref(hub.key, "evals")}>Evals</a> },
           { key: "activity", label: <a href={agentHref(hub.key, "activity")}>Activity</a> },
         ]}
-      />
+      />}
       <div key={`${hub.key}:${tab}`}>
-        {tab === "access" && <AccessEditor hub={hub} />}
+        {tab === "access" && <AccessEditor hub={hub} embedded={embedded} />}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
-        {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
-        {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
+        {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} embedded={embedded} />}
+        {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} embedded={embedded} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
       </div>
     </>

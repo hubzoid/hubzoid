@@ -2780,3 +2780,63 @@
   border: 0;
   border-radius: 5px;
 }
+
+/* Embedded management: readable rows and keyboard-friendly navigation. */
+.hz-agent-tabs { display: flex; flex-wrap: wrap; gap: 0 24px; margin: 20px 0; border-bottom: 1px solid var(--hz-line); }
+.hz-agent-tabs > a, .hz-agent-tabs > button { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 0; border-bottom: 2px solid transparent; color: var(--hz-secondary); text-decoration: none; font-size: .9286rem; }
+.hz-agent-tabs > [aria-current="page"] { border-bottom-color: var(--hz-ink); color: var(--hz-ink); }
+.hz-agent-tabs > :hover { color: var(--hz-ink); }
+.console-embed .ant-breadcrumb a { color: var(--hz-secondary); }
+.console-embed .ant-typography-secondary > a { text-decoration: underline; text-underline-offset: 3px; }
+.hz-access-list, .hz-workflow-list { list-style: none; margin: 0 0 24px; padding: 0; }
+.hz-access-list > li { display: grid; grid-template-columns: 210px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--hz-line-soft); }
+.hz-access-person { min-width: 0; }
+.hz-access-person .person-cell { min-width: 0; }
+.hz-access-person > .ant-space { gap: 10px !important; }
+.hz-access-person > .ant-space > .ant-space-item:first-child { flex: none; }
+.hz-access-status { margin: 5px 0 0 42px; }
+.hz-access-capabilities { min-width: 0; }
+.hz-workflow-list > li { display: flex; justify-content: space-between; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--hz-line-soft); }
+.hz-workflow-info { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.hz-workflow-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hz-workflow-title > a { font-weight: 500; color: var(--hz-ink); overflow-wrap: anywhere; }
+.hz-workflow-account { overflow-wrap: anywhere; }
+.hz-workflow-schedule { display: flex; flex-wrap: wrap; gap: 5px 16px; color: var(--hz-secondary); }
+.hz-workflow-actions { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; flex: none; }
+.console-embed .hz-scroll-table, .console-embed .hz-scroll-table .ant-table-content { overflow: visible !important; }
+.hz-table-scroll { max-width: 100%; overflow-x: auto; }
+.hz-workspace-context { color: var(--hz-secondary); font-size: .9286rem; margin: 0 0 16px; }
+.hz-workspace-files { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 1200px) {
+  .hz-access-list > li { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .hz-access-capabilities { grid-column: 1; }
+  .hz-access-actions { grid-column: 2; grid-row: 1 / 3; }
+  .hz-workspace-files { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .hz-agent-tabs { column-gap: 20px; margin-top: 12px; }
+  .hz-agent-tabs > a, .hz-agent-tabs > button { min-height: 44px; }
+  .hz-workflow-list > li { flex-direction: column; gap: 14px; }
+  .hz-workflow-actions { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
+  .hz-access-list > li { grid-template-columns: minmax(0, 1fr); }
+  .hz-access-actions { grid-column: 1; grid-row: auto; }
+  .hz-set .hz-file-row, .hz-set .hz-icon-link, .hz-set .hz-select-sm { min-height: 44px; }
+  .hz-set .hz-icon-link { min-width: 44px; }
+}
+
+.hz-set .hz-source-collection, .hz-set .hz-source-search { background: transparent; border: 0; border-radius: 0; padding: 0 0 24px; box-shadow: none; }
+.hz-set .hz-source-collection { border-bottom: 1px solid var(--hz-line-soft); }
+.hz-set .hz-source-header > h2 { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .hz-set .hz-source-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .hz-set .hz-source-header > h2 { grid-column: 1 / -1; }
+  .hz-set .hz-source-header > .hz-pill { justify-self: start; }
+}
+
+@media (max-width: 767px) {
+  .hz-native-overlay .ant-btn, .hz-native-overlay .ant-input:not(textarea),
+  .hz-native-overlay .ant-input-affix-wrapper, .hz-native-overlay .ant-select,
+  .hz-native-overlay .ant-checkbox-wrapper, .hz-native-overlay .ant-collapse-header { min-height: 44px; }
+  .hz-native-overlay .ant-drawer-close, .hz-native-overlay .ant-modal-close { min-width: 44px; min-height: 44px; }
+  .hz-native-overlay .ant-drawer-footer .ant-space { flex-wrap: wrap; }
+}
