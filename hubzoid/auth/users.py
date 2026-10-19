@@ -390,7 +390,9 @@ class UserStore:
         ``deleted`` and a released email (``deleted-<id>@deleted.invalid``), so
         the person's conversations and run history keep their owner id and the
         email can be used for a new account. Sign-in data, MFA, API keys and
-        one-time links go, and the credential counter moves, in one transaction."""
+        one-time links go, their snapshot links are revoked, and the credential
+        counter moves, in one transaction."""
+        from ..chat.sharing import manifests
         from ..chat.store import shares
         from .schema import api_keys, mfa_factors, mfa_recovery
 
@@ -408,6 +410,9 @@ class UserStore:
             conn.execute(mfa_recovery.delete().where(mfa_recovery.c.user_id == user_id))
             # Their share links stop working; the conversations themselves stay.
             conn.execute(shares.delete().where(shares.c.owner_id == user_id))
+            conn.execute(manifests.update().where(manifests.c.owner_id == user_id,
+                                                  manifests.c.status == "active")
+                         .values(status="revoked", revoked_at=now))
             conn.execute(api_keys.update().where(api_keys.c.user_id == user_id,
                                                  api_keys.c.revoked_at.is_(None))
                          .values(revoked_at=now))
@@ -800,6 +805,35 @@ def bootstrap_admin_from_env(hub_dir: Path, env: Mapping[str, str] | None = None
         return None
     st = store(hub_dir)
     if st.count(exclude_local=True):
+        if st.find_by_email(email) is None:
+            # Only the first administrator comes from settings: a later change
+            # (or a deleted owner) never mints one at start. Say so, though.
+            log.warning("auth: HUBZOID_ADMIN_EMAIL has no account, and other accounts exist, so it "
+                        "was not created. Create it once with `hubzoid admin create %s --owner --password`, or "
+                        "sign in as an existing administrator.", email)
+        return None
+    return create_configured_owner(hub_dir, env)
+
+
+def create_configured_owner(hub_dir: Path, env: Mapping[str, str] | None = None) -> dict | None:
+    """Create the administrator named by ``HUBZOID_ADMIN_EMAIL`` and
+    ``HUBZOID_ADMIN_PASSWORD`` when no account has that email, with the owner's
+    grants. For explicit operator steps (the first start, ``hubzoid migrate
+    openwebui --apply``); returns None when nothing was created."""
+    env = os.environ if env is None else env
+    hub_dir = Path(hub_dir)
+    email = normalize_email(env.get("HUBZOID_ADMIN_EMAIL"))
+    password = env.get("HUBZOID_ADMIN_PASSWORD") or ""
+    if not email or not password:
+        return None
+    st = store(hub_dir)
+    if st.find_by_email(email) is not None:
+        return None
+    from ..access import store_for
+    from ..access.service import DELETED_PREFIX
+
+    if store_for(hub_dir).metadata(DELETED_PREFIX + email):
+        log.warning("auth: HUBZOID_ADMIN_EMAIL names an account that was deleted; not creating it again")
         return None
     try:
         passwords.check(password)

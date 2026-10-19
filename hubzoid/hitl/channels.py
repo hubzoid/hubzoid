@@ -111,9 +111,9 @@ ACTION_PREFIX = "hz_hitl_"
 
 
 def _page() -> str:
-    from ..appmode import public_url
+    from . import service
 
-    return (public_url() or "").rstrip("/") + "/requests"
+    return service.requests_url()
 
 
 def slack_blocks(req: dict) -> list[dict]:

@@ -199,6 +199,25 @@ def refusal(decision, name: str, *, guarded: bool = False) -> str | None:
     return None if guarded else DENIED_MESSAGE.format(name=name)
 
 
+STOPPED = "This reply was stopped, so the tool did not run."
+
+
+async def _stopped() -> bool:
+    """The chat run this call belongs to was stopped or lost its branch lease
+    (``SessionSlot.guard``). Checked here, in the wrapper every runtime's hub
+    and MCP tools pass through, so Stop holds on Claude, Codex and the Agents
+    SDK alike. Fails closed: no step without a known owner."""
+    from .. import _request_ctx
+
+    guard = getattr(_request_ctx.native_session(), "guard", None)
+    if guard is None:
+        return False
+    try:
+        return not await asyncio.to_thread(guard)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def checked_server(server, hub_dir: Path):
     """``server`` (an Agents SDK MCP server) with the same per-call check as
     ``run_checked``. Every runtime's MCP tools end in ``server.call_tool``,
@@ -214,6 +233,8 @@ def checked_server(server, hub_dir: Path):
 
         from .evaluator import check_run
 
+        if await _stopped():
+            return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
         decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
         refused = refusal(decision, tool_name)
         if refused is not None:
@@ -239,6 +260,8 @@ def run_checked(ft: FunctionTool, hub_dir: Path) -> FunctionTool:
     async def _checked_invoke(ctx, input_str):
         from .evaluator import check_run
 
+        if await _stopped():
+            return STOPPED
         decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
         refused = refusal(decision, ft.name, guarded=guarded)
         if refused is not None:

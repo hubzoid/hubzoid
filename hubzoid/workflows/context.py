@@ -566,7 +566,10 @@ class Hub:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
         # Publish a copy named by its digest, so the approved bytes are exactly
         # the published ones even if the source changes meanwhile.
-        snap = self.data_dir / "plans" / f"{digest[7:23]}{source.suffix}"
+        import re as _re
+
+        slug = _re.sub(r"[^a-z0-9]+", "-", (title or source.stem).lower()).strip("-")[:60] or "plan"
+        snap = self.data_dir / "plans" / digest[7:23] / f"{slug}{source.suffix}"  # named for people
         snap.parent.mkdir(parents=True, exist_ok=True)
         if not snap.exists():
             snap.write_bytes(data)
@@ -591,15 +594,20 @@ class Hub:
         create = _HITL_CREATE_STEP or _hitl_create
         read = _HITL_READ_STEP or _hitl_read
         req = create(payload)
+        if req["status"] == "pending":
+            from .chat_link import post_request
+
+            post_request(ctx.hub_dir, ctx.run or {}, ctx.workflow, req)  # the card, in the chat that started the run
         if req["status"] == "pending" and spec["approvers"] == ["requester"]:
             # Nobody watches a scheduled run: email the person a link to answer.
-            from ..appmode import public_url
+            from ..hitl.service import requests_url
+            from .runtime import title_for
 
-            base = (public_url() or "").rstrip("/")
             what = spec.get("question") or spec["title"]
+            who = f"{title_for(ctx.workflow)} on {ctx.hub}"
             self.send_email(f"Waiting for you: {spec['title'][:150]}",
-                            f"{ctx.workflow} is waiting for your answer:\n\n{what}\n\n"
-                            f"Answer it in Hubzoid: {base}/requests\n", raise_on_failure=False)
+                            f"{who} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {requests_url()}\n", raise_on_failure=False)
         while req["status"] == "pending":
             if not _hitl_receive(req["id"]):
                 import time

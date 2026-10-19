@@ -260,3 +260,31 @@ def test_mcp_admin_tools_require_grant_and_hide_secrets(hub):
     out = call("agent_health", "ben@example.org")
     assert json.loads(out)["agent"] == hub.name.lower() and "SECRET" not in out
     assert "denials" in json.loads(call("recent_denials", "ben@example.org"))
+
+
+def test_health_names_people_without_access_unowned_admins_and_failing_alerts(hub, monkeypatch):
+    import time
+
+    import sqlalchemy as sa
+
+    from hubzoid import db
+    from hubzoid.auth import users
+
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    users.create(hub, email="nobody@example.org", name="Nobody")
+    users.create(hub, email="admin@localhost", name="Local", role="admin")
+    assert diag.check_people_access(hub).status == "warn"
+    assert "No agents yet" in diag.check_people_access(hub).summary
+    assert diag.check_unowned_admins(hub).status == "warn"
+    assert diag.check_alert_delivery(hub).status in ("ok", "info")
+    with db.operational_engine(hub).begin() as conn:
+        conn.execute(sa.text("INSERT INTO hz_workflow_alerts (id, hub, kind, payload, destination, state, attempt, due, "
+                             "created, error) VALUES ('alert:1', :h, 'failure', '{}', '{}', 'failed', 5, 0, :t, "
+                             "'ValueError: Alert destination environment variable is missing')"),
+                     {"h": hub.name.lower(), "t": time.time()})
+    alerts = diag.check_alert_delivery(hub)
+    assert alerts.status == "warn" and "destination environment variable" in alerts.summary
+    svc = diag.service_for(hub)
+    report = svc.get(svc.start(actor="t", run_inline=True)["report_id"])
+    labels = {c["check_id"]: c["label"] for c in report["checks"]}
+    assert labels["access.people"] == "Everyone active can use an agent."

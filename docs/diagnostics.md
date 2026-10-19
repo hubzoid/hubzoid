@@ -1,7 +1,7 @@
 # Workspace settings and diagnostics
 
 Settings → Workspace settings lists every settings area with its file, owner
-and the command that changes it (Chat defaults, Brand, Advanced, Compatibility).
+and the command that changes it (Chat defaults, Brand, Advanced; Compatibility only with `HUBZOID_PARITY_LEDGER=1`).
 Settings → Workspace settings → Health & support runs read-only checks.
 
 ## admin.yaml

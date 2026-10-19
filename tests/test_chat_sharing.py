@@ -178,3 +178,81 @@ def test_deleting_a_shared_message_revokes_its_snapshot_links(client):
                              "expected_revision": rev, "preview_hash": prev["preview_hash"]})
     assert done.status_code == 200 and done.json()["snapshot_links_revoked"] == [share["id"]]
     assert client.get(f"/api/shares/{token}").status_code == 404
+
+
+def test_signed_download_links_never_travel_in_a_share():
+    from hubzoid.chat.sharing import project, unlink
+
+    text = ("Here it is.\n\n[Download report.md](https://hub.example.com/b/x/artifacts/web-c_1/report.md?t=abc&e=9)"
+            "\nAlso https://hub.example.com/artifacts/web-c_1/my%20data.csv?e=9&t=def and "
+            "[the docs](https://example.com/docs?t=1)")
+    clean, names = unlink(text)
+    assert names == ["report.md", "my data.csv"]
+    for spelt in ("[r](/%61rtifacts/web-c/x.pdf?%74=TOK&e=1)", "<a href=\"/artifacts/web-c/x.pdf?e=1&amp;t=TOK\">r</a>",
+                  "see https://h/b/x/artifacts/web-c/x.pdf?t=TOK."):
+        out, found = unlink(spelt)
+        assert "TOK" not in out and found == ["x.pdf"], spelt
+    assert "t=abc" not in clean and "t=def" not in clean and "/artifacts/" not in clean
+    assert "report.md" in clean and "[the docs](https://example.com/docs?t=1)" in clean
+    msgs, omitted = project([{"id": "m1", "role": "assistant", "content": [{"type": "text", "text": text}]}],
+                            {}, pseudonyms=False)
+    assert "/artifacts/" not in msgs[0]["content"][0]["text"]
+    assert {"file: report.md", "file: my data.csv"} <= set(omitted)
+
+
+def _publish(client, cid, headers=ORIGIN, audience=None):
+    pv = client.post("/api/shares/previews", headers=headers, json={
+        "conversation_id": cid, "audience": audience or {"type": "deployment"}, "allow_copy": True}).json()
+    made = client.post("/api/shares", headers=headers, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    assert made.status_code == 201, made.text
+    return made.json()
+
+
+def test_links_stored_by_older_builds_are_stripped_on_read_and_copy(client, hub, monkeypatch):
+    import json
+
+    import sqlalchemy as sa
+
+    from hubzoid.chat.sharing import manifests
+
+    cid, _ = as_owner_conversation(client)
+    share = _publish(client, cid)
+    token = share["url"].rsplit("/", 1)[1]
+    svc = client.app.state.chat.sharing
+    with svc.engine.begin() as conn:
+        row = conn.execute(sa.select(manifests.c.projection_json).where(manifests.c.id == share["id"])).first()
+        p = json.loads(row.projection_json)
+        p["messages"][-1]["content"].append({"type": "text", "text": "[Download x.pdf](/artifacts/web-c/x.pdf?t=zz)"})
+        conn.execute(manifests.update().where(manifests.c.id == share["id"]).values(projection_json=json.dumps(p)))
+    body = client.get(f"/api/shares/{token}").json()
+    assert "t=zz" not in json.dumps(body) and "file: x.pdf" in body["omissions"]
+    as_people(monkeypatch)
+    cp = client.post(f"/api/shares/{token}/copies/previews", headers=who("ana")).json()
+    made = client.post(f"/api/shares/{token}/copies", headers=who("ana"), json={"digest": cp["digest"]}).json()
+    copied = client.get(f"/api/conversations/{made['new_conversation_id']}", headers=who("ana")).json()
+    assert "t=zz" not in json.dumps(copied["messages"])
+
+
+@pytest.mark.parametrize("how", ["delete", "block"])
+def test_an_owner_who_is_deleted_or_blocked_stops_their_links(client, hub, monkeypatch, how):
+    import sqlalchemy as sa
+
+    from hubzoid.auth import users
+    from hubzoid.chat.sharing import manifests
+
+    as_people(monkeypatch)
+    ana = who("ana")
+    cid, b = new_conv(client, ana)
+    wait_run(client, send(client, cid, "the plan", b, ana)["run_id"], ana)
+    share = _publish(client, cid, ana)
+    token = share["url"].rsplit("/", 1)[1]
+    assert client.get(f"/api/shares/{token}", headers=who("ben")).status_code == 200
+    owner = users.find_by_email(hub, "ana@example.org")
+    if how == "delete":
+        users.store(hub).delete(owner["id"])
+        with client.app.state.chat.sharing.engine.connect() as conn:
+            assert conn.execute(sa.select(manifests.c.status).where(manifests.c.id == share["id"])).scalar() == "revoked"
+    else:
+        from hubzoid.access import store_for
+        store_for(hub).suspend("ana@example.org", actor="admin@example.org")
+    assert client.get(f"/api/shares/{token}", headers=who("ben")).status_code == 404
