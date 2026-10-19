@@ -58,10 +58,15 @@ def test_plan_routes_hub_scoped_web_app_calls(tmp_path):
     sales, support = _hub(tmp_path, "sales", 3611), _hub(tmp_path, "support", 3612)
     gp = gateway.plan([sales, support])
     legacy = gp.edge_routes()
-    # The Console's per-hub reads (evals) reach each bridge in both UI modes.
+    # The Console's per-hub reads (evals) reach each bridge in both UI modes, and
+    # so does the hub-scoped API, by hub key and with its path unchanged.
     assert {r["prefix"] for r in legacy} == {"/b/sales/artifacts", "/b/support/artifacts",
-                                             "/b/sales/portal/api", "/b/support/portal/api"}
+                                             "/b/sales/portal/api", "/b/support/portal/api",
+                                             "/api/hubs/sales", "/api/hubs/support"}
     routes = {r["prefix"]: r for r in gp.edge_routes(web_app=True)}
+    for key, port in (("sales", 3611), ("support", 3612)):
+        assert routes[f"/api/hubs/{key}"] == {"prefix": f"/api/hubs/{key}",
+                                               "upstream": f"http://127.0.0.1:{port}"}
     for slug, port in (("sales", 3611), ("support", 3612)):
         for part in ("api", "artifacts", "branding", "portal/api"):
             r = routes[f"/b/{slug}/{part}"]

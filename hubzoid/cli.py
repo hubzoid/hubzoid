@@ -3024,6 +3024,7 @@ app.add_typer(
 from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
 from .chat import engine_cli as _chat_engine_cli  # noqa: E402
+from .secretstore.cli import secrets_app  # noqa: E402
 
 _chat_engine_cli.register(chat_app)
 from .chat import feedback_cli as _chat_feedback_cli  # noqa: E402
@@ -3095,6 +3096,12 @@ app.add_typer(
     help="Move an Open WebUI install to the Hubzoid web app.",
     rich_help_panel="Commands",
 )
+app.add_typer(
+    secrets_app,
+    name="secrets",
+    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
+    rich_help_panel="Commands",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -3114,6 +3121,8 @@ _STARTER_BRIDGE_KEY_LINE = "# BRIDGE_API_KEYS=dev           # comma-separated ke
 
 _STARTER_ENV = """\
 # Hub configuration. This file is git-ignored and can hold keys: keep it private.
+# Secrets saved in the Console or with `hubzoid secrets set` are stored in the
+# database, not here. `hubzoid secrets list` shows both. A value in this file wins.
 #
 # --- Model -----------------------------------------------------------------
 # The default uses your installed `claude` CLI and Pro/Max subscription for

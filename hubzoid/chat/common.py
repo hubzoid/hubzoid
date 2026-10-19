@@ -23,8 +23,10 @@ log = logging.getLogger("hubzoid.chat")
 T = TypeVar("T")
 
 
-def error(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status, detail={"code": code, "message": message})
+def error(status: int, code: str, message: str, **extra: Any) -> HTTPException:
+    """The shared error. ``extra`` adds optional fields beside code and message,
+    such as ``fields``, ``retryable`` or ``current_revision``."""
+    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
 
 
 def not_found(what: str = "conversation") -> HTTPException:

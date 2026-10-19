@@ -12,6 +12,12 @@ processes it reaches.
     hub secret         JSON secret in AWS         HUBZOID_HUB_SECRET_NAME in <hub>/.env
     restricted         <hub>/restricted/.env      (none)
     restricted secret  JSON secret in AWS         HUBZOID_RESTRICTED_SECRET_NAME in restricted/.env
+    console            the secret store (bridge)  `use_store`, after migrations
+
+The rows above `console` are operator sources. The store (secrets set in the
+Console, the CLI or the API, `hubzoid.secretstore`) fills only keys no operator
+source sets, so an operator value always wins. A bridge turns it on with
+`use_store` once its database is migrated, then loads its settings again.
 
 A standalone hub (not registered in a gateway manifest) treats its own `.env` as
 part of the deployment. There the deployment secret is applied after
@@ -54,6 +60,8 @@ L_HUB = "hub"
 L_HUB_SECRET = "hub secret"
 L_RESTRICTED = "restricted"
 L_RESTRICTED_SECRET = "restricted secret"
+L_CONSOLE = "console"
+L_CONSOLE_RESTRICTED = "console restricted"
 
 SECRET_NAME_KEYS = frozenset({"AWS_SECRET_NAME", "HUBZOID_HUB_SECRET_NAME", "HUBZOID_RESTRICTED_SECRET_NAME"})
 
@@ -299,13 +307,27 @@ def load_secret(name: str, *, region: str | None, layer: str) -> dict[str, str]:
 
 def clear_cache() -> None:
     """Forget fetched secrets and recorded loads (for tests)."""
-    global _in_use, _base_env
+    global _in_use, _base_env, _store_hook
     with _lock:
         _cache.clear()
     _loads.clear()
     _once.clear()
     _in_use = False
     _base_env = None
+    _store_hook = None
+
+
+# The secret store's start-up layer: (hub_dir, env after the operator layers,
+# the keys an operator source set) -> (hub values, restricted values). Set by a
+# bridge after its migrations (`use_store`); None everywhere else.
+StoreHook = Callable[[Path, Mapping[str, str], frozenset], "tuple[dict[str, str], dict[str, str]]"]
+_store_hook: StoreHook | None = None
+
+
+def use_store(hook: StoreHook | None) -> None:
+    """Turn the store layer on (a bridge, before it builds its runtime) or off."""
+    global _store_hook
+    _store_hook = hook
 
 
 def secrets_in_use() -> bool:
@@ -481,7 +503,18 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
 
     hub_path = hub_dir / ".env"
     restricted_path = hub_dir / "restricted" / ".env"
-    hub_file = _read_file(hub_path)
+    # A reload sees the stored values an earlier load put in the environment. A
+    # file line that only echoes one back (`KEY=${KEY}`) is not an operator value:
+    # dropping it keeps the stored value, and a restricted one stays restricted.
+    previous = _loads.get(str(hub_dir.resolve()))
+    stored_before = {**(previous.values.get(L_CONSOLE, {}) if previous else {}),
+                     **(previous.values.get(L_CONSOLE_RESTRICTED, {}) if previous else {})}
+
+    def read(path: Path) -> dict[str, str]:
+        values = _read_file(path)
+        return {k: v for k, v in values.items() if not (k in stored_before and v == stored_before[k])}
+
+    hub_file = read(hub_path)
     is_registered = registered(hub_dir, start, hub_file)
     deployed: dict[str, str] = {}
 
@@ -507,7 +540,7 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
             apply(L_DEPLOYMENT_SECRET, kept, f"aws:{pointer.name}", start, "the process environment")
             deployed.update({k: v for k, v in kept.items() if k == "WEBUI_SECRET_KEY" or _encryption_key(k)})
             if kept:
-                hub_file = _read_file(hub_path)  # ${VAR} may now refer to deployment values
+                hub_file = read(hub_path)  # ${VAR} may now refer to deployment values
 
     # The hub file, exactly as before.
     apply(L_HUB, hub_file, str(hub_path))
@@ -528,7 +561,7 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
 
     # The restricted file, exactly as before. Read now, so ${VAR} references
     # resolve against the same environment they always did.
-    restricted_file = _read_file(restricted_path)
+    restricted_file = read(restricted_path)
     apply(L_RESTRICTED, restricted_file, str(restricted_path))
 
     # Restricted secret, named only in the restricted file.
@@ -536,6 +569,21 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
     if name:
         values = load_secret(name, region=region_for(name, env), layer=RESTRICTED)
         apply(L_RESTRICTED_SECRET, values, f"aws:{name}", restricted_file, str(restricted_path))
+
+    # The secret store, below every operator source: only keys none of them set.
+    # A blank operator value (`KEY=` copied from an example file) sets nothing.
+    if _store_hook is not None:
+        operator = {k for k, v in start.items() if v.strip()}
+        for values in record.values.values():
+            operator.update(k for k, v in values.items() if v.strip())
+        try:
+            plain, restricted = _store_hook(hub_dir, dict(env), frozenset(operator))
+        except Exception as exc:  # noqa: BLE001 - reported by class only, never by message
+            _log_once(logging.ERROR, "hub %s: stored secrets were not loaded (%s). Run hubzoid doctor.",
+                      hub_dir.name, type(exc).__name__)
+            plain, restricted = {}, {}
+        apply(L_CONSOLE, {k: v for k, v in plain.items() if k not in operator}, "console")
+        apply(L_CONSOLE_RESTRICTED, {k: v for k, v in restricted.items() if k not in operator}, "console")
 
     # Deployment-locked keys. A hub value that differs from the deployment's
     # means Open WebUI and this bridge disagree. Warn, never fail.
@@ -581,8 +629,8 @@ def _without(env: Mapping[str, str], drop: set[str], keep: Callable[[str], bool]
     return out
 
 
-_HUB_ONLY = {L_HUB_SECRET, L_RESTRICTED, L_RESTRICTED_SECRET}
-_RESTRICTED_ONLY = {L_RESTRICTED, L_RESTRICTED_SECRET}
+_HUB_ONLY = {L_HUB_SECRET, L_RESTRICTED, L_RESTRICTED_SECRET, L_CONSOLE, L_CONSOLE_RESTRICTED}
+_RESTRICTED_ONLY = {L_RESTRICTED, L_RESTRICTED_SECRET, L_CONSOLE_RESTRICTED}
 
 
 def for_hub_children(env: Mapping[str, str]) -> dict[str, str]:
@@ -691,6 +739,19 @@ def _layers(hub_dir: Path, env: Mapping[str, str], *, fetch_secrets: bool,
     if restricted_secret:
         layers.append((L_RESTRICTED_SECRET, *restricted_secret))
     return layers
+
+
+def applied(hub_dir: Path) -> dict[str, str]:
+    """{key: layer} for the latest load of this hub in this process, the layer
+    that set each key last. Names only, never values."""
+    record = _loads.get(str(Path(hub_dir).resolve()))
+    out: dict[str, str] = {}
+    if record is None:
+        return out
+    for layer in record.order:
+        for key in record.values[layer]:
+            out[key] = layer
+    return out
 
 
 def resolve_key(hub_dir: Path, key: str, *, env: Mapping[str, str] | None = None) -> tuple[str | None, str | None]:

@@ -74,11 +74,14 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
     routes = gp.edge_routes()
     # /portal/api reaches each hub's own bridge in the legacy UI mode too, so the
     # Console's eval redirect for a hub that is not first lands on its bridge.
+    # /api/hubs/<key> goes to the hub's bridge by hub key, with the path unchanged.
     assert routes == [
         {"prefix": "/b/sales/artifacts", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/sales"},
         {"prefix": "/b/sales/portal/api", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/sales"},
+        {"prefix": "/api/hubs/sales", "upstream": "http://127.0.0.1:8000"},
         {"prefix": "/b/support/artifacts", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/support"},
         {"prefix": "/b/support/portal/api", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/support"},
+        {"prefix": "/api/hubs/support", "upstream": "http://127.0.0.1:8001"},
     ]
 
 

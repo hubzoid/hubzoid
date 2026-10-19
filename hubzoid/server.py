@@ -78,6 +78,12 @@ def build_app() -> FastAPI:
 
     migrations.upgrade(dblib.operational_engine(hub_dir), "operational")
     migrations.upgrade(dblib.engine_for(hub_dir), "hub")
+    # Second phase: secrets stored in the Console fill the keys no operator
+    # source sets, read once now and never changed while serving.
+    from .secretstore import layer as secret_layer
+
+    secret_layer.enable(hub_dir)
+    settings = settingslib.load(hub_dir)
     rt = runtime_lib.build(hub_dir)
 
     # Model label shown in /v1/models. Falls back to the runtime's name
@@ -426,8 +432,10 @@ def build_app() -> FastAPI:
         # Connectors are managed in the Console in both modes: its API, people's
         # connections and the OAuth return (the edge routes /oauth/connectors/ here).
         from .connectors import routes as connector_routes
+        from .secretstore import routes as secret_routes
 
         connector_routes.mount(app, hub_dir)
+        secret_routes.mount(app, hub_dir)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
