@@ -788,6 +788,7 @@ export const en = {
     hideDiff: "Hide changes",
     noChanges: "No changes from the published file.",
     submit: "Submit for review",
+    saveFirst: "Save the draft to submit it.",
     submitted: "Submitted for review.",
     approve: "Approve",
     approved: "Approved. Publish when ready.",

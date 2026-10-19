@@ -139,3 +139,55 @@ def test_openapi_import_converts_only_selected_operations(client):
     assert r.status_code == 422 and r.json()["detail"]["code"] == "remote_reference"
     broken = client.post(f"{A}/openapi/preview", headers=ORIGIN, json={"spec": {"openapi": "3.0.3", "paths": {}}})
     assert broken.status_code == 422
+
+
+def _approve(client, path, content=None, new=None):
+    d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": path, **({"content": content} if content else {})}).json()
+    if new is not None:
+        d = client.patch(f"{A}/drafts/{d['id']}", headers=ORIGIN, json={"content": new, "expected_revision": 1}).json()
+    d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": d["revision"]}).json()
+    client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN, json={"decision": "approve", "digest": d["digest"]})
+    return d
+
+
+def test_a_publication_is_one_commit_like_a_hub_change(client, hub):
+    import subprocess
+
+    git = lambda *a: subprocess.run(["git", "-C", str(hub), *a], capture_output=True, text=True, check=True).stdout
+    git("init", "-q")
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "start")
+    before = (hub / "AGENTS.md").read_text()
+    d = _approve(client, "AGENTS.md", new=before + "\nA reviewed rule.\n")
+    pub = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]}).json()
+    assert pub["commit_sha"] and git("rev-parse", "HEAD").strip() == pub["commit_sha"]
+    body = git("log", "-1", "--format=%B")
+    assert f"Hubzoid-Workspace-Draft: {hub.name.lower()}#{d['id']}" in body
+    assert git("status", "--porcelain", "--", "AGENTS.md") == ""  # nothing left uncommitted
+
+
+def test_flat_and_differently_spelt_skill_folders_are_listed(client, hub):
+    import shutil
+
+    if (hub / "skills").exists():
+        shutil.move(str(hub / "skills"), str(hub / "Skill"))
+    (hub / "Skill").mkdir(exist_ok=True)
+    (hub / "Skill" / "triage.md").write_text("---\nname: triage\ndescription: Sort tickets\n---\nSort them.\n")
+    files = {f["path"]: f["kind"] for f in client.get(f"{A}/files").json()["items"]}
+    assert files.get("Skill/triage.md") == "skill"
+    bad = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "Skill/triage.md"}).json()
+    bad = client.patch(f"{A}/drafts/{bad['id']}", headers=ORIGIN,
+                       json={"content": "---\nname: x\n---\nno description\n", "expected_revision": 1}).json()
+    assert any(p["code"] == "invalid_frontmatter" for p in bad["problems"])  # checked like SKILL.md
+    # A new skill goes into the folder the hub already has.
+    d = _approve(client, "skills/notes/SKILL.md", content="---\nname: notes\ndescription: Notes\n---\nTake notes.\n")
+    client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert (hub / "Skill" / "notes" / "SKILL.md").is_file() and not (hub / "skills").exists()
+
+
+def test_broken_frontmatter_is_explained_in_plain_words():
+    from hubzoid.chat.authoring import validate
+
+    problems = validate("AGENTS.md", "---\nname: a\ndescription: x\nbad line: : here\n  oops\n---\nBody.\n")
+    assert problems and "settings block" in problems[0]["message"]
+    assert "while scanning" not in problems[0]["message"] and "unicode string" not in problems[0]["message"]

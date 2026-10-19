@@ -1,12 +1,15 @@
 """Authoring the hub's own files from the Workspace (HUB-81, first part).
 
 The agent's instructions (``AGENTS.md``, ``agents/<name>/AGENTS.md``), skills
-(``skills/<name>/SKILL.md`` and their text files) and shared prompts
+(``skills/<name>/SKILL.md`` and their text files, or a flat ``skills/<name>.md``;
+the folder may be spelt as the loaders accept) and shared prompts
 (``prompts/<id>.md``) stay ordinary hub files: Claude Code, Codex, the CLI and
 the Workspace all edit the same bytes. A change made here is a **draft**:
 validated with the same loaders the runtime uses, shown as a diff against the
 file it started from, then **approved** by a hub manager for its exact digest
-and **published** with one atomic write. Publishing refuses a stale base (the
+and **published** with one atomic write and one Git commit (trailer
+``Hubzoid-Workspace-Draft``), under the hub write lock that hub changes and
+scheduled runs also take. Publishing refuses a stale base (the
 file changed since the draft began) instead of rebasing, and every published
 version is kept so it can be rolled back (as a new, reviewed change). Teammates
 keep using the published file until then. Code (tools, scripts) is never
@@ -26,6 +29,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -37,6 +41,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..control import canonical
 from . import graph as g
+
+log = logging.getLogger(__name__)
 
 metadata = sa.MetaData()
 Err = g.GraphError
@@ -127,15 +133,30 @@ def parse_prompt(text: str) -> tuple[PromptSpec, str]:
     return spec, body
 
 
+def _bucket(name: str) -> str:
+    """``agents`` or ``skills`` for any spelling the loaders accept (``Skill``,
+    ``agent``…, ``hubzoid._fs``); other names as they are."""
+    from .._fs import _ALIASES
+
+    low = name.lower()
+    return next((b for b in ("agents", "skills") if low in _ALIASES[b]), name)
+
+
+def _flat_skill(parts: tuple[str, ...]) -> bool:
+    """``skills/<name>.md``: the loader's flat skill shape."""
+    return len(parts) == 2 and parts[1].lower().endswith(".md")
+
+
 def kind_of(path: str) -> str:
     parts = Path(path).parts
-    if path == "AGENTS.md" or (len(parts) == 3 and parts[0] == "agents" and parts[2] == "AGENTS.md"):
+    first = _bucket(parts[0]) if parts else ""
+    if path == "AGENTS.md" or (len(parts) == 3 and first == "agents" and parts[2] == "AGENTS.md"):
         return "agent"
-    if len(parts) >= 3 and parts[0] == "skills":
+    if first == "skills" and (len(parts) >= 3 or _flat_skill(parts)):
         return "skill"
     if len(parts) == 2 and parts[0] == "prompts" and path.endswith(".md"):
         return "prompt"
-    raise Err(422, "path_not_authorable", "Only AGENTS.md, agents/<name>/AGENTS.md, skills/<name>/... and "
+    raise Err(422, "path_not_authorable", "Only AGENTS.md, agents/<name>/AGENTS.md, skills/<name>/..., skills/<name>.md and "
                                           "prompts/<id>.md can be edited here.")
 
 
@@ -157,7 +178,7 @@ def validate(path: str, content: str) -> list[dict]:
                                           "description": fm.get("description") or (body.strip()[:80] or "x"), **fm})
             if not body.strip():
                 problems.append({"code": "empty_instructions", "message": "The instructions are empty."})
-        elif kind == "skill" and path.endswith("SKILL.md"):
+        elif kind == "skill" and (Path(path).name.lower() == "skill.md" or _flat_skill(Path(path).parts)):
             fm, body = frontmatter.split(content)
             SkillSpec.model_validate(fm or {})
             if not body.strip():
@@ -171,8 +192,23 @@ def validate(path: str, content: str) -> list[dict]:
             problems.append({"code": "invalid_frontmatter", "field": ".".join(str(x) for x in e["loc"]),
                              "message": e["msg"]})
     except ValueError as exc:
-        problems.append({"code": "invalid", "message": str(exc)})
+        problems.append({"code": "invalid", "message": _plain(exc)})
     return problems
+
+
+def _plain(exc: ValueError) -> str:
+    """A loader error in words a person can act on (no parser internals)."""
+    import yaml
+
+    cause = exc.__cause__
+    if isinstance(cause, yaml.YAMLError):
+        mark = getattr(cause, "problem_mark", None)
+        where = f" near line {mark.line + 2}" if mark is not None else ""  # +1 for the opening ---
+        return (f"The settings block between the --- lines at the top isn't valid{where}. "
+                "Check for a missing colon, or quote a value that contains a colon.")
+    if "frontmatter must be a YAML mapping" in str(exc):
+        return "The settings block between the --- lines at the top needs `key: value` lines."
+    return str(exc)
 
 
 class AuthoringService:
@@ -187,6 +223,14 @@ class AuthoringService:
         if not rel or ".." in Path(rel).parts or rel.startswith("."):
             raise Err(422, "path_not_authorable", "That path can't be edited here.")
         kind_of(rel)
+        parts = Path(rel).parts
+        if _bucket(parts[0]) in ("agents", "skills"):
+            # A new skill goes into the folder the hub already has (Skill/, skills/…).
+            from .._fs import resolve_bucket
+
+            existing = resolve_bucket(self.hub_dir, _bucket(parts[0]))
+            if existing is not None and existing.name != parts[0]:
+                rel = Path(existing.name, *parts[1:]).as_posix()
         target = (self.hub_dir / rel)
         try:
             target.resolve().relative_to(self.hub_dir.resolve())
@@ -206,8 +250,12 @@ class AuthoringService:
     def files(self) -> list[dict]:
         """The authorable files of the hub, with their current hash."""
         out = []
-        candidates = [self.hub_dir / "AGENTS.md", *sorted((self.hub_dir / "agents").glob("*/AGENTS.md")),
-                      *sorted(p for p in (self.hub_dir / "skills").rglob("*") if p.is_file()),
+        from .._fs import resolve_bucket
+
+        agents_dir = resolve_bucket(self.hub_dir, "agents") or self.hub_dir / "agents"
+        skills_dir = resolve_bucket(self.hub_dir, "skills") or self.hub_dir / "skills"
+        candidates = [self.hub_dir / "AGENTS.md", *sorted(agents_dir.glob("*/AGENTS.md")),
+                      *sorted(p for p in skills_dir.rglob("*") if p.is_file()),
                       *sorted((self.hub_dir / "prompts").glob("*.md"))]
         for p in candidates:
             if not p.is_file() or p.is_symlink():
@@ -319,10 +367,14 @@ class AuthoringService:
         finishes step 3; one between 1 and 2 writes the file then."""
         import threading
 
+        from ..hub_changes import service as hub_files
+
         with self.engine.connect() as conn:
             path = self._draft(conn, did).path
         lock = _PATH_LOCKS.setdefault((self.hub, path), threading.Lock())
-        with lock:
+        # The hub write lock too: hub changes, scheduled runs and publications
+        # take turns, so none writes over another between its check and write.
+        with lock, hub_files.write_lock(self.hub_dir):
             with self.engine.begin() as conn:
                 d = self._draft(conn, did)
                 if d.digest != digest or d.state not in ("approved", "publishing"):
@@ -357,6 +409,7 @@ class AuthoringService:
                 previous, prev_sha = current, cur_sha
             else:  # finishing a publication a crash interrupted
                 previous, prev_sha = None, d.base_sha256
+            commit = self._commit(actor, d)
             vid = str(uuid.uuid4())
             with self.engine.begin() as conn:
                 if previous is not None and conn.execute(sa.select(published.c.id).where(
@@ -371,7 +424,22 @@ class AuthoringService:
                                                        content=d.content, previous_sha256=prev_sha, draft_id=did,
                                                        published_by=actor.id, published_at=_now()))
                 conn.execute(drafts.update().where(drafts.c.id == did).values(state="published", updated_at=_now()))
-            return {"path": d.path, "sha256": new_sha, "version_id": vid, "previous_sha256": prev_sha}
+            return {"path": d.path, "sha256": new_sha, "version_id": vid, "previous_sha256": prev_sha,
+                    "commit_sha": commit}
+
+    def _commit(self, actor, d) -> str | None:
+        """One Git commit for the published file, like a hub change's."""
+        from ..hub_changes import service as hub_files
+
+        who = getattr(actor, "email", None) or actor.id
+        trailer = f"Hubzoid-Workspace-Draft: {self.hub}#{d.id}"
+        message = (f"Update {d.path} (reviewed in Settings → Agent instructions)\n\n{trailer}\n"
+                   f"Hubzoid-Published-By: {who}\n")
+        try:
+            return hub_files.commit_files(self.hub_dir, [self._path(d.path)], message, trailer)
+        except Exception as exc:  # noqa: BLE001 — the file is published; say the commit is missing
+            log.warning("workspace: %s published but not committed (%s)", d.path, type(exc).__name__)
+            return None
 
     def versions(self, rel: str) -> list[dict]:
         self._path(rel)

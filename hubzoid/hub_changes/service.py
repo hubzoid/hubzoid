@@ -368,19 +368,31 @@ def _find_commit(top: Path, ch: dict) -> str | None:
     return r.stdout.strip() or None
 
 
-def _commit(hub_dir: Path, ch: dict, approver: str) -> str | None:
+def commit_files(hub_dir: Path, paths: list[Path], message: str, trailer: str) -> str | None:
+    """Commit exactly ``paths`` (files on disk under the hub) with ``message``,
+    whose ``trailer`` line identifies the change. Nothing staged means it was
+    committed already (a retry after a crash): that commit is found by its
+    trailer. None when the hub is not in a Git repository. Every web-app change
+    to hub files (hub changes, Workspace publications) commits this way, under
+    ``write_lock``."""
     from ..schedule_runner import repo_toplevel
 
     top = repo_toplevel(Path(hub_dir))
     if top is None:
         return None
-    specs = [os.path.relpath(_disk(hub_dir, f["path"]), top) for f in ch["files"]]
+    specs = [os.path.relpath(p, top) for p in paths]
     _git(top, "add", "-A", "--", *specs)
     if not _git(top, "diff", "--cached", "--quiet", "--", *specs, check=False).returncode:
-        return _find_commit(top, ch)  # nothing staged: already committed (recovery)
+        r = _git(top, "log", "--format=%H", "-n", "1", "--fixed-strings", f"--grep={trailer}", check=False)
+        return r.stdout.strip() or None
     _git(top, "-c", "user.name=Hubzoid", "-c", "user.email=hub-changes@hubzoid.invalid", "commit", "-q",
-         "-m", _commit_message(ch, approver), "--", *specs)
+         "-m", message, "--", *specs)
     return _git(top, "rev-parse", "HEAD").stdout.strip()
+
+
+def _commit(hub_dir: Path, ch: dict, approver: str) -> str | None:
+    return commit_files(hub_dir, [_disk(hub_dir, f["path"]) for f in ch["files"]], _commit_message(ch, approver),
+                        f"Hubzoid-Change: {ch['hub_id']}#{ch['id']}")
 
 
 def _publish(hub_dir: Path) -> tuple[str | None, str | None]:
