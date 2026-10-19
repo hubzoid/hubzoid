@@ -31,6 +31,7 @@ type Delivery = {
 };
 type Reply = {
   id: string; kind: string; state: string; thread_id: string | null; error: string | null; attempts: number;
+  delivery?: { status: string; at: number; error?: string | null } | null;
   created: number;
 };
 type Thread = {
@@ -488,6 +489,7 @@ function Replies({ url }: { url: string }) {
             { title: "Kind", dataIndex: "kind" },
             { title: "State", dataIndex: "state", render: (s: string) => tag(REPLY, s) },
             { title: "Attempts", dataIndex: "attempts" },
+            { title: "Delivery", render: (_: unknown, r: Reply) => (r.delivery ? <Tag>{r.delivery.status}</Tag> : "") },
             { title: "Error", dataIndex: "error", render: (e: string | null) => (e ? <Text type="secondary">{e}</Text> : null) },
             {
               title: "", render: (_: unknown, r) => r.state === "ambiguous" ? (
@@ -641,7 +643,142 @@ function ThreadView({ hub, cid, tid }: { hub: Hub; cid: string; tid: string }) {
 // -- provider-specific setup ------------------------------------------------------------
 function ProviderPanel({ url, provider }: { url: string; provider: string }) {
   if (provider === "slack") return <SlackPanel url={url} />;
+  if (provider === "github") return <GitHubPanel url={url} />;
+  if (provider === "linear") return <LinearPanel url={url} />;
+  if (provider === "email") return <EmailPanel url={url} />;
   return null;
+}
+
+type EmailStatus = {
+  transport: string; mailbox: string; started: boolean; last_poll: number | null; last_error: string | null;
+  draft_verified: boolean; connected: boolean; senders_allowed: number; authentication: string; pending: number;
+  gap: { messages: number; at: number } | null;
+};
+
+function EmailPanel({ url }: { url: string }) {
+  const status = useLoad<EmailStatus>(`${url}/email/status`);
+  const [note, setNote] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+  const act = async (what: "connect" | "poll" | "rehearse-draft") => {
+    setNote(null);
+    try {
+      const out = await hubRequest<Record<string, unknown>>(`${url}/email/${what}`, "POST", {});
+      if (what === "connect") setLink(String(out.authorization_url));
+      else if (what === "poll") setNote(out.state === "busy" ? { type: "info", text: "The mailbox is being read right now. Try again in a moment." }
+        : out.state === "paused" ? { type: "info", text: "The channel is paused, so mail is not read." }
+        : { type: "success", text: out.state === "started" ? "Started: mail from now on is read." : `Read ${out.messages} new message(s).` });
+      else setNote({ type: "success", text: String(out.note) });
+      status.reload();
+    } catch (e) {
+      setNote({ type: "error", text: errorText(e) });
+    }
+  };
+  if (!status.data) return status.error ? <Alert type="warning" showIcon title={status.error} style={{ marginBottom: 16 }} /> : null;
+  const d = status.data;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Title level={4}>Mailbox {d.mailbox} {d.connected ? <Tag color="green">connected</Tag> : <Tag>not connected</Tag>}</Title>
+      <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
+        <Descriptions.Item label="Transport">{d.transport}</Descriptions.Item>
+        <Descriptions.Item label="Reading">{d.started ? `since start, last read ${when(d.last_poll)}` : "not started"}{d.pending ? ` · ${d.pending} waiting to be read` : ""}</Descriptions.Item>
+        <Descriptions.Item label="Senders who start work">{d.senders_allowed} allowed address(es), {d.authentication === "aligned_dkim" ? "with a valid signature from their domain" : "every message reviewed"}</Descriptions.Item>
+        <Descriptions.Item label="Drafts">{d.draft_verified ? "checked: real drafts work" : "not checked yet"}</Descriptions.Item>
+        {d.last_error && <Descriptions.Item label="Last problem">{d.last_error}</Descriptions.Item>}
+        {d.gap && <Descriptions.Item label="Not re-read">{d.gap.messages} older message(s) after a mailbox reset ({when(d.gap.at)})</Descriptions.Item>}
+      </Descriptions>
+      <Space wrap>
+        {d.transport !== "imap" && <Button onClick={() => act("connect")}>{d.connected ? "Reconnect" : "Get the consent link"}</Button>}
+        <Button onClick={() => act("poll")}>Read new mail now</Button>
+        <Popconfirm title="Save one draft in the mailbox (to itself) and read it back? Nothing is sent." onConfirm={() => act("rehearse-draft")}>
+          <Button>Check drafts</Button>
+        </Popconfirm>
+      </Space>
+      {link && <Paragraph style={{ marginTop: 8 }}><a href={link} target="_blank" rel="noreferrer">Open this signed in as {d.mailbox}</a> (works once, for 10 minutes)</Paragraph>}
+      {note && <Alert style={{ marginTop: 8 }} type={note.type} showIcon title={note.text} />}
+    </div>
+  );
+}
+
+type GitHubSetup = { state: string; app_id: number | null; slug: string | null; installation_url: string | null; error: string | null };
+
+function GitHubPanel({ url }: { url: string }) {
+  const status = useLoad<GitHubSetup>(`${url}/github/setup`);
+  const [form] = Form.useForm();
+  const [reg, setReg] = useState<string | null>(null);
+  const [repos, setRepos] = useState<{ id: number; full_name: string }[] | null>(null);
+  const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const start = async (v: { owner: string; type: string; name: string }) => {
+    try {
+      const out = await hubRequest<{ registration_url: string }>(`${url}/github/setup`, "POST", v);
+      setReg(out.registration_url);
+      status.reload();
+    } catch (e) {
+      setNotice({ type: "error", text: errorText(e) });
+    }
+  };
+  const list = async () => {
+    try {
+      setRepos((await hubRequest<{ items: { id: number; full_name: string }[] }>(`${url}/github/repositories`)).items);
+    } catch (e) {
+      setNotice({ type: "error", text: errorText(e) });
+    }
+  };
+  const st = status.data?.state ?? "none";
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Title level={4}>GitHub App</Title>
+      <Paragraph type="secondary">
+        Your own App, owned by your account or organization. GitHub hands its private key and webhook secret to this
+        hub's secret store directly. Setup state: <Tag>{st}</Tag>
+      </Paragraph>
+      {notice && <Alert style={{ marginBottom: 8 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
+      {(st === "none" || st === "failed") && (
+        <Form form={form} layout="inline" onFinish={start} initialValues={{ type: "organization" }}>
+          <Form.Item name="owner" rules={[{ required: true, message: "The owner's GitHub login" }]}>
+            <Input placeholder="Owner (example-company)" aria-label="GitHub owner" />
+          </Form.Item>
+          <Form.Item name="type">
+            <Select aria-label="Owner type" style={{ width: 150 }} options={[{ value: "organization", label: "Organization" }, { value: "user", label: "User" }]} />
+          </Form.Item>
+          <Form.Item name="name" rules={[{ required: true, message: "The App's name" }]}>
+            <Input placeholder="App name" aria-label="App name" />
+          </Form.Item>
+          <Form.Item><Button type="primary" htmlType="submit">Start App setup</Button></Form.Item>
+        </Form>
+      )}
+      {reg && <Paragraph><a href={reg} target="_blank" rel="noreferrer">Continue to GitHub to create the App</a> (the link works once, for 15 minutes)</Paragraph>}
+      {status.data?.installation_url && <Paragraph><a href={status.data.installation_url} target="_blank" rel="noreferrer">Install the App on your repositories</a></Paragraph>}
+      {st === "ready" && <Button onClick={list}>Show reachable repositories</Button>}
+      {repos && <Paragraph style={{ marginTop: 8 }}>{repos.length ? repos.map((r) => <Tag key={r.id}>{r.full_name} ({r.id})</Tag>) : "None yet."}</Paragraph>}
+    </div>
+  );
+}
+
+type LinearSetup = { callback_url: string; webhook_url: string; scopes: string[]; steps: string[]; installed: boolean };
+
+function LinearPanel({ url }: { url: string }) {
+  const setup = useLoad<LinearSetup>(`${url}/linear/setup`);
+  const [link, setLink] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const connect = async () => {
+    try {
+      setLink((await hubRequest<{ authorization_url: string }>(`${url}/linear/connect`, "POST", {})).authorization_url);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  if (!setup.data) return setup.error ? <Alert type="warning" showIcon title={setup.error} style={{ marginBottom: 16 }} /> : null;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Title level={4}>Linear app {setup.data.installed ? <Tag color="green">installed</Tag> : <Tag>not installed</Tag>}</Title>
+      <ol>{setup.data.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+      <Paragraph>Callback URL: <Text code copyable>{setup.data.callback_url}</Text></Paragraph>
+      <Paragraph>Webhook URL: <Text code copyable>{setup.data.webhook_url}</Text></Paragraph>
+      <Button onClick={connect}>{setup.data.installed ? "Reconnect" : "Get the approval link"}</Button>
+      {link && <Paragraph style={{ marginTop: 8 }}><a href={link} target="_blank" rel="noreferrer">A workspace admin approves the app here</a> (works once, for 10 minutes)</Paragraph>}
+      {error && <Alert style={{ marginTop: 8 }} type="error" showIcon title={error} />}
+    </div>
+  );
 }
 
 function download(name: string, text: string) {
