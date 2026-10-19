@@ -147,6 +147,9 @@ def validate(hub_dir, data: dict, *, lines: dict | None = None, path: str | None
             errors.append(_err("invalid_config", _pointer(loc), msg, lines))
     except ChannelError as exc:
         errors.append(_err(exc.code, exc.extra.get("field", "/provider_config"), exc.message, lines))
+    if settings is not None:
+        for field_path, message in adapter.check(cfg, settings):
+            errors.append(_err("invalid_config", field_path, message, lines))
     errors.extend(_check_refs(hub_dir, cfg, lines))
     errors.extend(_check_target(hub_dir, cfg, lines))
     return Validation(not errors, errors, config=cfg, settings=settings, data=data)
