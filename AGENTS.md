@@ -15,13 +15,12 @@ technology leaders. GitZoid is a sample application direction.
 This brief supersedes older services-led product positioning. It is direction,
 not a release feature list. After 1.1.1, prioritize stability, testing and friction
 in first and repeat use. Older implementation workstreams are a reference
-inventory, not an automatic feature queue. Native chat is the current default.
-The 2026-10-13 interface decision permanently supports both native chat and
-Open WebUI, with equal support and release-testing requirements. Open WebUI is
-optional to install, not a deprecated or temporary mode; no removal is planned.
-Validate both interfaces before a release and record skips and coverage gaps
-honestly (see `docs/RELEASING.md`). A possible future `[assistantui]` extra is a
-packaging idea, not an available install path or an authorized packaging change.
+inventory, not an automatic feature queue. Hubzoid 2.0 has one chat interface,
+its own web app built on assistant-ui (founder decisions D030 and D031,
+2026-10-18, which replace the 2026-10-13 equal-support rule). There is no Open
+WebUI mode, extra or account sync in 2.0. Deployments that still need Open WebUI
+stay on the 1.x line. Record release skips and coverage gaps honestly (see
+`docs/RELEASING.md`).
 Easy customer hosting is a framework requirement. Provider-specific implementation,
 memory and additional onboarding variants still need scoped decisions.
 This context update authorizes no migration.
@@ -132,7 +131,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/templates/gitzoid/` | PR review, security and engineering-report sample, with fictional data and optional GitHub setup. `--template gitzoid`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
-| `edge.py` | Public reverse proxy: the native chat app and Console by default; Open WebUI and bridge routes in Open WebUI mode. |
+| `edge.py` | Public reverse proxy in front of the bridge: the web app, its Settings and the API, with client identity headers refused. |
 | `gateway.py` | Plans one deployment over many hub bridges (`hubzoid gateway`), for either chat UI. |
 | `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
@@ -164,9 +163,11 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 - Pre-shipped tools must scope writes to `<hub>/output/<session>/`. Reads
   may go anywhere under the hub directory. No filesystem access outside the
   hub root.
-- Open WebUI (Open WebUI mode) is an optional extra invoked as a subprocess; the package
-  must not `import open_webui` at module load (keeps cold-start fast and lets
-  the bridge run headless via `--no-ui`).
+- There is one chat interface, the Hubzoid web app. Don't add another UI mode
+  or an account sync with an outside chat app. Reading an Open WebUI (1.x)
+  database for migration lives only in `hubzoid/migration/openwebui/`, read-only.
+- Retired settings (`appmode.RETIRED`) are named, never silently ignored: a
+  setting that could weaken sign-in stops the start; the rest warn.
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
   execution backends (today: OpenAI Agents SDK Claude Agent SDK and Codex app-server). A
   single hub folder must produce identical manual-testing surface across
@@ -211,7 +212,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 
 ## Style
 
-- Python 3.11+. Effective upper bound is whatever open-webui currently supports (today: 3.12). Use `from __future__ import annotations`.
+- Python 3.11+, tested up to 3.12. Use `from __future__ import annotations`.
 - Stdlib + pinned deps only (see `pyproject.toml`).
 - Logging via `logging.getLogger(__name__)`; level is set by the CLI.
 - No print statements in library code (CLI is allowed to use `rich.console`).

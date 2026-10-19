@@ -230,6 +230,20 @@ def make(ctx) -> list:
         # trusted identity reaches the worker thread.
         return await asyncio.to_thread(fn, *args, **kwargs)
 
+    def denied(actor: str, name: str, action: str) -> str | None:
+        """Workflow access (``hubzoid.workflows.access``) for this exact
+        workflow: None when allowed, else the sentence to return."""
+        from ..workflows import access as wf_access
+
+        try:
+            key = wf_access.canonical(hub_dir, name.strip())
+        except wf_access.AccessError:
+            return None  # an unknown name gets control's own "no such workflow"
+        if wf_access.authorize(hub_dir, actor, key, action).allowed:
+            return None
+        verb = {"run": "run", "control": "pause, resume or cancel", "view_runs": "see the runs of"}[action]
+        return f"You can't {verb} {key}. An admin can give you access in Settings, Workflow access."
+
     @function_tool
     async def list_workflows() -> str:
         """List this agent's workflows and scheduled tasks.
@@ -249,6 +263,10 @@ def make(ctx) -> list:
             return f"[not available: {_UNAVAILABLE}]"
         if not rows:
             return "This agent has no workflows or scheduled tasks."
+        rows = [r for r in rows if not denied(actor, str(r.get("name") or ""), "view_runs")
+                or not denied(actor, str(r.get("name") or ""), "run")]
+        if not rows:
+            return "This agent has no workflows or scheduled tasks you can see."
         lines = [f"{len(rows)} workflow(s) and scheduled task(s) in this agent:"]
         lines += [_workflow_line(r) for r in rows[:MAX_ROWS]]
         if len(rows) > MAX_ROWS:
@@ -275,6 +293,8 @@ def make(ctx) -> list:
         actor, _surface, why = caller()
         if actor is None:
             return f"[not available: {why}]"
+        if workflow.strip() and (no := denied(actor, workflow, "view_runs")):
+            return f"[not available: {no}]"
         try:
             rows = await call(control.history, hub_dir, viewer=actor,
                               workflow=workflow.strip() or None, run_id=run_id.strip() or None,
@@ -284,6 +304,7 @@ def make(ctx) -> list:
         except Exception:  # noqa: BLE001
             log.exception("workflow_tools: workflow_runs failed")
             return f"[not available: {_UNAVAILABLE}]"
+        rows = [r for r in rows if not denied(actor, str(r.get("workflow") or ""), "view_runs")]
         if run_id.strip():
             return _run_detail(rows[0]) if rows else f"There is no run {run_id.strip()!r} in this agent."
         if not rows:
@@ -318,6 +339,8 @@ def make(ctx) -> list:
             return "[not started: inputs must be a JSON object of named values.]"
         if values is not None and not isinstance(values, dict):
             return "[not started: inputs must be a JSON object of named values.]"
+        if no := denied(actor, name, "run"):
+            return f"[not started: {no}]"
         try:
             out = await call(control.start_now, hub_dir, name, actor=actor, surface=surface,
                              request_id=get_chat_id(), prefer="code", inputs=values)
@@ -350,6 +373,8 @@ def make(ctx) -> list:
         actor, surface, why = caller()
         if actor is None:
             return f"[not available: {why}]"
+        if no := denied(actor, name, "control"):
+            return f"[not available: {no}]"
         try:
             out = await call(control.set_paused, hub_dir, name, True, actor=actor,
                              surface=surface, request_id=get_chat_id(), prefer="code")
@@ -379,6 +404,8 @@ def make(ctx) -> list:
         actor, surface, why = caller()
         if actor is None:
             return f"[not available: {why}]"
+        if no := denied(actor, name, "control"):
+            return f"[not available: {no}]"
         try:
             out = await call(control.set_paused, hub_dir, name, False, actor=actor,
                              surface=surface, request_id=get_chat_id(), prefer="code")
@@ -408,6 +435,13 @@ def make(ctx) -> list:
         actor, surface, why = caller()
         if actor is None:
             return f"[not available: {why}]"
+        try:
+            found = await call(control.history, hub_dir, viewer=actor, run_id=run_id.strip(), limit=1,
+                               prefer="code")
+        except Exception:  # noqa: BLE001 - control.cancel reports a missing run itself
+            found = []
+        if found and (no := denied(actor, str(found[0].get("workflow") or ""), "control")):
+            return f"[not available: {no}]"
         try:
             out = await call(control.cancel, hub_dir, run_id, actor=actor, surface=surface,
                              request_id=get_chat_id())

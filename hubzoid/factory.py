@@ -180,8 +180,14 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     registry = cards.wrap(hub_dir, access.apply(hub_dir, registry))
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
 
-    mcp_servers = load_mcp_servers(mcp_loader.load_all_raw(hub_dir))
+    from .hitl import gate as hitl_gate
+
+    # The access check per call (milestone B) first, then the approval gate.
+    mcp_servers = [access.guard.checked_server(hitl_gate.guard_mcp_server(s, hub_dir), hub_dir)
+                   for s in load_mcp_servers(mcp_loader.load_all_raw(hub_dir))]
 
     # Delegates run as within-turn subagents the main agent calls (as_tool),
     # each on its own model. Built from the gated registry so their tool scope
@@ -233,21 +239,28 @@ def _with_core_skills(skills: list) -> list:
 
 
 def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
-    """Add the core-shipped, `curator`-gated `remember` tool to the registry.
+    """Add the core-shipped hub memory and hub change tools (`curator`-gated)
+    and the personal memory tools to the registry.
 
     Present on every hub but hidden/denied unless the caller is in the hub's
     `curator` Open WebUI group on a verified-login surface (same wall as
     restricted/ tools). A hub that already defines its own tool of the same
     name keeps it — hub wins over the core tool.
     """
+    from .hub_changes.tools import gate
     from .tools import curator as curator_tool
 
     for ft in curator_tool.make(ctx):
         if ft.name in registry:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
-        registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
-                                               ctx.hub_dir)
+        registry[ft.name] = gate(ft, ctx.hub_dir, access, curator_tool.CURATOR_PERMISSION)
+    # Personal memory: each person's own notes. No grant needed; a call with
+    # nobody signed in is refused by the tool itself.
+    from . import personal_memory
+
+    for ft in personal_memory.make(ctx.hub_dir):
+        registry.setdefault(ft.name, ft)
 
 
 def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:

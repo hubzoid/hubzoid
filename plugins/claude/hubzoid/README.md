@@ -7,7 +7,7 @@ export HUBZOID_MCP_URL=https://your-domain.example/mcp
 claude --plugin-dir /absolute/path/to/plugins/claude/hubzoid
 ```
 
-Use `/mcp` to authenticate. Sign in through Open WebUI, then approve Hubzoid's
+Use `/mcp` to authenticate. Sign in to Hubzoid, then approve Hubzoid's
 consent screen. The plugin contains no credentials; Claude stores its own OAuth
 credentials. The hub sends its instructions and available tools over MCP.
 

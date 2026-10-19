@@ -4,10 +4,13 @@ const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { settingsHost } = require("./settings-host.cjs");
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
+  // A person who uses agents but doesn't manage the deployment.
+  const host = await settingsHost({ as: "sam@example.com" });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = [];
@@ -48,17 +51,16 @@ const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
         if (ep.startsWith("/my/schedules/psdemo/")) return route.fulfill({ json: { ok: true } });
         return route.fulfill({ status: 403, json: { detail: "Admin only" } });
       }
-      const relative = url.pathname.replace(/^\/portal\/?/, "") || "index.html";
+      if (await host.forward(route, url)) return;
+      const relative = url.pathname.replace(/^\/(portal\/?)?/, "") || "index.html";
       const file = path.join(root, relative);
       return route.fulfill({ body: fs.readFileSync(fs.existsSync(file) && fs.statSync(file).isFile() ? file : path.join(root, "index.html")),
         contentType: file.endsWith(".js") ? "application/javascript" : file.endsWith(".css") ? "text/css" : "text/html" });
     });
     await page.clock.install();
-    // With the web app on, a person's Console pages open in the chat app's Settings.
+    // The old Console address opens the person's schedules in Settings.
     await page.goto("http://hubzoid.test/portal/#/schedules");
     await page.waitForURL(/\/settings#\/me\/schedules$/);
-    my.web_app = false;
-    await page.goto("http://hubzoid.test/portal/#/schedules");
     await page.getByRole("heading", { name: "Reports you can run" }).waitFor();
     await page.getByRole("link", { name: "My completed report" }).waitFor();
     const scheduleButton = page.getByRole("button", { name: "Weekly service snapshot", exact: true });
@@ -92,5 +94,5 @@ const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
     await page.getByRole("dialog").getByText("Latest runs", { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log("Personal reports: discovery, results, keyboard, editing, refresh and mobile controls passed.");
-  } finally { await browser.close(); }
+  } finally { await browser.close(); await host.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

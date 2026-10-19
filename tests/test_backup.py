@@ -273,8 +273,7 @@ def _gateway(tmp_path: Path) -> tuple[Path, Path, Path]:
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key=h.name, name=h.name, path=str(h), model_id=h.name,
                                dbos_url=f"sqlite:///{h}/.hubzoid/dbos.db") for h in (a, b)],
-                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
-                    owui_url="http://127.0.0.1:43080", owui_db=str(gw / "webui.db"))
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}", owui_db=str(gw / "webui.db"))
     from hubzoid.access import store_for
 
     store_for(a).grant("a@example.org", "alpha", "use_hub", actor="test")
@@ -439,7 +438,6 @@ def test_cli_backup_without_chat_data_says_so(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
     assert r.exit_code == 0, r.output
     out = " ".join(r.output.split())
-    assert "No Open WebUI data directory" in out
     assert "conversations live in the operational database" in out
     assert "also archive the gateway's --data-dir" in out
     assert "holds user accounts" not in out

@@ -24,8 +24,10 @@ SCRUBBED = {
     "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
     "AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
     "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_BEARER_TOKEN_BEDROCK",
-    # Hubzoid and Open WebUI service secrets
-    "BRIDGE_API_KEYS", "HUBZOID_ARTIFACT_SECRET", "HUBZOID_GATEWAY_ADMIN_PASSWORD", "WEBUI_SECRET_KEY",
+    # Hubzoid service secrets
+    "BRIDGE_API_KEYS", "HUBZOID_ARTIFACT_SECRET", "HUBZOID_ADMIN_PASSWORD",
+    # retired Open WebUI (1.x) credentials a kept or restored .env may still hold
+    "WEBUI_SECRET_KEY", "WEBUI_ADMIN_PASSWORD", "HUBZOID_GATEWAY_ADMIN_PASSWORD",
     "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY", "OAUTH_CLIENT_INFO_ENCRYPTION_KEY",
     "DATABASE_URL", "HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB",
 }
@@ -37,7 +39,7 @@ KEPT = {
     "AWS_CONFIG_FILE": "/c", "AWS_SHARED_CREDENTIALS_FILE": "/s",
     # hub settings a stdio MCP server may rely on, and process basics
     "SLACK_BOT_TOKEN": "xoxb", "GOOGLE_CLIENT_SECRET": "g", "COMPOSIO_API_KEY": "c",
-    "HUBZOID_GATEWAY_ADMIN_EMAIL": "a@x", "DATABASE_SCHEMA": "s", "OTEL_EXPORTER_OTLP_HEADERS": "h",
+    "HUBZOID_ADMIN_EMAIL": "a@x", "DATABASE_SCHEMA": "s", "OTEL_EXPORTER_OTLP_HEADERS": "h",
     "PATH": "/bin", "HOME": "/home/x",
 }
 
@@ -60,8 +62,8 @@ def test_only_keys_present_are_touched():
 def test_bedrock_keeps_the_aws_credentials_the_cli_signs_in_with():
     env = {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_ACCESS_KEY_ID": "id", "AWS_SECRET_ACCESS_KEY": "s",
            "AWS_SESSION_TOKEN": "t", "AWS_BEARER_TOKEN_BEDROCK": "b", "AWS_SECRET_NAME": "n",
-           "WEBUI_SECRET_KEY": "w"}
-    assert cs.child_env_overrides(env) == {"AWS_SECRET_NAME": "", "WEBUI_SECRET_KEY": ""}
+           "HUBZOID_ARTIFACT_SECRET": "w"}
+    assert cs.child_env_overrides(env) == {"AWS_SECRET_NAME": "", "HUBZOID_ARTIFACT_SECRET": ""}
 
 
 def _hub(tmp_path: Path) -> Path:
@@ -124,7 +126,7 @@ def test_claude_complete_passes_the_overrides(monkeypatch):
 
     from hubzoid import factory_claude
 
-    os.environ.update({"WEBUI_SECRET_KEY": "w", "ANTHROPIC_API_KEY": "sk-ant"})
+    os.environ.update({"HUBZOID_ARTIFACT_SECRET": "w", "ANTHROPIC_API_KEY": "sk-ant"})
     seen = {}
 
     async def fake_query(prompt, options):
@@ -134,7 +136,7 @@ def test_claude_complete_passes_the_overrides(monkeypatch):
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     asyncio.run(factory_claude.claude_complete("hi"))
-    assert seen["env"] == {"WEBUI_SECRET_KEY": ""}
+    assert seen["env"] == {"HUBZOID_ARTIFACT_SECRET": ""}
 
 
 def test_smtp_credentials_do_not_reach_agent_children():

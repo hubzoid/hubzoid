@@ -145,3 +145,65 @@ live panel can accurately report availability. Reuse the existing OAuth flow.
 - The Google/password phone preview passes Axe serious/critical checks in
   Light, Dark and OLED after theme transitions settle. The temporary preview
   label's light-theme contrast was corrected. Real Google OAuth is still untested.
+
+## Final review on the merged design branch
+
+The five-hub preview now runs from `hz2/chat-design`. This pass checked the
+builder, administrator and teammate journeys with fictional data, without
+connecting customer systems or changing access in a real deployment.
+
+### Fixes
+
+- Access uses readable person/capability rows with visible Edit access actions,
+  instead of a wide table that hid the actions at laptop widths.
+- Workflow rows keep the schedule, execution account, state and actions
+  together. On phones they stack without forcing horizontal scrolling.
+- Embedded agent navigation uses ordinary links with a clear current state.
+  This removes nested interactive controls and the inaccessible mobile overflow
+  button from the embedded tabs. Standalone Console tabs remain unchanged.
+- Breadcrumb contrast and inline link distinction are corrected. Wide eval
+  tables have a named, keyboard-focusable scrolling region.
+- Agent instructions identifies the hub supplying its files. Following another
+  agent's Edit instructions link explicitly explains that the files shown are
+  from a different hub. Authoring remains limited to the backend's current hub.
+- Sources uses flat sections and complete collection names on phones. The
+  sample handbook note was created, synced and found through source search.
+- Embedded management dialogs now give phone buttons, inputs and checkbox rows
+  44px minimum touch targets, including portals rendered outside Settings.
+
+### Verification
+
+- Merged baseline: 324 role/theme/viewport layout smoke states across owner,
+  Ana and Ben, dark/light/OLED, desktop/tablet/phone. No document overflow or
+  uncaught page errors. This is layout coverage, not 324 end-to-end workflows.
+- Final changed screens: Access, Workflows, Evals, Agent instructions and
+  populated Sources, at 1172px and 390px in Light and Dark. All 20 settled-page
+  Axe WCAG A/AA checks passed, with no document overflow. The access drawer's
+  phone button height was measured separately.
+- TypeScript and production build pass. Lint has warnings and no errors.
+- Expanded Settings regression passes: grouping, profile save, keyboard agent
+  navigation, reachable phone access/workflow actions, focus after Console,
+  and fixture Google sign-in. Standalone Console: **55 journeys passed**;
+  connectors: **22 checks passed**; personal reports suite passed. This supersedes
+  the earlier standalone journey failure recorded above.
+- Live provider: a fresh Engineering chat called `whoami`, completed its reply,
+  and rendered correctly after reopening. Five-agent switching, composer menu,
+  notifications, account menu, collapsed sidebar and Chat defaults review/diff/
+  discard were exercised. Earlier queue, interrupt and branch checks remain
+  recorded above; they were not all repeated in this pass.
+- Source creation, note entry, sync and search succeeded against the real local
+  backend. Access editing and workflow history were inspected on phones without
+  changing grants or starting real workflows.
+
+### Limits and test setup
+
+Real Google sign-in and customer connectors remain unverified. The Google page
+is a labelled design preview; the working sample connector is local. The earlier
+native-chat fixture/streaming test failures have not been resolved by these UI
+changes. This is a design review, not full release certification.
+
+The earlier disposable preview database contained the removed, unreleased
+Spaces revision `op_0032`. A SQLite backup was made before aligning its revision
+marker with `op_0031`; the now-unused Spaces tables were retained. No repository
+migration or customer database was changed. This local fixture adjustment is
+not an upgrade procedure for deployed databases.

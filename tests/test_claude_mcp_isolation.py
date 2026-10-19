@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from hubzoid import factory_claude, owui_mcp
+from hubzoid import factory_claude, personal_mcp
 from hubzoid.access import Identity, identity_scope, store_for
 
 
@@ -57,7 +57,7 @@ def _per_user(monkeypatch):
         return ({key: {"type": "http", "url": f"http://127.0.0.1:9/{who}/mcp",
                        "headers": {"Authorization": f"Bearer token-of-{who}"}}},
                 [f"mcp__{key}__*"])
-    monkeypatch.setattr(owui_mcp, "per_user_specs", specs)
+    monkeypatch.setattr(personal_mcp, "per_user_specs", specs)
 
 
 # --- chat ----------------------------------------------------------------------
