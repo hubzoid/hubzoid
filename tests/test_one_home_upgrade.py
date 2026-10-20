@@ -81,3 +81,26 @@ def test_a_fresh_database_needs_no_upgrade(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'new.db'}")
     migrations.upgrade(eng, "operational")
     assert migrations.current(eng, "operational") == "op_0080"
+
+
+def test_a_repository_with_its_own_agents_md_uses_the_gateway_manifest(tmp_path, monkeypatch):
+    # A folder of hubs often has an AGENTS.md for coding agents: with a
+    # gateway's data folder named, its hubs come from the manifest.
+    from hubzoid import deployment
+
+    for key in ("DATABASE_URL", "HUBZOID_OPERATIONAL_DB", "HUBZOID_DEPLOYMENT_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_SECRET_KEY", "x" * 43 + "=")
+    root = tmp_path / "repo"
+    (root / "sales").mkdir(parents=True)
+    (root / "AGENTS.md").write_text("Notes for coding agents.\n")
+    (root / "sales" / "AGENTS.md").write_text("---\nname: Sales\n---\nbody")
+    gw = root / "gateway-data"
+    deployment.save(gw / "deployment.json", hubs=[dict(key="sales", name="Sales", path=str(root / "sales"),
+                                                       model_id="sales", slug="sales")],
+                    operational_url=f"sqlite:///{gw / 'op.db'}", public_url="https://hubs.example.org",
+                    auth=True, name="Acme")
+    result = CliRunner().invoke(cli.app, ["upgrade", str(root), "--data-dir", str(gw)])
+    assert result.exit_code == 0, result.output
+    doc = (root / "hubzoid.yaml").read_text()
+    assert "- sales" in doc and "public_url: https://hubs.example.org" in doc and "name: Acme" in doc

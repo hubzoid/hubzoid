@@ -69,6 +69,7 @@ class Upgrade:
         self.done: list[str] = []
         self.doc: dict = {}
         self.doc_changed = False
+        self.from_manifest: set[str] = set()   # sections only the manifest filled
 
     def note(self, text_: str) -> None:
         self.done.append(text_)
@@ -96,12 +97,13 @@ class Upgrade:
         self.doc["hubs"] = hubs
         if manifest.get("name") and manifest["name"] != "Hubzoid":
             self.doc["brand"] = {"identity": {"name": manifest["name"]}}
+            self.from_manifest.add("brand")
         self.doc_changed = True
         self.note(f"write {path} (hubs: {', '.join(hubs)})")
 
     # -- brand, chat defaults, diagnostics -------------------------------------------------
     def _section(self, conn, tables: set, key: str, legacy: str, sql: str, column: str, fix=None) -> None:
-        if key in self.doc or (self.root / legacy).is_file():
+        if (key in self.doc and key not in self.from_manifest) or (self.root / legacy).is_file():
             return
         if not tables.issuperset(sql.split("FROM ")[1].split()[0:1]):
             return
@@ -238,7 +240,7 @@ class Upgrade:
             for r in _rows(conn, "SELECT id, hub_id, path, content, published_at FROM hz_authoring_versions"):
                 stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(r["published_at"] or 0))
                 self._export_file(out / "workspace-versions" / r["hub_id"] /
-                                  f"{stamp}__{r['path'].replace('/', '__')}", r["content"])
+                                  f"{stamp}-{r['id'][:8]}__{r['path'].replace('/', '__')}", r["content"])
         if "hz_channel_connections" in tables:
             for r in _rows(conn, "SELECT hub, id, config_json, file_path FROM hz_channel_connections"):
                 hub = next((h for h in self.hubs if h.name.lower() == r["hub"]), None)

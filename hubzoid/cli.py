@@ -1899,27 +1899,34 @@ def upgrade_cmd(
     root = folder.resolve()
     found = deployfile.find(root)
     df = deployfile.load(found) if found else None
+    # Which hubs: the deployment file, then --hub, then a gateway's manifest,
+    # and only then the folder itself as a hub (a repository of hubs often has
+    # an AGENTS.md of its own for coding agents).
+    if data_dir is not None:
+        state = data_dir.resolve()
+    elif df is not None:
+        state = _deployment_state_dir(df)
+    elif (root / ".hubzoid-gateway" / "deployment.json").is_file():
+        state = root / ".hubzoid-gateway"
+    else:
+        state = root / ".hubzoid"
+    manifest_hubs: list[Path] = []
+    try:
+        manifest = json.loads((state / "deployment.json").read_text())
+        manifest_hubs = [Path(h["path"]) for h in manifest.get("hubs", [])]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     if df is not None:
         hub_dirs = df.hub_dirs()
     elif hubs:
         hub_dirs = [h.resolve() for h in hubs]
+    elif manifest_hubs:
+        hub_dirs = manifest_hubs
     elif (root / "AGENTS.md").is_file():
         hub_dirs = [root]
+        state = data_dir.resolve() if data_dir is not None else datadir.state(root)
     else:
         hub_dirs = []
-    if data_dir is not None:
-        state = data_dir.resolve()
-    elif hub_dirs == [root]:
-        state = datadir.state(root)
-    else:
-        state = _deployment_state_dir(df) if df is not None else (
-            root / ".hubzoid-gateway" if (root / ".hubzoid-gateway").is_dir() else root / ".hubzoid")
-    if not hub_dirs:
-        try:
-            manifest = json.loads((state / "deployment.json").read_text())
-            hub_dirs = [Path(h["path"]) for h in manifest.get("hubs", [])]
-        except (OSError, ValueError, KeyError):
-            pass
     if not hub_dirs:
         console.print("[red]No hubs found.[/red] Run it in the deployment folder, or pass --data-dir or --hub.")
         raise typer.Exit(2)
