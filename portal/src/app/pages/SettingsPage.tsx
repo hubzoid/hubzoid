@@ -295,7 +295,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
     return (
       <div key={g.id} className="hz-set-big-wrap">
         {link(first.hash, g.label, current, cx("hz-nav", g.big && "hz-set-big"), g.icon,
-          g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count">{hubs.length}</span> : undefined)}
+          g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count" aria-hidden>{hubs.length}</span> : undefined)}
       </div>
     );
   };

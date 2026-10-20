@@ -1,7 +1,7 @@
 // Usage: what each agent used this month against its limits, as bars, and the
 // limits themselves as a few fields (budgets.yaml stays one click away). The
 // totals for a period sit above. Same API as `hubzoid budgets`.
-import { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import { App, Segmented } from "antd";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ApiError, request, type Hub, type Summary } from "../api";
@@ -10,7 +10,7 @@ import { useHashQuery } from "../hooks/useRoute";
 import { AppContext } from "../app/lib/app-context";
 import { AgentAvatar } from "../app/components/ui";
 import { short } from "../lib/format";
-import { agentName } from "./AgentsScreen";
+import { agentName } from "../lib/agentName";
 
 type Limits = Record<string, Record<string, string | number>>;
 type Status = {
@@ -42,13 +42,17 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
         </div>
         <Segmented aria-label="Period" value={period} onChange={(v) => setQ({ period: v === "30d" ? undefined : String(v) })} options={PERIODS} />
       </div>
-      <dl className="hz-usage-stats">
-        <div><dt>Messages</dt><dd>{s ? s.totals.messages.toLocaleString() : "—"}</dd></div>
-        <div><dt>People active</dt><dd>{s ? s.totals.active_users.toLocaleString() : "—"}</dd></div>
-        <div><dt>Tokens</dt><dd>{s ? short(s.totals.input_tokens + s.totals.output_tokens) : "—"}</dd></div>
-        <div><dt>Workflow runs</dt><dd>{!s ? "—" : s.runs_available ? (s.totals.runs ?? 0).toLocaleString() : "—"}</dd></div>
-        <div><dt>Approx. cost</dt><dd>{s ? usd(s.totals.cost_usd) : "—"}</dd></div>
-      </dl>
+      <ul className="hz-usage-stats" aria-label="Totals">
+        <Stat label="Messages" value={s ? s.totals.messages.toLocaleString() : "—"}
+          sub={s ? `Across ${s.totals.chats.toLocaleString()} ${s.totals.chats === 1 ? "conversation" : "conversations"}` : undefined} />
+        <Stat label="Users" value={s?.user_accounts?.accounts == null ? "—" : s.user_accounts.accounts.toLocaleString()}
+          sub={s?.user_accounts ? `Across ${s.user_accounts.hubs} ${s.user_accounts.hubs === 1 ? "hub" : "hubs"}` : undefined} />
+        <Stat label="Tokens used" value={s ? short(s.totals.input_tokens + s.totals.output_tokens) : "—"}
+          sub={s ? `${short(s.totals.input_tokens)} in · ${short(s.totals.output_tokens)} out` : undefined} />
+        <Stat label="Workflow runs" value={!s ? "—" : !s.has_workflows ? "0" : s.runs_available ? (s.totals.runs ?? 0).toLocaleString() : "—"}
+          sub={s?.has_workflows && s.runs_available ? `${(s.totals.failed ?? 0).toLocaleString()} failed` : undefined} />
+        <Stat label="Approx. cost" value={s ? usd(s.totals.cost_usd) : "—"} sub="Estimated from model prices" />
+      </ul>
       <h3 className="hz-usage-sub">This month by agent</h3>
       <p className="hz-usage-note">Each model call is checked against its agent's limits first. An agent with no limit is never stopped.</p>
       <ul className="hz-usage-list">
@@ -57,6 +61,16 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <li>
+      <span className="hz-usage-stat-label">{label}</span>
+      <span className="hz-usage-stat-value">{value}</span>
+      {sub && <span className="hz-usage-stat-sub">{sub}</span>}
+    </li>
   );
 }
 
@@ -113,7 +127,7 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
         <span className="hz-usage-edit">{s && Object.keys(s.limits ?? {}).length ? "Edit limits" : "Set limits"}</span>
         {open ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
       </button>
-      {open && s && <LimitsEditor base={base} status={s} saved={data.reload} />}
+      {open && s && <LimitsEditor key={s.revision} base={base} status={s} saved={data.reload} />}
     </li>
   );
 }
@@ -144,17 +158,13 @@ const errorMessage = (e: unknown) => {
  *  they are; Edit as file shows the whole budgets.yaml. */
 function LimitsEditor({ base, status, saved }: { base: string; status: Status; saved: () => void }) {
   const { message } = App.useApp();
-  const [values, setValues] = useState<Record<string, string>>({});
+  // Remounted for each saved revision (its key), so the fields start from it.
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(FIELDS.map((f) => [`${f.scope}.${f.key}`, String(status.limits?.[f.scope]?.[f.key] ?? "")])));
   const [asFile, setAsFile] = useState(false);
   const [yaml, setYaml] = useState(status.yaml);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const v: Record<string, string> = {};
-    for (const f of FIELDS) v[`${f.scope}.${f.key}`] = String(status.limits?.[f.scope]?.[f.key] ?? "");
-    setValues(v);
-    setYaml(status.yaml);
-  }, [status.revision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     let body = yaml;

@@ -300,7 +300,13 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
           size="middle"
           dataSource={rows}
           rowClassName="clickable"
-          onRow={(r) => ({ onClick: () => setDetail(r) })}
+          onRow={(r) => ({
+            onClick: () => setDetail(r),
+            // The whole row opens the event, from the keyboard too.
+            tabIndex: 0,
+            "aria-label": `Event details: ${r.tool ?? r.action ?? ""}`.trim(),
+            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetail(r); } },
+          })}
           scroll={{ x: 640 }}
           pagination={{
             current: page,

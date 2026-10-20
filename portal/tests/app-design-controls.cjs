@@ -71,11 +71,12 @@ const { PASSWORD } = require('./app-fixture-server.cjs');
       await page.screenshot({ path: `${shots}/${mode}-profile.png` });
 
       await page.goto(`${base}/settings#/agents`);
-      const agents = page.getByRole('list', { name: 'Agents', exact: true });
+      const agents = page.getByRole('table', { name: 'Agents', exact: true });
       await agents.waitFor({timeout: 60000});
-      assert.equal(await agents.getByRole('listitem').count(), 5);
-      await agents.getByRole('link', { name: 'Operations', exact: true }).hover();
-      assert.equal(await page.locator('.agent-card').filter({ has: page.getByRole('link', { name: 'Operations', exact: true }) }).evaluate(e => getComputedStyle(e).boxShadow), 'none');
+      // A header row and one row per agent; the row is one link, with no shadow.
+      assert.equal(await agents.getByRole('row').count(), 6);
+      await agents.getByRole('link', { name: 'Open Operations', exact: true }).hover();
+      assert.equal(await page.locator('.hz-agent-row').filter({ has: page.getByRole('link', { name: 'Open Operations', exact: true }) }).evaluate(e => getComputedStyle(e).boxShadow), 'none');
       await page.screenshot({ path: `${shots}/${mode}-agents.png` });
 
       await page.goto(`${base}/settings#/people`);
@@ -162,7 +163,7 @@ const { PASSWORD } = require('./app-fixture-server.cjs');
     await mp.waitForURL(`${base}/`);
     await mp.goto(`${base}/settings#/me/profile`);
     await mp.getByLabel('Display name').waitFor();
-    assert.equal(await mp.locator('.hz-set-nav').getByRole('link', { name: 'People & access', exact: true }).count(), 0);
+    assert.equal(await mp.locator('.hz-set-nav').getByRole('link', { name: 'Team', exact: true }).count(), 0);
     assert.ok(await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(errors, []);
     console.log('PASS: custom action tokens, tablet/phone settings, 44px Radix options, member preferences');

@@ -111,13 +111,10 @@ export default function RequestsPage() {
   const done = (decided ?? []).filter((r) => keep(r.apiBase)).slice(0, 50);
   const unread = updates.filter((n) => n.state === "unread").length;
 
-  // Land on the first tab with something in it.
+  // Until a tab is chosen, land on the first one with something in it.
   const counts = { needs: needs.length, updates: unread, done: 0 };
   const [chose, setChose] = useState(false);
-  useEffect(() => {
-    if (chose || pending === null) return;
-    if (needs.length === 0 && unread > 0) setTab("updates");
-  }, [pending, chose, needs.length, unread]);
+  const shown: Tab = chose || pending === null ? tab : needs.length === 0 && unread > 0 ? "updates" : tab;
 
   const agentOptions = useMemo(
     () => [{ value: "", label: "All agents" }, ...app.agents.list.map((a) => ({ value: a.id, label: a.name }))],
@@ -130,7 +127,7 @@ export default function RequestsPage() {
       description="Approvals, questions and updates from your agents."
       wide
       actions={
-        tab === "updates" && unread > 0 ? (
+        shown === "updates" && unread > 0 ? (
           <Button variant="secondary" size="sm" onClick={() => void markAllRead()}>
             {t.notices.markAll}
           </Button>
@@ -148,7 +145,7 @@ export default function RequestsPage() {
               <button
                 key={id}
                 type="button"
-                aria-current={tab === id ? "page" : undefined}
+                aria-current={shown === id ? "page" : undefined}
                 onClick={() => {
                   setChose(true);
                   setTab(id);
@@ -166,7 +163,7 @@ export default function RequestsPage() {
 
         {pending === null ? (
           <p className="hz-inbox-empty">{t.requests.loading}</p>
-        ) : tab === "needs" ? (
+        ) : shown === "needs" ? (
           needs.length === 0 ? (
             <Empty icon={<Check size={18} aria-hidden />} title="You're all caught up" text="Approvals and questions from your agents appear here." testId="requests-empty" />
           ) : (
@@ -177,7 +174,7 @@ export default function RequestsPage() {
               ))}
             </ul>
           )
-        ) : tab === "updates" ? (
+        ) : shown === "updates" ? (
           updates.length === 0 && waiting.length === 0 ? (
             <Empty icon={<MessageSquare size={18} aria-hidden />} title="No updates" text="Replies that finish while you're elsewhere appear here." />
           ) : (

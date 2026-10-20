@@ -57,7 +57,7 @@ export default defineConfig({
       ['/portal/api', '/api', '/oauth', '/branding', '/artifacts', '/b/'].map((p) => [p, {
         target: bridge,
         changeOrigin: true,
-        configure: (proxy: { on: (event: string, fn: (req: { getHeader: (n: string) => unknown; setHeader: (n: string, v: string) => void }) => void) => void }) => {
+        configure: (proxy) => {
           proxy.on('proxyReq', (req) => { if (req.getHeader('origin')) req.setHeader('origin', bridge) })
         },
       }]),

@@ -1,15 +1,12 @@
 // A page's frame: a title, an optional line under it, actions on the right,
 // and the page's own content below. Inside Settings it is a section heading.
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { useContext, useEffect, type ReactNode } from "react";
 import { Menu as MenuIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { IconButton } from "../components/ui";
 import { InSettings } from "./SettingsFrame";
-
-/** Inside another page's tab (an agent's Instructions, say): only the content
- *  and its actions, under the host page's own heading. */
-export const BarePage = createContext(false);
+import { BarePage } from "./barePage";
 
 export function PageFrame({ title, description, actions, wide, children }: {
   title: string;

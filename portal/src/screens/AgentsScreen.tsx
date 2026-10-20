@@ -1,13 +1,8 @@
 import { useContext, useState, type ReactNode } from "react";
 import { AppContext } from "../app/lib/app-context";
 import { AgentAvatar as AppAvatar } from "../app/components/ui";
-import { displayName, formatRelative } from "../app/lib/format";
-
-/** The chat app's name for an agent, unless it is only the folder name. */
-export function agentName(chatName: string | undefined, hubName: string, key: string): string {
-  if (chatName && chatName !== key) return chatName;
-  return displayName(hubName) || hubName || key;
-}
+import { formatRelative } from "../app/lib/format";
+import { agentName } from "../lib/agentName";
 import { Button, Card, Empty, Input, Tag, Typography } from "antd";
 import { ChevronRight, Search } from "lucide-react";
 import { type EvalScore, type Hub, type SummaryHub, type Workflow } from "../api";

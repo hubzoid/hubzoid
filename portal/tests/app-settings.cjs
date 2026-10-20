@@ -22,7 +22,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     const sections = page.locator(".hz-set-nav");
     assert.equal(await sections.getByRole("link", { name: "Preferences", exact: true }).count(), 1);
     assert.equal(await sections.getByRole("link", { name: "Appearance", exact: true }).count(), 0);
-    await page.getByRole("navigation", { name: "Personal preferences" }).getByRole("link", { name: "Appearance", exact: true }).click();
+    await page.getByRole("navigation", { name: "Preferences" }).getByRole("link", { name: "Appearance", exact: true }).click();
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.getByLabel("Search settings").fill("name");
@@ -34,19 +34,25 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByLabel("Search settings").fill("no-such-preference");
     await page.getByText(/No settings match/).waitFor();
     await page.getByLabel("Search settings").fill("");
-    await sections.getByRole("link", { name: "Workspace settings", exact: true }).click();
+    // Four big destinations; each holds its sections as tabs.
+    for (const name of ["Agents", "Schedules", "Usage", "Team"])
+      assert.equal(await sections.getByRole("link", { name, exact: true }).count(), 1, `${name} is in the Settings nav`);
+    await sections.getByRole("link", { name: "Team", exact: true }).click();
     await page.locator(".console-embed").waitFor({timeout: 60000});
-    await page.getByRole("navigation", { name: "Workspace settings", exact: true }).getByRole("link", { name: "Brand", exact: true }).click();
+    const team = page.getByRole("navigation", { name: "Team", exact: true });
+    await team.getByRole("link", { name: "Workspace", exact: true }).click();
+    await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("link", { name: "Brand", exact: true }).click();
     await page.waitForURL(/#\/settings\/appearance$/);
-    await page.getByRole("navigation", { name: "Workspace settings", exact: true }).getByRole("link", { name: "Health & support", exact: true }).waitFor();
-    assert.equal(await sections.getByRole("link", { name: "Health & support", exact: true }).count(), 0);
+    await team.getByRole("link", { name: "Health", exact: true }).waitFor();
+    assert.equal(await sections.getByRole("link", { name: "Health", exact: true }).count(), 0);
     await sections.getByRole("link", { name: "Agents", exact: true }).click();
-    await page.getByRole("list", { name: "Agents", exact: true }).waitFor();
-    assert.equal(await page.getByRole("list", { name: "Totals", exact: true }).isVisible(), false);
-    await page.getByText("Usage overview", { exact: true }).click();
+    await page.getByRole("table", { name: "Agents", exact: true }).waitFor();
+    assert.equal(await page.getByRole("list", { name: "Totals", exact: true }).count(), 0);
+    await sections.getByRole("link", { name: "Usage", exact: true }).click();
     await page.getByRole("list", { name: "Totals", exact: true }).waitFor();
     await page.setViewportSize({ width: 1172, height: 740 });
-    await sections.getByRole("link", { name: "People & access", exact: true }).click();
+    await sections.getByRole("link", { name: "Team", exact: true }).click();
+    await page.getByRole("navigation", { name: "Team", exact: true }).getByRole("link", { name: "People", exact: true }).click();
     await page.locator(".person-cell").first().waitFor();
     const identities = await page.locator(".person-cell").evaluateAll((cells) => cells.map((cell) => ({
       width: cell.getBoundingClientRect().width,
@@ -105,7 +111,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await oauth.getByRole("link", { name: "sam@example.com", exact: true }).click();
     await oauth.getByLabel("Display name").waitFor();
     await oauth.getByText("sam@example.com", { exact: true }).waitFor();
-    console.log("Settings grouping, profile save, focus after Console, phone layout and fixture OAuth passed.");
+    console.log("Settings destinations and tabs, profile save, focus after Console, phone layout and fixture OAuth passed.");
   } finally {
     await browser.close();
     await dev?.close();

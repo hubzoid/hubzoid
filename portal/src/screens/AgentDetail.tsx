@@ -8,7 +8,7 @@ import { lazyChunk } from "../lib/lazyChunk";
 import { AppContext } from "../app/lib/app-context";
 import { formatRelative } from "../app/lib/format";
 import { AgentAvatar } from "../app/components/ui";
-import { BarePage } from "../app/pages/PageFrame";
+import { BarePage } from "../app/pages/barePage";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
@@ -19,7 +19,7 @@ import { AgentChannels } from "./ChannelsScreen";
 import { AgentIntake } from "./IntakeScreen";
 import { AgentSetup } from "./SetupScreen";
 import { WorkItemsScreen } from "./WorkItemsScreen";
-import { agentName } from "./AgentsScreen";
+import { agentName } from "../lib/agentName";
 import { SandboxesScreen } from "./SandboxesScreen";
 
 const WorkspacePage = lazyChunk(() => import("../app/pages/WorkspacePage"));
@@ -41,7 +41,6 @@ const SECTIONS: { key: AgentTab; label: string; parts?: [AgentTab, string][] }[]
   { key: "setup", label: "Setup", parts: [["setup", "Settings"], ["secrets", "Secrets"], ["channels", "Channels"], ["intake", "Intake"]] },
   { key: "activity", label: "Activity" },
 ];
-export const AGENT_TABS: AgentTab[] = SECTIONS.flatMap((s) => (s.parts ? s.parts.map(([k]) => k) : [s.key]));
 const sectionOf = (tab: AgentTab) => SECTIONS.find((s) => s.key === tab || s.parts?.some(([k]) => k === tab)) ?? SECTIONS[0];
 
 export function AgentDetail({

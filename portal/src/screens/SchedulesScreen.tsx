@@ -290,7 +290,8 @@ function SchedulesTable({
           ...(agentName ? [{ title: "Agent", key: "agent", render: (_: unknown, s: Row) => agentName(s.hub) }] : []),
           {
             title: "Schedule", key: "name",
-            render: (_, s) => <><Text strong>{s.name}</Text><div style={{ marginTop: 2 }}><Dot tone={STATE_TAG[s.state] ?? "default"} label={s.state_label} /></div></>,
+            render: (_, s) => <><button type="button" className="row-name" onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</button>
+              <div style={{ marginTop: 2 }}><Dot tone={STATE_TAG[s.state] ?? "default"} label={s.state_label} /></div></>,
           },
           {
             title: "Report", key: "report",
