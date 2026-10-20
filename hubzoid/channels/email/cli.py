@@ -69,6 +69,24 @@ def poll_cmd(hub: Path = HUB, cid: str = ID, as_json: bool = typer.Option(False,
         f"{d['state']}: {d['messages']} new message(s)."))
 
 
+@email_app.command("import-history")
+def import_cmd(hub: Path = HUB, cid: str = ID,
+               query: str = typer.Option(..., "--query", help="Exact Gmail query; prefer a reviewed business label."),
+               after: str = typer.Option(..., "--after", help="Inclusive UTC date, YYYY-MM-DD."),
+               before: str = typer.Option(..., "--before", help="Exclusive UTC date, YYYY-MM-DD."),
+               limit: int = typer.Option(1000, "--limit", min=1, max=10000),
+               apply_digest: str | None = typer.Option(None, "--apply", help="Exact digest from the preview."),
+               restart: bool = typer.Option(False, "--restart", help="Replay the same scope after a page-token failure."),
+               as_json: bool = typer.Option(False, "--json")):
+    """Preview a bounded Gmail history import, or resume one approved page. Nothing is sent."""
+    from ..cli import _actor, _out, _run
+    from .history import import_history
+
+    _, conn = _conn(hub, cid, as_json)
+    _out(_run(import_history, as_json, conn, query=query, after=after, before=before, limit=limit,
+              apply_digest=apply_digest, restart=restart, actor=_actor()), as_json)
+
+
 @email_app.command("rehearse-draft")
 def rehearse_cmd(hub: Path = HUB, cid: str = ID, as_json: bool = typer.Option(False, "--json")):
     """Save one real draft (to the mailbox itself) and read it back. Nothing is sent."""

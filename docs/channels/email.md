@@ -25,14 +25,14 @@ provider_config:
     port: 993
     tls: implicit           # or starttls; there is no plain-text mode
     username: orders@example.com
-    password_ref: secret:channel/company-hub/orders-email/imap-password
+    password_ref: secret:hub/company-hub/orders-imap-password
     drafts_folder: Drafts   # optional; found from the server when left out
   smtp:
     host: smtp.example.com
     port: 465
     tls: implicit
     username: orders@example.com
-    password_ref: secret:channel/company-hub/orders-email/imap-password
+    password_ref: secret:hub/company-hub/orders-imap-password
   sender_policy:
     allowed: [buyer@customer.example]   # exact addresses, no wildcards
     authentication: aligned_dkim        # or manual: every message waits for a person
@@ -50,7 +50,7 @@ password:
   transport: gmail
   gmail:
     client_id: 1234.apps.googleusercontent.com
-    client_secret_ref: secret:channel/company-hub/orders-email/google-client-secret
+    client_secret_ref: secret:hub/company-hub/orders-google-client-secret
     oauth_ref: secret:channel/company-hub/orders-email/gmail-oauth   # written by connect
     label_ids: [INBOX]
 ```
@@ -60,7 +60,7 @@ password:
   microsoft365:
     app_id: 00000000-0000-0000-0000-000000000000    # your Entra app
     tenant_id: example.onmicrosoft.com
-    client_secret_ref: secret:channel/company-hub/orders-email/m365-client-secret
+    client_secret_ref: secret:hub/company-hub/orders-m365-client-secret
     oauth_ref: secret:channel/company-hub/orders-email/m365-oauth
 ```
 
@@ -72,7 +72,7 @@ password:
 > doctor, then start reading new mail. Do not send anything.
 
 ```sh
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/orders-email/imap-password --stdin --apply
+hubzoid secrets set ./company-hub --ref secret:hub/company-hub/orders-imap-password --stdin
 hubzoid channels apply ./company-hub --file channels/orders-email.yaml --expected-revision absent
 hubzoid channels doctor ./company-hub orders-email
 hubzoid channels resume ./company-hub orders-email
@@ -90,10 +90,52 @@ signed in as the mailbox. Consent for any other mailbox is refused.
 | Gmail | `gmail.readonly` to read. `--mode approve` adds `gmail.send`; `--mode draft` adds `gmail.compose` (which can also send at Google, but Hubzoid still sends only what a person approved). |
 | Microsoft 365 | `offline_access`, `User.Read`, `Mail.ReadWrite` (read and drafts), `Mail.Send`. |
 
+## Import selected Gmail history
+
+New-only polling remains the default. An operator or their trusted local
+authoring assistant can preview a bounded historical import separately:
+
+```sh
+hubzoid channels email import-history ./company-hub orders-email \
+  --query 'label:orders' --after 2026-08-20 --before 2026-10-21 --limit 1000 --json
+```
+
+The preview reads no messages. Review the mailbox, channel revision, labels,
+query, dates and limit, then repeat that command with `--apply <digest>`.
+Each call processes one page of at most 20 messages; repeat until `complete`.
+The account/query/date scope never changes on resume. Dates are UTC with an
+inclusive start and exclusive end. The importer uses epoch queries and checks
+each message's provider timestamp, avoiding Gmail's PST interpretation of
+date strings. See [Google's search rules](https://developers.google.com/workspace/gmail/api/guides/filtering).
+
+Sender checks, quarantine, attachment limits and workflow permissions are
+unchanged. Import can start the configured workflow, so review its action
+modes first. It does not send mail or alter read status. Source messages and
+attachments are retained by the existing intake service and count against its
+storage allowance. Select a business label/query rather than importing a
+personal inbox indiscriminately. This generic importer does not classify or
+discard unrelated mail on the operator's behalf.
+
+Progress lives in the SDK operational store and appears in
+`hubzoid channels email status`. An interrupted page resumes from its last
+completed message. A repeated completed import is inert. The normal poll
+cursor is preserved, or initialized before import so new arrivals are not
+lost. Expired pagination stops with `pagination_expired`; explicitly repeat
+the same approved scope with `--restart` to replay pages while preserving
+completed IDs. No recovery widens dates, query or labels. A changed channel
+or scope requires a fresh preview/digest and starts a new import, with ordinary
+intake deduplication across overlaps.
+
+The per-import limit is 1 to 10000 messages, default 1000. `limit_reached`
+means the import is partial, never complete. Review a larger limit or a narrower
+date range in a new preview. Only Gmail has this historical import path.
+Qualification here uses a fake Gmail API, not a real mailbox or hosted runtime.
+
 ## Who gets in
 
-- Only mail that arrives after you start is read. Nothing is marked read or
-  moved in the mailbox.
+- Polling reads only mail arriving after it starts. Existing Gmail mail is
+  read only through the separate exact-scope import above. Nothing is marked
+  read or moved in the mailbox.
 - A message starts work when it has exactly one From address, that address
   is on `allowed`, and it carries a valid DKIM signature from the same domain
   covering From and Subject (not rsa-sha1, no body-length limit). DKIM shows
