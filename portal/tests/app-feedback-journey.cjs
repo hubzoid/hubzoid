@@ -279,7 +279,13 @@ async function main() {
     const applied = await setFeedback({ tool: true });
     assert.equal(applied.runtime_reloaded, true);
     await ask(p, "What does the enterprise plan cost?");
-    const target = (await json(sam.context, `/api/conversations/${encodeURIComponent(cid)}`)).body.messages.at(-1).id;
+    // The answer just given, found by what it says (the snapshot can lag the screen by a moment).
+    let target = null;
+    for (let i = 0; i < 40 && !target; i++) {
+      const msgs = (await json(sam.context, `/api/conversations/${encodeURIComponent(cid)}`)).body.messages;
+      target = msgs.find((m) => m.role === "assistant" && JSON.stringify(m.content || []).includes("enterprise plan"))?.id;
+      if (!target) await new Promise((r) => setTimeout(r, 250));
+    }
     await ask(p, "Save negative feedback on your previous answer. The price was outdated.");
     await last(p).getByText("Saved: negative feedback").waitFor();
     const viaTool = (await json(sam.context, `/api/conversations/${encodeURIComponent(cid)}/feedback`)).body.items.find(
