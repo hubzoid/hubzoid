@@ -8,6 +8,11 @@ Codex review (gpt-6.1-sol, high effort, 20 Oct; 24 findings, all checked
 against the code, summarised at the end). Nothing here is built until the
 founder approves it.
 
+**Approved by the founder on 20 Oct 2026** with the recommended answers to the
+open questions: secrets split by kind (B8 c), `hubzoid.yaml` in the deployment
+folder, `admin.yaml` file-only, no separate units per hub, and the identity
+merge after launch.
+
 It replaces, if approved:
 
 - revision 1's separate units per hub (`--no-bridges`, `hubzoid bridge`);
