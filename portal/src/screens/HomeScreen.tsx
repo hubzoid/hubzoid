@@ -40,7 +40,8 @@ function Stat({ label, value, hint, sub }: {
 
 export function HomeScreen({ hubs, reloadHubs, embedded = false }: { hubs: Hub[]; reloadHubs: () => void; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
-  const period = PERIODS.some((p) => p.value === q.period) ? q.period : "7d";
+  // Settings' agent list states its numbers for 30 days.
+  const period = PERIODS.some((p) => p.value === q.period) ? q.period : embedded ? "30d" : "7d";
   const summary = useData<Summary>(`/summary?period=${period}`, { keepStale: true });
   const workflows = useData<{ workflows: Workflow[] }>("/workflows", { keepStale: true });
   const s = summary.data;

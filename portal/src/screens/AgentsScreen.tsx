@@ -175,7 +175,7 @@ function FolderLine({ hub, workflows }: { hub: Hub; workflows: number | null }) 
   const parts = PARTS.map(([key, one, many]) => {
     const n = key === "workflows" ? workflows ?? 0 : c[key];
     return n ? <span key={key}><b>{n}</b> {n === 1 ? one : many}</span> : null;
-  }).filter(Boolean).slice(0, 3);
+  }).filter(Boolean).slice(0, 4);
   if (!parts.length) return <span className="hz-agent-folder is-empty">Only instructions</span>;
   return <span className="hz-agent-folder">{parts}</span>;
 }
@@ -228,9 +228,13 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
       ) : (
         <div className="hz-agent-list" role="table" aria-label="Agents">
           <div className="hz-agent-row is-head" role="row">
+            {/* Matches the rows' stretched link, so columns line up at every width. */}
+            <span className="hz-agent-row-link" aria-hidden />
             <span role="columnheader">Agent</span>
             <span role="columnheader">In its folder</span>
             <span role="columnheader">People</span>
+            <span role="columnheader">Chats, 30 days</span>
+            <span role="columnheader">Spend, 30 days</span>
             <span role="columnheader">Last used</span>
             <span role="columnheader">Status</span>
             <span />
@@ -239,7 +243,7 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
             <div key={h.key} className="hz-agent-row" role="row">
               <a href={agentHref(h.key)} className="hz-agent-row-link" aria-label={`Open ${name}`} />
               <span className="hz-agent-who" role="cell">
-                <AppAvatar name={name} src={agent?.avatar_url} size={32} />
+                <AppAvatar name={name} src={agent?.avatar_url} size={40} />
                 <span className="min-w-0">
                   <span className="hz-agent-name">{name}</span>
                   <span className="hz-agent-key">{h.key}</span>
@@ -247,6 +251,8 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
               </span>
               <span role="cell"><FolderLine hub={h} workflows={flows} /></span>
               <span role="cell" className="hz-agent-num">{!m ? "—" : m.everyone ? "Everyone" : m.users_with_access}</span>
+              <span role="cell" className="hz-agent-num">{!m ? "—" : m.chats.toLocaleString()}</span>
+              <span role="cell" className="hz-agent-when"><Cost usd={m?.cost_usd ?? null} unpriced={m?.unpriced ?? 0} /></span>
               <span role="cell" className={m?.last_activity ? "hz-agent-when" : "hz-agent-when is-empty"}>
                 {m?.last_activity ? formatRelative(m.last_activity) : "Not yet"}
               </span>
