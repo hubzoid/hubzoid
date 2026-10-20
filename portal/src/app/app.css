@@ -58,8 +58,8 @@
   --hz-success-soft: #eaf4ec;
   --hz-warning: #795416;
   --hz-warning-soft: #faf0db;
-  --hz-info: #345e91;
-  --hz-info-soft: #eef3fa;
+  --hz-info: #b5471f;
+  --hz-info-soft: #fbede7;
   --hz-code-bg: #f3f2ef;
   --hz-overlay: rgb(24 24 19 / 0.25);
   --hz-focus: #6b6b70;
@@ -97,8 +97,8 @@
   --hz-success-soft: #17261c;
   --hz-warning: #e6c283;
   --hz-warning-soft: #2b2518;
-  --hz-info: #a9c6ea;
-  --hz-info-soft: #16212f;
+  --hz-info: #f28b66;
+  --hz-info-soft: #2b1f1a;
   --hz-code-bg: #111111;
   --hz-overlay: rgb(0 0 0 / 0.55);
   --hz-focus: #b5b5bc;
@@ -2711,16 +2711,22 @@
 @layer components {
   .hz-set { grid-template-columns: 248px minmax(0, 1fr); }
   .hz-set-bigs { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; }
-  .hz-set-nav .hz-nav.hz-set-big {
-    min-height: 40px;
-    gap: 12px;
-    padding: 0 10px;
-    font-size: 1.0714rem;
+  /* Every Settings nav item has the same type: the four destinations are set
+     apart by place and row height, not a bigger font. */
+  .hz-set-nav .hz-nav {
+    min-height: 34px;
+    gap: 10px;
+    font-size: 1rem;
     font-weight: 500;
     color: var(--hz-secondary);
   }
-  .hz-set-nav .hz-nav.hz-set-big:hover { color: var(--hz-ink); }
-  .hz-set-nav .hz-nav.hz-set-big[aria-current="page"] { color: var(--hz-ink); font-weight: 600; background: var(--hz-active); }
+  .hz-set-nav .hz-nav:hover { color: var(--hz-ink); }
+  .hz-set-nav .hz-nav[aria-current="page"] { color: var(--hz-ink); font-weight: 600; }
+  .hz-set-nav .hz-nav.hz-set-big {
+    min-height: 38px;
+    padding: 0 10px;
+  }
+  .hz-set-nav .hz-nav.hz-set-big[aria-current="page"] { background: var(--hz-active); }
   .hz-set-count { margin-left: auto; font-size: .8571rem; font-weight: 500; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
   .hz-set-nav .hz-set-group { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hz-line-soft); font-weight: 600; font-size: .8214rem; }
   .hz-set-grouphead { margin: 0 0 14px; }
@@ -2747,6 +2753,7 @@
   .hz-set-main.is-grouped .page-header .ant-typography-secondary { font-size: .9286rem; }
   .hz-preference-tabs a[aria-current="page"] { font-weight: 600; }
   @media (max-width: 767px) {
+    .hz-set-nav .hz-nav { min-height: 44px; }
     .hz-set-nav .hz-nav.hz-set-big { min-height: 48px; }
     .hz-subtabs a { height: 44px; }
   }
@@ -2803,7 +2810,7 @@
   .hz-status > i { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
   .hz-status.is-muted { color: var(--hz-mute); }
   .hz-status.is-accent { color: var(--hz-accent-text); }
-  .hz-status.is-info { color: var(--hz-info); }
+  .hz-status.is-info { color: var(--hz-accent-text); }
   .hz-status.is-ok { color: var(--hz-success); }
   .hz-status.is-warn { color: var(--hz-warning); }
   .hz-status.is-bad { color: var(--hz-danger); }
@@ -2867,20 +2874,6 @@
   .hz-agent-head { display: flex; align-items: center; gap: 14px; margin: 12px 0 4px; }
   .hz-agent-head h1 { margin: 0; font-size: 1.5714rem; font-weight: 650; letter-spacing: -0.02em; color: var(--hz-ink); }
   .hz-agent-head p { margin: 2px 0 0; font-size: .9643rem; color: var(--hz-secondary); max-width: 72ch; }
-  .hz-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-  .hz-fact {
-    display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--hz-line);
-    border-radius: 12px; color: var(--hz-ink); text-decoration: none; transition: background-color 120ms var(--hz-ease);
-  }
-  .hz-fact:hover { background: var(--hz-hover); }
-  .hz-fact-icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--hz-sunken); color: var(--hz-mute); flex: none; }
-  .hz-fact-label { display: block; font-size: .8214rem; color: var(--hz-mute); }
-  .hz-fact-value { display: block; margin-top: 2px; font-size: 1.0714rem; font-weight: 600; overflow-wrap: anywhere; }
-  .hz-fact-value code { font-size: .8571rem; font-weight: 500; }
-  .hz-fact-note { display: block; margin-top: 2px; font-size: .8571rem; color: var(--hz-mute); }
-  .hz-fact-note.is-bad { color: var(--hz-danger); }
-  .hz-fact-go { color: var(--hz-mute); opacity: 0; flex: none; }
-  .hz-fact:hover .hz-fact-go { opacity: 1; }
 }
 
 /* Usage: totals, then one row per agent with its month as bars against its
@@ -2914,10 +2907,10 @@
   .hz-bar-pct { font-weight: 600; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
   .hz-bar-pct.is-warn { color: var(--hz-warning); }
   .hz-bar-pct.is-bad { color: var(--hz-danger); }
-  .hz-bar { display: block; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hz-ink) 13%, transparent); overflow: hidden; }
-  .hz-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--hz-ink); transition: width 240ms var(--hz-ease); }
-  .hz-bar.is-warn > span { background: var(--hz-warning); }
-  .hz-bar.is-bad > span { background: var(--hz-danger-solid); }
+  .hz-meter { display: block; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hz-ink) 13%, transparent); overflow: hidden; }
+  .hz-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--hz-ink); transition: width 240ms var(--hz-ease); }
+  .hz-meter.is-warn > span { background: var(--hz-warning); }
+  .hz-meter.is-bad > span { background: var(--hz-danger-solid); }
   .hz-limits { padding: 8px 12px 22px 56px; }
   .hz-limits-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: 16px 24px; }
   .hz-limits-field { display: flex; flex-direction: column; gap: 6px; }
@@ -3349,7 +3342,6 @@
    layer, so links styled as buttons, facts and statuses restate their colour. */
 .console-embed a.hz-btn-secondary, .console-embed a.hz-btn-secondary:hover { color: var(--hz-ink); }
 .console-embed a.hz-btn-neutral, .console-embed a.hz-btn-neutral:hover { color: var(--hz-bg); }
-.console-embed a.hz-fact, .console-embed a.hz-fact:hover { color: var(--hz-ink); }
 .console-embed a.hz-status, .console-embed a.hz-status.is-muted { color: var(--hz-mute); }
 .console-embed a.hz-status.is-ok { color: var(--hz-success); }
 .console-embed a.hz-status.is-bad { color: var(--hz-danger); }
@@ -3357,8 +3349,8 @@
 .console-embed .hz-subtabs a[aria-current="page"], .console-embed .hz-agent-tabs > a[aria-current="page"],
 .console-embed .hz-subtabs a:hover, .console-embed .hz-agent-tabs > a:hover { color: var(--hz-ink); }
 .console-embed .hz-agent-tabs > a[aria-current="page"] { font-weight: 600; }
-.console-embed .hz-bar { height: 8px; min-height: 0; }
-.console-embed .hz-bar > span { height: 8px; }
+.console-embed .hz-meter { height: 8px; min-height: 0; }
+.console-embed .hz-meter > span { height: 8px; }
 .console-embed .row-chevron { color: var(--hz-mute); vertical-align: middle; }
 .console-embed tr.clickable:hover .row-chevron { color: var(--hz-ink); }
 .console-embed .row-name { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--hz-ink); text-align: left; cursor: pointer; }
@@ -3385,3 +3377,33 @@
 .hz-icon-btn[data-saved] {
   color: var(--color-accent, currentColor);
 }
+
+/* Orange marks what matters in Settings, and nothing is blue: where you are
+   (the nav item, the open tab), what to look at (counts, key links) and
+   informational messages. One accent, per the Studio rules. */
+.hz-set-nav .hz-nav[aria-current="page"] { box-shadow: inset 3px 0 0 var(--hz-accent); }
+.hz-set-nav .hz-nav[aria-current="page"] svg { color: var(--hz-accent-text); }
+.hz-set-nav .hz-set-count { color: var(--hz-accent-text); font-weight: 600; }
+/* On the selected row's darker background, deepen the orange toward the ink
+   so the small count keeps text contrast (4.5:1) in every palette. */
+.hz-set-nav .hz-nav[aria-current="page"] .hz-set-count { color: color-mix(in srgb, var(--hz-accent-text) 80%, var(--hz-ink)); }
+.hz-preference-tabs a[aria-current="page"],
+.hz-agent-tabs > [aria-current="page"],
+.console-embed .hz-agent-tabs > a[aria-current="page"] { border-color: var(--hz-accent); }
+.hz-inbox-tabs button[aria-current="page"] { border-color: var(--hz-accent); }
+/* Selected sub-tabs and filters: the checked information pair, so a custom
+   palette can't make the label unreadable. */
+.hz-subtabs a[aria-current="page"],
+.console-embed .hz-subtabs a[aria-current="page"] { background: var(--hz-info-soft); border-color: var(--hz-info-soft); color: var(--hz-info); }
+.hz-agents-filters button[aria-pressed="true"] { background: var(--hz-info-soft); color: var(--hz-info); }
+.hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-info); }
+.hz-usage-edit, .hz-inbox-detail-foot a { color: var(--hz-accent-text); }
+.hz-meter > span { background: var(--hz-accent); }
+.hz-set-grouphead h1, .hz-agent-head h1, .hz-usage-head h2 { color: var(--hz-ink); }
+/* Accent tags use the information pair, whose contrast every palette checks
+   (orange in the built-in palettes). Unscoped, so drawers and popups match. */
+.ant-tag.hz-tag-accent, .console-embed .ant-tag.hz-tag-accent {
+  background: var(--hz-info-soft) !important; border-color: transparent !important; color: var(--hz-info) !important;
+}
+.hz-meter.is-warn > span { background: var(--hz-warning); }
+.hz-meter.is-bad > span { background: var(--hz-danger-solid); }

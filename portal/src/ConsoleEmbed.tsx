@@ -35,7 +35,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "w
       Select: { ...(base.components?.Select ?? {}), optionSelectedBg: v("--hz-active", "#DDDCDA"), optionSelectedColor: ink, optionActiveBg: v("--hz-hover", "#E7E6E2"), optionSelectedFontWeight: 500, activeBorderColor: v("--hz-focus", "#6B6B70"), hoverBorderColor: v("--hz-input", "#89898F"), activeOutlineColor: "transparent" },
       Segmented: { ...(base.components?.Segmented ?? {}), itemSelectedBg: v("--hz-active", "#DDDCDA"), itemSelectedColor: ink, itemHoverBg: v("--hz-hover", "#E7E6E2"), itemHoverColor: ink },
       Menu: { ...(base.components?.Menu ?? {}), itemSelectedBg: v("--hz-active", "#DDDCDA"), itemSelectedColor: ink, itemHoverColor: ink, itemHoverBg: v("--hz-hover", "#E7E6E2") },
-      Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
+      Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: v("--hz-accent", "#B5471F"), itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
       // One table look across Settings: roomy rows, a quiet header with no
       // column dividers, and the app's own hover colour.

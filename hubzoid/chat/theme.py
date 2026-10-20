@@ -54,7 +54,8 @@ _LIGHT = {
     "successText": "#286841", "successBackground": "#EAF4EC", "successBorder": "#C9E2D1",
     "warningText": "#795416", "warningBackground": "#FAF0DB", "warningBorder": "#EFDCA6",
     "errorText": "#B3312C", "errorBackground": "#FBEAE7", "errorBorder": "#F0CBC5",
-    "infoText": "#345E91", "infoBackground": "#EEF3FA", "infoBorder": "#C9D9EE",
+    # Information uses the accent's soft tint: one accent, no blue.
+    "infoText": "#B5471F", "infoBackground": "#FBEDE7", "infoBorder": "#F1CDBE",
 }
 
 _DARK = {
@@ -70,7 +71,7 @@ _DARK = {
     "successText": "#9FD0AE", "successBackground": "#17261C", "successBorder": "#2D4A39",
     "warningText": "#E6C283", "warningBackground": "#2B2518", "warningBorder": "#5A4826",
     "errorText": "#F0A09A", "errorBackground": "#2E1C1B", "errorBorder": "#633838",
-    "infoText": "#A9C6EA", "infoBackground": "#16212F", "infoBorder": "#32496A",
+    "infoText": "#F28B66", "infoBackground": "#2B1F1A", "infoBorder": "#5A3324",
 }
 
 # Black: true black surfaces for OLED screens, otherwise the dark palette.

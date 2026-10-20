@@ -166,7 +166,7 @@ function step(name) {
     await page.getByRole("textbox", { name: "Find an agent" }).fill("");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agents.png"), fullPage: true });
     await page.getByRole("link", { name: "Open Support Assistant", exact: true }).click();
-    assert.equal(await hash(), "#/agents/support/overview");
+    assert.equal(await hash(), "#/agents/support/access");
 
     // ---- access: readable rows -----------------------------------------------
     step("Access tab shows readable capabilities, inherited rights and account states");
@@ -225,7 +225,7 @@ function step(name) {
     const firstRow = page.locator(".hz-agent-row:not(.is-head)").first();
     const key = decodeURIComponent((await firstRow.locator(".hz-agent-row-link").getAttribute("href")).split("#/agents/")[1].split("/")[0]);
     await firstRow.locator(".hz-agent-row-link").click();
-    await page.waitForURL(url => url.hash === `#/agents/${key}/overview`);
+    await page.waitForURL(url => url.hash === `#/agents/${key}/access`);
     await go("/agents");
     await page.locator("a.hz-agent-row-link").first().focus();
     await page.keyboard.press("Shift+Tab");
@@ -1402,7 +1402,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Overview, Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity").waitFor();
+    await page.getByText("has Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity section, not the Settings Activity link.
     await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();

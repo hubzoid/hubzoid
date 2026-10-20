@@ -298,6 +298,17 @@ const step = (name) => {
     assert.equal("id" in edit.body, false);
     assert.equal(edit.body.expected_revision, "revision-linear");
 
+    step("A stored client secret is not sent to a moved server");
+    await page.getByRole("link", { name: "Linear" }).click();
+    await drawer().getByLabel("Server URL").fill("https://elsewhere.example.org/mcp");
+    const before = fx.state.calls.filter((c) => c.method !== "GET").length;
+    await drawer().getByRole("button", { name: "Save" }).click();
+    await drawer().getByText("A new server needs its client secret again. Enter it, or remove the stored secret.").waitFor();
+    assert.equal(fx.state.calls.filter((c) => c.method !== "GET").length, before, "nothing was sent");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await drawer().waitFor({ state: "hidden" });
+
     step("A manual file change cannot be overwritten by an open editor");
     await page.getByRole("link", { name: "Linear" }).click();
     await drawer().getByLabel("Name").fill("Stale change");

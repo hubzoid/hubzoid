@@ -13,7 +13,8 @@ const ACCENT = "#B5471F";
 
 const shared = {
   colorPrimary: ACCENT,
-  colorInfo: "#345E91",
+  // One accent: informational messages use the brand orange, never blue.
+  colorInfo: ACCENT,
   colorSuccess: "#276444",
   colorWarning: "#805500",
   colorError: "#A3322A",
@@ -51,8 +52,8 @@ export const lightTheme: ThemeConfig = {
     colorWarningBorder: "#EFDCA6",
     colorErrorBg: "#FBEDEA",
     colorErrorBorder: "#F0CBC5",
-    colorInfoBg: "#EEF3FA",
-    colorInfoBorder: "#C9D9EE",
+    colorInfoBg: "#FBEDE7",
+    colorInfoBorder: "#F1CDBE",
   },
   components: {
     Alert: { withDescriptionPadding: 12, withDescriptionIconSize: 16 },
@@ -81,9 +82,10 @@ export const darkTheme: ThemeConfig = {
     colorErrorBg: "#3C2023",
     colorErrorBorder: "#754049",
     colorErrorText: "#FFB4B4",
-    colorInfoBg: "#1C2D43",
-    colorInfoBorder: "#395477",
-    colorInfoText: "#ADCCF0",
+    colorInfo: "#E5572A",
+    colorInfoBg: "#2B1F1A",
+    colorInfoBorder: "#5A3324",
+    colorInfoText: "#F28B66",
     // The dark algorithm dims the light theme's brown warning seed too far
     // for helper text. Pin the text token independently of alert backgrounds.
     colorWarningText: "#E6BF72",
