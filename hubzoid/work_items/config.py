@@ -51,7 +51,10 @@ CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 #: so each has a write mode and is off until enabled. Hubzoid registers these;
 #: hubs and channels may add their own (see `register_action`). Any other
 #: action a work item declares is still limited by its route, but has no mode.
-BUILTIN_ACTIONS = {"email.send": True, "erp.submit": True, "customer_reply.send": True}
+BUILTIN_ACTIONS = {"email.send": True, "erp.submit": True, "customer_reply.send": True,
+                   # A pull request change (hubzoid.channels.github.operations). Known here so its
+                   # write mode never depends on which module was imported first.
+                   "github.pr_update": False}
 _ACTIONS: dict[str, bool] = dict(BUILTIN_ACTIONS)   # id -> has a real draft somewhere
 #: Channels that cannot hold a real draft (a chat message has no drafts).
 #: Filled by channel adapters as they register.

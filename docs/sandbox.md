@@ -25,7 +25,8 @@ without it.
    an unprivileged user, offline.
 4. **Done.** When the call completes, every process in the sandbox is ended,
    any new commits in a checkout are exported as a patch into the hub's
-   `output/`, and the sandbox is deleted. A failed call keeps its sandbox
+   `output/` (with `dirty: true` when files were left changed but not
+   committed), and the sandbox is deleted. A failed call keeps its sandbox
    (paused, files intact) for its one retry.
 
 Cleanup also runs on its own every `reaper.interval_seconds` while Hubzoid
@@ -119,7 +120,9 @@ hub.call_agent("Fix the failing test.", agent="coder", stage="code",
                checkout={"url": "https://github.com/acme/app.git", "ref": "main"})
 ```
 
-`depth` (optional) makes a shallow clone. A private repository is cloned with
+`depth` (optional) makes a shallow clone. `commit` (optional) pins the
+checkout to an exact commit, so work planned against one commit is done on
+that commit even if the branch moved since. A private repository is cloned with
 the host's own Git access (its SSH agent or credential helper); a user name or
 token written into the URL is removed and not used.
 

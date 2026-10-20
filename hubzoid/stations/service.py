@@ -179,12 +179,12 @@ def _create(hub_dir, item, agent, message, digest, stage, revision, response_mod
         raise WorkItemError("invalid_request", f"{agent} has no sandbox to check a repository out into.",
                             status=422)
     if checkout is not None and (not isinstance(checkout, dict) or not isinstance(checkout.get("url"), str)
-                                 or set(checkout) - {"url", "ref", "dest", "depth"}
+                                 or set(checkout) - {"url", "ref", "dest", "depth", "commit"}
                                  or (checkout.get("depth") is not None
                                      and (isinstance(checkout["depth"], bool) or not isinstance(checkout["depth"], int)
                                           or not 1 <= checkout["depth"] <= 10000))):
-        raise WorkItemError("invalid_request", "checkout is {url, ref, depth} (ref and depth optional; depth 1 to "
-                            "10000 for a shallow clone).")
+        raise WorkItemError("invalid_request", "checkout is {url, ref, depth, commit} (all but url optional; depth 1 "
+                            "to 10000 for a shallow clone; commit pins the checkout to an exact commit).")
     schema = station.schema
     if response_model is not None:
         model_schema = response_model.model_json_schema()

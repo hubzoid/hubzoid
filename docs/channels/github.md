@@ -35,6 +35,7 @@ provider_config:
     label: factory         # this label added by someone with triage access or more
     pr_opened: true        # an orientation summary for each new pull request
     ci_failure: true       # failed checks on a pull request go to the workflow
+    routes: {}             # optional: the work-item route each trigger asks for
   hooks: []                # extra events for other workflows: {id, event, workflow}
   body_limit_bytes: 10485760
   excluded_diff_files: []
@@ -95,6 +96,19 @@ never printed. Intake fetches the issue and acts as the token's owner.
 Outsiders, bots and the App's own comments are recorded and ignored, with no
 reply. A repository not in the file is ignored.
 
+Each trigger asks for a work-item route, used when the workflow declares it
+(otherwise its first route applies). A route is a ceiling the run can only
+narrow. The defaults are `mention: answer`, `review_mention: revise`,
+`label: triage`, `pull_request: summarize` and `ci_failure: revise`. A hub
+sets its own in `rules.routes`, for example a factory whose label goes
+straight to implementation:
+
+```yaml
+  rules:
+    label: factory
+    routes: {mention: request, review_mention: request, label: implement}
+```
+
 ## Tools for agents and workflows
 
 A hub with an enabled GitHub connection gets `github__<operation>` tools: 19
@@ -107,19 +121,73 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
 
 - Every call names `repository_id`, and work started by the channel may use
   only its own repository.
-- Writes run only inside channel work, as recorded writes that are never
-  repeated on their own. Unattended work writes only on the issue or pull
-  request it came from, and never opens a new issue or pull request.
-- A new pull request is always a draft.
-- Updating a pull request waits for a person's approval of the exact change,
-  which arrives with the shared approvals service. Until then it is refused.
+- Writes run only inside a work item, as recorded writes that are never
+  repeated on their own. The work may have started anywhere: GitHub, chat,
+  the API, Slack or Linear.
+- Unattended work writes only on the issue or pull request it came from, and
+  never opens a new issue. One exception: work started by the label may open
+  one draft pull request, for a branch it pushed itself with `push_branch`.
+- A new pull request is always a draft. With `head_sha`, it opens only if the
+  head branch is still at that commit (the one a review covered). An
+  interrupted creation is settled by finding the pull request for that head
+  branch, never by opening a second one.
+- Work no person asked for (a webhook, a service) gets the unattended limits.
+- Updating a pull request (title, body, base, closing it, or marking it ready
+  with `draft: false`) is the action `github.pr_update`. It is off until the
+  hub's `work-items.yaml` sets it to `approve`. Then the work waits until the
+  person who asked approves that exact change, in the Console's Work items
+  page or with `hubzoid operations approve`. The approval covers the pull
+  request at its current head commit: a push after it needs a fresh approval.
   This includes `updateIssue` and `closeIssue` on a number that is a pull
-  request.
+  request. Unattended work and agents inside a station turn never update a
+  pull request.
 - Commit SHAs, branch names and file paths are checked before they go into a
   URL, so no argument can reach another repository.
 - The repository is looked up by its id before each call. A renamed
   repository keeps working; one moved to another owner is refused until the
   file is updated.
+
+```yaml
+# work-items.yaml
+version: 1
+write_modes:
+  github.pr_update: approve
+```
+
+## Pushing a branch from workflow code
+
+Agents never hold a GitHub token. An isolated agent commits in its sandbox,
+Hubzoid exports those commits as a patch, and workflow code pushes them:
+
+```python
+from hubzoid.channels import config
+from hubzoid.channels.github import operations
+
+conn = config.active(hub.hub_dir, "github")
+pushed = operations.push_branch(
+    conn, repository_id=2001, branch="factory/12-fix-total",
+    patch=patch_bytes, patch_sha256=checked_digest, base_sha=base_commit,
+    expected_head=None)            # or the head this work pushed last time
+```
+
+- It runs only in a work item whose route allows the action `github.push`,
+  and never from inside an agent's turn.
+- The host clones the repository at the start commit, applies the patch with
+  hooks off, and pushes with a token for that one repository with
+  `contents: write`. The token stays in that process. In personal token mode
+  it pushes with your whole token, which is not narrowed: use a fine-grained
+  token limited to the repository.
+- It refuses the default branch, protected branches, an existing branch when
+  `expected_head` is empty (`branch_exists`) and a branch that moved
+  (`stale_head`). The push carries a lease on the exact head it expects, so
+  nothing is ever overwritten.
+- `patch_sha256` must match the bytes, so what is pushed is what the hub
+  checked.
+- The commit id is deterministic (the committer date is the author date), so
+  an interrupted push is recognised by reading the branch, never pushed twice.
+  `key=` tells later pushes to the same branch apart.
+- Which branches the hub owns, how many CI repairs it makes and when it opens
+  a pull request are the hub's own rules.
 
 ## Troubleshooting
 
@@ -133,3 +201,7 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
 | `permission_missing` | Accept the App's updated permissions on GitHub. |
 | `pat_remote_forbidden` | Use App mode for a hosted hub. |
 | `signature_invalid` | The webhook secret does not match. |
+| `pr_update_requires_approval` | Set `github.pr_update: approve` in `work-items.yaml`, or comment instead. |
+| `branch_exists`, `stale_head` | The branch is not where this work left it. Nothing was overwritten. Check who pushed. |
+| `branch_protected`, `default_branch_refused` | Push to a branch of the hub's own and open a draft pull request. |
+| `patch_changed` | The patch changed after it was checked. Export and check it again. |
