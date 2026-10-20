@@ -432,3 +432,22 @@ async def test_a_stopped_run_never_raises_an_approval_card_for_an_outside_mcp_to
         await rt.aclose()
     assert out == guard.STOPPED
     assert ran == [] and asked == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_closes_the_thinking_block_before_the_error():
+    proc = Process([
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "thread"}, "model": "m"}},
+        {"method": "item/reasoning/summaryTextDelta", "params": {"itemId": "r", "delta": "Thinking."}},
+    ])  # then EOF: Codex stopped
+    rt = CodexRuntime(name="t", instructions="", registry={}, thinking_mode="full")
+    items = []
+    token = _typed_exchange.set(True)
+    try:
+        with pytest.raises(RuntimeError, match="stopped unexpectedly"):
+            async for x in rt._exchange(proc, "hi", "/tmp", {}):
+                items.append(x)
+    finally:
+        _typed_exchange.reset(token)
+    assert isinstance(items[-1], run_events.ReasoningEnd) and "</think>" in items[-1].legacy

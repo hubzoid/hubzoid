@@ -382,6 +382,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # the neutral specs into the Claude SDK's {type, url|command, ...} shape.
     # Our in-process hubzoid server (the FunctionTool registry) is added on top.
     external_mcp = mcp_loader.load_all_claude(hub_dir)
+    # The same configuration the CLI runs, for the servers' read-only hints.
+    raw_mcp = {k: v for k, v in mcp_loader.load_all_raw(hub_dir).items() if k in external_mcp}
     hubzoid_mcp = _build_mcp_server(registry)
     mcp_servers = {**external_mcp, _MCP_NAMESPACE: hubzoid_mcp}
 
@@ -490,7 +492,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [*hooks.get("PreToolUse", []),
                            HookMatcher(hooks=[hitl_gate.claude_hook(hub_dir, _MCP_NAMESPACE,
-                                                                    read_only=_read_only_hints(hub_dir))])]
+                                                                    read_only=_read_only_hints(raw_mcp))])]
     options = dataclasses.replace(options, hooks=hooks)
 
     # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
@@ -513,7 +515,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     )
 
 
-def _read_only_hints(hub_dir: Path):
+def _read_only_hints(specs: dict):
     """``(server, tool) -> readOnlyHint`` for the hub's own MCP servers, which
     the Claude CLI connects itself. Each server is listed once, with the same
     client the other runtimes use, so ``ask: writes`` lets a read-only tool run
@@ -528,7 +530,7 @@ def _read_only_hints(hub_dir: Path):
         from .factory import load_mcp_servers
         from .factory_codex import _read_only_tools
 
-        spec = mcp_loader.load_all_raw(hub_dir).get(server_key)
+        spec = specs.get(server_key)
         if spec is None:
             return {}
         servers = load_mcp_servers({server_key: spec})
@@ -830,6 +832,9 @@ def _only_tools(options, allowed: list[str]):
     return dataclasses.replace(options, hooks=hooks)
 
 
+_HOOK_TIMEOUT = 60  # seconds: the Claude SDK's default per hook
+
+
 def _in_order(options):
     """Hubzoid's PreToolUse hooks as one hook that runs them one after
     another and stops at the first refusal.
@@ -855,8 +860,10 @@ def _in_order(options):
                 return out
         return {}
 
-    timeouts = [m.timeout for m in matchers if getattr(m, "timeout", None)]
-    matcher = HookMatcher(hooks=[ordered], timeout=sum(timeouts) if timeouts else None)
+    # One deadline for the chain: each hook keeps its own budget (the SDK's
+    # default for a hook without one), so no hook gets less time than before.
+    budget = sum((getattr(m, "timeout", None) or _HOOK_TIMEOUT) * len(m.hooks or []) for m in matchers)
+    matcher = HookMatcher(hooks=[ordered], timeout=budget)
     return dataclasses.replace(options, hooks={**options.hooks, "PreToolUse": [matcher]})
 
 

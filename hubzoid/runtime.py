@@ -235,10 +235,13 @@ class OpenAIAgentsRuntime:
     async def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]:
         """Run one turn as a typed stream (see `hubzoid.run_events`), after the
         hub's usage limits admit it (`hubzoid.budgets`)."""
-        from . import budgets
+        from . import _request_ctx, budgets
 
         model = getattr(self._agent, "model", None)
         model = getattr(model, "model", model)
+        slot = _request_ctx.native_session()
+        if slot is not None and getattr(slot, "model", None):
+            model = slot.model  # the person's choice for this turn (see _stream)
 
         def refuse(exc):
             self.last_error = exc

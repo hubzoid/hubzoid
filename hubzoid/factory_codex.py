@@ -405,103 +405,112 @@ class CodexRuntime:
         await send({"id": 3, "method": "turn/start", "params": turn_params})
         calls = 0
         saw_delta = set()
-        while True:
-            msg = await read()
-            method = msg.get("method")
-            p = msg.get("params", {})
-            if "error" in msg and msg.get("id") == 3:
-                raise RuntimeError("Codex could not start the turn. Check login, model availability and usage limits.")
-            if p.get("threadId", thread) != thread:
-                raise RuntimeError("Codex returned an unexpected thread identity.")
-            if method == "item/tool/call":
-                calls += 1
-                from . import budgets
-                if calls > budgets.cap_turns(self.max_turns):
-                    raise RuntimeError("Codex reached the configured tool-call limit.")
-                name, arguments = p.get("tool"), p.get("arguments", {})
-                tool = shown.get(name) if not p.get("namespace") else None
-                finished = None
-                if tool is None:
-                    # Not offered to this caller: answered like an unknown tool
-                    # and not shown, so its existence is not disclosed.
-                    result, success = "Tool is not available in this hub.", False
-                else:
-                    from agents import RunConfig
-                    from agents.tool_context import ToolContext
-                    args_json = json.dumps(arguments)
-                    ctx = ToolContext(context=None, tool_name=name, tool_call_id=p["callId"], tool_arguments=args_json, run_config=RunConfig())
-                    _request_ctx.record_tool_call(name, arguments)
-                    display = tool_events.format_call(name, arguments, mode=self.tool_mode)
-                    call_id = str(p.get("callId") or "")
-                    if typed:
-                        if think is not None and display:
-                            closing = think.visible("")
-                            if closing:
-                                yield run_events.ReasoningEnd(legacy=closing)
-                        reasoning_signalled = False
-                        yield run_events.ToolCall(id=call_id, name=name, args=arguments, legacy=display)
-                    elif display:
-                        yield display
-                    try:
-                        result = await tool.on_invoke_tool(ctx, args_json)
-                        success = not tool_events.failed_output(result)
-                    except Exception:
-                        result, success = _TOOL_FAILED, False
-                        log.exception("Codex tool %s failed", name)
-                    # 1.0.x printed nothing for a Codex tool result, failed or not.
-                    finished = run_events.ToolResult(id=call_id, name=name, ok=success,
-                                                     message=None if success else run_events.TOOL_FAILED,
-                                                     card=_request_ctx.take_card(result, call_id=call_id, tool=name)
-                                                     if success else None)
-                if not isinstance(result, str):
-                    result = json.dumps(result, default=str)
-                if tool is not None:
-                    # For an eval's result preview; a no-op in chat.
-                    _request_ctx.record_tool_result(call_id, result)
-                await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})
-                if typed and finished is not None:
-                    yield finished
-            elif "id" in msg and method:
-                # No native approvals, elicitation or unconfigured callbacks.
-                await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
-            elif method == "item/reasoning/summaryTextDelta":
-                if think is not None:
-                    thought = p.get("delta") or ""
-                    chunk = think.thinking(thought)
-                    text = thought if self.thinking_mode == "full" else ""
-                    if chunk or text or not reasoning_signalled:
-                        reasoning_signalled = True
-                        yield run_events.ReasoningDelta(text=text, legacy=chunk)
-            elif method == "item/agentMessage/delta":
-                saw_delta.add(p.get("itemId"))
-                if think is not None and p.get("delta"):
-                    closing = think.visible("")
-                    if closing:
-                        yield run_events.ReasoningEnd(legacy=closing)
-                    reasoning_signalled = False
-                yield p.get("delta", "")
-            elif method == "item/completed":
-                item = p.get("item", {})
-                if item.get("type") == "agentMessage" and item.get("id") not in saw_delta:
-                    if think is not None and item.get("text"):
+        try:
+            while True:
+                msg = await read()
+                method = msg.get("method")
+                p = msg.get("params", {})
+                if "error" in msg and msg.get("id") == 3:
+                    raise RuntimeError("Codex could not start the turn. Check login, model availability and usage limits.")
+                if p.get("threadId", thread) != thread:
+                    raise RuntimeError("Codex returned an unexpected thread identity.")
+                if method == "item/tool/call":
+                    calls += 1
+                    from . import budgets
+                    if calls > budgets.cap_turns(self.max_turns):
+                        raise RuntimeError("Codex reached the configured tool-call limit.")
+                    name, arguments = p.get("tool"), p.get("arguments", {})
+                    tool = shown.get(name) if not p.get("namespace") else None
+                    finished = None
+                    if tool is None:
+                        # Not offered to this caller: answered like an unknown tool
+                        # and not shown, so its existence is not disclosed.
+                        result, success = "Tool is not available in this hub.", False
+                    else:
+                        from agents import RunConfig
+                        from agents.tool_context import ToolContext
+                        args_json = json.dumps(arguments)
+                        ctx = ToolContext(context=None, tool_name=name, tool_call_id=p["callId"], tool_arguments=args_json, run_config=RunConfig())
+                        _request_ctx.record_tool_call(name, arguments)
+                        display = tool_events.format_call(name, arguments, mode=self.tool_mode)
+                        call_id = str(p.get("callId") or "")
+                        if typed:
+                            if think is not None and display:
+                                closing = think.visible("")
+                                if closing:
+                                    yield run_events.ReasoningEnd(legacy=closing)
+                            reasoning_signalled = False
+                            yield run_events.ToolCall(id=call_id, name=name, args=arguments, legacy=display)
+                        elif display:
+                            yield display
+                        try:
+                            result = await tool.on_invoke_tool(ctx, args_json)
+                            success = not tool_events.failed_output(result)
+                        except Exception:
+                            result, success = _TOOL_FAILED, False
+                            log.exception("Codex tool %s failed", name)
+                        # 1.0.x printed nothing for a Codex tool result, failed or not.
+                        finished = run_events.ToolResult(id=call_id, name=name, ok=success,
+                                                         message=None if success else run_events.TOOL_FAILED,
+                                                         card=_request_ctx.take_card(result, call_id=call_id, tool=name)
+                                                         if success else None)
+                    if not isinstance(result, str):
+                        result = json.dumps(result, default=str)
+                    if tool is not None:
+                        # For an eval's result preview; a no-op in chat.
+                        _request_ctx.record_tool_result(call_id, result)
+                    await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})
+                    if typed and finished is not None:
+                        yield finished
+                elif "id" in msg and method:
+                    # No native approvals, elicitation or unconfigured callbacks.
+                    await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
+                elif method == "item/reasoning/summaryTextDelta":
+                    if think is not None:
+                        thought = p.get("delta") or ""
+                        chunk = think.thinking(thought)
+                        text = thought if self.thinking_mode == "full" else ""
+                        if chunk or text or not reasoning_signalled:
+                            reasoning_signalled = True
+                            yield run_events.ReasoningDelta(text=text, legacy=chunk)
+                elif method == "item/agentMessage/delta":
+                    saw_delta.add(p.get("itemId"))
+                    if think is not None and p.get("delta"):
                         closing = think.visible("")
                         if closing:
                             yield run_events.ReasoningEnd(legacy=closing)
                         reasoning_signalled = False
-                    yield item.get("text", "")
-            elif method == "thread/tokenUsage/updated":
-                total = p.get("tokenUsage", {}).get("total", {})
-                usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
-            elif method == "turn/completed":
-                turn = p.get("turn") or {}
-                if think is not None:
-                    closing = think.close()
-                    if closing:
-                        yield run_events.ReasoningEnd(legacy=closing)
-                if turn.get("status") != "completed":
-                    raise CodexTurnError("Codex turn failed or was interrupted. Check login, model availability and usage limits.",
-                                         _turn_error_kind(turn))
-                break
+                    yield p.get("delta", "")
+                elif method == "item/completed":
+                    item = p.get("item", {})
+                    if item.get("type") == "agentMessage" and item.get("id") not in saw_delta:
+                        if think is not None and item.get("text"):
+                            closing = think.visible("")
+                            if closing:
+                                yield run_events.ReasoningEnd(legacy=closing)
+                            reasoning_signalled = False
+                        yield item.get("text", "")
+                elif method == "thread/tokenUsage/updated":
+                    total = p.get("tokenUsage", {}).get("total", {})
+                    usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
+                elif method == "turn/completed":
+                    turn = p.get("turn") or {}
+                    if think is not None:
+                        closing = think.close()
+                        if closing:
+                            yield run_events.ReasoningEnd(legacy=closing)
+                    if turn.get("status") != "completed":
+                        raise CodexTurnError("Codex turn failed or was interrupted. Check login, model availability and usage limits.",
+                                             _turn_error_kind(turn))
+                    break
+        except Exception:
+            # A failed turn closes an open thinking block first, so the error
+            # never reads as part of the reasoning.
+            if think is not None:
+                closing = think.close()
+                if closing:
+                    yield run_events.ReasoningEnd(legacy=closing)
+            raise
 
 
 def _reset_quietly(var, token) -> None:
