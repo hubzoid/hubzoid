@@ -585,3 +585,30 @@ def test_an_export_says_whether_the_tree_had_uncommitted_changes(tmp_path, monke
         monkeypatch.setattr(sandbox_service, "_provider_for", lambda hub_dir, r, d=dirty: Prov(d))
         out = sandbox_service.export_patches(tmp_path, "box-1", tmp_path / "out")
         assert out[0]["dirty"] is dirty and out[0]["commits"] == 0
+
+
+def test_a_personal_token_works_on_a_repository_another_account_owns(hub_dir, api):
+    """Token mode records the token's owner, but the repository may belong to
+    an organization: the owner check follows the repository's recorded owner."""
+    from hubzoid.channels import config
+
+    from .test_channels_github import _secret
+
+    _secret(hub_dir, "token", "pat-test-value")
+    v = config.load_text(hub_dir, config.render({
+        "version": 1, "id": "github", "provider": "github", "enabled": True, "workflow": "factory",
+        "run_as": "workflow", "allowed_groups": [],
+        "provider_config": {"mode": "pat", "owner": {"type": "user", "login": "someone", "id": 7},
+                            "repositories": [{"id": 2001, "full_name": "example-co/widget"}],
+                            "token_ref": "secret:channel/factory/github/token"}}))
+    assert v.valid, v.errors
+    config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    conn = config.active(hub_dir, "github")
+    gh._NAMES.clear()
+    out = operations.call(conn, "getRepository", {"repository_id": 2001})
+    assert out["data"]["full_name"] == "example-co/widget"
+    api.full_name = "elsewhere/widget"                 # moved to another owner: refused
+    gh._NAMES.clear()
+    with pytest.raises(ChannelError) as exc:
+        operations.call(conn, "getRepository", {"repository_id": 2001})
+    assert exc.value.code == "repository_moved"

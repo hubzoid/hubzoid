@@ -110,8 +110,13 @@ def current_name(conn, web, repository_id: int) -> str:
             raise ChannelError("out_of_scope", "The repository is not reachable any more.", status=403) from None
         raise ChannelError("provider_unavailable", "Could not read the repository from GitHub.", status=503) from exc
     owner = ((data.get("owner") or {}).get("login") or "").lower()
-    if owner != conn.settings.owner.login.lower():
+    # The owner recorded for this repository when it was added: the App's
+    # account, or for a personal token whoever owns the repository (a token
+    # may work on another account's or an organization's repository).
+    recorded = conn.settings.repo(repository_id)
+    expected = (recorded.full_name.split("/", 1)[0] if recorded else conn.settings.owner.login).lower()
+    if owner != expected:
         raise ChannelError("repository_moved", f"The repository now belongs to {owner or 'someone else'}, not "
-                           f"{conn.settings.owner.login}. Update the channel file.", status=409)
+                           f"{expected}. Update the channel file.", status=409)
     _NAMES[key] = (time.time() + NAME_SECONDS, data["full_name"])
     return data["full_name"]
