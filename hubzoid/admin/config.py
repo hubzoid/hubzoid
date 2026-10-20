@@ -16,8 +16,8 @@ it read-only; there is no plan, apply or copy in the database.
 
 The **domain registry** describes every settings area the Console shows, with
 its file, owner, read and write permissions and operations. Each domain keeps
-its own store and apply rules: chat (``chat/config.yaml``), branding
-(``branding.yaml``, through reviewed publication) and admin (this file).
+one home, a file: chat (``chat:`` in hubzoid.yaml), branding (``brand:`` and
+``branding/``) and admin (``diagnostics:``), all read-only in Settings.
 Process settings that come from the environment are listed read-only with
 their source.
 """
@@ -222,24 +222,22 @@ def domains(hub_dir: Path, principal=None) -> list[dict]:
     except Exception:  # noqa: BLE001
         brand = {"revision": None, "generation": 0}
     model = os.environ.get("MODEL") or "claude-local"
+    edit = "Edit hubzoid.yaml (or ask Claude Code or Codex to); every agent picks it up within a few seconds."
     out = [
-        {"domain": "chat", "owner": "HUB-71", "file": "chat/config.yaml", "revision": chat_active.revision,
-         "digest": chat_active.digest, "read_capability": "chat_config.read",
-         "write_capability": "chat_config.manage", "restart_required": False,
-         "cli": ["hubzoid chat config get --sources", "hubzoid chat config apply --file chat/config.yaml"],
-         "api": ["GET /api/chat/config", "PUT /api/chat/config"], "console": "#/settings/chat"},
-        {"domain": "branding", "owner": "HUB-82", "file": "branding.yaml", "revision": brand.get("revision"),
-         "generation": brand.get("generation"), "read_capability": "branding.read",
-         "write_capability": "branding.activate", "restart_required": False,
-         "cli": ["hubzoid branding inspect", "hubzoid branding draft create", "hubzoid branding activate"],
-         "api": ["GET /api/branding/history", "POST /api/branding/drafts"], "console": "#/settings/appearance",
-         "note": "Changes go through a reviewed draft and activation."},
-        {"domain": "admin", "owner": "HUB-84", "file": FILE, "revision": admin.revision, "digest": admin.digest,
-         "read_capability": "admin.config.read", "write_capability": "admin.config.write",
-         "restart_required": False,
-         "cli": ["hubzoid admin config show", "hubzoid admin config plan --file admin.yaml",
-                 "hubzoid admin config apply --plan ID --digest D --expected-revision N"],
-         "api": ["GET /api/admin/config", "POST /api/admin/config/plans"], "console": "#/settings/admin"},
+        {"domain": "chat", "owner": "HUB-71", "file": chat_active.source, "revision": chat_active.revision,
+         "digest": chat_active.digest, "read_capability": "chat_config.read", "read_only": True,
+         "restart_required": False, "cli": ["hubzoid chat config get --sources"],
+         "api": ["GET /api/chat/config"], "console": "#/settings/chat", "note": edit},
+        {"domain": "branding", "owner": "HUB-82", "file": brand.get("source") or "hubzoid.yaml (brand)",
+         "revision": brand.get("revision"), "generation": brand.get("generation"),
+         "read_capability": "branding.read", "read_only": True, "restart_required": False,
+         "cli": ["hubzoid branding inspect", "hubzoid branding validate"],
+         "api": ["GET /api/branding/source"], "console": "#/settings/appearance",
+         "note": "The brand and its files in branding/. " + edit},
+        {"domain": "admin", "owner": "HUB-84", "file": service_for(hub_dir).file_state()["path"],
+         "revision": admin.revision, "digest": admin.digest, "read_capability": "admin.config.read",
+         "read_only": True, "restart_required": False, "cli": ["hubzoid admin config show"],
+         "api": ["GET /api/admin/config"], "console": "#/settings/admin", "note": edit},
         {"domain": "model", "owner": "HUB-101", "file": ".env", "read_only": True,
          "values": [{"key": "MODEL", "value": model, "source": "environment" if os.environ.get("MODEL") else "default"}],
          "restart_required": True, "note": "Set in the hub's .env. Changing it needs a restart."},

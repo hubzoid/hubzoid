@@ -95,3 +95,12 @@ def test_gateway_is_an_alias_that_prints_the_file(tmp_path, launched, monkeypatc
     assert "hubzoid run" in result.output and "  - sales" in result.output and "name: Acme" in result.output
     no = CliRunner().invoke(cli.app, ["gateway", "sales", "--no-bridges"])
     assert no.exit_code == 2 and "hubzoid restart" in " ".join(no.output.split())
+
+
+def test_a_broken_policy_section_stops_the_start(tmp_path, launched, monkeypatch):
+    _hub(tmp_path, "sales", 3841), _hub(tmp_path, "support", 3842)
+    (tmp_path / "hubzoid.yaml").write_text("version: 1\nhubs: [sales, support]\n"
+                                           "chat:\n  sharing:\n    enabeld: false\n")
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli.app, ["run", "--port", "3840", "--no-open"])
+    assert result.exit_code == 2 and "chat:" in result.output and not launched

@@ -484,6 +484,7 @@ def run(
             if not df.hubs:
                 console.print(f"[red]{df.path} lists no hubs.[/red] Add their folders under `hubs:`.")
                 raise typer.Exit(2)
+            _check_deployment_sections(df)
             targets = df.hub_dirs()
         elif not targets:
             targets = [Path(".")]
@@ -646,6 +647,38 @@ def run(
             _stop_groups([p for p in (edge.procs + unit.procs)[::-1]])
         finally:
             _restore_shutdown_handlers(previous)
+
+
+def _check_deployment_sections(df) -> None:
+    """A deployment file whose brand, chat or diagnostics section is invalid
+    stops the start: those hold policy (terms, sharing, exports, storage)
+    that must never fall back to an open default."""
+    problems = []
+    if df.chat is not None:
+        from .chat import config as chat_cfg
+
+        try:
+            chat_cfg.validate_document({"version": 1, **df.chat})
+        except chat_cfg.ConfigError as exc:
+            problems.append(f"chat: {exc.message}")
+    if df.brand is not None:
+        from .ui import branding_models
+
+        try:
+            branding_models.validate({"version": 1, **df.brand})
+        except branding_models.BrandError as exc:
+            problems.append(f"brand: {exc.message}")
+    if df.diagnostics is not None:
+        from .admin import config as admin_cfg
+
+        try:
+            admin_cfg.validate({"version": 1, "diagnostics": df.diagnostics})
+        except admin_cfg.AdminError as exc:
+            problems.append(f"diagnostics: {exc.message}")
+    for problem in problems:
+        console.print(f"[red]{escape(str(df.path))}, {escape(problem)}[/red]")
+    if problems:
+        raise typer.Exit(2)
 
 
 def _refuse_channel_flags(slack: bool, whatsapp: bool, telegram: bool, webhook: bool) -> None:
@@ -1042,6 +1075,7 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
                 console.print(f"[red]{escape(problem)}[/red]")
             raise typer.Exit(2)
         os.environ.update(values)
+        os.environ["HUBZOID_DEPLOYMENT_FILE"] = str(df.path)  # where every bridge reads brand and chat
         public_url = public_url or df.public_url
         name = df.name or name
 
