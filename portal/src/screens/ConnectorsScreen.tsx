@@ -58,7 +58,7 @@ function SignInTag({ c }: { c: Connector }) {
       : "Hubzoid registers itself with the provider the first time someone connects.";
   return (
     <Tooltip title={how}>
-      <Tag color="blue">OAuth{c.client_id ? " · own client" : ""}</Tag>
+      <Tag className="hz-tag-accent">OAuth{c.client_id ? " · own client" : ""}</Tag>
     </Tooltip>
   );
 }

@@ -110,7 +110,7 @@ export function PageSpinner() {
 
 type NoticeTone = "info" | "success" | "warning" | "error";
 const toneStyle: Record<NoticeTone, string> = {
-  info: "bg-info-soft text-info",
+  info: "hz-notice-info",
   success: "bg-success-soft text-success",
   warning: "bg-warning-soft text-warning",
   error: "bg-danger-soft text-danger",

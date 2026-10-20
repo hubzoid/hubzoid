@@ -129,13 +129,13 @@ type Group = { id: string; label: string; lede: string; icon: ReactNode; members
 /** The Settings nav: four big destinations for running the team's agents, then
  *  a quieter personal group. Old section links still open inside their group. */
 const GROUPS: Group[] = [
-  { id: "agents", label: S.agents, lede: "", icon: <Bot size={18} aria-hidden />, big: true, team: true,
+  { id: "agents", label: S.agents, lede: "", icon: <Bot size={16} aria-hidden />, big: true, team: true,
     members: ["agents", "work", "sandboxes", "hub-changes", "instructions"] },
-  { id: "schedules", label: S.schedules, lede: "", icon: <CalendarClock size={18} aria-hidden />, big: true,
+  { id: "schedules", label: S.schedules, lede: "", icon: <CalendarClock size={16} aria-hidden />, big: true,
     members: ["schedules", "my-schedules"] },
-  { id: "usage", label: "Usage", lede: "", icon: <Gauge size={18} aria-hidden />, big: true, team: true, members: ["budgets"] },
+  { id: "usage", label: "Usage", lede: "", icon: <Gauge size={16} aria-hidden />, big: true, team: true, members: ["budgets"] },
   { id: "team", label: "Team", lede: "People, what they can do, how they sign in, and the workspace they share.",
-    icon: <UsersRound size={18} aria-hidden />, big: true, team: true,
+    icon: <UsersRound size={16} aria-hidden />, big: true, team: true,
     members: ["people", "activity", "workflow-access", "signin", "chat", "brand", "health", "advanced", "parity"],
     tabs: [
       { key: "people", label: "People" },
