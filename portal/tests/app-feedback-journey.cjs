@@ -25,6 +25,7 @@ const { WORK, SHOTS, ADMIN, SAM, AGENT_NAME, step, steps } = h;
 const COMMENT = "Synthetic check fb-e2e-7731: the September price list is missing";
 const SLACK_SECRET = "e2e-slack-signing-secret";
 const shots = [];
+let toolTarget = null;
 
 // ---- a fake Slack Web API (what the hub's Slack client calls) ---------------------------
 function fakeSlack(port) {
@@ -293,6 +294,30 @@ async function main() {
     assert.equal(viaTool.message_id, target, "the tool rated the previous answer, not its own confirmation");
     assert.equal(viaTool.comment, "The price was outdated.");
 
+    step("Repeated requests (negative, positive, negative) and a web edit keep rating only that answer");
+    const mineOn = async () => (await json(sam.context, `/api/conversations/${encodeURIComponent(cid)}/feedback`)).body.items
+      .filter((m) => m.message_id === target);
+    const countAll = async () => (await json(sam.context, `/api/conversations/${encodeURIComponent(cid)}/feedback`)).body.items.length;
+    const ratedBefore = await countAll();
+    await ask(p, "Save positive feedback on your previous answer");
+    await ask(p, "Save negative feedback on your previous answer. Still the old price.");
+    let onTarget = await mineOn();
+    assert.equal(onTarget.length, 1);
+    assert.equal(onTarget[0].rating, "negative");
+    assert.equal(await countAll(), ratedBefore, "no confirmation became a rated answer");
+    const webEdit = await sam.context.request.put(
+      `${BASE}/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(target)}/feedback`,
+      { headers: { Origin: BASE }, data: { expected_revision: onTarget[0].revision, rating: "negative", comment: "edited on the web" } });
+    assert.equal(webEdit.status(), 200);
+    await ask(p, "Save positive feedback on your previous answer");
+    onTarget = await mineOn();
+    assert.equal(onTarget[0].rating, "positive");
+    assert.equal(await countAll(), ratedBefore);
+    toolTarget = { message_id: target, rating: onTarget[0].rating, revision: onTarget[0].revision, ratings_in_conversation: ratedBefore };
+    await shot(p, "13-tool-repeated-requests", "Negative, positive, negative through chat, a web edit, then positive",
+      "Every request updates the one rating on the enterprise-plan answer; confirmations are never rated",
+      `Target ${target}: rating ${onTarget[0].rating}, revision ${onTarget[0].revision}; ${ratedBefore} ratings in the conversation before and after`);
+
     // ---- Slack, local simulation -------------------------------------------------------------
     console.log("\n[slack] Signed Slack requests against the real server, fake Slack Web API");
     const channelFile = path.join(WORK, "feedback", "slack-main.yaml");
@@ -490,7 +515,7 @@ async function main() {
     if (server) console.error(`server log: ${server.log}`);
     process.exitCode = 1;
   } finally {
-    fs.writeFileSync(path.join(WORK, "feedback-journey.json"), JSON.stringify({ steps, shots, errors }, null, 2));
+    fs.writeFileSync(path.join(WORK, "feedback-journey.json"), JSON.stringify({ steps, shots, errors, toolTarget }, null, 2));
     await browser?.close().catch(() => {});
     await server?.stop();
     slack?.server.close();
