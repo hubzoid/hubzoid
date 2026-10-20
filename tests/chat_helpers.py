@@ -122,3 +122,22 @@ def wait_titles(timeout: float = 10.0) -> None:
     from hubzoid.chat import titles
 
     assert titles.workers.wait_idle(timeout)
+
+
+_WRITES = [0]
+
+
+def write_chat_config(hub, doc: dict) -> None:
+    """Chat defaults live in a file now: write the document where the
+    deployment reads it (chat/config.yaml), with a fresh modification time."""
+    import os
+    import time
+
+    import yaml
+
+    path = Path(hub) / "chat" / "config.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    _WRITES[0] += 1
+    stamp = time.time_ns() + _WRITES[0] * 1000
+    os.utime(path, ns=(stamp, stamp))

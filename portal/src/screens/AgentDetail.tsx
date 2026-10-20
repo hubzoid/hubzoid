@@ -17,6 +17,7 @@ import { AgentConnectors } from "./ConnectorsScreen";
 import { AgentSecrets } from "./SecretsScreen";
 import { AgentChannels } from "./ChannelsScreen";
 import { AgentIntake } from "./IntakeScreen";
+import { AgentFeedback } from "./FeedbackScreen";
 import { AgentSetup } from "./SetupScreen";
 import { WorkItemsScreen } from "./WorkItemsScreen";
 import { agentName } from "../lib/agentName";
@@ -27,7 +28,7 @@ const HubChangesPage = lazyChunk(() => import("../app/pages/HubChangesPage"));
 
 export type AgentTab =
   | "overview" | "access" | "connectors" | "instructions" | "changes" | "runs" | "work" | "sandboxes"
-  | "evals" | "setup" | "secrets" | "channels" | "intake" | "activity";
+  | "evals" | "feedback" | "setup" | "secrets" | "channels" | "intake" | "activity";
 
 /** The agent page's sections: a few tabs, each holding its related parts as
  *  sub-tabs (a nested view), instead of one tab per screen. */
@@ -37,7 +38,7 @@ const SECTIONS: { key: AgentTab; label: string; parts?: [AgentTab, string][] }[]
   { key: "connectors", label: "Connectors" },
   { key: "instructions", label: "Instructions", parts: [["instructions", "Files"], ["changes", "Changes to review"]] },
   { key: "runs", label: "Runs & schedules", parts: [["runs", "Workflows"], ["work", "Work items"], ["sandboxes", "Sandboxes"]] },
-  { key: "evals", label: "Quality" },
+  { key: "evals", label: "Quality", parts: [["evals", "Evals"], ["feedback", "Feedback"]] },
   { key: "setup", label: "Setup", parts: [["setup", "Settings"], ["secrets", "Secrets"], ["channels", "Channels"], ["intake", "Intake"]] },
   { key: "activity", label: "Activity" },
 ];
@@ -114,6 +115,7 @@ export function AgentDetail({
         {tab === "secrets" && <AgentSecrets hub={hub} />}
         {tab === "channels" && <AgentChannels hub={hub} rest={rest} />}
         {tab === "intake" && <AgentIntake hub={hub} rest={rest} />}
+        {tab === "feedback" && <AgentFeedback hub={hub} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
       </div>
     </>

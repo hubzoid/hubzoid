@@ -1,8 +1,13 @@
 # Chat configuration
 
-`chat/config.yaml` is an optional deployment file for chat settings. Without it
-every setting has its product default and a fresh hub works. The file, the CLI,
-the API and Settings → Workspace settings → Chat defaults share one schema and one apply.
+Chat defaults live in the `chat:` section of `hubzoid.yaml` in the deployment
+folder (for this release, `chat/config.yaml` there is read when the section is
+missing). Without either, every setting has its product default and a fresh hub
+works. Settings → Workspace settings → Chat defaults shows them read-only; the
+file is the only place they change.
+
+Ratings (`feedback.enabled`, `feedback.tool`, `feedback.reasons`) are described in
+[Feedback on answers](feedback.md).
 
 ## The file
 
@@ -33,28 +38,32 @@ line and nearest known key. Settings for chat features that are not in this
 release (for example `voice:`) are refused with `capability_unavailable`, never
 reported as on. English is the only interface language.
 
-## Apply
+## Changing them
+
+Edit the file (or ask Claude Code or Codex to). Every agent reads it again when
+it changes, within a few seconds; there is no apply step and no copy in the
+database, and history is Git. In `hubzoid.yaml` the section holds the same keys
+without `version:`:
+
+```yaml
+chat:
+  presentation:
+    appearance:
+      default_mode: dark
+```
 
 ```bash
 hubzoid chat config schema --json
-hubzoid chat config get . --sources --json      # revision, values and where each comes from
+hubzoid chat config get . --sources --json      # the values and where each comes from
 hubzoid chat config validate . --file chat/config.yaml --json
-hubzoid chat config diff . --file chat/config.yaml --json
-hubzoid chat config apply . --file chat/config.yaml --expected-revision absent --idempotency-key <uuid> --json
-hubzoid chat config set presentation.appearance.default_mode . --value-json '"dark"'   # edits the file only
-hubzoid chat config export .
 ```
 
-`--expected-revision absent` creates the first revision and fails if one
-exists. After that pass the revision `get` returned. Two applies against the
-same revision give one winner and a `revision_conflict` (exit code 4) for the
-other. Nothing is applied in part. No restart is needed.
-
-API: `GET /api/chat/config/schema`, `GET /api/chat/config?sources=true`,
-`POST /api/chat/config/validate`, `POST /api/chat/config/diff`,
-`PUT /api/chat/config` with `{"version": 1, "expected_revision": N, "config": {...}}`
-and an `Idempotency-Key` header. `GET /api/chat/bootstrap` gives the public
-defaults before sign-in.
+An edit that makes the file invalid changes nothing: the last good values stay
+and Settings says what is wrong. A start with an invalid file stops, naming the
+line, because it holds policy (sharing, exports, file storage) that must never
+fall back to its open default. `PUT /api/chat/config` answers 409 `file_owned`.
+`GET /api/chat/config`, `GET /api/chat/config/schema` and
+`GET /api/chat/bootstrap` (public defaults before sign-in) are unchanged.
 
 ## Personal preferences
 

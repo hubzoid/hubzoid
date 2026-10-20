@@ -33,7 +33,6 @@ const SignInPage = lazyChunk(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazyChunk(() => import("./pages/SetPasswordPage"));
 const ConnectionsPage = lazyChunk(() => import("./pages/ConnectionsPage"));
 const NotFoundPage = lazyChunk(() => import("./pages/NotFoundPage"));
-const BrandPreviewPage = lazyChunk(() => import("./pages/BrandPreviewPage"));
 const SettingsPage = lazyChunk(() => import("./pages/SettingsPage"));
 
 const PUBLIC_ROUTES: Route["name"][] = ["signin", "set-password", "share"];
@@ -297,12 +296,6 @@ export default function App() {
     return wrap(
       <Suspense fallback={<PageSpinner />}>
         <SharePage shareId={route.id} />
-      </Suspense>,
-    );
-  if (route.name === "brand-preview")
-    return wrap(
-      <Suspense fallback={<PageSpinner />}>
-        <BrandPreviewPage draftId={route.id} />
       </Suspense>,
     );
   if (!authenticated) return <PageSpinner />;

@@ -4,35 +4,22 @@
 This is the generic identity seam every non-web surface plugs into. First the
 phone numbers recorded on people in the Console (``GrantStore.set_phone``): a
 WhatsApp sender, or a Telegram sender who shared their contact, with that
-number is that person. Then, when the hub has one, its own roster in the
-``identity/`` folder, presence-activated, owner-authored, git-committed. Two
-backings, one object (``Roster``):
+number is that person. Then, when the hub has one, its own lookup code,
+``identity/access.py``: a function ``resolve(surface, handle)`` (live CRM / API
+lookup). It MAY also define ``groups_for_email(email)`` to describe people on
+the web/MCP surfaces; a file that defines only ``resolve`` is never handed an
+email. Groups describe people and grant nothing.
 
-  * ``identity/access.py`` — a function ``resolve(surface, handle)`` (live CRM /
-    API lookup). Wins if present. It MAY also define ``groups_for_email(email)``
-    to opt in to email-keyed lookups on the web/MCP surfaces; a legacy file that
-    defines only ``resolve`` is never handed an email.
-  * ``identity/access.csv`` — a table ``phone,email[,groups][,extra]`` the
-    operator edits. Keyed on the normalized phone AND on the lowercased email,
-    so the same person resolves from a WhatsApp number or an Open WebUI login.
+``identity/access.csv`` is no longer read (one home for each fact: phone numbers
+are on people in Settings, and who may use a channel is a grant there). A hub
+that still has one gets a warning naming what to do instead.
 
 ``Roster`` stays callable — ``roster(surface, handle) -> {email, groups} | None``
-— so the inbound harness and Telegram enrollment are unchanged. New:
-``roster.groups_for_email(email) -> list[str]`` (``[]`` for unknown), which the
-bridge unions into a web/MCP caller's Open WebUI groups. On that path the roster
-is ADDITIVE, never a gate: an email absent from it simply contributes nothing,
-so OWUI-only users are never locked out. On a webhook surface the handle lookup
-is still the allowlist (unknown -> None -> rejected).
-
-The CSV backing reloads when the file changes on disk (mtime/size/inode stamp),
-so an operator edit takes effect on the next lookup with no restart. It is
-fail-closed by construction: an unreadable or half-saved CSV resolves to no
-groups (deny), never to a stale last-known-good grant. Save atomically
-(write-then-rename) to avoid torn reads.
+— so the inbound harness and Telegram enrollment are unchanged. On a webhook
+surface the handle lookup is the allowlist (unknown -> None -> rejected).
 """
 from __future__ import annotations
 
-import csv
 import importlib.util
 import logging
 import re
@@ -51,7 +38,8 @@ log = logging.getLogger("hubzoid.access")
 # satisfies this (it is callable), so existing type hints keep holding.
 Resolver = Callable[[str, str], "dict | None"]
 
-_CSV_NAME = "access.csv"
+_CSV_NAME = "access.csv"   # no longer read; named so doctor and logs can say so
+_CSV_WARNED: set[str] = set()
 _PY_NAME = "access.py"
 _GROUP_SPLIT = re.compile(r"[;,]")
 
@@ -113,16 +101,18 @@ def hub_roster(hub_dir) -> "Roster | None":
     """The hub's own roster from ``identity/``, or ``None`` without one.
 
     The CSV backing reloads itself on file change, so a single instance stays
-    current. A ``.py`` backing wins over a ``.csv`` table."""
+    current."""
     idir = resolve_bucket(Path(hub_dir), "identity")
     if idir is None:
         return None
     py = idir / _PY_NAME
-    table = idir / _CSV_NAME
     if py.is_file():
         return _FunctionRoster(py)
-    if table.is_file():
-        return _CsvRoster(table)
+    if (idir / _CSV_NAME).is_file() and str(idir) not in _CSV_WARNED:
+        _CSV_WARNED.add(str(idir))
+        log.warning("identity/%s in %s is no longer read: record people's phone numbers in Settings, and "
+                    "grant who may use a channel there. A hub's own identity/access.py still works.",
+                    _CSV_NAME, Path(hub_dir).name)
     return None
 
 
@@ -159,114 +149,6 @@ def reset_roster_cache() -> None:
 
 # ---------------------------------------------------------------------------
 # CSV backing
-# ---------------------------------------------------------------------------
-class _Snapshot:
-    """One immutable parse of the CSV: both indexes plus the file stamp they
-    were read at. Swapped atomically on reload."""
-
-    __slots__ = ("by_phone", "by_email", "stamp")
-
-    def __init__(self, by_phone, by_email, stamp):
-        self.by_phone = by_phone
-        self.by_email = by_email
-        self.stamp = stamp
-
-
-class _CsvRoster(Roster):
-    def __init__(self, path: Path):
-        self._path = path
-        self._lock = threading.Lock()
-        self._snap = self._reload()
-
-    def _stat_stamp(self):
-        try:
-            st = self._path.stat()
-        except OSError:
-            return None
-        return (st.st_mtime_ns, st.st_size, st.st_ino)
-
-    def _current(self) -> "_Snapshot":
-        """Return the live snapshot, reparsing if the file changed on disk."""
-        stamp = self._stat_stamp()
-        snap = self._snap
-        if stamp == snap.stamp:
-            return snap
-        with self._lock:
-            if stamp == self._snap.stamp:  # someone else reloaded while we waited
-                return self._snap
-            self._snap = self._reload(stamp)
-            return self._snap
-
-    def _reload(self, stamp=None) -> "_Snapshot":
-        if stamp is None:
-            stamp = self._stat_stamp()
-        by_phone, by_email = _load_table(self._path)
-        log.info(
-            "identity: loaded %d phone / %d email row(s) from %s",
-            len(by_phone), len(by_email), self._path,
-        )
-        return _Snapshot(by_phone, by_email, stamp)
-
-    def __call__(self, surface: str, handle: str) -> "dict | None":
-        key = normalize_phone(handle)
-        if not key:
-            return None
-        return _copy(self._current().by_phone.get(key))
-
-    def groups_for_email(self, email: str | None) -> "list[str]":
-        key = (email or "").strip().lower()
-        if not key:
-            return []
-        return list(self._current().by_email.get(key, ()))
-
-
-def _load_table(path: Path) -> "tuple[dict[str, dict], dict[str, list]]":
-    """Parse the CSV into ``(phone -> record, email -> [groups])``.
-
-    Headers are lowercased + trimmed; the phone is normalized so a prettified
-    cell still matches a raw ``wa_id``; the email is lowercased to match Open
-    WebUI; groups split on ``;`` or ``,``; blank rows skipped; any other column
-    is preserved on the phone record as context (center, name, …). Rows that
-    share an email UNION their groups (one person, several numbers is
-    legitimate). Fail-closed: any read error yields two empty indexes.
-    """
-    by_phone: "dict[str, dict]" = {}
-    by_email: "dict[str, set]" = {}
-    try:
-        with path.open(newline="", encoding="utf-8-sig") as f:
-            rows = list(csv.reader(f))
-    except OSError:
-        log.warning("identity: could not read %s; denying", path, exc_info=True)
-        return {}, {}
-    if not rows:
-        return {}, {}
-
-    header = [c.strip().lower() for c in rows[0]]
-    for raw in rows[1:]:
-        if not any((cell or "").strip() for cell in raw):
-            continue  # blank row
-        cells = {
-            header[i]: (raw[i].strip() if i < len(raw) else "")
-            for i in range(len(header))
-        }
-        phone = normalize_phone(cells.get("phone"))
-        email = (cells.get("email") or "").strip().lower() or None
-        groups = _norm_groups(cells.get("groups"))
-        if phone:
-            record: dict = {"email": email, "groups": groups}
-            for k, v in cells.items():
-                if k in ("phone", "email", "groups"):
-                    continue
-                if v:
-                    record[k] = v
-            by_phone[phone] = record
-        if email:
-            by_email.setdefault(email, set()).update(groups)
-    return by_phone, {e: sorted(g) for e, g in by_email.items()}
-
-
-# ---------------------------------------------------------------------------
-# Function backing
 # ---------------------------------------------------------------------------
 class _FunctionRoster(Roster):
     def __init__(self, path: Path):

@@ -185,8 +185,10 @@ def build_router(hub_dir: Path) -> APIRouter:
     def delete_connector(connector_id: str, request: Request):
         user = admin(request)
         same_origin(request)
-        if not registry.delete(hub_dir, connector_id, actor=user.email):
-            raise _error(404, "not_found", "No connector has this ID.")
+        try:
+            registry.delete(hub_dir, connector_id, actor=user.email)
+        except ConnectorError as err:
+            _raise(err)
         return Response(status_code=204)
 
     @router.put("/portal/api/connectors/{connector_id}/agents/{hub}", status_code=204)
@@ -206,8 +208,10 @@ def build_router(hub_dir: Path) -> APIRouter:
         """Stop offering a connector in one agent (its grants there go too)."""
         user = admin(request)
         same_origin(request)
-        if not registry.withdraw(hub_dir, connector_id, hub, actor=user.email):
-            raise _error(404, "not_found", "This agent does not offer this connector.")
+        try:
+            registry.withdraw(hub_dir, connector_id, hub, actor=user.email)
+        except ConnectorError as err:
+            _raise(err)
         return Response(status_code=204)
 
     def _known_agent(hub: str) -> None:

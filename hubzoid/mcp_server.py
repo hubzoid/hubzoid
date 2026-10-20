@@ -60,6 +60,7 @@ CHAT_SCOPED_TOOLS = frozenset({
     "list_artifacts",
     "read_upload",
     "read_upload_full",
+    "record_feedback",   # rates an answer in the caller's chat conversation; MCP has none
 })
 
 
@@ -243,7 +244,10 @@ def _registry_tool_class():
                     return ToolResult(content=f"[{exc}]", is_error=True)
                 ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
             from . import _request_ctx
+            from . import drain as drain_lib
 
+            if drain_lib.active():
+                return ToolResult(content=f"[{drain_lib.MESSAGE}]", is_error=True)
             with access.identity_scope(ident), _request_ctx.card_scope():
                 try:
                     result = await fn.on_invoke_tool(tool_ctx, args_json)

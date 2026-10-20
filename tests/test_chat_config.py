@@ -38,7 +38,7 @@ def test_config_defaults_without_files(client):
     r = client.get("/api/chat/config?sources=true")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["revision"] == 0 and body["file"] == {"path": "chat/config.yaml", "exists": False}
+    assert body["revision"] == 0 and body["file"]["exists"] is False and body["file"]["read_only"] is True
     assert body["config"]["presentation"]["locale"] == {"default": "en", "allowed": ["en"]}
     assert body["sources"]["/presentation/appearance/default_mode"] == {"value": "dark",
                                                                         "source": "default"}
@@ -83,28 +83,35 @@ def test_default_must_be_allowed():
     assert exc.value.code == "validation_failed"
 
 
-def test_atomic_apply_conflict_and_create_only(client):
-    first = _put(client, DARK, "absent")
-    assert first.status_code == 200 and first.json()["revision"] == 1
-    again = _put(client, DARK, "absent")
-    assert again.status_code == 409 and again.json()["detail"]["current_revision"] == 1
-    a = _put(client, {"presentation": {"appearance": {"default_mode": "light"}}}, 1)
-    b = _put(client, {"presentation": {"appearance": {"default_mode": "oled"}}}, 1)
-    assert a.status_code == 200 and b.status_code == 409
-    assert b.json()["detail"]["code"] == "revision_conflict"
-    assert client.get("/api/chat/config").json()["config"]["presentation"]["appearance"][
-        "default_mode"] == "light"
+def _deployment_file(hub, chat: str) -> None:
+    (hub / "hubzoid.yaml").write_text("version: 1\nhubs: [.]\nchat:\n" + chat)
 
 
-def test_idempotency_replay_and_payload_mismatch(client):
-    one = _put(client, DARK, "absent", key="k-1")
-    two = _put(client, DARK, "absent", key="k-1")
-    assert one.json()["revision"] == two.json()["revision"] == 1 and two.json()["replayed"]
-    other = _put(client, {"presentation": {"timezone": "Asia/Kolkata"}}, "absent", key="k-1")
-    assert other.status_code == 409 and other.json()["detail"]["code"] == "idempotency_key_reused"
+def test_the_file_is_the_one_home_and_writes_are_refused(hub, client):
+    # Settings, the CLI and the API can't change chat defaults: the file can.
+    refused = _put(client, DARK, "absent")
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "file_owned"
+    assert "hubzoid.yaml" in refused.json()["detail"]["message"] or "chat/config.yaml" in refused.text
+    _deployment_file(hub, "  presentation:\n    appearance:\n      default_mode: light\n")
+    body = client.get("/api/chat/config?sources=true").json()
+    assert body["config"]["presentation"]["appearance"]["default_mode"] == "light"
+    assert body["file"]["path"] == "hubzoid.yaml (chat)" and body["file"]["valid"] is True
+    # A broken edit keeps the last good values and says so; it never falls back to defaults.
+    _deployment_file(hub, "  presentation:\n    apperance: {}\n")
+    body = client.get("/api/chat/config").json()
+    assert body["config"]["presentation"]["appearance"]["default_mode"] == "light"
+    assert body["file"]["valid"] is False and "apperance" in body["file"]["error"]["message"]
 
 
-def test_preferences_lock_allowed_and_revision(client):
+def test_a_broken_file_at_start_refuses_instead_of_defaults(hub):
+    (hub / "chat").mkdir()
+    (hub / "chat" / "config.yaml").write_text("version: 1\npresentation:\n  sharing_typo: 1\n")
+    with pytest.raises(cfg.ConfigError) as exc:
+        cfg.ChatConfigService(hub).active()
+    assert exc.value.code == "chat_config_invalid"
+
+
+def test_preferences_lock_allowed_and_revision(hub, client):
     prefs = client.get("/api/chat/preferences").json()
     assert prefs["revision"] == 0 and prefs["effective"]["mode"]["source"] == "default"
     ok = client.put("/api/chat/preferences", headers=ORIGIN,
@@ -115,8 +122,8 @@ def test_preferences_lock_allowed_and_revision(client):
     stale = client.put("/api/chat/preferences", headers=ORIGIN,
                        json={"expected_revision": 0, "values": {"mode": "dark"}})
     assert stale.status_code == 409
-    _put(client, {"presentation": {"preferences": {"mode": False},
-                                   "appearance": {"default_mode": "dark"}}}, "absent")
+    _deployment_file(hub, "  presentation:\n    preferences: {mode: false}\n"
+                          "    appearance: {default_mode: dark}\n")
     locked = client.put("/api/chat/preferences", headers=ORIGIN,
                         json={"expected_revision": 1, "values": {"mode": "light"}})
     assert locked.status_code == 422 and locked.json()["detail"]["code"] == "policy_locked"
@@ -186,25 +193,13 @@ def test_theme_route_serves_css_for_both_surfaces(client):
     assert dark["--hz-accent-active"] == body["palettes"]["dark"]["actionActive"]
 
 
-def test_cli_apply_matches_api(hub, client, tmp_path):
+def test_cli_get_shows_the_file(hub):
     from hubzoid.cli import app as cli_app
 
     (hub / "chat").mkdir()
     (hub / "chat" / "config.yaml").write_text(
         "version: 1\npresentation:\n  appearance:\n    default_mode: light\n")
-    runner = CliRunner()
-    diff = runner.invoke(cli_app, ["chat", "config", "diff", str(hub), "--json"])
-    assert diff.exit_code == 0, diff.output
-    assert json.loads(diff.output)["changes"][0]["pointer"] == "/presentation/appearance/default_mode"
-    missing = runner.invoke(cli_app, ["chat", "config", "apply", str(hub), "--json"])
-    assert missing.exit_code == 2
-    applied = runner.invoke(cli_app, ["chat", "config", "apply", str(hub), "--expected-revision",
-                                      "absent", "--json"])
-    assert applied.exit_code == 0, applied.output
-    api = client.get("/api/chat/config").json()
-    assert api["revision"] == 1 and api["digest"] == json.loads(applied.output)["digest"]
-    assert api["file"]["matches_active"] is True
-    conflict = runner.invoke(cli_app, ["chat", "config", "apply", str(hub), "--expected-revision",
-                                       "0", "--json"])
-    assert conflict.exit_code == 4
-    assert json.loads(conflict.output)["detail"]["code"] == "revision_conflict"
+    got = CliRunner().invoke(cli_app, ["chat", "config", "get", str(hub), "--json"])
+    assert got.exit_code == 0, got.output
+    out = json.loads(got.output)
+    assert out["config"]["presentation"]["appearance"]["default_mode"] == "light"

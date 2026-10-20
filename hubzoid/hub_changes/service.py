@@ -1,7 +1,7 @@
 """Proposing, reviewing and applying changes to a hub's own files.
 
-What may change: ``AGENTS.md`` and Markdown files under ``knowledge/`` and
-``skills/`` (found under any accepted spelling of those folders). Access, approval and run settings, workflow code,
+What may change: ``AGENTS.md`` and Markdown files under ``knowledge/``,
+``skills/``, ``agents/`` (a delegate's ``AGENTS.md``) and ``prompts/`` (found under any accepted spelling of those folders). Access, approval and run settings, workflow code,
 local tools, secrets and anything outside the hub are never proposable.
 
 A proposal stores, per file, the SHA-256 of the bytes it had when proposed
@@ -67,7 +67,7 @@ changes = sa.Table(
     sa.Column("updated_at", sa.Float, nullable=False),
 )
 
-ROOTS = ("knowledge", "skills")
+ROOTS = ("knowledge", "skills", "agents", "prompts")
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 20
 REVIEW_PERMISSION = "manage_access"
@@ -144,7 +144,7 @@ def check_path(path: str) -> str:
         return "AGENTS.md"
     if p.parts[0].lower() not in ROOTS or len(p.parts) < 2 or p.suffix.lower() != ".md":
         raise ChangeError(f"{rel} can't be changed this way. You can change AGENTS.md and Markdown files "
-                          "under knowledge/ and skills/.", code="outside_scope")
+                          "under knowledge/, skills/, agents/ and prompts/.", code="outside_scope")
     return str(PurePosixPath(p.parts[0].lower(), *p.parts[1:]))  # the folder by its canonical name
 
 
@@ -215,6 +215,16 @@ def build(hub_dir: Path, edits: list[dict]) -> list[dict]:
     out = [f for f in files.values() if f["text"] != f["base_text"]]
     if not out:
         raise ChangeError("These edits change nothing.", code="no_change")
+    from ..chat.authoring import validate as validate_file
+
+    for f in out:
+        if f["path"] == "AGENTS.md" or f["path"].startswith(("skills/", "agents/", "prompts/")):
+            # Instructions, skills and prompts are checked with the loaders the
+            # runtime uses, so an approved change never breaks the agent.
+            problems = validate_file(f["path"], f["text"])
+            if problems:
+                raise ChangeError(f"{f['path']}: " + "; ".join(str(p.get("message") or p) for p in problems),
+                                  code="invalid_file", problems=problems)
     if len(out) > MAX_FILES:
         raise ChangeError(f"A change may touch at most {MAX_FILES} files.")
     for f in out:
@@ -534,7 +544,7 @@ def undo(hub_dir: Path, change_id: int, *, actor: str, via: str = "api") -> dict
 
 def needs_reload(ch: dict) -> bool:
     """Whether a change touched what a runtime reads only when it is built."""
-    return any(p == "AGENTS.md" or p.startswith("skills/") for p in ch.get("paths") or
+    return any(p == "AGENTS.md" or p.startswith(("skills/", "agents/")) for p in ch.get("paths") or
                [f["path"] for f in ch.get("files") or []])
 
 

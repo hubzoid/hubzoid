@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { isAppPath, parseRoute, safeRedirect, signInHref } from "../src/app/lib/router.ts";
 
 // The chat app's own routes: the server answers them with the page shell.
-for (const path of ["/", "/new", "/new/finance", "/c/c_abc123", "/s/sh_abc123", "/auth", "/auth/set-password", "/account", "/account/connections"])
+for (const path of ["/", "/new", "/new/finance", "/c/c_abc123", "/s/sh_abc123", "/auth", "/auth/set-password", "/account", "/account/connections", "/inbox", "/requests"])
   assert.equal(isAppPath(path), true, path);
 // Everything else is the server's: a full page load, never the app's "Page not found".
 for (const path of [
@@ -17,6 +17,7 @@ for (const path of [
   "/oauth/google/login",
   "/artifacts/c_1/report.md",
   "/branding/logo.svg",
+  "/branding-preview/retired",
   "/b/finance/artifacts/c_1/x.csv",
   "/connect/abc",
   "/newsletter",
@@ -24,6 +25,11 @@ for (const path of [
   "/authorize",
 ])
   assert.equal(isAppPath(path), false, path);
+
+// Both Inbox addresses survive the merged shell, while the file-owned brand has no preview route.
+assert.deepEqual(parseRoute("/inbox", new URLSearchParams()), { name: "requests" });
+assert.deepEqual(parseRoute("/requests", new URLSearchParams()), { name: "requests" });
+assert.deepEqual(parseRoute("/branding-preview/retired", new URLSearchParams()), { name: "not-found" });
 
 // Sign-in keeps only same-origin relative redirects. They are read against
 // this page's origin, as the browser will read them.

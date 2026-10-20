@@ -1,15 +1,17 @@
 # Branding and UI configuration
 
-The Hubzoid web app's brand is published, not picked up from whatever files
-sit in a folder. One brand covers sign-in, chat, shared pages and Settings.
+The Hubzoid web app's brand lives in the deployment folder, and only there.
+One brand covers sign-in, chat, shared pages and Settings.
 Choosing an agent changes the agent's name, avatar and suggestions, never the
 deployment's brand.
 
 ### Files
 
-`branding.yaml` (optional, `version: 1`) lives in the deployment folder: the
-hub folder for a standalone hub, or the folder that holds the gateway's
-deployment manifest. Its files live under `branding/`.
+The brand is the `brand:` section of `hubzoid.yaml` in the deployment folder
+(the hub folder for a deployment of one). Its files live under `branding/` next
+to it. Until a deployment has a `brand:` section, a `branding.yaml` there is
+read instead (this release only). The keys below are the same in both; in
+`hubzoid.yaml` leave out `version:`.
 
 ```yaml
 version: 1
@@ -67,37 +69,29 @@ Decorative CSS may style exactly `[data-brand-slot="brand.logoFrame"]`,
 24px) and `padding` (0 to 32px). Approval cards, errors and permission notices
 are never inside a brand slot. `custom.css` is no longer served.
 
-### Publishing
+### Changing the brand
 
-Nothing reaches teammates until an exact candidate is reviewed and activated.
+Edit `hubzoid.yaml` and the files in `branding/` (or ask Claude Code or Codex
+to), and check them:
 
 ```bash
-hubzoid branding inspect . --json            # source, active revision, legacy files
-hubzoid branding validate . --json           # every file, every palette mode
-hubzoid branding draft create . --json       # returns id, revision, digest, preview_url
-hubzoid branding diff <draft> . --json
-hubzoid branding review <draft> . --digest <digest> --expected-revision <draft revision> --decision approve
-hubzoid branding activate <draft> . --review <review id> --expected-revision <active generation>
-hubzoid branding history . --json
-hubzoid branding rollback . --revision <revision id>   # a new draft: review and activate it
-hubzoid branding export . --output brand-export
+hubzoid branding inspect . --json     # where the brand comes from, legacy files
+hubzoid branding validate . --json    # the brand as every agent will read it
 ```
 
-Open the `preview_url` (`/branding-preview/<draft>`) while signed in as an
-administrator to see the draft on sign-in, chat, a shared page and Settings
-in light, dark and OLED. Settings → Workspace settings → Brand does the same steps,
-and can edit the main fields and upload a logo or favicon as a new draft. A
-changed file, a changed active brand or a new validator release needs a fresh
-review. Activation is atomic: a retried request with the same
-`Idempotency-Key` returns the same activation, and a stale `expected-revision`
-is refused.
+Every agent reads the change within a few seconds; history is the folder's Git
+history. Settings → Brand shows what people see and which file it comes from,
+read-only. An edit that makes the file invalid changes nothing (the last good
+brand, and its terms, stay) and Settings says what is wrong; a start with an
+invalid brand stops, naming the line. Each person's acceptance of the terms and
+their dismissed announcements stay with them.
 
 `hubzoid branding import-legacy . --write` turns a pre-2.0 `branding/` folder
 into a `branding.yaml` and reports each file: mapped, not used, or dropped
 (`custom.css`).
 
-The API is `/api/branding/...` (drafts, assets, preview, reviews, activate,
-history, export, rollbacks) and the public `GET /api/branding`.
+The API is `GET /api/branding/source`, `GET /api/branding/active`, each
+person's `/api/branding/me...`, and the public `GET /api/branding`.
 
 ## Quick-start prompt suggestions
 

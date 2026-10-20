@@ -3377,3 +3377,11 @@
 /* A person's name reads the same in every list: the name, not a coloured link. */
 .console-embed .person-cell a { font-weight: 600; color: var(--hz-ink); }
 .console-embed .person-cell a:hover { text-decoration: underline; }
+
+/* Rating an answer (chat/feedback.tsx): the form fits a phone beside the answer. */
+.hz-feedback-form {
+  width: min(18rem, calc(100vw - 1.5rem));
+}
+.hz-icon-btn[data-saved] {
+  color: var(--color-accent, currentColor);
+}

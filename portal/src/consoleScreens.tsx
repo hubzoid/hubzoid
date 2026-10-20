@@ -22,7 +22,7 @@ const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then
 const UsageScreen = lazyChunk(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
-const TABS: AgentTab[] = ["overview", "access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "setup", "secrets", "channels", "intake", "activity"];
+const TABS: AgentTab[] = ["overview", "access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "feedback", "setup", "secrets", "channels", "intake", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */

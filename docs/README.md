@@ -1,8 +1,10 @@
 # Documentation
 
-The [website docs](https://hubzoid.com/docs) organize the product guides for readers.
-This directory retains revision-specific guides for source users and reviewers.
-Website publication is independent of this checkout; use these local guides when
+This directory is the one source of Hubzoid's documentation. The
+[website docs](https://hubzoid.com/docs) should render or link these pages rather
+than keep their own copies (until they do, the website can lag behind), and the [builder skill](../skills/builder/SKILL.md)
+links here instead of repeating them. Each release's pages are at its tag, so
+read the tag of the version you installed. Use this checkout's pages when
 testing an unreleased branch.
 
 | Journey | Guides |

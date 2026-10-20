@@ -1,7 +1,9 @@
 """Routes for feedback, helpers and notifications (``hubzoid.chat.feedback``).
 
   PUT|GET|DELETE /api/conversations/{id}/messages/{mid}/feedback   your rating of an answer
+  GET  /api/conversations/{id}/feedback     your ratings in a conversation
   GET  /api/chat/feedback[/export]          ratings of this hub (chat.feedback.read)
+  GET  /api/hubs/{hub}/feedback[/export]    the same, for the agent's Feedback page
   POST /api/chat/helpers                    start a helper (follow-ups, title)
   GET  /api/chat/helpers                    your helper results for a conversation
   PATCH /api/conversations/{id}/title       rename (a typed title always wins)
@@ -21,7 +23,7 @@ import threading
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from ..control import authz
 from . import engine_routes as er
@@ -81,28 +83,64 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
         await call(svc.delete_feedback, actor.id, mid, body.get("expected_revision"))
         return Response(status_code=204)
 
-    @app.get("/api/chat/feedback")
-    async def list_feedback(request: Request):
-        user, actor = await actor_of(request)
-        if not await manager(user, "chat.feedback.read"):
-            raise authz.denied("chat.feedback.read")
-        q = request.query_params
-        return await call(svc.list_feedback, agent_id=q.get("agent_id"), rating=q.get("rating"),
-                          reason=q.get("reason"), limit=int(q.get("limit") or 50), cursor=q.get("cursor"),
-                          reader=actor)
+    @app.get("/api/conversations/{cid}/feedback")
+    async def my_feedback(cid: str, request: Request):
+        _, actor = await actor_of(request)
+        await call(engine.readable, cid, actor)
+        return {"items": await call(svc.mine, cid, actor.id)}
 
-    @app.get("/api/chat/feedback/export")
-    async def export_feedback(request: Request):
+    async def reviewer(request: Request):
+        """The reader of this hub's ratings, and whether they may also read
+        the WhatsApp replies those ratings quote (Intake)."""
         user, actor = await actor_of(request)
-        if not await manager(user, "chat.feedback.read"):
+        try:
+            p = await asyncio.to_thread(authz.principal_for, user, ctx.hub_dir)
+        except Exception:  # noqa: BLE001 - fail closed
+            raise authz.denied("chat.feedback.read") from None
+        if not p.can("chat.feedback.read", ctx.hub):
             raise authz.denied("chat.feedback.read")
+        return actor, p.can("intake.read", ctx.hub)
+
+    def filters(request: Request) -> dict:
+        q = request.query_params
+        try:
+            since = float(q["since"]) if q.get("since") else None
+        except ValueError:
+            raise error(400, "invalid_request", "since is a time in seconds.") from None
+        return dict(agent_id=q.get("agent_id"), rating=q.get("rating"), reason=q.get("reason"),
+                    source=q.get("source"), since=since)
+
+    async def review_list(request: Request):
+        actor, intake_visible = await reviewer(request)
+        q = request.query_params
+        try:
+            limit = int(q.get("limit") or 50)
+        except ValueError:
+            raise error(400, "invalid_request", "limit is a number.") from None
+        out = await call(svc.list_feedback, limit=limit, cursor=q.get("cursor"), reader=actor,
+                         intake_visible=intake_visible, **filters(request))
+        return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+    async def review_export(request: Request):
+        actor, intake_visible = await reviewer(request)
         fmt = request.query_params.get("format") or "json"
         if fmt not in ("json", "csv"):
             raise error(422, "validation_failed", "format is json or csv.")
-        data, media = await call(svc.export_feedback, fmt, agent_id=request.query_params.get("agent_id"),
-                                 rating=request.query_params.get("rating"), reader=actor)
+        data, media = await call(svc.export_feedback, fmt, reader=actor, intake_visible=intake_visible,
+                                 **filters(request))
         return Response(data, media_type=media, headers={
-            "Content-Disposition": f'attachment; filename="feedback.{fmt}"', "Cache-Control": "no-store"})
+            "Content-Disposition": f'attachment; filename="feedback.{fmt}"', "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff"})
+
+    app.add_api_route("/api/chat/feedback", review_list, methods=["GET"])
+    app.add_api_route("/api/chat/feedback/export", review_export, methods=["GET"])
+    # The agent's Feedback page in Settings: the same list, under the hub's own routes.
+    from .. import hub_routes
+
+    hub_router = hub_routes.router(ctx.hub_dir, tags=["feedback"])
+    hub_router.add_api_route("/feedback", review_list, methods=["GET"])
+    hub_router.add_api_route("/feedback/export", review_export, methods=["GET"])
+    app.include_router(hub_router)
 
     # -- helpers -------------------------------------------------------------------
     @app.post("/api/chat/helpers", status_code=202)

@@ -100,6 +100,7 @@ class WhatsAppAdapter(Adapter):
     webhook = True
     customer_facing = True
     send_action = "customer_reply.send"
+    feedback_target = "workflow"
     recovery = "escalate"
     part_chars = 4000
     max_parts = 4
@@ -170,6 +171,8 @@ class WhatsAppAdapter(Adapter):
                         continue
                     if not ours:
                         ev.ignore_reason = "phone_number_mismatch"
+                    elif ev.kind == "feedback":
+                        pass    # a rating never opens or extends the 24-hour window
                     elif ev.data["trust"]["reason"] != "future_timestamp":
                         key = ev.origin.thread_key       # only a real, current message opens the window
                         windows[key] = max(windows.get(key, 0), int(ev.data.get("timestamp") or 0))
@@ -232,7 +235,34 @@ class WhatsAppAdapter(Adapter):
             ev.text = f"[A {msg.get('type') or 'unknown'} message that Hubzoid cannot show]"
             ev.data["trust"] = {"decision": trust["decision"], "reason": "unsupported_message",
                                 "evidence": {"message_type": msg.get("type")}}
+        if conn.config.feedback:
+            self._rating(msg, text, ev)
         return ev
+
+    @staticmethod
+    def _rating(msg: dict, text: str, ev: InboundEvent) -> None:
+        """A 👍 or 👎 reaction (or its removal), or a reply that quotes one of
+        our messages and starts with 👍 or 👎, may rate a reply we sent. Which
+        reply, if any, is decided when it is routed (hubzoid.channels.feedback):
+        anything else stays an ordinary message, as before."""
+        from ..feedback import emoji_rating
+
+        if msg.get("type") == "reaction":
+            reaction = msg.get("reaction") if isinstance(msg.get("reaction"), dict) else {}
+            emoji = reaction.get("emoji") or ""
+            rating = emoji_rating(emoji) if emoji else "remove"
+            if rating and reaction.get("message_id"):
+                ev.kind = "feedback"
+                ev.data.update(action={"positive": "up", "negative": "down"}.get(rating, "remove"),
+                               target=str(reaction["message_id"]))
+            return
+        quoted = (msg.get("context") or {}).get("id") if isinstance(msg.get("context"), dict) else None
+        rating = emoji_rating(text)
+        if quoted and rating and msg.get("type") == "text":
+            comment = text.strip()[1:].lstrip("\U0001F3FB\U0001F3FC\U0001F3FD\U0001F3FE\U0001F3FF\uFE0F")
+            ev.kind = "feedback"
+            ev.data.update(action="up" if rating == "positive" else "down", target=str(quoted),
+                           comment=comment.strip(" :-–—\n")[:4000])
 
     def ack_response(self, admitted):
         return 200, {"received": True}

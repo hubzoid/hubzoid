@@ -1,5 +1,25 @@
-"""The connector registry: remote MCP servers an administrator offers
-(``hz_connectors``, in the shared operational store).
+"""The connector registry: remote MCP servers the deployment offers, defined in
+files: ``connectors/<id>.yaml`` in the deployment folder (the hub folder for a
+deployment of one)::
+
+    version: 1
+    name: GitHub
+    url: https://api.githubcopilot.com/mcp/
+    sign_in: oauth            # oauth (each person), shared (one company key) or none
+    client_id: Iv1.abc        # optional, a client registered in advance
+    client_secret: env:GITHUB_MCP_CLIENT_SECRET   # a reference, never the value
+    scopes: [repo]
+    tools: [list_issues, get_issue]               # optional allow-list
+    hubs: [support-hub, ops-hub]                  # the agents that offer it
+    enabled: true
+
+Settings shows connectors read-only; each person connects their own account
+there. The database keeps only what people and providers create: each
+person's tokens, sign-in flows in progress, and clients registered with a
+provider dynamically (the ``hz_connectors`` row caches those).
+
+What follows describes a connector's fields as they were stored before 2.0
+(``hz_connectors``, for ``hubzoid upgrade``):
 
 A connector is a slug id (also the app of its ``connector_<id>`` capability), a
 display name, the server URL, how it signs in (``oauth``: each person with their
@@ -239,62 +259,193 @@ def _body(data) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Reads
+# Reads: the connector files are the definitions
 # ---------------------------------------------------------------------------
-def _get_row(conn, cid: str) -> dict | None:
-    r = conn.execute(text(_SELECT + " WHERE id = :id"), {"id": cid}).fetchone()
-    return _row(r) if r else None
+FILE_KEYS = {"version", "name", "url", "sign_in", "client_id", "client_secret", "scopes", "tools",
+             "enabled", "shared_header", "shared_key", "hubs"}
+
+
+@dataclass(frozen=True)
+class Definition:
+    connector: "Connector"
+    hubs: tuple[str, ...]
+    client_secret_ref: str | None
+    shared_key_ref: str | None
+    path: Path
+
+
+def folder(hub_dir) -> Path:
+    """Where the deployment's connector files live: ``connectors/`` in the
+    deployment folder (the hub folder for a deployment of one)."""
+    from ..control.filesettings import settings_root
+
+    return settings_root(Path(hub_dir)) / "connectors"
+
+
+def _ref(value, what: str) -> str | None:
+    if value in (None, ""):
+        return None
+    from ..secretstore import RefError, parse
+
+    try:
+        parse(str(value))
+    except RefError as exc:
+        raise ConnectorError("invalid_ref", f"{what} is a reference such as env:NAME, never the "
+                             f"value itself ({exc}).", 422) from None
+    return str(value)
+
+
+def parse_file(path: Path) -> Definition:
+    """One ``connectors/<id>.yaml``. Raises ConnectorError naming the file."""
+    from ..control import yamlfile
+
+    cid = check_id(path.stem)
+    try:
+        data = yamlfile.load(path).data or {}
+    except yamlfile.YamlError as exc:
+        raise ConnectorError("invalid_file", f"{path.name}: {exc.message}", 422) from None
+    if not isinstance(data, dict):
+        raise ConnectorError("invalid_file", f"{path.name} is a mapping of settings.", 422)
+    unknown = sorted(set(data) - FILE_KEYS)
+    if unknown:
+        raise ConnectorError("invalid_file", f"{path.name}: unknown key {unknown[0]!r}.", 422)
+    try:
+        auth = _auth_type(data.get("sign_in", "oauth"))
+        client_id = _optional_text(data.get("client_id"), code="invalid_client_id", what="client_id",
+                                   limit=_CLIENT_ID_MAX) if auth == "oauth" else None
+        secret_ref = _ref(data.get("client_secret"), "client_secret") if auth == "oauth" else None
+        shared_ref = _ref(data.get("shared_key"), "shared_key") if auth == "shared" else None
+        if auth == "shared" and not shared_ref:
+            raise ConnectorError("invalid_shared_secret", "A shared connector names its key: "
+                                 "shared_key: env:NAME.", 422)
+        hubs = data.get("hubs") or []
+        if not isinstance(hubs, list) or not all(isinstance(h, str) and h.strip() for h in hubs):
+            raise ConnectorError("invalid_hubs", "hubs lists the agents (hub folder names) that offer "
+                                 "this connector.", 422)
+        connector = Connector(
+            id=cid, name=_name(data.get("name") or cid), url=net.check_url(data.get("url")), auth_type=auth,
+            client_id=client_id, has_client_secret=bool(secret_ref),
+            scopes=_scopes(data.get("scopes")) if auth == "oauth" else None,
+            tool_allowlist=tuple(_allowlist(data.get("tools")) or ()) or None,
+            enabled=_enabled(data.get("enabled", True)), created_by="file", created_at=0.0, updated_at=0.0,
+            registered=False, shared_header=_shared_header(data.get("shared_header")) if auth == "shared" else None,
+            has_shared_secret=bool(shared_ref))
+    except ConnectorError as exc:
+        raise ConnectorError(exc.code, f"{path.name}: {exc.message}", 422) from None
+    return Definition(connector, tuple(_hub(h) for h in hubs), secret_ref, shared_ref, path)
+
+
+_seen: dict[str, tuple] = {}
+
+
+def definitions(hub_dir) -> dict[str, Definition]:
+    """Every valid connector file, by id; cached until the files change. A
+    file that becomes invalid keeps its last good definition while the hub
+    runs; one that never was valid is left out (doctor names it)."""
+    base = folder(hub_dir)
+    paths = sorted(p for p in base.glob("*.y*ml") if p.suffix in (".yaml", ".yml")) if base.is_dir() else []
+    out: dict[str, Definition] = {}
+    for path in paths:
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        stamp = (st.st_mtime_ns, st.st_size)
+        hit = _seen.get(str(path))
+        if hit is not None and hit[0] == stamp:
+            if hit[1] is not None:
+                out[hit[1].connector.id] = hit[1]
+            continue
+        try:
+            d = parse_file(path)
+        except ConnectorError as exc:
+            log.warning("connectors: %s", exc.message)
+            d = hit[1] if hit is not None else None
+        _seen[str(path)] = (stamp, d)
+        if d is not None:
+            out[d.connector.id] = d
+    return out
+
+
+def problems(hub_dir) -> list[str]:
+    """What is wrong with each connector file, for doctor and Settings."""
+    base = folder(hub_dir)
+    out = []
+    for path in sorted(base.glob("*.yaml")) if base.is_dir() else []:
+        try:
+            parse_file(path)
+        except ConnectorError as exc:
+            out.append(exc.message)
+    return out
+
+
+def _with_cache(hub_dir, d: Definition) -> "Connector":
+    from dataclasses import replace
+
+    try:
+        with engine(hub_dir).connect() as conn:
+            r = conn.execute(text("SELECT client_info_enc FROM hz_connectors WHERE id = :id"),
+                             {"id": d.connector.id}).fetchone()
+    except Exception:  # noqa: BLE001 - a store that can't be read means no cached client
+        r = None
+    return replace(d.connector, registered=bool(r and r[0]))
 
 
 def get(hub_dir, cid: str) -> Connector | None:
     if not isinstance(cid, str) or not ID_RE.match(cid):
         return None
-    with engine(hub_dir).connect() as conn:
-        row = _get_row(conn, cid)
-    return _connector(row) if row else None
+    d = definitions(hub_dir).get(cid)
+    return _with_cache(hub_dir, d) if d else None
 
 
 def list_all(hub_dir) -> list[Connector]:
-    with engine(hub_dir).connect() as conn:
-        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()]
-    return [_connector(r) for r in rows]
+    return sorted((_with_cache(hub_dir, d) for d in definitions(hub_dir).values()),
+                  key=lambda c: (c.name, c.id))
+
+
+def _resolve(hub_dir, ref: str | None, what: str) -> str | None:
+    if not ref:
+        return None
+    from ..secretstore import resolve
+
+    try:
+        return resolve(ref, Path(hub_dir))
+    except Exception:  # noqa: BLE001 - SecretError and friends
+        log.error("connectors: %s (%s) is not set", what, ref)
+        return None
 
 
 def shared_headers(hub_dir, cid: str) -> dict | None:
-    """The request header of a Shared key connector, decrypted, or None. A key
-    sent as ``Authorization`` without a scheme is sent as a Bearer token."""
-    with engine(hub_dir).connect() as conn:
-        r = conn.execute(text("SELECT auth_type, shared_header, shared_secret_enc FROM "
-                              "hz_connectors WHERE id = :id"), {"id": cid}).fetchone()
-    if not r or r[0] != "shared" or not r[2]:
+    """The request header of a Shared key connector, from the reference its
+    file names, or None. A key sent as ``Authorization`` without a scheme is
+    sent as a Bearer token."""
+    d = definitions(hub_dir).get(cid)
+    if d is None or d.connector.auth_type != "shared":
+        return None
+    key = _resolve(hub_dir, d.shared_key_ref, f"the shared key of {cid}")
+    if not key:
         return None
     try:
-        key = secretbox.decrypt_text(Path(hub_dir), r[2])
-    except secretbox.SecretKeyError:
-        log.error("connectors: the shared key of %s cannot be decrypted with the deployment key",
-                  cid)
+        _check_shared_key(key)
+    except ConnectorError:
+        log.error("connectors: the shared key of %s (%s) is not a valid header value", cid, d.shared_key_ref)
         return None
-    header = r[1] or DEFAULT_SHARED_HEADER
+    header = d.connector.shared_header or DEFAULT_SHARED_HEADER
     if header.lower() == "authorization" and " " not in key.strip():
         key = f"Bearer {key.strip()}"
     return {header: key}
 
 
 def client_secret(hub_dir, cid: str) -> str | None:
-    """The pre-registered client secret, decrypted, or None."""
-    with engine(hub_dir).connect() as conn:
-        r = conn.execute(text("SELECT client_secret_enc FROM hz_connectors WHERE id = :id"),
-                         {"id": cid}).fetchone()
-    if not r or not r[0]:
+    """The pre-registered client secret, from the reference its file names."""
+    d = definitions(hub_dir).get(cid)
+    if d is None or not d.client_secret_ref:
         return None
-    try:
-        return secretbox.decrypt_text(Path(hub_dir), r[0])
-    except secretbox.SecretKeyError:
-        log.error("connectors: the client secret of %s cannot be decrypted with the deployment "
-                  "key", cid)
-        raise ConnectorError("secret_unreadable", "This connector's client secret cannot be read "
-                             "with this deployment's key. An administrator can enter it again.",
-                             500) from None
+    value = _resolve(hub_dir, d.client_secret_ref, f"the client secret of {cid}")
+    if value is None:
+        raise ConnectorError("secret_unreadable", f"{d.client_secret_ref} (the client secret of {cid}) "
+                             "is not set. Add it to the deployment's .env.", 500)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +484,16 @@ def save_registration(hub_dir, cid: str, redirect_uri: str, client: dict, *,
             r = conn.execute(text("SELECT client_info_enc FROM hz_connectors WHERE id = :id"),
                              {"id": cid}).fetchone()
             if not r:
-                raise ConnectorError("not_found", "This connector no longer exists.", 404)
+                d = definitions(hub_dir).get(cid)
+                if d is None:
+                    raise ConnectorError("not_found", "This connector no longer exists.", 404)
+                # The row only caches clients registered with the provider.
+                now = time.time()
+                conn.execute(text("INSERT INTO hz_connectors (id, name, url, auth_type, enabled, created_at, "
+                                  "updated_at) VALUES (:id, :n, :u, :a, 1, :t, :t)"),
+                             {"id": cid, "n": d.connector.name, "u": d.connector.url,
+                              "a": d.connector.auth_type, "t": now})
+                r = (None,)
             current = r[0]
             clients = _registrations(hub_dir, current)
             existing = clients.get(redirect_uri)
@@ -391,243 +551,76 @@ def _audit(conn, hub_dir, actor: str, action: str, cid: str) -> None:
                                          permission=capability(cid), surface="console")
 
 
+def _file_owned(cid: str | None = None) -> ConnectorError:
+    where = f"connectors/{cid}.yaml" if cid else "connectors/<id>.yaml"
+    return ConnectorError("file_owned", f"Connectors are defined in {where} in the deployment folder. "
+                          "Edit the file (or ask Claude Code or Codex to); every agent picks it up. Each "
+                          "person still connects their own account here.", 409)
+
+
 def create(hub_dir, data, *, actor: str) -> Connector:
-    data = _body(data)
-    name = _name(data.get("name"))
-    url = net.check_url(data.get("url"))
-    auth = _auth_type(data.get("auth_type", "oauth"))
-    client_id = _optional_text(data.get("client_id"), code="invalid_client_id",
-                               what="The client ID", limit=_CLIENT_ID_MAX)
-    secret = _optional_text(data.get("client_secret"), code="invalid_client_secret",
-                            what="The client secret", limit=_SECRET_MAX)
-    shared_header = shared_enc = None
-    if auth in ("none", "shared"):
-        client_id = secret = None
-    if auth == "shared":
-        shared_header = _shared_header(data.get("shared_header"))
-        key = _optional_text(data.get("shared_secret"), code="invalid_shared_secret",
-                             what="The key", limit=_SECRET_MAX)
-        if not key:
-            raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
-        _check_shared_key(key)
-        shared_enc = secretbox.encrypt(Path(hub_dir), key)
-    if secret and not client_id:
-        raise ConnectorError("invalid_client_secret", "Enter the client ID that goes with the "
-                             "client secret.", 422)
-    scopes = _scopes(data.get("scopes")) if auth == "oauth" else None
-    allow = _allowlist(data.get("tool_allowlist"))
-    enabled = _enabled(data.get("enabled", True))
-    explicit = data.get("id")
-    now = time.time()
-    with engine(hub_dir).begin() as conn:
-        if explicit not in (None, ""):
-            cid = check_id(explicit)
-            if _get_row(conn, cid):
-                raise ConnectorError("exists", f"A connector with the ID {cid} already exists.", 409)
-        else:
-            base = slugify(name)
-            if not ID_RE.match(base or ""):
-                raise ConnectorError("invalid_id", "Choose an ID for this connector: lowercase "
-                                     "letters, digits or _.", 422)
-            cid, n = base, 2
-            while _get_row(conn, cid):
-                cid = f"{base[:36]}_{n}"
-                n += 1
-        conn.execute(text(
-            "INSERT INTO hz_connectors (" + ", ".join(_COLUMNS) + ") VALUES ("
-            + ", ".join(f":{k}" for k in _COLUMNS) + ")"),
-            {"id": cid, "name": name, "url": url, "auth_type": auth, "client_id": client_id,
-             "client_secret_enc": secretbox.encrypt(Path(hub_dir), secret) if secret else None,
-             "client_info_enc": None, "scopes": scopes,
-             "tool_allowlist": json.dumps(allow) if allow else None,
-             "enabled": 1 if enabled else 0, "created_by": normalize(actor) or None,
-             "created_at": now, "updated_at": now, "shared_header": shared_header,
-             "shared_secret_enc": shared_enc})
-        _audit(conn, hub_dir, actor, "connector_create", cid)
-    log.info("connectors: %s added %s (%s)", normalize(actor), cid, auth)
-    return get(hub_dir, cid)
+    raise _file_owned()
 
 
 def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
-    """Apply the fields present in ``data``. Returns (connector, reset) where
-    ``reset`` is True when people's existing connections no longer applied (the
-    URL or authentication changed) and were removed: a token is never sent to
-    a server other than the one that issued it."""
-    data = _body(data)
-    if "id" in data and data["id"] not in (None, cid):
-        raise ConnectorError("invalid_id", "A connector's ID cannot be changed. Add a new one "
-                             "instead.", 422)
-    with engine(hub_dir).begin() as conn:
-        row = _get_row(conn, cid) if ID_RE.match(cid or "") else None
-        if row is None:
-            raise ConnectorError("not_found", "No connector has this ID.", 404)
-        changes: dict = {}
-        if "name" in data:
-            changes["name"] = _name(data["name"])
-        if "url" in data:
-            changes["url"] = net.check_url(data["url"])
-        if "auth_type" in data:
-            changes["auth_type"] = _auth_type(data["auth_type"])
-        if "client_id" in data:
-            changes["client_id"] = _optional_text(data["client_id"], code="invalid_client_id",
-                                                  what="The client ID", limit=_CLIENT_ID_MAX)
-            if changes["client_id"] != row["client_id"] and "client_secret" not in data:
-                # A secret belongs to its client ID.
-                changes["client_secret_enc"] = None
-        if "client_secret" in data:
-            secret = _optional_text(data["client_secret"], code="invalid_client_secret",
-                                    what="The client secret", limit=_SECRET_MAX)
-            changes["client_secret_enc"] = (secretbox.encrypt(Path(hub_dir), secret)
-                                            if secret else None)
-        if "scopes" in data:
-            changes["scopes"] = _scopes(data["scopes"])
-        if "tool_allowlist" in data:
-            allow = _allowlist(data["tool_allowlist"])
-            changes["tool_allowlist"] = json.dumps(allow) if allow else None
-        if "enabled" in data:
-            changes["enabled"] = 1 if _enabled(data["enabled"]) else 0
-        if "shared_header" in data:
-            changes["shared_header"] = _shared_header(data["shared_header"])
-        if "shared_secret" in data:
-            key = _optional_text(data["shared_secret"], code="invalid_shared_secret",
-                                 what="The key", limit=_SECRET_MAX)
-            if key:
-                _check_shared_key(key)
-            changes["shared_secret_enc"] = secretbox.encrypt(Path(hub_dir), key) if key else None
-        auth = changes.get("auth_type", row["auth_type"])
-        if auth in ("none", "shared"):
-            changes["client_id"] = None
-            changes["client_secret_enc"] = None
-        if auth == "shared":
-            changes.setdefault("shared_header", row.get("shared_header") or DEFAULT_SHARED_HEADER)
-            if ("url" in changes and changes["url"] != row["url"]
-                    and not changes.get("shared_secret_enc")):
-                # A key belongs to the server it was given for: the stored one is
-                # never sent to a new address.
-                raise ConnectorError("shared_key_required", "A new server needs its own key. "
-                                     "Enter the key again.", 422)
-            if not changes.get("shared_secret_enc", row.get("shared_secret_enc")):
-                raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
-        else:
-            changes["shared_header"] = None
-            changes["shared_secret_enc"] = None
-        client_id = changes.get("client_id", row["client_id"])
-        secret_enc = changes.get("client_secret_enc", row["client_secret_enc"])
-        if secret_enc and not client_id:
-            raise ConnectorError("invalid_client_secret", "Enter the client ID that goes with "
-                                 "the client secret.", 422)
-        reset = (("url" in changes and changes["url"] != row["url"])
-                 or ("auth_type" in changes and changes["auth_type"] != row["auth_type"]))
-        if reset:
-            # A different server or authorization: the cached client and every
-            # in-flight authorization belong to the old one.
-            changes["client_info_enc"] = None
-            conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
-        if changes:
-            changes["updated_at"] = time.time()
-            conn.execute(text("UPDATE hz_connectors SET "
-                              + ", ".join(f"{k} = :{k}" for k in changes) + " WHERE id = :id"),
-                         {**changes, "id": cid})
-            _audit(conn, hub_dir, actor, "connector_update", cid)
-    if changes:
-        log.info("connectors: %s changed %s (%s)", normalize(actor), cid,
-                 ", ".join(sorted(k for k in changes if k != "updated_at")))
-    if reset:
-        from . import oauth_flow, tokens
-
-        oauth_flow.forget_discovery(row["url"])
-        dropped = tokens.drop_connector(hub_dir, cid)
-        if dropped:
-            log.info("connectors: %s now points elsewhere; %d connection(s) removed", cid, dropped)
-    return get(hub_dir, cid), reset
+    raise _file_owned(cid)
 
 
 def delete(hub_dir, cid: str, *, actor: str) -> bool:
-    """Remove the connector, every in-flight authorization for it and every
-    person's connection to it (revoked at the provider in the background).
-    Grants of its capability stay in the access store, shown as obsolete."""
-    if not isinstance(cid, str) or not ID_RE.match(cid):
-        return False
-    with engine(hub_dir).begin() as conn:
-        res = conn.execute(text("DELETE FROM hz_connectors WHERE id = :id"), {"id": cid})
-        if res.rowcount != 1:
-            return False
-        conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
-        conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = :id"), {"id": cid})
-        _audit(conn, hub_dir, actor, "connector_delete", cid)
-    log.info("connectors: %s removed %s", normalize(actor), cid)
-    from . import tokens
-
-    tokens.drop_connector(hub_dir, cid)
-    return True
+    raise _file_owned(cid)
 
 
-# ---------------------------------------------------------------------------
-# Which agents offer a connector
-# ---------------------------------------------------------------------------
+def stored_definitions(hub_dir, *, eng=None) -> list[dict]:
+    """Connectors defined in the database before 2.0 (Settings, 1.2 to 1.3),
+    with their secrets decrypted, for ``hubzoid upgrade`` to write into files
+    and .env. Never shown or logged."""
+    out = []
+    with (eng if eng is not None else engine(hub_dir)).connect() as conn:
+        rows = [_row(r) for r in conn.execute(text(_SELECT + " WHERE created_by IS NOT NULL ORDER BY id"))
+                .fetchall()]
+        agents = {}
+        try:
+            for cid, hub in conn.execute(text("SELECT connector_id, hub FROM hz_connector_agents")):
+                agents.setdefault(cid, []).append(hub)
+        except Exception:  # noqa: BLE001 - the table may already be gone
+            pass
+    for row in rows:
+        def dec(value):
+            if not value:
+                return None
+            try:
+                return secretbox.decrypt_text(Path(hub_dir), value)
+            except secretbox.SecretKeyError:
+                return None
+        out.append({**{k: row[k] for k in ("id", "name", "url", "auth_type", "client_id", "scopes",
+                                           "tool_allowlist", "enabled", "shared_header")},
+                    "client_secret": dec(row["client_secret_enc"]), "shared_secret": dec(row["shared_secret_enc"]),
+                    "hubs": sorted(agents.get(row["id"], []))})
+    return out
+
+
 def _hub(hub) -> str:
     return normalize(str(hub or ""))
 
 
 def offered_in(hub_dir, hub, *, conn=None) -> set[str]:
-    """The ids of the connectors offered in agent `hub`."""
-    def read(c):
-        return {r[0] for r in c.execute(text(
-            "SELECT connector_id FROM hz_connector_agents WHERE hub = :h"), {"h": _hub(hub)})}
-
-    if conn is not None:
-        return read(conn)
-    with engine(hub_dir).connect() as c:
-        return read(c)
+    """The ids of the connectors offered in agent `hub` (their files' ``hubs``)."""
+    hub = _hub(hub)
+    return {cid for cid, d in definitions(hub_dir).items() if hub in d.hubs}
 
 
 def agents_of(hub_dir, cid: str) -> list[str]:
     """The agents that offer connector `cid`."""
-    with engine(hub_dir).connect() as conn:
-        return sorted(r[0] for r in conn.execute(text(
-            "SELECT hub FROM hz_connector_agents WHERE connector_id = :c"), {"c": cid}))
+    d = definitions(hub_dir).get(cid)
+    return sorted(d.hubs) if d else []
 
 
 def offer(hub_dir, cid: str, hub, *, actor: str) -> bool:
-    """Offer an existing connector in agent `hub`. True when it was not yet."""
-    hub = _hub(hub)
-    if not hub or hub == "*":
-        raise ConnectorError("invalid_agent", "Choose an agent.", 422)
-    with engine(hub_dir).begin() as conn:
-        if not _get_row(conn, cid):
-            raise ConnectorError("not_found", "This connector doesn't exist.", 404)
-        if cid in offered_in(hub_dir, hub, conn=conn):
-            return False
-        conn.execute(text("INSERT INTO hz_connector_agents (connector_id, hub, added_by, added_at) "
-                          "VALUES (:c, :h, :b, :t)"),
-                     {"c": cid, "h": hub, "b": normalize(actor) or None, "t": time.time()})
-        from ..access import store_for
-
-        store_for(Path(hub_dir)).write_audit(conn, normalize(actor) or "unknown", "connector_offer",
-                                             hub=hub, permission=capability(cid), surface="console")
-    return True
+    raise _file_owned(cid)
 
 
 def withdraw(hub_dir, cid: str, hub, *, actor: str) -> bool:
-    """Stop offering connector `cid` in agent `hub`: people stop using it there
-    and its grants in that agent are removed. The connector, people's
-    connections and other agents' offers stay."""
-    from ..access import store_for
-
-    hub = _hub(hub)
-    with engine(hub_dir).begin() as conn:
-        res = conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = :c "
-                                "AND hub = :h"), {"c": cid, "h": hub})
-        if res.rowcount != 1:
-            return False
-        store_for(Path(hub_dir)).write_audit(conn, normalize(actor) or "unknown",
-                                             "connector_withdraw", hub=hub,
-                                             permission=capability(cid), surface="console")
-    gs = store_for(Path(hub_dir))
-    for subject, granted_hub, permission in gs.list_grants(hub):
-        if permission == capability(cid):
-            gs.revoke(subject, granted_hub, permission, actor=normalize(actor) or "unknown")
-    return True
+    raise _file_owned(cid)
 
 
 # ---------------------------------------------------------------------------
@@ -637,17 +630,10 @@ def permissions(hub_dir) -> list[dict]:
     """One ``connector_<id>`` capability per connector offered in this agent
     (the hub folder's name). A switched off connector stays listed (its grants
     remain visible) but unavailable."""
-    from . import existing_engine
-
-    eng = existing_engine(hub_dir)
-    if eng is None:
-        return []
-    with eng.connect() as conn:
-        offered = offered_in(hub_dir, Path(hub_dir).name, conn=conn)
-        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()
-                if r[0] in offered]
+    offered = offered_in(hub_dir, Path(hub_dir).name)
     out = []
-    for c in (_connector(r) for r in rows):
+    for c in sorted((d.connector for cid, d in definitions(hub_dir).items() if cid in offered),
+                    key=lambda c: (c.name, c.id)):
         shared = c.auth_type == "shared"
         out.append({
             "permission": c.capability,

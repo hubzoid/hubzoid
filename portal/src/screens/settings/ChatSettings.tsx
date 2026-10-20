@@ -1,10 +1,9 @@
-// Console → Settings → Chat: the deployment's chat/config.yaml as a form.
-// The same schema and apply as `hubzoid chat config apply` and
-// PUT /api/chat/config: the diff is shown before applying, apply sends the
-// revision it was based on, and a conflict asks for a reload.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography } from "antd";
-import { control, ControlError, newKey } from "../../lib/controlApi";
+// Console → Settings → Chat: the deployment's chat defaults, read-only. They
+// live in hubzoid.yaml (chat:); this shows the values every agent reads and
+// where they come from.
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography, ConfigProvider } from "antd";
+import { control, ControlError } from "../../lib/controlApi";
 
 const { Text, Paragraph } = Typography;
 
@@ -51,7 +50,6 @@ export function ChatSettings() {
   const [draft, setDraft] = useState<Config | null>(null);
   const [changes, setChanges] = useState<Change[] | null>(null);
   const [error, setError] = useState<ControlError | null>(null);
-  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -69,7 +67,6 @@ export function ChatSettings() {
     void load();
   }, [load]);
 
-  const dirty = useMemo(() => !!active && !!draft && JSON.stringify(active.config) !== JSON.stringify(draft), [active, draft]);
 
   const edit = (fn: (c: Config) => void) => {
     setDraft((d) => {
@@ -82,59 +79,24 @@ export function ChatSettings() {
     setDone(null);
   };
 
-  const review = async () => {
-    if (!draft || !active) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await control<{ changes: Change[] }>("/api/chat/config/diff", {
-        body: { version: 1, expected_revision: active.revision, config: draft },
-      });
-      setChanges(res.changes);
-    } catch (e) {
-      setError(e as ControlError);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const apply = async () => {
-    if (!draft || !active) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await control<{ revision: number; digest: string }>("/api/chat/config", {
-        method: "PUT",
-        idempotencyKey: newKey(),
-        body: { version: 1, expected_revision: active.revision === 0 ? "absent" : active.revision, config: draft },
-      });
-      setDone(`Applied as revision ${res.revision}.`);
-      await load();
-    } catch (e) {
-      setError(e as ControlError);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!active || !draft)
     return error ? <Alert type="error" showIcon title="Couldn't load chat settings" description={error.message} /> : <Card loading />;
 
   const a = draft.presentation.appearance;
   const prefs = draft.presentation.preferences;
   return (
+    <ConfigProvider componentDisabled>
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Text type="secondary">
-        {active.revision === 0
-          ? "Everyone uses the product defaults. Change anything below, review it, then apply it for everyone."
-          : `Last applied${active.applied_by ? ` by ${active.applied_by}` : ""}. People can change what you allow.`}
-        {active.file.exists && active.file.valid === false && (
-          <Tag color="error" style={{ marginLeft: 8 }}>The settings file has a problem: see details</Tag>
-        )}
-        {active.file.exists && active.file.valid !== false && !active.file.matches_active && (
-          <Tag color="warning" style={{ marginLeft: 8 }}>The settings file has changes that aren’t applied yet</Tag>
-        )}
-      </Text>
+      <Alert
+        type="info"
+        showIcon
+        title="Chat defaults live in the deployment folder"
+        description={`They come from ${active.file.path}. Edit the file (or ask Claude Code or Codex to); every agent picks it up within a few seconds. People can still change what the file allows for themselves.`}
+        data-testid="chat-defaults-read-only"
+      />
+      {active.file.valid === false && (
+        <Alert type="warning" showIcon title="The settings file has a problem" description={(active.file as any).error?.message} />
+      )}
       {error && (
         <Alert
           type="error"
@@ -231,20 +193,6 @@ export function ChatSettings() {
         </Space>
       </Card>
 
-      {dirty && (
-      <Space className="save-bar">
-        <Text>Unsaved changes</Text>
-        <Button onClick={() => void review()} disabled={!dirty} loading={busy && !changes}>
-          Review changes
-        </Button>
-        <Button type="primary" onClick={() => void apply()} disabled={!dirty || !changes} loading={busy && !!changes}>
-          Apply
-        </Button>
-        <Button onClick={() => void load()} disabled={busy}>
-          Discard
-        </Button>
-      </Space>
-      )}
       {changes && (
         <Table<Change>
           size="small"
@@ -314,6 +262,7 @@ export function ChatSettings() {
         ]}
       />
     </Space>
+    </ConfigProvider>
   );
 }
 

@@ -1463,4 +1463,7 @@ journey("local", "Local mode: no sign-in page and no Sign out", async (ctx) => {
   await context.close();
 });
 
-main();
+// Run directly: every journey. Required by a companion (app-feedback-journey.cjs):
+// only its helpers, so it starts its own servers.
+if (require.main === module) main();
+module.exports = { WORK, SHOTS, PYTHON, REPO, ADMIN, SAM, AGENT_NAME, freePorts, python, makeHub, Server, step, steps };

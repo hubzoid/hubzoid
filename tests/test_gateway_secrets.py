@@ -157,9 +157,8 @@ def test_external_bridge_fetches_the_deployment_secret_from_the_manifest(tmp_pat
     alpha, beta = _hubs(tmp_path)
     os.environ.update({"AWS_SECRET_NAME": "dep", "AWS_REGION": "eu-west-1"})
     fake = install(monkeypatch, _secrets())
-    result = _gateway(tmp_path, alpha, beta, "--no-bridges")
+    result = _gateway(tmp_path, alpha, beta)
     assert result.exit_code == 0, result.output
-    assert not [c for c in launched if c["cmd"][2:4] == ["hubzoid", "run"]]
 
     # A bridge unit that sets only HOME and PATH, as on the live deployment.
     os.environ.clear()
@@ -220,7 +219,7 @@ def test_standalone_run_keeps_hub_only_layers_out_of_the_edge(tmp_path, monkeypa
     install(monkeypatch, {"dep": {"OAUTH_SESSION_TOKEN_ENCRYPTION_KEY": "deployment-signing-key"},
                           "solo-hub": {"SOLO_HUB_SECRET": "solo-hub-secret-value"},
                           "solo-restricted": {"SOLO_RESTRICTED_SECRET": "solo-restricted-secret-value"}})
-    cli.run(hub=hub, port=3090, bridge_port=8190, host="127.0.0.1", no_ui=False,
+    cli.run(hubs=[hub], port=3090, bridge_port=8190, host="127.0.0.1", no_ui=False,
             slack=False, whatsapp=False, telegram=False, webhook=False)
 
     bridge = next(c["env"] for c in launched if "hubzoid.server:build_app" in c["cmd"])

@@ -77,6 +77,12 @@ def _expected_revision(raw: Any):
     return value
 
 
+def _typed_refused(name: str, where: str):
+    """Keys a person types have one home, the operator's: .env or the host."""
+    return error(409, "operator_source", f"Set {name} in {where} (or the host's environment). Hubzoid stores "
+                 "only keys it obtains itself, such as a connection's sign-in.")
+
+
 def build_router(hub_dir: Path) -> list[APIRouter]:
     hub_dir = Path(hub_dir)
     own = hub_key(hub_dir)
@@ -119,6 +125,7 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
 
     @hub_router.put("/secrets/{name}")
     async def set_hub(name: str, request: Request, who: Viewer = Depends(writer)):
+        raise _typed_refused(name, "this agent's .env")
         body = await _body(request)
         restricted = body.get("restricted")  # omitted keeps a stored secret's restriction
         if restricted is not None and not isinstance(restricted, bool):
@@ -162,6 +169,7 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
 
     @deployment_router.put("/{name}")
     async def set_deployment(name: str, request: Request, who: Viewer = Depends(writer)):
+        raise _typed_refused(name, "the deployment's .env")
         body = await _body(request)
         if body.get("restricted"):
             raise error(422, "invalid_request", "Only a hub secret can be restricted.")

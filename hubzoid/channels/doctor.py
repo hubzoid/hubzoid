@@ -83,9 +83,16 @@ def run(conn: Connection, inputs: dict | None = None) -> dict:
             checks.append(Check("workflows", "fail", "Code workflows are off on this deployment, so work from this "
                                 "channel is recorded but never runs.", "workflows_off",
                                 "Set HUBZOID_SCHEDULES=1 in the hub's .env and restart the hub."))
-    if conn.config.agent and not conn.config.allowed_groups:
-        checks.append(Check("groups", "warn", "allowed_groups is empty, so nobody can start work from this "
-                            "channel.", "no_groups", "List the groups whose members may ask, then apply."))
+    if conn.config.agent:
+        from ..capabilities import channel_permission
+
+        checks.append(Check("grants", "ok", f"Who may start work here is the {channel_permission(conn.id)!r} "
+                            "grant in Settings (with access to the agent).", "",
+                            "Grant it in Settings > Access to the people who may ask."))
+    if conn.config.allowed_groups:
+        checks.append(Check("groups", "warn", "allowed_groups is no longer read: who may start work is a grant "
+                            "in Settings, so nobody gains access from this list.", "groups_ignored",
+                            "Remove allowed_groups and grant the people in Settings."))
     links = store.list_links(conn.hub_dir, conn.hub, conn.provider)
     if not conn.adapter.customer_facing:     # outside senders are never linked to accounts
         checks.append(Check("links", "ok" if links else "warn",
@@ -137,10 +144,10 @@ def _actor_checks(conn: Connection, external_id: str, workspace_id: str | None) 
     denied = _hub_access(conn.hub_dir, link["account_email"])
     out.append(Check("actor:hub", "ok" if not denied else "fail",
                      "Has access to this hub." if not denied else "No access to this hub.", denied or ""))
-    if conn.config.agent or conn.config.allowed_groups:
+    if conn.config.agent:
         ok = _groups_ok(conn, link["account_email"])
-        out.append(Check("actor:groups", "ok" if ok else "fail",
-                         "In an allowed group." if ok else "Not in any of " + ", ".join(conn.config.allowed_groups
-                                                                                        or ["(none)"]),
-                         "" if ok else "group_not_allowed"))
+        out.append(Check("actor:grant", "ok" if ok else "fail",
+                         "May start work from this channel." if ok else
+                         "Not granted to start work from this channel (Settings > Access).",
+                         "" if ok else "channel_not_granted"))
     return out

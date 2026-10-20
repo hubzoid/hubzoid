@@ -524,3 +524,10 @@ def test_an_external_host_can_still_read_an_earlier_card_version(hub, monkeypatc
                 await client.read_resource(f"ui://cardhub/custom/{'0' * 64}/index.html")
 
     asyncio.run(run())
+
+
+def test_the_files_take_effect_without_an_apply(hub):
+    # mcp-apps.yaml and cards/ are the configuration: a bound tool gets its card
+    # with no apply step, and an older card still keeps only its own tools.
+    out = asyncio.run(_call(hub, "order_summary"))
+    assert out["card"]["kind"] == "table" and cards.active(hub)[0]["actor"] == "file"

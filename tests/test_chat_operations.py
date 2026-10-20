@@ -557,3 +557,28 @@ def test_a_reply_records_the_session_that_started_it(hub, monkeypatch):
     for mid in replies:
         record = run_identity.for_run(hub, "chat", mid)
         assert record and (record["credential_kind"], record["credential_id"]) == ("session", "sess_ana_1"), record
+
+
+def test_a_draining_hub_starts_nothing_and_a_cut_reply_is_interrupted(client):
+    # `hubzoid restart` drains first: no new reply starts, a reply cut off by
+    # the grace period ends as interrupted (not "stopped" by a person), and
+    # what was queued stays parked instead of starting on a stopping process.
+    from hubzoid import drain
+
+    cid, b = new_conv(client)
+    first = send(client, cid, "slow first", b)
+    q = client.post(f"/api/conversations/{cid}/queue", headers=h(),
+                    json={"branch_id": b["id"], "content": "two"})
+    assert q.status_code == 201, q.text
+    drain.start()
+    try:
+        refused = op(client, cid, {"kind": "send", "branch_id": b["id"], "expected_revision": None,
+                                   "parent_id": None, "content": [{"type": "text", "text": "new"}]})
+        assert refused.status_code == 503 and "restarting" in refused.text, refused.text
+        client.post(f"/api/runs/{first['run_id']}/cancel", headers=ORIGIN, json={"park_queue": False})
+        assert wait_run(client, first["run_id"])["status"] == "interrupted"
+        items = client.get(f"/api/conversations/{cid}/queue").json()["items"]
+        assert [i["state"] for i in items] != ["dispatched"]
+        assert branch_of(client, cid, b["id"])["queue_paused"]
+    finally:
+        drain._reset_for_tests()

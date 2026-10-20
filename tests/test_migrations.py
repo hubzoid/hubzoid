@@ -22,7 +22,7 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                # web app (op_0009 to op_0012): accounts, conversations, connections
                "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
                "hz_conversations", "hz_messages", "hz_shares",
-               "hz_connectors", "hz_connector_tokens", "hz_connector_flows", "hz_connector_agents",
+               "hz_connectors", "hz_connector_tokens", "hz_connector_flows",
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts",
                # workflows from chat (op_0019): report series, personal schedules, proposals
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
@@ -53,7 +53,7 @@ LATER_TABLES = ("hz_directory_providers", "hz_directory_accounts", "hz_scim_toke
                 "hz_chat_storage_configs", "hz_chat_files", "hz_chat_file_uploads", "hz_chat_file_references",
                 "hz_chat_artifacts", "hz_chat_artifact_versions", "hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_branch_leases",
                 "hz_chat_queue", "hz_chat_events", "hz_chat_copy_lineage", "hz_chat_members",
-                "hz_chat_member_sets", "hz_chat_runtime_bindings", "hz_feedback", "hz_helper_jobs",
+                "hz_chat_member_sets", "hz_chat_runtime_bindings", "hz_feedback", "hz_feedback_tool_replies", "hz_helper_jobs",
                 "hz_notification_events", "hz_notification_inbox", "hz_notification_target_sets",
                 "hz_notification_targets", "hz_notification_deliveries", "hz_notification_presence",
                 "hz_share_manifests", "hz_share_previews", "hz_share_copy_operations", "hz_chat_folders",
@@ -334,7 +334,15 @@ def test_existing_connectors_stay_offered_in_every_known_agent(tmp_path):
         c.execute(text("INSERT INTO hz_grants (subject, hub, permission) VALUES "
                        "('a@x.org', 'sales', 'use_hub'), ('b@x.org', 'ops', 'use_hub'), "
                        "('root@x.org', '*', 'manage_access')"))
-    migrations.upgrade(eng, "operational")
+    def to_0071(rev, context):  # op_0080 later drops the offers: connector files list their agents
+        return script._upgrade_revs("op_0071", rev)
+
+    with EnvironmentContext(cfg, script, fn=to_0071, destination_rev="op_0071") as env:
+        with eng.connect() as conn:
+            env.configure(connection=conn, version_table=migrations.STORES["operational"])
+            with env.begin_transaction():
+                env.run_migrations()
+            conn.commit()
     with eng.connect() as c:
         offers = set(c.execute(text("SELECT connector_id, hub FROM hz_connector_agents")))
     assert offers == {("gmail", "sales"), ("gmail", "ops")}

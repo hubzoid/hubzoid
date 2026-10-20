@@ -187,6 +187,10 @@ def set_cmd(
 
     hub_dir = _hub(hub, as_json)
     scope, target, secret_name = _target(hub_dir, name, ref, restricted, deployment, as_json)
+    if scope in ("hub", "deployment"):
+        where = "the deployment's .env" if scope == "deployment" else f"{hub_dir.name}/.env"
+        _fail("operator_source", f"Set {secret_name} in {where} (or the host's environment). Hubzoid stores "
+              "only keys it obtains itself, and secrets a channel file names as secret:channel/...", 409, as_json)
     why = names.problem(secret_name)
     if why:
         _fail("validation_failed", why, 422, as_json, fields={"name": "invalid"})
