@@ -3384,6 +3384,9 @@
 .hz-set-nav .hz-nav[aria-current="page"] { box-shadow: inset 3px 0 0 var(--hz-accent); }
 .hz-set-nav .hz-nav[aria-current="page"] svg { color: var(--hz-accent-text); }
 .hz-set-nav .hz-set-count { color: var(--hz-accent-text); font-weight: 600; }
+/* On the selected row's darker background, deepen the orange toward the ink
+   so the small count keeps text contrast (4.5:1) in every palette. */
+.hz-set-nav .hz-nav[aria-current="page"] .hz-set-count { color: color-mix(in srgb, var(--hz-accent-text) 80%, var(--hz-ink)); }
 .hz-preference-tabs a[aria-current="page"],
 .hz-agent-tabs > [aria-current="page"],
 .console-embed .hz-agent-tabs > a[aria-current="page"] { border-color: var(--hz-accent); }
@@ -3395,12 +3398,13 @@
 .hz-agents-filters button[aria-pressed="true"] { background: var(--hz-info-soft); color: var(--hz-info); }
 .hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-info); }
 .hz-usage-edit, .hz-inbox-detail-foot a { color: var(--hz-accent-text); }
-.hz-bar > span { background: var(--hz-accent); }
+/* Usage meters only: the chat message bar shares the .hz-bar name. */
+.hz-bar[role="meter"] > span { background: var(--hz-accent); }
 .hz-set-grouphead h1, .hz-agent-head h1, .hz-usage-head h2 { color: var(--hz-ink); }
 /* Accent tags use the information pair, whose contrast every palette checks
    (orange in the built-in palettes). Unscoped, so drawers and popups match. */
 .ant-tag.hz-tag-accent, .console-embed .ant-tag.hz-tag-accent {
   background: var(--hz-info-soft) !important; border-color: transparent !important; color: var(--hz-info) !important;
 }
-.hz-bar.is-warn > span { background: var(--hz-warning); }
-.hz-bar.is-bad > span { background: var(--hz-danger-solid); }
+.hz-bar[role="meter"].is-warn > span { background: var(--hz-warning); }
+.hz-bar[role="meter"].is-bad > span { background: var(--hz-danger-solid); }

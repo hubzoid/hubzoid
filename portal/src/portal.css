@@ -839,7 +839,9 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 }
 /* Running and in-progress tags use the accent, as information does: no blue. */
 :root[data-theme="dark"] .ant-tag-blue,
-:root[data-theme="dark"] .ant-tag-processing {
+:root[data-theme="dark"] .ant-tag-processing,
+:root[data-theme="dark"] .ant-tag.ant-tag-blue:not(.ant-tag-disabled),
+:root[data-theme="dark"] .ant-tag.ant-tag-processing:not(.ant-tag-disabled) {
   color: #f28b66; background: #2b1f1a; border-color: #5a3324;
 }
 
