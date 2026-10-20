@@ -4,16 +4,16 @@ Hubzoid owns the whole journey: an administrator registers a server once,
 each person authorizes it with their own account in the browser, and every
 chat turn reaches the server as that person (``hubzoid.personal_mcp``).
 
-  registry.py    servers an administrator registers (``hz_connectors``)
+  registry.py    servers defined in deployment YAML files
   discovery.py   where a server's authorization lives (RFC 9728, RFC 8414)
   oauth_flow.py  the browser authorization in two halves: start, callback
   tokens.py      each person's tokens: storage, refresh, revocation
   per_user.py    the servers a caller may reach this turn (runtimes read it)
   routes.py      HTTP: Console registry, people's connections, OAuth callback
 
-Every secret at rest (tokens, client secrets, registered clients, PKCE
-verifiers) is encrypted with the deployment key (``hubzoid.secretbox``). None of
-them is ever logged or returned by the API.
+Personal tokens, registered clients and PKCE verifiers are encrypted with the
+deployment key (``hubzoid.secretbox``). Operator client secrets and shared keys
+live in .env, referenced from YAML. No secret is logged or returned by the API.
 """
 from __future__ import annotations
 

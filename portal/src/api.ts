@@ -459,6 +459,8 @@ export function query(
 // ---- Personal connections: the connector registry (organization administrators) ----
 
 export type Connector = {
+  /** File revision used to reject saves from stale forms. */
+  revision?: string;
   id: string;
   name: string;
   url: string;
@@ -498,6 +500,7 @@ export type HubMcpServer = {
 };
 
 export type ConnectorInput = {
+  expected_revision?: string;
   id?: string;
   name?: string;
   url?: string;

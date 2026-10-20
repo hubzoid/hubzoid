@@ -99,7 +99,7 @@ credentials in the process list. Limits:
 
 ## Connectors in Settings
 
-Remote MCP servers are added in Settings, and Hubzoid holds each person's
+Remote MCP servers are added in Settings or deployment YAML files, and Hubzoid holds each person's
 connection. Every chat turn and workflow run reaches the server as the person
 (or, for a Shared key, as the company account).
 
@@ -122,6 +122,39 @@ they use, with whether each is set. Never a value, header, command argument or
 URL. Those servers reach everyone who can use the agent. Local command servers
 stay in the file, because adding a command from a browser would let any
 administrator run it on the server.
+
+### Settings and files use the same definitions
+
+Settings writes `connectors/<id>.yaml` beside the deployment's `hubzoid.yaml`
+(or in the hub folder for a standalone deployment). You can also edit that
+file by hand; bridges reread it when it changes. For example:
+
+```yaml
+version: 1
+name: Company tools
+url: https://mcp.example.com/mcp  # replace with your server
+sign_in: oauth
+hubs: [support]
+enabled: true
+```
+
+Adding from an agent's Connectors tab includes that agent in `hubs`. It does
+not grant people access: grant **Connect …** or **Use …** in the agent's
+**Access** tab, then each person connects under **Settings → Connections**.
+
+Client secrets and shared keys entered in the UI are saved in the deployment
+`.env` with owner-only permissions and referenced from YAML as `env:NAME`.
+They work without restarting the bridges and are never returned to the browser.
+Operator environment values take precedence for hand-authored references.
+Settings-generated references read their literal `.env` value, including after
+a restart. Replacing a key creates a fresh reference; old values are left for operator cleanup in case another
+file still uses them. Keep `.env` out of version control and protect its backups.
+
+UI edits preserve definition fields but may normalize formatting and remove
+YAML comments. A stale browser form is rejected if the file has changed since
+it opened. Repair malformed YAML before editing that connector in Settings.
+Read-only deployments show a save error; their operators can continue managing
+connector files externally.
 
 ### Add a server (organization administrators, in Settings)
 
