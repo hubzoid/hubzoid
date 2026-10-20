@@ -31,14 +31,20 @@ def hub_dir(tmp_path, monkeypatch, fake):
     root = tmp_path / "desk"
     root.mkdir()
     (root / "AGENTS.md").write_text("---\nname: Desk\n---\nA desk.\n")
-    (root / "identity").mkdir()
-    (root / "identity" / "access.csv").write_text("phone,email,groups\n,ana@example.org,support\n")
     return root
+
+
+def _grant(hub_dir, cid="fake-main", email="ana@example.org"):
+    """Who may start work from a channel is a grant in Settings."""
+    from hubzoid.access import store_for
+    from hubzoid.capabilities import channel_permission
+
+    store_for(hub_dir).grant(email, hub_dir.name, channel_permission(cid), actor="test")
 
 
 def yaml_for(**over) -> str:
     data = {"version": 1, "id": "fake-main", "provider": "fake", "enabled": True, "agent": "main",
-            "allowed_groups": ["support"], "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}}
+            "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}}
     data.update(over)
     return config.render(data)
 
@@ -47,6 +53,7 @@ def applied(hub_dir, **over):
     v = config.load_text(hub_dir, yaml_for(**over))
     assert v.valid, v.errors
     config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    _grant(hub_dir, v.config.id)
     return config.active(hub_dir, v.config.id)
 
 
@@ -319,7 +326,7 @@ def test_unlinked_notice_is_sent_once_per_person(hub_dir, fake):
     assert len(fake.sent) == 1
 
 
-def test_linked_person_outside_groups_is_refused(hub_dir, fake):
+def test_linked_person_without_the_channel_grant_is_refused(hub_dir, fake):
     from hubzoid.channels import links
 
     conn = applied(hub_dir)
@@ -407,7 +414,7 @@ def test_workflow_route_starts_one_work_item(hub_dir, fake, monkeypatch):
 
     started = []
     monkeypatch.setattr(wi, "start", lambda hub_dir, item: (started.append(item["id"]), item)[1])
-    conn = applied(hub_dir, agent=None, workflow="intake", allowed_groups=[])
+    conn = applied(hub_dir, agent=None, workflow="intake")
     send(conn, ev(data={"unattended": True}))
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     row = store.list_deliveries(hub_dir, "desk", conn.id)["items"][0]
@@ -486,7 +493,7 @@ def test_stop_signal_cancels_the_persons_work_item(hub_dir, fake, monkeypatch):
     from hubzoid.work_items import store as wstore
 
     monkeypatch.setattr(wi, "start", lambda hub_dir, item: item)
-    conn = applied(hub_dir, agent=None, workflow="intake", run_as="workflow", allowed_groups=["support"])
+    conn = applied(hub_dir, agent=None, workflow="intake", run_as="workflow")
     _user(hub_dir, "ana@example.org")
     from hubzoid.access import store_for
 

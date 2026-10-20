@@ -4,7 +4,7 @@
 Access is decided only by grants in the Console (``GrantStore.can``). Groups
 are context the agent can see, from two hub-owned sources:
 
-  * Roster groups (``identity/access.{csv,py}``), keyed by email. An email
+  * Roster groups (``identity/access.py``), keyed by email. An email
     absent from the roster contributes nothing.
   * Header groups (``X-Hubzoid-Groups``), supplied by a trusted front or
     surface resolver (the inbound bridge carries the roster's groups here).
