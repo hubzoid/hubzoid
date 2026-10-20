@@ -1,8 +1,8 @@
 # Documentation
 
 This directory is the one source of Hubzoid's documentation. The
-[website docs](https://hubzoid.com/docs) render or link these pages rather than
-keeping their own copies, and the [builder skill](../skills/builder/SKILL.md)
+[website docs](https://hubzoid.com/docs) should render or link these pages rather
+than keep their own copies (until they do, the website can lag behind), and the [builder skill](../skills/builder/SKILL.md)
 links here instead of repeating them. Each release's pages are at its tag, so
 read the tag of the version you installed. Use this checkout's pages when
 testing an unreleased branch.

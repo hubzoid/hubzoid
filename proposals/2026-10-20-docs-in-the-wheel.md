@@ -34,7 +34,8 @@ bundled docs".
 - `hubzoid docs skill builder --to .claude/skills/hubzoid-builder` writes the
   skill for a project and refuses to overwrite a changed copy.
 - The skill then says "read `hubzoid docs <topic>`" instead of a GitHub URL.
-- The website keeps rendering or linking the repo's `docs/`, as now.
+- The website renders or links the repo's `docs/`, never its own copy. Today it
+  still keeps its own pages, so that is separate website work.
 
 ## Scope and non-goals
 
