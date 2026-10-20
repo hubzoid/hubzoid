@@ -2827,8 +2827,8 @@
   .hz-agents-filters button[aria-pressed="true"] { color: var(--hz-ink); background: var(--hz-active); font-weight: 600; }
   .hz-agents-filters button span { margin-left: 4px; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
   .hz-agent-list { border-top: 1px solid var(--hz-line); }
-  /* The list uses the whole width of the page. */
-  .hz-set-main:has(.hz-agent-list) { max-width: none; }
+  /* Lists and tables use the whole width of the page; forms keep a reading width. */
+  .hz-set-main:has(.hz-agent-list), .hz-set-main:has(.hz-usage), .hz-set-main:has(.ant-table) { max-width: none; }
   .hz-agent-row {
     position: relative; display: grid; align-items: center; gap: 20px;
     grid-template-columns: minmax(220px, 1.3fr) minmax(300px, 2fr) 80px 110px 110px 100px 160px 72px;
@@ -3366,3 +3366,14 @@
 .console-embed .row-name:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: 2px; border-radius: 4px; }
 .console-embed tr.clickable:focus-visible > td { background: var(--hz-hover); }
 .console-embed tr.clickable:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: -2px; }
+
+/* Team > People: a person, their account, their agents, two-step and last sign-in. */
+.console-embed .people-account { display: flex; flex-direction: column; gap: 2px; }
+.console-embed .people-agents { color: var(--hz-ink); }
+/* Pages with tabs keep a reading width, except lists and tables, which use
+   the whole page (outside any layer, to follow the tabbed-page width above). */
+.hz-set-main:has(.ant-table), .hz-set-main:has(.hz-usage), .hz-set-main:has(.hz-agent-list),
+.hz-set-main:has(.hz-agent-head) { max-width: none; }
+/* A person's name reads the same in every list: the name, not a coloured link. */
+.console-embed .person-cell a { font-weight: 600; color: var(--hz-ink); }
+.console-embed .person-cell a:hover { text-decoration: underline; }

@@ -587,7 +587,28 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if agent and not person["access"].get(agent):
                 continue
             rows.append(person)
-        return {"people": rows[offset : offset + limit], "total": len(rows)}
+        page = rows[offset : offset + limit]
+        if admin.is_org_admin:
+            _sign_in_facts(page)
+        return {"people": page, "total": len(rows)}
+
+    def _sign_in_facts(people: list[dict]) -> None:
+        """When each person last signed in, and whether two-step sign-in is
+        on, from their account. Organization administrators only; ``None``
+        where there is no account (local mode, or never signed up)."""
+        from .auth import mfa
+        from .auth import users as userlib
+
+        try:
+            accounts = {userlib.normalize_email(u["email"]): u
+                        for u in userlib.list_users(hub_dir) if u.get("email") and not u.get("deleted_at")}
+        except Exception as exc:  # noqa: BLE001 — sign-in facts are extra; the list stands without them
+            log.warning("people: could not read accounts for sign-in facts: %s", exc)
+            accounts = {}
+        for person in people:
+            account = accounts.get(userlib.normalize_email(person["subject"]))
+            person["last_sign_in"] = account["last_login_at"] if account else None
+            person["two_step"] = mfa.enrolled(hub_dir, account["id"]) if account else None
 
     @router.post("/people/refresh")
     @_denied

@@ -126,37 +126,37 @@ export function RecoveryScreen({
   );
 }
 
-export function AccountTag({ status }: { status: string }) {
-  const s = accountStatus(status);
+/** A status as a dot and a word, the same on every page: colour is never the
+ *  only cue. Takes the presentation colours from lib/format. */
+export function StatusDot({ color, label, hint }: { color: string; label: string; hint?: string }) {
+  const tone = color === "green" || color === "success" ? "is-ok"
+    : color === "red" || color === "error" ? "is-bad"
+    : color === "gold" || color === "orange" || color === "warning" ? "is-warn"
+    : color === "blue" || color === "processing" || color === "purple" ? "is-info"
+    : "is-muted";
   return (
-    <Tooltip title={s.hint || undefined}>
-      <Tag color={s.color} style={{ marginInlineEnd: 0 }}>
-        {s.label}
-      </Tag>
+    <Tooltip title={hint || undefined}>
+      <span className={`hz-status ${tone}`}>
+        <i aria-hidden />
+        {label}
+      </span>
     </Tooltip>
   );
+}
+
+export function AccountTag({ status }: { status: string }) {
+  const s = accountStatus(status);
+  return <StatusDot color={s.color} label={s.label} hint={s.hint} />;
 }
 
 export function WorkflowStateTag({ state }: { state: string }) {
   const s = workflowState(state);
-  return (
-    <Tooltip title={s.hint || undefined}>
-      <Tag color={s.color} style={{ marginInlineEnd: 0 }}>
-        {s.label}
-      </Tag>
-    </Tooltip>
-  );
+  return <StatusDot color={s.color} label={s.label} hint={s.hint} />;
 }
 
 export function RunStatusTag({ status }: { status: string }) {
   const s = runStatus(status);
-  return (
-    <Tooltip title={s.hint || undefined}>
-      <Tag color={s.color} style={{ marginInlineEnd: 0 }}>
-        {s.label}
-      </Tag>
-    </Tooltip>
-  );
+  return <StatusDot color={s.color} label={s.label} hint={s.hint} />;
 }
 
 export function CapabilityTag({

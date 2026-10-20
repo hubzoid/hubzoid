@@ -38,7 +38,7 @@ import { inputField } from "../components/WorkflowInputs";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
-import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, When } from "../components/common";
+import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When } from "../components/common";
 import { formatDuration } from "../lib/format";
 import { displayName } from "../app/lib/format";
 
@@ -64,7 +64,7 @@ const adminPaused = (s: Row) => s.state === "paused" && s.reason === "admin";
 const at = (seconds: number | null | undefined) => (seconds ? new Date(seconds * 1000).toISOString() : null);
 
 /**
- * Schedules & reports: one page for everyone. "Yours" is the signed-in
+ * Schedules: one page for everyone. "Yours" is the signed-in
  * person's own schedules and report links on every agent; admins also get
  * "Everyone", one agent at a time. The server decides what each view returns.
  */
@@ -213,10 +213,9 @@ function AgentWorkflows({ hubs }: { hubs: Hub[] }) {
   );
 }
 
-/** Status as a dot and a word. */
+/** Status as a dot and a word, with the same tones as the rest of Settings. */
 function Dot({ tone, label }: { tone: string; label: string }) {
-  const cls = tone === "green" ? "is-ok" : tone === "gold" ? "is-warn" : tone === "red" ? "is-bad" : tone === "blue" ? "is-info" : "is-muted";
-  return <span className={`hz-status ${cls}`}><i aria-hidden />{label}</span>;
+  return <StatusDot color={tone} label={label} />;
 }
 
 const DONE: Record<Action, string> = {

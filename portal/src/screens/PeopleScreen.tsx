@@ -37,6 +37,8 @@ import {
   PersonAvatar,
   PersonCell,
   RoleBadge,
+  StatusDot,
+  When,
 } from "../components/common";
 import {
   isService,
@@ -86,6 +88,8 @@ export function PeopleScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
   const agentName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
+  // Sign-in facts come only for organization administrators.
+  const signInFacts = embedded && (data.data?.people ?? []).some((p) => "two_step" in p);
   const resetFilters = () => {
     setResetToken((t) => t + 1); // remount the search input so its defaultValue clears
     setQuery({ q: undefined, status: undefined, role: undefined, agent: undefined, page: undefined });
@@ -209,6 +213,7 @@ export function PeopleScreen({
           <LoadState error={data.error} retry={data.reload} />
         ) : (
           <Table<Person>
+            className="people-table"
             rowKey="subject"
             size="middle"
             dataSource={data.data.people}
@@ -240,7 +245,7 @@ export function PeopleScreen({
               {
                 title: "Person",
                 key: "person",
-                width: embedded ? 230 : undefined,
+                width: embedded ? 280 : undefined,
                 render: (_, p) => (
                   <PersonCell subject={p.subject} display={p.display} link={personHref(p.subject)} />
                 ),
@@ -248,27 +253,34 @@ export function PeopleScreen({
               {
                 title: "Account",
                 key: "account",
-                width: embedded ? 150 : 170,
+                width: embedded ? 190 : 170,
                 render: (_, p) => (
-                  <Space size={4} wrap>
+                  <div className="people-account">
                     <AccountTag status={p.status} />
-                    {p.organization_admin && <RoleBadge>Administrator</RoleBadge>}
-                    {p.reader && !p.organization_admin && <Tooltip title="Signed in to read a shared report. No agent access."><Tag>Reader</Tag></Tooltip>}
-                  </Space>
+                    <Text type="secondary">
+                      {p.organization_admin ? "Administrator" : p.reader ? "Reader" : p.subject.startsWith("workflow:") ? "Service" : "User"}
+                    </Text>
+                  </div>
                 ),
               },
               {
                 title: "Agents",
                 key: "agents",
-                width: embedded ? 130 : undefined,
                 render: (_, p) => {
                   const entries = Object.entries(p.access).filter(([, perms]) => perms.length);
                   if (!entries.length) return <Text type="secondary">No agent access</Text>;
-                  if (embedded) return <Tooltip title={entries.map(([h]) => agentName(h)).join(", ")}>
-                    <a href={personHref(p.subject)} aria-label={`Agent access for ${personName(p.subject, p.display)}`}>
-                      {entries.length} {entries.length === 1 ? "agent" : "agents"}
-                    </a>
-                  </Tooltip>;
+                  if (embedded) {
+                    // The first agents by name, then a count, so a row stays one line.
+                    const names = entries.map(([h]) => agentName(h));
+                    return (
+                      <Tooltip title={names.join(", ")}>
+                        <span className="people-agents">
+                          {names.slice(0, 2).join(", ")}
+                          {names.length > 2 && <Text type="secondary"> and {names.length - 2} more</Text>}
+                        </span>
+                      </Tooltip>
+                    );
+                  }
                   return (
                     <Space wrap size={[6, 6]}>
                       {entries.map(([h, perms]) => (
@@ -282,6 +294,23 @@ export function PeopleScreen({
                   );
                 },
               },
+              ...(signInFacts ? [
+                {
+                  title: "Two-step",
+                  key: "two_step",
+                  width: 120,
+                  render: (_: unknown, p: Person) => p.two_step == null ? <Text type="secondary">—</Text>
+                    : p.two_step ? <StatusDot color="green" label="On" /> : <StatusDot color="gold" label="Off" />,
+                },
+                {
+                  title: "Last sign-in",
+                  key: "last_sign_in",
+                  width: 140,
+                  render: (_: unknown, p: Person) => p.last_sign_in
+                    ? <When value={new Date(p.last_sign_in * 1000).toISOString()} />
+                    : <Text type="secondary">{p.two_step == null ? "No account yet" : "Never"}</Text>,
+                },
+              ] : []),
               {
                 title: "",
                 key: "open",
