@@ -6,6 +6,9 @@ missing). Without either, every setting has its product default and a fresh hub
 works. Settings → Workspace settings → Chat defaults shows them read-only; the
 file is the only place they change.
 
+Ratings (`feedback.enabled`, `feedback.tool`, `feedback.reasons`) are described in
+[Feedback on answers](feedback.md).
+
 ## The file
 
 ```yaml

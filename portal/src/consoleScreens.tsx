@@ -22,7 +22,7 @@ const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then
 const BudgetsScreen = lazyChunk(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
 const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
-const TABS: AgentTab[] = ["access", "connectors", "setup", "secrets", "channels", "intake", "runs", "evals", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "setup", "secrets", "channels", "intake", "feedback", "runs", "evals", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
@@ -50,7 +50,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Connectors, Setup, Secrets, Channels, Intake, Runs & schedules, Evals and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Access, Connectors, Setup, Secrets, Channels, Intake, Feedback, Runs & schedules, Evals and Activity, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />

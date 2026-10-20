@@ -224,9 +224,22 @@ def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
     return server or None, tool or name
 
 
-def claude_hook(hub_dir: Path, hub_namespace: str):
+def _asks_for_writes(hub_dir: Path, tool: str, connector: str) -> bool:
+    """Whether the rule for this MCP tool is ``ask: writes`` (only then does
+    the server's read-only hint matter)."""
+    from . import config as cfglib
+
+    try:
+        return cfglib.load(hub_dir).rule_for(tool, connector).ask == "writes"
+    except Exception:  # noqa: BLE001 - an unreadable file asks for every tool anyway
+        return False
+
+
+def claude_hook(hub_dir: Path, hub_namespace: str, read_only=None):
     """A PreToolUse hook for MCP tools Claude calls directly (``mcp__<server>__<tool>``).
-    Hub tools (the ``hub_namespace`` server) are already wrapped."""
+    Hub tools (the ``hub_namespace`` server) are already wrapped. ``read_only``
+    is an async ``(server, tool) -> bool | None``: the server's readOnlyHint,
+    for ``ask: writes`` as on the other runtimes."""
     hub_dir = Path(hub_dir)
 
     async def hook(tool_input, _tool_use_id, _context):
@@ -235,7 +248,13 @@ def claude_hook(hub_dir: Path, hub_namespace: str):
             return {}
         connector, tool = mcp_parts(hub_dir, name)
         args = (tool_input or {}).get("tool_input") or {}
-        verdict = await asyncio.to_thread(evaluate, hub_dir, tool, args, connector=connector)
+        hint = None
+        if read_only is not None and connector and _asks_for_writes(hub_dir, tool, connector):
+            try:
+                hint = await read_only(connector, tool)
+            except Exception:  # noqa: BLE001 - no hint: the tool counts as a write
+                hint = None
+        verdict = await asyncio.to_thread(evaluate, hub_dir, tool, args, connector=connector, read_only=hint)
         if verdict.action == "allow":
             return {}
         if verdict.action == "ask":

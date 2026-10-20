@@ -235,6 +235,13 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
             return "disabled", None
         if event.data.get("signal") == "stop":     # a control signal, before any text check
             return _stop(hub_dir, conn, row, thread, event, app)
+        if event.kind == "feedback":               # a rating of a delivered reply, never new work
+            from . import feedback
+
+            taken = feedback.route(hub_dir, conn, row, thread, event, app)
+            if taken is not None:
+                return taken
+            event.kind = "message"                 # not about one of our replies: an ordinary message
         if event.trigger and not event.text.strip() and not event.files:
             _notice(conn, thread, event, "empty_request")
             _finish(hub_dir, row["id"], "ignored", "empty_request")
@@ -720,6 +727,10 @@ def _chat_reply(hub_dir: Path, app, conn, thread: dict, row: dict) -> bool:
     outcome = _outcome(results)
     if outcome is None:
         return False
+    if outcome == "posted" and state == "complete" and text_out:
+        from . import feedback
+
+        feedback.post_slack_prompt(conn, thread, run["id"])   # rating buttons under a finished answer only
     account = (row.get("route_json") or {}).get("account")
     convs = thread.get("conversations_json") or {}
     busy = chat is not None and any(conversation_busy(chat.engine, cid) for cid in convs.values())

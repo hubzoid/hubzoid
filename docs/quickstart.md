@@ -133,6 +133,9 @@ The hub's tools and knowledge are then available there under your access. See
 
 ## Make it useful
 
+With Claude Code or Codex, the [builder skill](../skills/builder/SKILL.md)
+does these steps from your task, material and rules, with no clicks in Settings.
+
 1. Edit `my-hub/AGENTS.md` to describe a real task and the expected result.
    Its `suggestions:` become the buttons on the empty chat screen.
 2. Replace the files in `knowledge/` with your own and ask about them.
@@ -182,6 +185,9 @@ hubzoid run my-hub
 and you are signed in as an Administrator with access to the hub. Add
 teammates under **People & access → Add user** in Settings: choose their
 access, then share the one-time sign-in link it gives you. Nothing is emailed.
+From the command line, `hubzoid admin create teammate@example.com my-hub`
+prints the link and `hubzoid grant teammate@example.com use_hub my-hub` gives
+them the agent.
 With Google, Microsoft or an OpenID Connect provider configured, people can
 sign in with it instead ([authentication](auth.md)).
 

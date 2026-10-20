@@ -156,6 +156,17 @@ def validate(hub_dir, data: dict, *, lines: dict | None = None, path: str | None
     if settings is not None:
         for field_path, message in adapter.check(cfg, settings):
             errors.append(_err("invalid_config", field_path, message, lines))
+    if cfg.feedback:
+        where = adapter.feedback_target
+        if not where:
+            errors.append(_err("invalid_config", "/feedback", f"Rating controls are not available on "
+                               f"{adapter.title or cfg.provider} channels (Slack and WhatsApp have them).", lines))
+        elif where == "agent" and not cfg.agent:
+            errors.append(_err("invalid_config", "/feedback", f"On {adapter.title}, rating controls appear under "
+                               "agent answers: set agent.", lines))
+        elif where == "workflow" and not cfg.workflow:
+            errors.append(_err("invalid_config", "/feedback", f"On {adapter.title}, rating controls appear on a "
+                               "workflow's final replies: set workflow.", lines))
     errors.extend(_check_refs(hub_dir, cfg, lines))
     errors.extend(_check_target(hub_dir, cfg, lines))
     return Validation(not errors, errors, config=cfg, settings=settings, data=data)

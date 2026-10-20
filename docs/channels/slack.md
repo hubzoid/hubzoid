@@ -130,3 +130,7 @@ Slack app never has two listeners.
 | `credential_missing` | Fill the named secret with `hubzoid secrets set`. |
 | `blocked_credentials` | Slack refused the bot token. Reinstall the app and set the token again. |
 | `blocked_destination` | The thread is gone, archived, or the bot left the channel. Nothing is posted elsewhere. |
+
+## Ratings
+
+With `feedback: true` in the channel file, a finished agent answer gets Helpful and Not helpful buttons. A click is saved as the linked account's rating and shows on the agent's Feedback page. See [Feedback on answers](../feedback.md).

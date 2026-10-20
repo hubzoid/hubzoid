@@ -34,7 +34,8 @@ def test_voice_is_off_for_members_until_granted(client, hub, monkeypatch):
     as_people(monkeypatch)
     feats = client.get("/api/chat/capabilities", headers=who("ana")).json()["features"]
     assert feats == {"chat_dictation": False, "chat_read_aloud": False, "chat_web_search": False,
-                     "chat_model_compare": False, "helper_followups": False, "web_search": False}
+                     "chat_model_compare": False, "helper_followups": False, "web_search": False,
+                     "feedback": True}   # ratings are collected by default (chat/config.yaml feedback.enabled)
     store_for(hub).grant("ana@example.org", hub.name, "chat_dictation", actor="t")
     feats = client.get("/api/chat/capabilities", headers=who("ana")).json()["features"]
     assert feats["chat_dictation"] is True and feats["chat_read_aloud"] is False

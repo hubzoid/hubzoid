@@ -13,7 +13,8 @@
     "test:app:settings": "node tests/app-settings.cjs",
     "test:app": "node --experimental-strip-types --no-warnings tests/app-stream.test.mts && node --experimental-strip-types --no-warnings tests/app-router.test.mts && node --experimental-strip-types --no-warnings tests/app-images.test.mts && node --experimental-strip-types --no-warnings tests/app-runtime.test.mts && node tests/app-real-journey.cjs",
     "fixture:app": "node tests/app-fixture-server.cjs",
-    "test:app:real": "node tests/app-real-journey.cjs"
+    "test:app:real": "node tests/app-real-journey.cjs",
+    "test:app:feedback": "node tests/app-feedback-journey.cjs"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.22",

@@ -80,7 +80,28 @@ def test_a_dry_run_changes_nothing(hub):
 def test_a_fresh_database_needs_no_upgrade(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'new.db'}")
     migrations.upgrade(eng, "operational")
-    assert migrations.current(eng, "operational") == "op_0080"
+    assert migrations.current(eng, "operational") == "op_0081"
+
+
+@pytest.mark.parametrize("revision", ["op_0073", "op_0080"])
+def test_feedback_and_one_home_branches_join_without_losing_existing_rows(tmp_path, revision):
+    eng = create_engine(f"sqlite:///{tmp_path / 'existing.db'}")
+    _to(eng, revision)
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO hz_feedback (id, hub_id, conversation_id, message_id, author_id, "
+                       "rating, reason_ids, tags, revision, created_at, updated_at) "
+                       "VALUES ('f', 'ops', 'c', 'm', 'u', 'up', '[]', '[]', 1, 1, 1)"))
+        c.execute(text("INSERT INTO hz_grants (subject, hub, permission) "
+                       "VALUES ('owner@example.org', 'ops', 'use_hub')"))
+    migrations.upgrade(eng, "operational")
+    assert migrations.current(eng, "operational") == "op_0081"
+    tables = set(inspect(eng).get_table_names())
+    assert "hz_feedback_tool_replies" in tables and "hz_branding_revisions" not in tables
+    columns = {row["name"]: row for row in inspect(eng).get_columns("hz_feedback")}
+    assert "target_kind" in columns and columns["conversation_id"]["nullable"]
+    with eng.connect() as c:
+        assert c.execute(text("SELECT rating FROM hz_feedback WHERE id='f'")).scalar_one() == "up"
+        assert c.execute(text("SELECT subject FROM hz_grants")).scalar_one() == "owner@example.org"
 
 
 def test_a_repository_with_its_own_agents_md_uses_the_gateway_manifest(tmp_path, monkeypatch):

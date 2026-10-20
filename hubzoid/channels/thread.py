@@ -68,6 +68,13 @@ class Thread:
             named = [actions] if isinstance(actions, str) else list(actions or [])
             actions = named + ([send] if send not in named else [])
         draft = getattr(conn.adapter, "draft", None)
+        if kind == "result" and conn.adapter.feedback_target == "workflow":
+            # The rating line is part of the text the approver sees and approves.
+            from . import feedback
+
+            footer = feedback.whatsapp_footer(conn, kind, self._recorded_text(kind, key))
+            if footer:
+                text = f"{text.rstrip()}\n\n{footer}"
         try:
             return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
                                 draft=draft)
@@ -76,6 +83,36 @@ class Thread:
                 self._stop_unapprovable(parked.operation_id, text)
             raise
 
+    def _recorded_text(self, kind: str, key: str) -> str | None:
+        """The last part of a reply already recorded under ``key`` (waiting
+        for approval, or sent), or None. A repeat keeps exactly that text, so
+        a settings change never alters a reply someone reviewed."""
+        from ..work_items import operations as ops
+        from ..work_items import store as wstore
+        from ..workflows import context
+
+        try:
+            ctx = context._ctx()
+        except Exception:  # noqa: BLE001 - no run bound
+            return None
+        work = ctx.work or {}
+        item = work.get("item")
+        if item is None:
+            return None
+        target = {"channel": self.channel, "thread": self.id}
+
+        def row(part: int):   # the same logical key operations.run gives this part
+            return wstore.op_by_key(self._hub_dir, ops.logical_key(
+                [ctx.hub, "item", item["id"], item["generation"], work.get("stage"), f"channel.{kind}", target,
+                 f"wf:{key}:{part}"]))
+
+        first = row(1)
+        if first is None:
+            return None
+        args = ops.row_arguments(self._hub_dir, first)
+        parts = int(args.get("parts") or 1)
+        last = row(parts) if parts > 1 else first
+        return (ops.row_arguments(self._hub_dir, last) if last else args).get("text") or ""
 
     def _unattended(self) -> bool:
         requester = self._item.get("requester") or ""

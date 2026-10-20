@@ -3109,3 +3109,11 @@
   .hz-native-overlay .ant-drawer-close, .hz-native-overlay .ant-modal-close { min-width: 44px; min-height: 44px; }
   .hz-native-overlay .ant-drawer-footer .ant-space { flex-wrap: wrap; }
 }
+
+/* Rating an answer (chat/feedback.tsx): the form fits a phone beside the answer. */
+.hz-feedback-form {
+  width: min(18rem, calc(100vw - 1.5rem));
+}
+.hz-icon-btn[data-saved] {
+  color: var(--color-accent, currentColor);
+}
