@@ -110,7 +110,7 @@ def test_open_webui_is_not_a_dependency_or_an_extra():
 def test_web_app_dependencies_are_declared_with_bounds():
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
     assert core["pwdlib"].startswith("pwdlib[argon2,bcrypt]")
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "markdown"):
         assert ">=" in core[name] and "<" in core[name], core[name]
 
 
@@ -162,7 +162,7 @@ def test_the_lock_is_slim():
     core = _pins("requirements.lock")
     for heavy in ("open-webui", "torch", "av", "transformers", "sentence-transformers", "chromadb"):
         assert heavy not in core, heavy
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg", "markdown"):
         assert name in core, name
 
 

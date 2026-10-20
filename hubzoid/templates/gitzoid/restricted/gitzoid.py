@@ -133,7 +133,7 @@ def pr_details(repo: str, number: int) -> str:
         "status_check": settings.status_for(name),
         "publication": "preview" if not settings.review.post_to_github else (row or {}).get("state"),
         "reviewed_sha": (row or {}).get("reviewed_sha"), "published_sha": (row or {}).get("published_sha"),
-        "coverage": {k: view.get(k) for k in ("reviewed_files", "total_files", "left_out", "ignored", "truncated", "notes")},
+        "coverage": {k: view.get(k) for k in ("reviewed_files", "total_files", "left_out", "built", "ignored", "truncated", "notes")},
         "blocking": sum(1 for f in open_f if gz.lifecycle.blocking(f)),
         "open_findings": [{"id": f["id"], "path": f["path"], "line": f["line"], "severity": f["severity"],
                            "category": f["category"], "rule": f["rule"], "body": f["body"],

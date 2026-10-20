@@ -583,12 +583,16 @@ start (a hub new to 1.1) it looks back 24 hours only: runs that finished
 before then are never alerted, and there is no historical backfill. From then
 on the cursor catches up downtime of any length.
 
-Destinations under `alerts.to` accept `webhook: ENV_VAR`, `slack: ENV_VAR` (incoming
-webhook), and `email: address`. Email uses the existing deployment SMTP settings.
-Preview mode writes private `.hubzoid/alert-preview/` files. `@workflow(alert_to=...)`
-or a markdown task's `alert_to:` overrides the hub destinations. `HUBZOID_ALERT_URL`
-is the deployment fallback. Missing destinations and exhausted deliveries are
-visible in `schedule deliveries`. They do not disappear as successful sends.
+Alerts are off until you configure a destination. Destinations under `alerts.to`
+accept `webhook: ENV_VAR`, `slack: ENV_VAR` (incoming webhook), and
+`email: address`. Email uses the existing deployment SMTP settings. Preview mode
+writes private `.hubzoid/alert-preview/` files. `@workflow(alert_to=...)` or a
+markdown task's `alert_to:` overrides the hub destinations. `HUBZOID_ALERT_URL`
+is the deployment fallback. With no destination at all, nothing is recorded or
+sent. `alerts: {to: []}` (or `alert_to=[]`) turns alerts off for a hub or
+workflow even when the fallback is set. Failed runs always show in the Console.
+Exhausted deliveries are visible in `schedule deliveries`. They do not disappear
+as successful sends.
 
 `on_failure` from 1.0.x still works, with three changes:
 

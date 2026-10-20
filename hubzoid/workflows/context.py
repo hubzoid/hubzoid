@@ -416,13 +416,16 @@ class Hub:
         run never sends an accepted message twice, and an interrupted send is
         reported as ambiguous rather than repeated. ``body_format="markdown"``
         opts into headings, lists and emphasis with fixed email styles. Raw HTML is escaped;
-        images and unsafe links are stripped; a plain-text MIME part is retained."""
+        images and unsafe links are stripped; a plain-text MIME part is retained.
+        ``body_format="html"`` sends the workflow's own email-safe layout: an
+        allowlist of tags and inline styles, HTTP(S) links, no images or scripts;
+        the plain-text part is derived from it."""
         from ..email_delivery import EmailError
 
         ctx = _ctx()
         ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
-        if body_format not in {"text", "markdown"}:
-            raise ValueError("Email body_format must be text or markdown.")
+        if body_format not in {"text", "markdown", "html"}:
+            raise ValueError("Email body_format must be text, markdown or html.")
         request = {"subject": subject, "body": body, "artifacts": ids}
         if body_format != "text":
             request["body_format"] = body_format

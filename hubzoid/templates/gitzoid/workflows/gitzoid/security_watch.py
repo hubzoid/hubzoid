@@ -55,7 +55,8 @@ def scan(repo: str) -> dict:
     notes = []
     try:
         root, sha = gz.checkout.ensure(gh, repo, hub.data_dir)
-        manifests, all_listed = gz.security.manifest_files(root)
+        skipped: list[str] = []
+        manifests, all_listed = gz.security.manifest_files(root, exclude=settings.exclude_for(repo), skipped=skipped)
         deps, problems = gz.security.dependencies(manifests)
         if not all_listed:
             problems.append(f"more than {len(manifests)} dependency files; the rest were not checked")
@@ -92,15 +93,16 @@ def scan(repo: str) -> dict:
     if problems:
         store.coverage_error(repo, "lockfiles", "; ".join(problems))
     return {"repo": repo, "sha": sha, "deps": len(deps), "items": items, "unused": unused, "notes": notes,
-            "complete": not problems, "profile": gz.profiles.text(store.profile(repo))}
+            "complete": not problems, "profile": gz.profiles.text(store.profile(repo)), "skipped": skipped}
 
 
 @step()
-def security_record(repo: str, items: list[dict], ignored: list[dict], stamp: str, clean: bool, complete: bool) -> dict:
+def security_record(repo: str, items: list[dict], ignored: list[dict], stamp: str, clean: bool, complete: bool,
+                    skipped_files: list[str] = ()) -> dict:
     store = gz.store.Store(hub.data_dir)
     for it in ignored:
         gz.security.ignore(store, repo, it, it.get("impact") or "judged not reachable from this code", stamp)
-    changes = gz.security.reconcile(store, repo, items, stamp, complete=complete)
+    changes = gz.security.reconcile(store, repo, items, stamp, complete=complete, skipped_files=set(skipped_files))
     if clean:
         store.coverage_ok(repo, "dependencies")
         store.coverage_ok(repo, "lockfiles")
@@ -159,7 +161,7 @@ def security_watch():
                         it = {**it, "impact": v.impact, "fix": v.fix}
                     kept.append(it)
                 items = kept
-            c = security_record(repo, items, ignored, p["stamp"], not s["notes"], s["complete"])
+            c = security_record(repo, items, ignored, p["stamp"], not s["notes"], s["complete"], s.get("skipped", []))
             for k in changes:
                 changes[k] += [{**x, "repo": repo} for x in c[k]]
             summary.append({"repo": repo, "dependencies": s["deps"], "advisories": len(items),
@@ -173,7 +175,8 @@ def security_watch():
             html = gz.render.security_page(group, p["stamp"], changes, view["open"], view["coverage"])
             art = gz.runtime.publish(hub, f"security-{group}", html, f"Security · {group} · {p['stamp'][:10]}",
                                      key=None, team_audience="hub")
-            subject, body = gz.render.security_email(group, changes, problems)
+            subject, body = gz.mail.security_email(changes, problems, len(g["repos"]), gz.runtime.link_of(art),
+                                                   repos=gz.runtime.pr_repos(settings))
             sent = gz.runtime.email_list(hub, g["email_list"], subject, body, art)
             security_after_email(gz.runtime.delivered(sent), [x["key"] for x in changes["new"] + changes["escalated"]],
                         problems)

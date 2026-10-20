@@ -94,6 +94,35 @@ def test_diff_lines():
     assert "a.py" in text and left == ["b.py"]
 
 
+def test_review_budget_reads_code_first_and_skips_build_output():
+    def added(text, n=1):
+        return {"patch": "@@ -0,0 +1,%d @@\n" % n + "\n".join("+" + text for _ in range(n))}
+    files = [{"filename": "CHANGELOG.md", **added("Notes " * 20, 40)},
+             {"filename": "docs/guide.md", **added("Words " * 20, 40)},
+             {"filename": "package-lock.json", **added('"x": "1"', 40)},
+             {"filename": "tests/test_auth.py", **added("assert login()", 5)},
+             {"filename": "portal_dist/assets/App-C_uA2yjw.js", **added("var a=1;" * 400, 60)},
+             {"filename": "web/app.min.js", **added("x" * 300, 80)},
+             {"filename": "web/tiny.min.js", **added("fetch('/steal')", 1)},  # small: read whatever its name
+             {"filename": "app/auth.py", **added("def login(): return True", 5)},
+             {"filename": "app/gen_pb2.py", **added("# Code generated. DO NOT EDIT.", 1)}]
+    built: list[str] = []
+    text, left = gz.diff.format_diff(files, 2_000, built=built)
+    assert built == ["portal_dist/assets/App-C_uA2yjw.js", "web/app.min.js"]   # small files are always read
+    assert "web/tiny.min.js" in text
+    assert text.index("app/auth.py") < text.index("tests/test_auth.py")         # code before tests
+    assert "app/gen_pb2.py" in text and left == ["CHANGELOG.md", "docs/guide.md"]  # too big for what was left
+    assert text.index("package-lock.json") > text.index("tests/test_auth.py")   # lockfiles last
+    assert gz.settings.load({}).review.max_diff_chars == 200_000
+    assert gz.diff.priority({"filename": "docs/conf.py"}) == 0 and gz.diff.priority({"filename": "requirements.txt"}) == 1
+    # Only the file's own first lines count as a "generated" header: a big edit lower down is still read.
+    edit = {"filename": "app/models.py", "patch": "@@ -400,1 +400,401 @@\n x = 1\n+# do not edit by hand\n"
+                                                    + "".join(f"+value_{i} = {'1' * 60}\n" for i in range(400))}
+    header = {"filename": "app/models_pb2.py", "patch": "@@ -1,2 +1,402 @@\n # Generated code. DO NOT EDIT.\n x = 1\n"
+                                                         + "".join(f"+value_{i} = {'1' * 60}\n" for i in range(400))}
+    assert not gz.diff.is_built(edit) and gz.diff.is_built(header)
+
+
 def test_anchor_survives_moves_and_detects_change():
     code = "def f():\n    x = load()\n    while True:\n        retry(x)\n    return x\n"
     a = gz.diff.anchor(code, 3)
@@ -160,6 +189,109 @@ def test_gate_keeps_real_findings_once():
     lowered, _ = gz.review.apply_verdicts(kept, kept, verdicts)
     assert gz.review.gate(lowered, lines, "medium", 8) == []
 
+
+
+def _view(**over):
+    f = {"id": "f" * 16, "path": "a.py", "line": 3, "severity": "high", "category": "bug", "rule": "No print",
+         "body": "This breaks the team rule No print. Printed lines never reach the log", "suggestion": ""}
+    view = {"open": [f], "fixed": [], "decided": [], "summary": "Adds a sync", "suggestions": ["Log the count"],
+            "risk": "high", "sha": "abc1234def", "reviewed_files": 2, "total_files": 2, "left_out": [], "ignored": [],
+            "notes": ["ruff: 3 result(s) on added lines", "CI unavailable"], "incremental": False, "truncated": False,
+            "rule_files": ["review.md"], "model": "m", "dropped": [], "paused": None, "verdict": "needs_changes"}
+    return {**view, **over}
+
+
+def test_pr_comment_keeps_the_gitzoid_layout():
+    pr = {"repo": "o/r", "number": 7, "head_ref": "b"}
+    body = gz.review.summary(_view(), pr, True)
+    assert body.startswith("<!-- gitzoid:summary -->\n### GitZoid review · Needs changes\n\n"
+                           "**Merge risk: high** · commit `abc1234` · 2 of 2 files reviewed\n")
+    assert "## 📝 Summary\n- Adds a sync." in body and "## ⚠️ Potential Issues (1)" in body
+    # Severity as a word, the location, one full stop, and no repeat of a rule the text already names.
+    assert "- _high_ `a.py:3` — This breaks the team rule No print. Printed lines never reach the log.\n" in body
+    assert body.index("<summary>Run details</summary>") > body.index("## ⚠️ Potential Issues")
+    # Analyzer and CI notes are run details, not a partial review; missing files are.
+    assert "Partial review" not in body
+    partial = gz.review.summary(_view(left_out=["big.py"], total_files=3), pr, False)
+    assert "> ⚠️ **Partial review.** 1 of 3 files were not reviewed." in partial and "`big.py`" in partial
+    assert "@gitzoid" not in partial
+    clean = gz.review.clean_summary(_view(open=[], suggestions=[], verdict="looks_good"))
+    assert "### GitZoid review · Looks good" in clean and "## ⚠️" not in clean and "Fix all" not in clean
+    partly = gz.review.clean_summary(_view(open=[], verdict="looks_good", left_out=["big.py"], total_files=3))
+    assert "### GitZoid review · No issues in the reviewed files" in partly
+
+
+def test_one_click_suggestion_only_when_confirmed_and_fenced():
+    pr = {"repo": "o/r", "number": 7}
+    f = {**_view()["open"][0], "k": 0, "suggestion": "    log.info(\"```x\")"}
+    kept, _ = gz.review.apply_verdicts([f], [f], [{"index": 0, "verdict": "uncertain", "severity": "high"}])
+    assert kept[0]["suggestion"] == ""
+    kept, _ = gz.review.apply_verdicts([f], [f], [])  # the second pass skipped it
+    assert kept[0]["suggestion"] == ""
+    kept, _ = gz.review.apply_verdicts([f], [f], [{"index": 0, "verdict": "confirmed", "severity": "high"}])
+    inline = gz.review.inline_body(kept[0], pr, True)
+    assert inline.startswith("**🐛 Bug** · high severity\n\n")
+    assert "````suggestion\n    log.info(\"```x\")\n````" in inline  # its own backticks cannot close the block
+    assert "```suggestion" not in gz.review.inline_body({**f, "suggestion": "x = 1\ny = 2"}, pr, True)
+    assert "```suggestion" not in gz.review.inline_body({**f, "line": None, "suggestion": "x"}, pr, True)
+
+
+def test_dependency_advisories_are_one_finding_per_package():
+    dep = {"ecosystem": "PyPI", "name": "gunicorn", "version": "21.2.0"}
+    advs = [{"key": "GHSA-1", "cves": ["CVE-1"], "severity": "high", "summary": "Smuggling.", "fixed": "22.0.0", "dep": dep},
+            {"key": "GHSA-2", "cves": [], "severity": "unknown", "summary": "Bypass", "fixed": "21.3.1", "dep": dep}]
+    lines = [(1, "gunicorn-extras==21.2.0"), (2, "gunicorn==21.2.0  # py3.8")]
+    [group] = gz.security.by_package(advs)
+    f = gz.security.pr_finding("requirements.txt", group, set(), lines)
+    assert f["line"] == 2 and f["severity"] == "high" and f["checked"]
+    assert f["body"] == ("gunicorn 21.2.0 has 2 known vulnerabilities, the worst high: GHSA-1 (Smuggling), "
+                         "GHSA-2 (Bypass). Upgrade to 22.0.0 or later.")
+    assert f["suggestion"] == "gunicorn==22.0.0  # py3.8"
+    unrated = gz.security.pr_finding("requirements.txt", group[1:], {"CVE-1"}, lines)
+    assert unrated["severity"] == "medium" and "no severity rating" in unrated["body"]
+    unfixed = gz.security.pr_finding("requirements.txt", [{**advs[0], "fixed": None}], {"CVE-1"}, lines)
+    assert "actively exploited" in unfixed["body"] and "No fixed version" in unfixed["body"] and not unfixed["suggestion"]
+    # The model restating the same advisory on that line is dropped by the gate.
+    model = {"path": "requirements.txt", "line": 2, "severity": "high", "confidence": "high", "category": "security",
+             "body": "gunicorn 21.2 has request smuggling", "rule": "review.md"}
+    kept = gz.review.gate([f, model], {("requirements.txt", 2)}, "high", 8)
+    assert [k["body"] for k in kept] == [f["body"]]
+
+
+def test_audit_rewording_is_the_same_finding_and_verdicts_apply(tmp_path):
+    st = gz.store.Store(tmp_path)
+    f = {"path": "app/a.py", "line": 10, "kind": "authorization", "severity": "high", "body": "No check.",
+         "evidence": "def a():"}
+    assert len(gz.audit.record(st, "o/r", [f], ["app/a.py"], tmp_path, "t1")) == 1
+    seen: set = set()
+    moved = {**f, "line": 25, "body": "Anyone can call a.", "evidence": "return a_rows()"}
+    assert gz.audit.record(st, "o/r", [moved], ["app/a.py"], tmp_path, "t2", seen=seen) == []
+    [row] = st.ledger_rows(["o/r"], kind="audit")
+    assert row["key"] in seen and row["line"] == 25 and row["last_seen"] == "t2"
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "b.py").write_text("def list_orders():\n    return rows()\n\n\ndef export_orders():\n"
+                                         "    return all_rows()\n")
+    one = {**f, "path": "app/b.py", "line": 2, "evidence": "return rows()"}
+    two = {**f, "path": "app/b.py", "line": 6, "evidence": "return all_rows()"}
+    assert len(gz.audit.record(st, "o/r", [one], ["app/b.py"], tmp_path, "t2")) == 1
+    assert len(gz.audit.record(st, "o/r", [two], ["app/b.py"], tmp_path, "t2")) == 1  # another handler: news
+    reworded = {**one, "evidence": "rows()", "body": "Anyone lists orders."}
+    assert gz.audit.record(st, "o/r", [reworded], ["app/b.py"], tmp_path, "t2") == []  # same function: not news
+    far = {**f, "line": 80, "evidence": "def b():"}
+    other = {**f, "kind": "injection", "evidence": "sql"}
+    assert len(gz.audit.record(st, "o/r", [far, other], ["app/a.py"], tmp_path, "t3")) == 2
+    kept, dropped = gz.audit.apply_verdicts([f, far], [{"index": 0, "verdict": "refuted", "reason": "public"},
+                                                      {"index": 1, "verdict": "confirmed", "severity": "low"}])
+    assert [d["line"] for d in dropped] == [10] and kept[0]["severity"] == "low"
+    assert gz.audit.gate(kept, {"app/a.py"}) == []  # lowered to low: not alerted
+    prompt = gz.audit.prompt("o/r", "", [("app/a.py", "x = 1", 0)], [{"path": "app/a.py", "line": 10,
+                                                                       "kind": "authorization", "title": "No check."}])
+    assert "<already_reported" in prompt and "app/a.py:10 authorization: No check." in prompt
+    # Progress survives a new commit only for windows whose content did not change.
+    (tmp_path / "app" / "c.py").write_text("x = 1\n")
+    done = gz.audit.windows(tmp_path, ["app/b.py", "app/c.py"], [])
+    (tmp_path / "app" / "c.py").write_text("x = 2\n")
+    assert [gz.audit.unit(u)[0] for u in gz.audit.windows(tmp_path, ["app/b.py", "app/c.py"], done)] == ["app/c.py"]
 
 # ------------------------------------------------------------------ commands
 
@@ -268,6 +400,39 @@ def test_ledger_new_quiet_escalated_resolved(tmp_path):
     assert len(gz.security.reconcile(store, "a/b", [{**item, "kev": True}], "t3")["escalated"]) == 1
     assert len(gz.security.reconcile(store, "a/b", [], "t4")["resolved"]) == 1
     assert gz.security.needs_assessment(store, "a/b", item)
+
+
+def test_dependency_files_in_test_sample_and_excluded_folders_are_skipped(tmp_path):
+    for rel in ("requirements.txt", "tests/requirements.txt", "templates/x/raw_data/sample/pulls/1/requirements.txt",
+                "examples/demo/package-lock.json", "legacy/requirements.txt", "app/requirements.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x==1.0\n")
+    skipped = []
+    files, complete = gz.security.manifest_files(tmp_path, exclude=["legacy/"], skipped=skipped)
+    assert set(files) == {"requirements.txt", "app/requirements.txt"} and complete
+    assert len(skipped) == 4
+    store = gz.store.Store(tmp_path)
+    item = {"key": "GHSA-1", "severity": "high", "kev": False, "summary": "s", "fixed": "2.0", "url": "u",
+            "dep": {"ecosystem": "PyPI", "name": "x", "version": "1.0", "file": "tests/requirements.txt"}}
+    gz.security.reconcile(store, "a/b", [item], "t1")
+    out = gz.security.reconcile(store, "a/b", [], "t2", skipped_files={"tests/requirements.txt"})
+    assert out["resolved"] == [] and store.ledger_rows(["a/b"], state="skipped")  # skipped, not fixed
+    assert len(gz.security.reconcile(store, "a/b", [item], "t3")["new"]) == 1     # checked again: alerted again
+
+
+def test_audit_skips_minified_generated_and_excluded_files(tmp_path):
+    files = {"app/auth.py": "def login():\n    return True\n",
+             "portal_dist/assets/App-C_uA2yjw.js": "var a=1;" * 5000,
+             "api/gen_pb2.py": "# Generated by the protocol buffer compiler.  DO NOT EDIT!\n" + "x = 1\n" * 4000,
+             "app/admin.py": "# Code generated. DO NOT EDIT.\ndef backdoor():\n    pass\n",  # small: still audited
+             "app/samples/demo.py": "print(1)\n", "old/auth.py": "def f():\n    pass\n"}
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    skipped = []
+    chosen = gz.audit.select(tmp_path, None, [], [], 100, exclude=["old/**"], skipped=skipped)
+    assert sorted(chosen) == ["app/admin.py", "app/auth.py"]
+    assert set(skipped) == {"portal_dist/assets/App-C_uA2yjw.js", "api/gen_pb2.py", "old/auth.py"}
 
 
 def test_imports_found_per_language():
@@ -400,13 +565,53 @@ def test_github_rate_limit_reports_reset():
         gh.pull("a/b", 1)
 
 
-def test_email_external_text_is_literal_and_coverage_survives_clipping():
-    from hubzoid.email_delivery import _formatted_body
-    _, body = gz.render.report_email("code", "group", "period",
-        {"headline": "A & B", "highlights": ["[Click](https://attacker.invalid) <img src=x>"],
-         "watch": ["x" * 3000]}, ["Unavailable patch"])
-    html = _formatted_body(gz.runtime.clip(body))
-    assert "Coverage is limited" in html
-    assert 'href="https://attacker.invalid"' not in html and "<img" not in html
-    assert "A &amp; B" in html and "more on the page" in html
-    assert "\\&lt;" not in html
+def test_email_external_text_is_literal_and_coverage_survives_trimming():
+    from hubzoid.email_delivery import MAX_LIST_HTML_TEXT, _html_text, _safe_html
+    long = "word " * 150
+    subject, body = gz.mail.report_email(
+        "code", "team", "01 Sep 2026 to 30 Sep 2026",
+        {"headline": "A & B, see `retry()` in acme/web#7 and other/repo#8",
+         "highlights": ["[Click](https://attacker.invalid) <img src=x>"] + [long] * 6, "watch": [long] * 3},
+        {"merged": 2, "additions": 10, "deletions": 1, "files_changed": 3},
+        ["acme/web#1: 2 file patches unavailable", "acme/web#2: Diff unavailable",
+         "GitHub search limit reached; merged PR totals may be incomplete"],
+        link="https://hub.example/portal/latest/r", repos={"acme/web"})
+    safe = _safe_html(body)
+    assert subject == "GitZoid Team Code Report: 01 Sep 2026 to 30 Sep 2026" and "GitZoid Team Code Report</h1>" in safe
+    assert "<img" not in safe and 'href="https://attacker.invalid"' not in safe and "[Click]" in safe
+    assert "A &amp; B" in safe and "retry()</code>" in safe
+    assert 'href="https://github.com/acme/web/pull/7"' in safe and "other/repo#8</a>" not in safe  # only GitZoid's repos
+    assert "part of the code in 2 pull requests" in safe and "search limit reached" in safe  # kept when trimmed
+    assert 'href="https://hub.example/portal/latest/r"' in safe and len(_html_text(body)) <= MAX_LIST_HTML_TEXT
+
+
+def test_security_email_groups_packages_and_puts_code_first():
+    dep = {"kind": "dependency", "repo": "acme/web", "package": "django", "version": "4.2", "severity": "high",
+           "impact": "Request smuggling is possible.", "fix": "Upgrade to 4.2.9.", "path": "requirements.txt",
+           "url": "https://osv.dev/vulnerability/GHSA-1"}
+    changes = {"new": [{**dep, "advisory": "GHSA-1", "key": "k1"}, {**dep, "advisory": "GHSA-2", "key": "k2", "kev": 1},
+                       {"kind": "audit", "repo": "acme/web", "advisory": "authorization", "severity": "high",
+                        "title": "Admin export has no permission check.", "impact": "Anyone signed in can export.",
+                        "path": "app/admin.py", "line": 12, "key": "k3"}],
+               "escalated": [], "resolved": [{"key": "old"}]}
+    subject, body = gz.mail.security_email(changes, [{"repo": "acme/web", "check_name": "lockfiles",
+                                                      "last_error": "yarn.lock unreadable"}], 1, "https://h/s")
+    assert subject == "GitZoid Security: 2 issues found · 1 check could not run"
+    assert body.index("Checks that could not run") < body.index("Code and access issues") < body.index("Vulnerable dependencies")
+    assert "2 known vulnerabilities" in body and "actively exploited" in body and body.count("django 4.2") == 1
+    assert "app/admin.py:12" in body and "1 resolved since the last check" in body and ".." not in body
+    assert gz.mail.sentence("Fixed it.", "Then this") == "Fixed it. Then this."
+
+
+def test_digest_email_matches_subject_and_shows_security_state():
+    d = {"headline": "One thing merged.", "for_leadership": ["Sign-in is faster."], "technical": [], "areas": [],
+         "watch": [], "poem": ""}
+    numbers = {"merged": 3, "contributors": 2, "open": 1, "stuck": 0}
+    never = {"open": [], "coverage": []}
+    subject, body = gz.mail.digest_email("team", "06 Oct to 12 Oct 2026", "12 Oct 2026", d, numbers, never)
+    assert subject == "GitZoid Team Digest: Week of 12 Oct 2026" and "GitZoid Team Digest</h1>" in body
+    assert "Security</h2>" not in body  # never checked: no all-clear
+    clean = {"open": [], "coverage": [{"repo": "a/b", "check_name": "dependencies", "last_ok": "t"}],
+             "audit_in_progress": ["a/b"]}
+    _, body = gz.mail.digest_email("all", "x", "y", d, numbers, clean, implicit=True)
+    assert "GitZoid Digest</h1>" in body and "No open security issues" in body and "still in progress" in body

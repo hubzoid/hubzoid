@@ -234,10 +234,41 @@ loop with your own Claude Code or Codex action and key when someone adds the
 Same repos, `review.md` files, groups and recipients. Copy `security_groups`,
 `digest_groups` and recipients into `workflows/settings.yaml`, start with
 `post_to_github: false`, compare a week of results, then post. Differences:
-email is a styled summary with key updates, next actions and a report link
+email keeps GitZoid's layout with key updates, next actions and a report link
 (no PDF attachment; plain-text fallback included), recipients must be at your
 company domain or have an account, and repo profiles refresh when the code
 changes instead of every 14 days.
+
+## Presentation in 1.3.3
+
+Emails use GitZoid's own layout again: the `/gitzoid` chip, a title that
+matches the subject, a stats bar, a summary box, then sections and one link to
+the full page. Security emails put code and access issues first and group
+each package's advisories into one card with one fix. Long emails drop lower
+items first; the page always has everything. They need Hubzoid 1.3.3, which
+sends workflow HTML email (`body_format="html"`).
+
+Pull request comments keep the verdict and merge-risk header, then use
+GitZoid's own layout again: what the change does, issues and security
+findings as `_high_` `path:line` rows, and suggestions, resolved findings, the
+fix-all prompt and run details collapsed. Inline comments read
+`**🐛 Bug** · high severity`. A finding the second pass confirmed
+can carry a one-line committable suggestion, and every advisory for one
+package version is one finding, with the upgrade as the suggestion when the
+line is a plain pin. A partial review says so above the fold. A review reads
+up to 200,000 characters of diff (`review.max_diff_chars`), code first, and
+skips large build output and minified or generated files (anything under 20 KB
+is always read).
+
+The security watch skips lockfiles in test, sample, fixture and example
+folders, and the deep audit skips large minified and generated files whatever
+their name. Add your own globs with `security.exclude_paths` or a repo's
+`exclude_paths`. The deep audit keeps its progress when the default branch
+moves, and an audit that is still in progress is not reported as a check that
+could not run; a window whose content changed is read again. A finding the
+model words differently next week, in the same function, is the same finding
+and is not emailed again. A second pass
+(`audit.verify`) tries to refute each finding before anyone is alerted.
 
 ## Presentation in 1.3.2
 

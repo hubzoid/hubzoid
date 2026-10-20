@@ -120,6 +120,7 @@ def normalize(f: dict) -> dict:
     f["path"] = f.get("path") if isinstance(f.get("path"), str) else ""
     f["line"] = f.get("line") if isinstance(f.get("line"), int) and f["line"] > 0 else None
     f["body"] = " ".join((f.get("body") or "").split())
+    f["suggestion"] = f.get("suggestion") if isinstance(f.get("suggestion"), str) else ""
     f["rule"] = re.sub(r"\s*\((?:applies to )?[^()]*\*[^()]*\)$", "", (f.get("rule") or "").strip())[:200]
     return f
 
@@ -129,12 +130,14 @@ def gate(findings: list[dict], lines: set[tuple[str, int]], floor: str, limit: i
     medium with high confidence; at or above the severity floor; and, when it
     names a line, on a line of this diff."""
     floor_rank = SEVERITY.get(floor, 0)
-    kept, seen = [], set()
+    kept, seen, advised = [], set(), set()
     for f in map(normalize, findings):
         key = (f["path"], f["line"], f["body"][:80].lower())
         same_rule = (f["path"], f["line"], f["rule"].lower()) if f["rule"] else None
         if not f["body"] or key in seen or (same_rule and same_rule in seen and not f.get("checked")):
             continue  # code-checked findings come first, so the model never repeats one
+        if not f.get("checked") and f["category"] == "security" and (f["path"], f["line"]) in advised:
+            continue  # the model restating a dependency advisory already reported on that line
         if not (f["severity"] == "high" or (f["severity"] in ("medium", "low") and f["confidence"] == "high")):
             continue
         if SEVERITY[f["severity"]] > floor_rank:
@@ -146,6 +149,8 @@ def gate(findings: list[dict], lines: set[tuple[str, int]], floor: str, limit: i
         seen.add(key)
         if same_rule:
             seen.add(same_rule)
+        if f.get("checked") and f["rule"] == "dependency advisory":
+            advised.add((f["path"], f["line"]))
         kept.append(f)
     kept.sort(key=lambda f: (f["category"] != "security", SEVERITY[f["severity"]], f["path"], f["line"] or 0))
     return [{**f, "k": i} for i, f in enumerate(kept[:limit])]
@@ -155,6 +160,7 @@ def apply_verdicts(kept: list[dict], todo: list[dict], verdicts: list[dict]) -> 
     """Only an active refutation drops a finding; an unclear answer keeps it.
     A verdict's index is the finding's position in `todo`."""
     by_k = {todo[v["index"]]["k"]: v for v in verdicts if isinstance(v.get("index"), int) and 0 <= v["index"] < len(todo)}
+    asked = {t["k"] for t in todo}
     dropped, out = [], []
     for f in kept:
         v = by_k.get(f["k"])
@@ -163,6 +169,8 @@ def apply_verdicts(kept: list[dict], todo: list[dict], verdicts: list[dict]) -> 
             continue
         if v and str(v.get("severity", "")).strip().lower() in SEVERITY:
             f = {**f, "severity": v["severity"].strip().lower()}
+        if f["k"] in asked and str((v or {}).get("verdict", "")).strip().lower() != "confirmed":
+            f = {**f, "suggestion": ""}  # a one-click change only for a finding the second pass confirmed
         out.append(f)
     return out, dropped
 
@@ -195,9 +203,9 @@ def status_for(mode: str, open_findings: list[dict], unreviewed: int = 0) -> tup
     if mode == "off":
         return None
     blocking = [f for f in open_findings if lifecycle.blocking(f)]
-    text = (f"{len(open_findings)} open finding(s), {len(blocking)} blocking" if open_findings else "No open findings")
+    text = (f"{plural(len(open_findings), 'open finding')}, {len(blocking)} blocking" if open_findings else "No open findings")
     if unreviewed:
-        text = f"Partly reviewed: {unreviewed} file(s) not reviewed. {text}"
+        text = f"Partly reviewed: {plural(unreviewed, 'file')} not reviewed. {text}"
     if mode == "gate" and (blocking or unreviewed):
         return "failure", text
     return "success", text
@@ -228,6 +236,8 @@ def diff_answer(result: dict) -> str:
     tail = []
     if result.get("left_out_for_size"):
         tail.append("Not reviewed (missing patch or size budget): " + ", ".join(result["left_out_for_size"][:20]))
+    if result.get("built_output"):
+        tail.append("Skipped as build output or minified code: " + ", ".join(result["built_output"][:20]))
     if result.get("ignored_by_review_md"):
         tail.append("Ignored by review.md: " + ", ".join(result["ignored_by_review_md"][:20]))
     tail.append(result.get("note", "Nothing was posted."))
@@ -252,95 +262,139 @@ def combined_prompt(findings: list[dict], pr: dict) -> str:
             f"{items}\n\n{GUARD}\nWhen they are fixed, push, then wait for GitZoid's review of the new commit.")
 
 
+ICONS = {"bug": "🐛 Bug", "security": "🔒 Security", "tests": "🧪 Tests", "convention": "📐 Team rule"}
+# Analyzer and CI notes describe the run; any other note means part of the review is missing.
+RUN_NOTE = re.compile(r"^(CI |[\w.-]+: (\d+ result\(s\) on added lines|not installed, skipped|timed out, skipped|"
+                      r"no SARIF output|skipped; custom commands|custom command opted in))")
+SUGGESTION_CHARS = 400
+
+
 def category_label(category: str) -> str:
-    return {"bug": "⚠️ Bug", "security": "🔒 Security", "tests": "🧪 Tests",
-            "convention": "📐 Team rule"}.get(category, "⚠️ Issue")
+    return ICONS.get(category, "📌 Note")
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def sentence(text: str) -> str:
+    text = " ".join(str(text or "").split())
+    return text if not text or text[-1] in ".!?…)`" else text + "."
+
+
+def with_rule(f: dict) -> str:
+    """The finding's text, then the rule it rests on unless the text already names it."""
+    body, rule = sentence(f["body"]), (f.get("rule") or "").strip()
+    named = rule.lower() in body.lower() or rule == "dependency advisory"
+    return body + (f" _({rule})_" if rule and not named else "")
+
+
+def where(f: dict) -> str:
+    return f"`{f['path']}:{f['line']}`" if f.get("line") else (f"`{f['path']}`" if f.get("path") else "whole change")
 
 
 def finding_row(f: dict) -> str:
-    where = f"`{f['path']}:{f['line']}`" if f.get("line") else (f"`{f['path']}`" if f.get("path") else "whole change")
-    rule = f" _({f['rule']})_" if f.get("rule") else ""
-    return f"- **{f['severity'].title()} · {category_label(f['category'])}** {where} — {f['body']}{rule}"
+    return f"- _{f['severity']}_ {where(f)} — {with_rule(f)}"
+
+
+def suggestion_block(f: dict) -> str:
+    """A committable GitHub suggestion that replaces the commented line with
+    one line, fenced so its text cannot close the block."""
+    text = (f.get("suggestion") or "").rstrip("\n")
+    if not f.get("line") or not text.strip() or len(text) > SUGGESTION_CHARS or "\n" in text:
+        return ""
+    ticks = "`" * max(3, max((len(r) for r in re.findall(r"`+", text)), default=0) + 1)
+    return f"\n\n{ticks}suggestion\n{text}\n{ticks}"
 
 
 def inline_body(f: dict, pr: dict, commands: bool) -> str:
-    rule = f" _({f['rule']})_" if f.get("rule") else ""
-    reply = "\n\nReply `@gitzoid dismiss <reason>` or `@gitzoid defer`." if commands else ""
-    return (f"**{category_label(f['category'])} · {f['severity'].title()}**\n\n{f['body']}{rule}\n\n"
-            f"<details><summary>Prompt for your AI agent</summary>\n\n```text\n{fix_prompt(f, pr)}\n```\n</details>"
+    reply = "\n\n<sub>Reply `@gitzoid dismiss <reason>` or `@gitzoid defer`.</sub>" if commands else ""
+    return (f"**{category_label(f['category'])}** · {f['severity']} severity\n\n{with_rule(f)}{suggestion_block(f)}\n\n"
+            f"<details><summary>🤖 Prompt for your AI agent</summary>\n\n```text\n{fix_prompt(f, pr)}\n```\n</details>"
             f"{reply}\n{FINDING_MARKER.format(f['id'])}")
 
 
+def review_body(n: int) -> str:
+    """The review that carries the inline comments says nothing itself: the summary comment is the review."""
+    return "<!-- gitzoid:review -->"
+
+
 def summary(view: dict, pr: dict, commands: bool) -> str:
-    """The one editable summary comment on the pull request."""
-    open_f, verdict_key = view["open"], view["verdict"]
-    head = (f"{SUMMARY_MARKER}\n### GitZoid review · {VERDICT[verdict_key]}\n\n"
-            f"**Merge risk: {view['risk']}** · commit `{view['sha'][:7]}` · "
-            f"{view['reviewed_files']} of {view['total_files']} files reviewed")
+    """The one summary comment on the pull request, edited in place on every
+    push: the verdict and merge risk, then GitZoid's original layout (summary,
+    issues and security findings, collapsed suggestions, resolved findings and
+    run details)."""
+    open_f = view["open"]
+    missing = len(view.get("left_out") or [])
+    limits = [n for n in view.get("notes") or [] if not RUN_NOTE.match(n)]
+    partial = bool(missing or view.get("truncated") or limits)
+    verdict_text = ("No issues in the reviewed files" if partial and not open_f and view.get("verdict") == "looks_good"
+                    else VERDICT.get(view.get("verdict"), "Looks good"))
+    out = [SUMMARY_MARKER, f"### GitZoid review · {verdict_text}", "",
+           f"**Merge risk: {view['risk']}** · commit `{view['sha'][:7]}` · "
+           f"{view['reviewed_files']} of {view['total_files']} files reviewed"]
+    if view.get("summary"):
+        out += ["", "## 📝 Summary", f"- {sentence(view['summary'])}"]
     if view.get("paused"):
-        return head + f"\n\nAutomatic reviews are paused on this pull request: {view['paused']}." + (
-            " Comment `@gitzoid resume` to restart them." if commands else "")
-    out = [head, "", "## 📝 Summary", "", view["summary"] or ""]
+        out += ["", f"> ⏸️ Automatic reviews are paused on this pull request: {view['paused']}."
+                + (" Comment `@gitzoid resume` to restart them." if commands else "")]
     issues = [f for f in open_f if f["category"] != "security"]
     security = [f for f in open_f if f["category"] == "security"]
-    for title, findings in (("⚠️ Potential issues", issues), ("🔒 Security", security)):
+    for title, findings in (("⚠️ Potential Issues", issues), ("🔒 Security", security)):
         if findings:
-            out += ["", f"## {title} ({len(findings)})", ""]
-            out += [finding_row(f) for f in findings]
-    if not open_f:
-        out += ["", "No issues found that passed GitZoid's checks."]
-    changes = []
-    if view["fixed"]:
-        changes.append(f"{len(view['fixed'])} fixed")
-    if view["still"]:
-        changes.append(f"{len(view['still'])} still open")
-    if view["decided"]:
-        changes.append(f"{len(view['decided'])} dismissed or deferred")
-    if view.get("prior_sha") and changes:
-        out += ["", f"**Since the last review** (`{view['prior_sha'][:7]}`): " + ", ".join(changes) + "."]
-    if view["fixed"]:
-        out += ["", f"<details><summary>✅ Resolved ({len(view['fixed'])})</summary>", "",
-                "Previously reported findings verified as fixed in the reviewed code:", ""]
-        out += [f"- `{f.get('path') or 'whole change'}` — {f['body']}" for f in view["fixed"]]
+            out += ["", f"## {title} ({len(findings)})"] + [finding_row(f) for f in findings]
+    if partial:
+        what = []
+        if missing or view.get("truncated"):
+            what.append(f"{missing or 'Some'} of {view['total_files']} files were not reviewed"
+                        + (" (GitHub lists at most 3,000)" if view.get("truncated") else ""))
+        what += limits
+        out += ["", "> ⚠️ **Partial review.** " + " ".join(sentence(w) for w in what) + " Details are under Run details."]
+    if view.get("suggestions"):
+        tips = view["suggestions"][:3]
+        out += ["", f"<details><summary>💡 Suggestions ({len(tips)})</summary>", ""] + [f"- {sentence(t)}" for t in tips]
         out += ["", "</details>"]
-    cov = [f"Reviewed: {view['reviewed_files']} file(s)."]
-    if view["ignored"]:
-        cov.append(f"Skipped by review.md ignore: {', '.join(view['ignored'][:10])}.")
-    if view["left_out"]:
-        cov.append(f"Not reviewed (missing patch or size budget): {', '.join(view['left_out'][:10])}"
-                   + (f" and {len(view['left_out']) - 10} more" if len(view["left_out"]) > 10 else "") + ".")
-    if view.get("truncated"):
-        cov.append("GitHub lists at most 3,000 files; files beyond that were not reviewed.")
-    if view.get("incremental"):
-        cov.append("Only files changed since the last review were reviewed.")
-    cov.extend(view.get("notes") or [])
-    if view["left_out"] or view.get("truncated") or view.get("notes") or view.get("ignored"):
-        out += ["", "> ⚠️ Coverage is limited. Read the coverage notes before relying on this review."]
-    out += ["", "<details><summary>Coverage</summary>", "", " ".join(cov), "</details>"]
+    if view.get("fixed"):
+        out += ["", f"<details><summary>✅ Resolved ({len(view['fixed'])})</summary>", ""]
+        out += [f"- {where(f)} — {sentence(f['body'])}" for f in view["fixed"][:30]] + ["", "</details>"]
     if open_f:
-        out += ["", "<details><summary>Fix all with your AI agent</summary>", "", "```text",
-                combined_prompt(open_f, pr), "```", "</details>"]
-    if view["suggestions"]:
-        out += ["", f"<details><summary>💡 Suggestions ({len(view['suggestions'][:3])})</summary>", ""] + [f"- {s}" for s in view["suggestions"][:3]] + ["</details>"]
-    details = [f"Rules: {', '.join(view['rule_files']) or 'none'}.", f"Model: {view['model'] or 'the hub model'}."]
-    out += ["", "<details><summary>Run details</summary>", "", " ".join(details)]
-    if view["dropped"]:
-        # Shown, not hidden: a refutation planted by code comments is visible to the reviewer.
-        out += ["", f"Dropped by the second pass ({len(view['dropped'])}):"]
-        out += [f"- `{f['path']}:{f['line']}` {f['body']} Reason given: {f.get('reason') or 'none'}" for f in view["dropped"][:5]]
-    out += ["</details>"]
+        out += ["", "<details><summary>🤖 Fix all with your AI agent</summary>", "", "```text",
+                combined_prompt(open_f, pr), "```", "", "</details>"]
+    out += ["", "<details><summary>Run details</summary>", ""] + [f"- {d}" for d in run_details(view)] + ["", "</details>"]
     if commands:
-        out += ["", "<sub>Commands: `@gitzoid review` · `pause` · `resume` · `help`. On an inline comment: "
+        out += ["", "<sub>Commands: `@gitzoid review` · `pause` · `resume` · `help`. On a finding: "
                 "`@gitzoid dismiss <reason>` or `@gitzoid defer`.</sub>"]
     return "\n".join(out)
 
 
+def run_details(view: dict) -> list[str]:
+    def listed(items: list[str]) -> str:
+        shown = ", ".join(f"`{x}`" for x in items[:10])
+        return shown + (f" and {len(items) - 10} more" if len(items) > 10 else "")
+
+    out = ["Only files changed since the last review were reviewed."] if view.get("incremental") else []
+    if view.get("left_out"):
+        out.append(f"Not reviewed (GitHub sent no patch, or over the size budget): {listed(view['left_out'])}.")
+    if view.get("truncated"):
+        out.append("GitHub lists at most 3,000 files; files beyond that were not reviewed.")
+    if view.get("ignored"):
+        out.append(f"Skipped by review.md: {listed(view['ignored'])}.")
+    if view.get("built"):
+        out.append(f"Skipped as build output or minified code (secret checks still read them): {listed(view['built'])}.")
+    out += [sentence(n) for n in view.get("notes") or []]
+    if view.get("decided"):
+        out.append(f"Dismissed or deferred by the team: {len(view['decided'])}.")
+    out.append(f"Rules: {', '.join(view.get('rule_files') or []) or 'none'}. Model: {view.get('model') or 'the hub model'}.")
+    for f in (view.get("dropped") or [])[:5]:
+        # Shown, not hidden: a refutation planted by code comments is visible to the reviewer.
+        out.append(f"Dropped by the second pass: {where(f)} {sentence(f['body'])} Reason given: "
+                   f"{sentence(f.get('reason') or 'none')}")
+    return out
+
+
 def clean_summary(view: dict) -> str:
-    if view.get("left_out") or view.get("truncated") or view.get("notes") or view.get("ignored"):
-        body = summary(view, view.get("pr", {}), view.get("commands", False))
-        return body.replace("Looks good", "No issues found in reviewed code · coverage notes")
-    return (f"{SUMMARY_MARKER}\n### GitZoid review · Looks good\n\n## 📝 Summary\n\n{view['summary'] or ''}\n\n"
-            f"Looks good · {view['reviewed_files']} of {view['total_files']} files reviewed · commit `{view['sha'][:7]}`")
+    """A clean pull request gets the same comment, with no findings sections."""
+    return summary(view, view.get("pr", {}), view.get("commands", False))
 
 
 def linked_issue(pr: dict) -> int | None:

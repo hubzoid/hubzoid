@@ -448,6 +448,18 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
     out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads",
                                       subject="Weekly", body="# Numbers are in", body_format="markdown")
     assert {r["recipient"]: r["status"] for r in out["results"]}["new@co.org"] == "previewed"
+    out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="Weekly",
+                                      body="<div><h1>Digest</h1><p>Numbers are in</p></div>", body_format="html")
+    preview = next(r for r in out["results"] if r["status"] == "previewed")
+    message = BytesParser(policy=policy.default).parsebytes(Path(preview["outbox"]).read_bytes())
+    rich, plain = (message.get_body(preferencelist=(k,)).get_content() for k in ("html", "plain"))
+    assert "<h1>Digest</h1>" in rich and "To stop, ask" in rich
+    assert "Numbers are in" in plain and "To stop, ask" in plain
+    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+                                       body="<p>" + "y" * 5001 + "</p>", body_format="html")["status"] == "refused"
+    # The limit counts what is read, list footer included.
+    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+                                       body="<p>" + "y" * 4990 + "</p>", body_format="html")["status"] == "refused"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="nope", subject="x",
                                        body="")["status"] == "refused"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",

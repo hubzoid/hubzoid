@@ -59,7 +59,8 @@ def test_missing_patch_does_not_hide_later_readable_file_or_pass_gate(hub, monke
     assert clean["status"] == "failure"
     view = store(hub).view(REPO, 104)
     assert view["reviewed_files"] == 0 and view["left_out"]
-    assert "missing patch" in gz.review.clean_summary(view)
+    clean_text = gz.review.clean_summary(view)
+    assert "**Partial review.**" in clean_text and "GitHub sent no patch" in clean_text
     text, left = gz.diff.format_diff([{"filename": "big.py", "patch": None},
                                     {"filename": "small.py", "patch": "@@ -0,0 +1 @@\n+x"}], 5000)
     assert "small.py" in text and left == ["big.py"]
