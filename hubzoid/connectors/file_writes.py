@@ -9,21 +9,42 @@ that another connector may use or a value inherited by a running process.
 from __future__ import annotations
 
 import hashlib
+import io
+import logging
 import os
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from dotenv import dotenv_values
 from sqlalchemy import text
 
 from .. import _file_lock
 from ..control import yamlfile
 from . import ConnectorError, engine, registry as r
 
+log = logging.getLogger(__name__)
+
+# Names Windows reserves for devices: con.yaml cannot be created there.
+_WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                               *(f"lpt{i}" for i in range(1, 10))})
+
+
+def _linked(path: Path) -> bool:
+    """A symbolic link, or a Windows junction (a reparse point is_symlink misses)."""
+    if path.is_symlink():
+        return True
+    try:
+        attrs = getattr(os.lstat(path), "st_file_attributes", 0)
+    except FileNotFoundError:
+        return False
+    return bool(attrs & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
 
 def _safe(path: Path) -> None:
-    if path.is_symlink():
+    if _linked(path):
         raise ConnectorError("unsafe_path", "Settings cannot write through a symbolic link. "
                              "Use a regular connector folder, YAML file and .env file.", 409)
 
@@ -78,29 +99,69 @@ def _check_revision(raw: str, expected: str | None) -> None:
                              "Refresh the page and reopen it before saving.", 409)
 
 
-def _atomic(path: Path, value: str, *, previous: str | None) -> None:
+_ANY = object()  # restoring a file: no content check
+
+
+def _atomic(path: Path, value: str, *, previous) -> None:
     _safe(path)
-    # Catch a manual editor while the UI was validating or preparing secrets.
-    current = path.read_text(encoding="utf-8") if path.exists() else None
-    if current != previous:
-        raise ConnectorError("conflict", "The file changed during this save. Refresh and try again.", 409)
     fd, name = tempfile.mkstemp(prefix=".connector-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(value)
             out.flush()
             os.fsync(out.fileno())
-        # mkstemp's 0600 also protects an existing, previously permissive .env.
-        _safe(path)
-        os.replace(name, path)
+        for attempt in range(10):
+            # Catch a manual edit made while this save was being prepared,
+            # checked as late as possible: just before the file is replaced.
+            current = path.read_text(encoding="utf-8") if path.exists() else None
+            if previous is not _ANY and current != previous:
+                raise ConnectorError("conflict", "The file changed during this save. Refresh and "
+                                     "try again.", 409)
+            # mkstemp's 0600 also protects an existing, previously permissive .env.
+            _safe(path)
+            try:
+                os.replace(name, path)
+                return
+            except PermissionError:
+                # Windows refuses to replace a file another process is reading
+                # for a moment (a bridge loading it); try again shortly.
+                if os.name != "nt" or attempt == 9:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         Path(name).unlink(missing_ok=True)
+
+
+@contextmanager
+def _undo_on_failure(path: Path, *, previous: str | None, written: str | None):
+    """When the database part of a change fails, put the definition file back
+    as it was: the API reports a failure, so the change must not stay active.
+    Only a file still holding what this save wrote (``written``; None when it
+    was deleted) is restored, so a manual edit made meanwhile is kept."""
+    try:
+        yield
+    except BaseException:
+        try:
+            current = path.read_text(encoding="utf-8") if path.exists() else None
+            if current == written:
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _atomic(path, previous, previous=_ANY)
+        except (OSError, ConnectorError):
+            log.error("connectors: could not restore %s after a failed save", path.name)
+        r._seen.pop(str(path), None)
+        raise
 
 
 def _prepare(path: Path, doc: dict, data: dict) -> tuple[dict, dict[str, str]]:
     """Merge known input fields; validate everything before writing either file."""
     doc = dict(doc)
     secrets: dict[str, str] = {}
+    if ("client_id" in data and "client_secret" not in data
+            and (data["client_id"] or None) != (doc.get("client_id") or None)):
+        # A secret belongs to its client ID.
+        doc.pop("client_secret", None)
     for source, dest in (("name", "name"), ("url", "url"), ("auth_type", "sign_in"),
                          ("client_id", "client_id"), ("scopes", "scopes"),
                          ("tool_allowlist", "tools"), ("enabled", "enabled"),
@@ -138,7 +199,7 @@ def _prepare(path: Path, doc: dict, data: dict) -> tuple[dict, dict[str, str]]:
     return doc, secrets
 
 
-def _save(path: Path, doc: dict, secrets: dict[str, str], *, previous: str | None) -> None:
+def _save(path: Path, written: str, secrets: dict[str, str], *, previous: str | None) -> None:
     if secrets:
         env = path.parent.parent / ".env"
         _safe(env)
@@ -150,10 +211,17 @@ def _save(path: Path, doc: dict, secrets: dict[str, str], *, previous: str | Non
         for key, value in secrets.items():
             quoted = value.replace("\\", "\\\\").replace("'", "\\'")
             content += f"{key}='{quoted}'\n"
+        # Only values that read back exactly from the whole file are stored: an
+        # unfinished quoted line earlier in .env would swallow them.
+        parsed = dotenv_values(stream=io.StringIO(content), interpolate=False)
+        if any(parsed.get(key) != value for key, value in secrets.items()):
+            raise ConnectorError("invalid_secret", "The secret could not be saved in the deployment "
+                                 ".env file. Check .env for an unfinished quoted value, and the "
+                                 "secret for unusual characters.", 422)
         _atomic(env, content, previous=old)
     # If YAML fails after .env succeeded, only unreferenced new keys remain.
     # Existing definitions and their secrets are still intact.
-    _atomic(path, yamlfile.dumps(doc), previous=previous)
+    _atomic(path, written, previous=previous)
     r._seen.pop(str(path), None)
 
 
@@ -161,13 +229,17 @@ def create(hub_dir, data, *, actor: str, hub: str = "") -> r.Connector:
     data = r._body(data)
     name = r._name(data.get("name"))
     cid = r.check_id(data.get("id") or r.slugify(name))
+    if cid in _WINDOWS_RESERVED:
+        raise ConnectorError("invalid_id", f"{cid} is a name Windows reserves for devices. "
+                             "Choose another ID.", 422)
     with _locked(hub_dir) as base:
         if _paths(base, cid):
             raise ConnectorError("exists", f"A connector with the ID {cid} already exists.", 409)
         path = base / f"{cid}.yaml"
         doc, secrets = _prepare(path, {"version": 1, "hubs": [r._hub(hub)] if hub else []}, data)
-        with engine(hub_dir).begin() as conn:
-            _save(path, doc, secrets, previous=None)
+        written = yamlfile.dumps(doc)
+        with _undo_on_failure(path, previous=None, written=written), engine(hub_dir).begin() as conn:
+            _save(path, written, secrets, previous=None)
             r._audit(conn, hub_dir, actor, "connector_create", cid)
         return r.get(hub_dir, cid)
 
@@ -190,8 +262,14 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[r.Connector, bool]:
         if old.auth_type == new.auth_type == "shared" and old.url != new.url and not secrets:
             raise ConnectorError("shared_key_required", "A new server needs its own key. "
                                  "Enter the key again.", 422)
-        with engine(hub_dir).begin() as conn:
-            _save(path, newdoc, secrets, previous=raw)
+        # Nor is a stored client secret sent to a new server's sign-in.
+        if (old.auth_type == new.auth_type == "oauth" and old.url != new.url
+                and new.has_client_secret and "client_secret" not in data):
+            raise ConnectorError("client_secret_required", "A new server needs its client "
+                                 "secret again. Enter it, or remove the stored secret.", 422)
+        written = yamlfile.dumps(newdoc)
+        with _undo_on_failure(path, previous=raw, written=written), engine(hub_dir).begin() as conn:
+            _save(path, written, secrets, previous=raw)
             # Tokens are removed after committing to avoid a second writer on SQLite.
             if reset:
                 conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
@@ -211,7 +289,11 @@ def delete(hub_dir, cid: str, *, actor: str, expected_revision: str | None = Non
             return False
         path, raw, _, _ = _read(base, cid)
         _check_revision(raw, expected_revision)
-        with engine(hub_dir).begin() as conn:
+        with _undo_on_failure(path, previous=raw, written=None), engine(hub_dir).begin() as conn:
+            # A manual edit since the file was read wins over this delete.
+            if path.read_text(encoding="utf-8") != raw:
+                raise ConnectorError("conflict", "The file changed during this delete. Refresh and "
+                                     "try again.", 409)
             path.unlink()
             r._seen.pop(str(path), None)
             conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
@@ -233,8 +315,9 @@ def offering(hub_dir, cid: str, hub, *, actor: str, offered: bool) -> bool:
         if (hub in hubs) == offered:
             return False
         doc["hubs"] = sorted(set(hubs + [hub])) if offered else [h for h in hubs if h != hub]
-        with engine(hub_dir).begin() as conn:
-            _save(path, doc, {}, previous=raw)
+        written = yamlfile.dumps(doc)
+        with _undo_on_failure(path, previous=raw, written=written), engine(hub_dir).begin() as conn:
+            _save(path, written, {}, previous=raw)
             from ..access import store_for
             store_for(Path(hub_dir)).write_audit(
                 conn, r.normalize(actor) or "unknown",

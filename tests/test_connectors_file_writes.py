@@ -222,3 +222,89 @@ def test_withdraw_and_delete_persist_and_clean_up(hub, tc):
     assert tc.delete("/portal/api/connectors/gmail", headers=SAME).status_code == 204
     assert not (hub / "connectors/gmail.yaml").exists()
     assert registry.get(hub, "gmail") is None
+
+
+def test_client_secret_neither_follows_a_new_server_nor_a_new_client(hub, tc):
+    assert create(tc, client_id="client", client_secret="first").status_code == 201
+    moved = {"url": "https://other.example/mcp"}
+    r = tc.patch("/portal/api/connectors/gmail", json=moved, headers=SAME)
+    assert r.status_code == 422 and detail(r)["code"] == "client_secret_required"
+    assert registry.get(hub, "gmail").url == body()["url"]
+    r = tc.patch("/portal/api/connectors/gmail", json={**moved, "client_secret": "second"}, headers=SAME)
+    assert r.status_code == 200 and registry.client_secret(hub, "gmail") == "second"
+    # A secret belongs to its client ID: a new ID without a secret drops it.
+    r = tc.patch("/portal/api/connectors/gmail", json={"client_id": "other-client"}, headers=SAME)
+    assert r.status_code == 200 and registry.client_secret(hub, "gmail") is None
+
+
+def test_windows_device_names_are_not_connector_ids(hub, tc):
+    r = create(tc, id="con")
+    assert r.status_code == 422 and detail(r)["code"] == "invalid_id"
+    assert not list((hub / "connectors").glob("*.yaml"))
+
+
+def test_a_failed_database_step_puts_the_file_back(hub, tc, monkeypatch):
+    from hubzoid.connectors import file_writes
+
+    assert create(tc).status_code == 201
+    path = hub / "connectors/gmail.yaml"
+    before = path.read_text()
+
+    def fail(*_a, **_k):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(file_writes.r, "_audit", fail)
+    with pytest.raises(RuntimeError):
+        registry.update(hub, "gmail", {"name": "Changed"}, actor=f.OWNER)
+    assert path.read_text() == before
+    with pytest.raises(RuntimeError):
+        registry.delete(hub, "gmail", actor=f.OWNER)
+    assert path.read_text() == before
+    with pytest.raises(RuntimeError):
+        registry.create(hub, body(id="linear", name="Linear"), actor=f.OWNER)
+    assert not (hub / "connectors/linear.yaml").exists()
+    assert registry.get(hub, "gmail").name == "Gmail"
+
+
+def test_a_manual_edit_while_the_new_file_is_written_wins(hub, tc, monkeypatch):
+    from hubzoid.connectors import file_writes
+
+    assert create(tc).status_code == 201
+    path = hub / "connectors/gmail.yaml"
+    manual = path.read_text().replace("name: Gmail", "name: Manual")
+    real = file_writes.os.fsync
+
+    def edit_meanwhile(fd):
+        real(fd)
+        path.write_text(manual)
+
+    monkeypatch.setattr(file_writes.os, "fsync", edit_meanwhile)
+    r = tc.patch("/portal/api/connectors/gmail", json={"name": "UI"}, headers=SAME)
+    assert r.status_code == 409 and detail(r)["code"] == "conflict"
+    assert path.read_text() == manual
+
+
+def test_an_unfinished_env_line_cannot_swallow_a_new_secret(hub, tc):
+    (hub / ".env").write_text("UNCHANGED='unfinished\n")
+    r = create(tc, client_id="client", client_secret="value")
+    assert r.status_code == 422 and detail(r)["code"] == "invalid_secret"
+    assert (hub / ".env").read_text() == "UNCHANGED='unfinished\n"
+    assert not list((hub / "connectors").glob("*.yaml"))
+
+
+def test_a_manual_edit_after_reading_is_not_deleted(hub, tc, monkeypatch):
+    from hubzoid.connectors import file_writes
+
+    assert create(tc).status_code == 201
+    path = hub / "connectors/gmail.yaml"
+    manual = path.read_text().replace("name: Gmail", "name: Manual")
+    real = file_writes._check_revision
+
+    def edit_meanwhile(raw, expected):
+        real(raw, expected)
+        path.write_text(manual)
+
+    monkeypatch.setattr(file_writes, "_check_revision", edit_meanwhile)
+    r = tc.delete("/portal/api/connectors/gmail", headers=SAME)
+    assert r.status_code == 409
+    assert path.read_text() == manual

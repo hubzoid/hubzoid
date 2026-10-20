@@ -149,6 +149,10 @@ Operator environment values take precedence for hand-authored references.
 Settings-generated references read their literal `.env` value, including after
 a restart. Replacing a key creates a fresh reference; old values are left for operator cleanup in case another
 file still uses them. Keep `.env` out of version control and protect its backups.
+A stored client secret or shared key is never sent to a different server: changing a
+connector's URL asks for it again (or, for a client secret, its removal), and a new
+client ID drops the old client's secret. On Windows the rewritten `.env` takes the
+deployment folder's permissions, so keep that folder restricted to the service account.
 
 UI edits preserve definition fields but may normalize formatting and remove
 YAML comments. A stale browser form is rejected if the file has changed since

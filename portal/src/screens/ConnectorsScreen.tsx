@@ -559,11 +559,21 @@ function ConnectorDrawer({
   const id = creating ? draft.id.trim() || slug(draft.name) : draft.id;
   // The stored key is never sent to another address: a new URL needs the key again.
   const keyNeeded = !!existing && existing.auth_type === "shared" && draft.url.trim() !== existing.url;
+  // Nor is a stored client secret: a new server needs it entered again, or removed.
+  const secretNeeded =
+    !!existing && existing.auth_type === "oauth" && draft.auth === "oauth" && existing.has_client_secret &&
+    draft.url.trim() !== existing.url && draft.clientId.trim() === (existing.client_id ?? "") &&
+    !draft.secret && !draft.dropSecret;
   const problems = {
     name: draft.name.trim() ? null : "Enter a name people will recognise, for example Gmail.",
     id: creating && !/^[a-z][a-z0-9_]{1,39}$/.test(id) ? "Use 2 to 40 lowercase letters, digits or _, starting with a letter." : null,
     url: urlProblem(draft.url),
-    secret: draft.auth === "oauth" && draft.secret && !draft.clientId.trim() ? "A client secret needs its client ID." : null,
+    secret:
+      draft.auth === "oauth" && draft.secret && !draft.clientId.trim()
+        ? "A client secret needs its client ID."
+        : secretNeeded
+          ? "A new server needs its client secret again. Enter it, or remove the stored secret."
+          : null,
     key:
       draft.auth === "shared" && !draft.key
         ? keyNeeded
