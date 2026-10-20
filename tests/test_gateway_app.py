@@ -60,7 +60,7 @@ def test_plan_routes_hub_scoped_web_app_calls(tmp_path):
     # The hub-scoped API goes by hub key, with its path unchanged.
     for key, port in (("sales", 3611), ("support", 3612)):
         assert routes[f"/api/hubs/{key}"] == {"prefix": f"/api/hubs/{key}",
-                                               "upstream": f"http://127.0.0.1:{port}"}
+                                               "upstream": f"http://127.0.0.1:{port}", "hub": key}
     for slug, port in (("sales", 3611), ("support", 3612)):
         for part in ("api", "artifacts", "branding", "portal/api"):
             r = routes[f"/b/{slug}/{part}"]

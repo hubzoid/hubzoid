@@ -60,6 +60,7 @@ class GatewayPlan:
         """
         routes = []
         for b in self.backends:
+            first = len(routes)
             base = f"/b/{b.slug}"
             routes.append({
                 "prefix": base + artifact_prefix,
@@ -109,6 +110,8 @@ class GatewayPlan:
                     "prefix": f"/webhooks/{b.slug}",
                     "upstream": f"http://127.0.0.1:{b.inbound_port}",
                 })
+            for r in routes[first:]:
+                r["hub"] = b.slug  # the edge answers for it by this hub's state
         return routes
 
     @property

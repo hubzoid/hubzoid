@@ -613,6 +613,9 @@ def _factory() -> Starlette:
                                   ({"default", "default_fallbacks", "routes",
                                   "states"}), read again when it changes.
     """
+    from . import supervisor as _supervisor
+
+    _supervisor.watch_parent()
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
         raise RuntimeError("edge factory needs HUBZOID_EDGE_DEFAULT in the environment.")

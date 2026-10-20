@@ -58,6 +58,9 @@ def _hub_dir() -> Path:
 
 
 def build_app() -> FastAPI:
+    from . import supervisor as _supervisor
+
+    _supervisor.watch_parent()  # no orphan holding the port if `hubzoid run` is killed
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
     logging.getLogger("alembic").setLevel(

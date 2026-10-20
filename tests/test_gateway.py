@@ -16,6 +16,11 @@ from hubzoid import cli, gateway
 from hubzoid.settings import Settings
 
 
+def _bare(routes):
+    """Routes without the hub tag the supervisor's table uses."""
+    return [{k: v for k, v in r.items() if k != "hub"} for r in routes]
+
+
 def _settings(hub_dir: Path, bridge_port: int, keys=("k",), label=None) -> Settings:
     return Settings(
         hub_dir=Path(hub_dir).resolve(),
@@ -46,7 +51,7 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
         str(support): _settings(support, 8001),
     })
     gp = gateway.plan([sales, support], load=load)
-    routes = gp.edge_routes()
+    routes = _bare(gp.edge_routes())
     # Each hub's artifacts, Console API, web app API and branding reach its own
     # bridge, with the /b/<slug> prefix stripped. /api/hubs/<key> reaches it by
     # hub key, with the path unchanged.
@@ -82,7 +87,7 @@ def test_plan_edge_routes_add_webhooks_for_inbound_hub(tmp_path):
     assert by_slug["wa"].inbound is True
     assert by_slug["wa"].inbound_port == 8100
     assert by_slug["plain"].inbound is False
-    webhooks = [r for r in gp.edge_routes() if r["prefix"].startswith("/webhooks")]
+    webhooks = [r for r in _bare(gp.edge_routes()) if r["prefix"].startswith("/webhooks")]
     assert webhooks == [{"prefix": "/webhooks/wa", "upstream": "http://127.0.0.1:8100"}]
 
 
@@ -96,7 +101,7 @@ def test_plan_inbound_honours_custom_port_and_telegram(tmp_path):
     )
     gp = gateway.plan([tg], load=_loader({str(tg): _settings(tg, 8000, label="tg-agent")}))
     assert gp.backends[0].inbound is True
-    assert {"prefix": "/webhooks/tg", "upstream": "http://127.0.0.1:8250"} in gp.edge_routes()
+    assert {"prefix": "/webhooks/tg", "upstream": "http://127.0.0.1:8250"} in _bare(gp.edge_routes())
 
 
 def test_plan_edge_routes_webhooks_for_every_inbound_hub(tmp_path):
@@ -116,7 +121,7 @@ def test_plan_edge_routes_webhooks_for_every_inbound_hub(tmp_path):
         str(b): _settings(b, 8001, label="beta-agent"),
     })
     gp = gateway.plan([a, b], load=load)
-    webhooks = [r for r in gp.edge_routes() if r["prefix"].startswith("/webhooks")]
+    webhooks = [r for r in _bare(gp.edge_routes()) if r["prefix"].startswith("/webhooks")]
     assert webhooks == [
         {"prefix": "/webhooks/alpha", "upstream": "http://127.0.0.1:8100"},
         {"prefix": "/webhooks/beta", "upstream": "http://127.0.0.1:8101"},
@@ -130,7 +135,7 @@ def test_plan_generic_webhook_surface_counts_as_inbound(tmp_path):
     (wh / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\nWEBHOOK_INBOUND_NAME=squadcast\n")
     gp = gateway.plan([wh], load=_loader({str(wh): _settings(wh, 8000, label="alerts-agent")}))
     assert gp.backends[0].inbound is True
-    assert {"prefix": "/webhooks/alerts", "upstream": "http://127.0.0.1:8100"} in gp.edge_routes()
+    assert {"prefix": "/webhooks/alerts", "upstream": "http://127.0.0.1:8100"} in _bare(gp.edge_routes())
 
 
 def test_plan_rejects_inbound_port_collision(tmp_path):

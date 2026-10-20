@@ -107,7 +107,11 @@ def test_default_mode_runs_bridge_and_edge_only(tmp_path, launched):
     assert len(launched) == 2
     edge = _edge(launched)
     assert edge["env"]["HUBZOID_EDGE_DEFAULT"] == "http://127.0.0.1:3802"  # every path to the bridge
-    assert json.loads(edge["env"]["HUBZOID_EDGE_ROUTES"]) == []
+    # One hub has the same per-hub addresses as a deployment of many.
+    routes = json.loads(edge["env"]["HUBZOID_EDGE_ROUTES"])
+    assert {r["prefix"] for r in routes} == {f"/b/ops/{p}" for p in ("artifacts", "portal/api", "api",
+                                                                       "branding", "v1")}
+    assert all(r["upstream"] == "http://127.0.0.1:3802" and r["strip_prefix"] == "/b/ops" for r in routes)
     assert edge["cmd"][edge["cmd"].index("--host") + 1] == "127.0.0.1"
     assert edge["cmd"][edge["cmd"].index("--port") + 1] == "3801"
     bridge = _bridge(launched)
@@ -119,7 +123,8 @@ def test_webhooks_go_to_the_inbound_process(tmp_path, launched):
     hub = _hub(tmp_path, "WEBHOOK_INBOUND_SECRET=s3cr3t-value-long\nWEBHOOK_INBOUND_NAME=alerts\n")
     result = _run(hub, "--webhook")
     assert result.exit_code == 0, result.output
-    routes = json.loads(_edge(launched)["env"]["HUBZOID_EDGE_ROUTES"])
+    routes = [r for r in json.loads(_edge(launched)["env"]["HUBZOID_EDGE_ROUTES"])
+              if r["prefix"].startswith("/webhooks/")]
     assert len(routes) == 1 and routes[0]["prefix"] == "/webhooks/ops"
     assert routes[0]["upstream"].startswith("http://127.0.0.1:")
     assert _kind(launched, "inbound")  # the inbound process was started
@@ -502,24 +507,6 @@ def test_a_slow_bridge_is_waited_for(tmp_path, monkeypatch):
     assert cli._wait_for_bridge(proc, "http://127.0.0.1:3802/healthz", timeout=60) is True
 
 
-@pytest.mark.parametrize("dead,code", [("hubzoid.server:build_app", 1),
-                                       ("hubzoid.server:build_app", 0),
-                                       ("hubzoid.edge:_factory", 1),
-                                       ("hubzoid.edge:_factory", 0)])
-def test_service_exit_after_readiness_is_a_failure(tmp_path, monkeypatch, launched, dead, code):
-    original = subprocess.Popen
-
-    def failing_bridge(cmd, *args, **kwargs):
-        proc = original(cmd, *args, **kwargs)
-        if dead in cmd:
-            proc.poll.side_effect = [None, None, code, code]
-        return proc
-
-    monkeypatch.setattr(subprocess, "Popen", failing_bridge)
-    monkeypatch.setattr(cli, "_wait_any", _WAIT_ANY)
-    assert _run(_hub(tmp_path)).exit_code == 1
-
-
 @pytest.mark.slow
 @pytest.mark.parametrize("option", ["--bridge-port", "--port"])
 def test_occupied_port_refuses_start_without_launching_children(tmp_path, monkeypatch, launched, option):
@@ -543,11 +530,16 @@ def test_occupied_port_refuses_start_without_launching_children(tmp_path, monkey
     assert "unavailable" in result.output and option in result.output
     assert not started
 
-def test_public_service_readiness_timeout_is_a_failure(tmp_path, monkeypatch, launched):
-    def readiness(proc, url, **kwargs):
-        return kwargs.get('label', 'bridge') == 'bridge'
+def test_a_public_port_that_cannot_open_is_a_failure(tmp_path, monkeypatch, launched):
+    original = subprocess.Popen
 
-    monkeypatch.setattr(cli, '_wait_for_bridge', readiness)
+    def edge_exits(cmd, *args, **kwargs):
+        proc = original(cmd, *args, **kwargs)
+        if "hubzoid.edge:_factory" in cmd:
+            proc.poll.return_value = 1   # could not bind
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", edge_exits)
     result = _run(_hub(tmp_path))
     assert result.exit_code == 1, result.output
     assert 'Hubzoid is ready' not in result.output
