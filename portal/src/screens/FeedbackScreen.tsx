@@ -146,9 +146,10 @@ export function AgentFeedback({ hub }: { hub: Hub }) {
       </Space>
       <Space style={{ marginBottom: 16 }} wrap>
         {page && (
-          <Text data-testid="feedback-counts">
-            <ThumbsUp size={13} aria-hidden /> {page.counts.positive} helpful · <ThumbsDown size={13} aria-hidden />{" "}
-            {page.counts.negative} not helpful
+          <Text data-testid="feedback-counts" style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+            <ThumbsUp size={13} aria-hidden /> {page.counts.positive} helpful
+            <span aria-hidden>·</span>
+            <ThumbsDown size={13} aria-hidden /> {page.counts.negative} not helpful
           </Text>
         )}
         <Button size="small" icon={<Download size={13} />} href={`${base(hub)}/export?format=csv${exportQuery}`}>
