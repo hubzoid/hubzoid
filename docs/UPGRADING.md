@@ -6,12 +6,72 @@ switch and no account sync. A deployment that still needs Open WebUI stays on
 the 1.x line (`pip install "hubzoid<2"`). The sections for 1.x releases below
 describe those releases as they were.
 
+- [One run mode: every hub supervised, every setting in one file](#one-run-mode)
 - [Upgrading to 2.0: Open WebUI removed](#upgrading-to-20-open-webui-removed)
 - [Upgrading to 1.3.2](#upgrading-to-132)
 - [Upgrading to 1.3: workflows from chat](#upgrading-to-13-workflows-from-chat)
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## One run mode
+
+`hubzoid run` now runs one hub or many: each hub in its own process, restarted
+on its own, behind one public port, with `hubzoid status`, `restart`, `reload`,
+`stop`, `start` and `logs` for a running deployment. And every setting has one
+home:
+
+| Setting | Its home now | Before |
+|---|---|---|
+| Hub list, public URL, sign-in, owner | `hubzoid.yaml` in the deployment folder | `hubzoid gateway` arguments and environment |
+| Brand | `brand:` in `hubzoid.yaml`, images in `branding/` | drafts, reviews and activations in the database |
+| Chat defaults | `chat:` in `hubzoid.yaml` | `chat/config.yaml` applied into the database |
+| Diagnostics limits | `diagnostics:` in `hubzoid.yaml` | `admin.yaml` planned and applied |
+| Connectors | `connectors/<id>.yaml` in the deployment folder, secrets in `.env` | added in Settings |
+| Channels (Slack app, WhatsApp, Telegram, webhook) | a file in the hub's `channels/` | `--slack`, `--whatsapp`, `--telegram`, `--webhook` |
+| Keys a person types | `.env` (or the host's environment) | also storable in Settings |
+| Instructions and their history | the files, changed through hub changes; Git history | Workspace drafts and versions in the database |
+| Phone numbers, who may ask from a channel | people and grants in Settings | also `identity/access.csv` |
+
+`chat/config.yaml`, `branding.yaml` and `admin.yaml` are still read for this
+release when `hubzoid.yaml` has no such section, and a hub whose `.env` alone
+turns on a 1.x channel still gets it (with a notice). `hubzoid gateway` works
+for one release and prints the `hubzoid.yaml` it amounts to.
+
+### Steps (offline, once)
+
+1. **Let waiting work finish.** Workflow runs started by the old version are
+   cancelled when a hub starts on new code, so finish or cancel them first
+   (`hubzoid schedule status`, the Workflows page).
+2. **Stop everything**: the gateway unit, every per-hub unit and every inbound
+   unit (`systemctl stop`, then `systemctl disable` them).
+3. **Back up** each hub and the state folder: `hubzoid backup`, then
+   `hubzoid backup verify` the archive. Keep the deployment key with it.
+4. **Install** the new version, then run, in the deployment folder:
+   ```bash
+   hubzoid upgrade --dry-run --data-dir ./gateway-data    # what it would write
+   hubzoid upgrade --data-dir ./gateway-data
+   ```
+   It writes `hubzoid.yaml` (from the gateway's manifest), the brand, chat
+   defaults and diagnostics limits kept in the database, Settings connectors
+   (`connectors/<id>.yaml`, secrets into `.env`), keys typed into Settings
+   (into their hub's `.env`), a channel file for each 1.x channel a `.env`
+   turns on, and exports Workspace drafts and published versions to
+   `<state>/exports/`. It never overwrites a file and never prints a secret.
+   Then it brings the database to the new schema, which drops the database
+   copies; that step refuses to run while anything kept only there has not
+   been written out.
+5. **Review and commit** the new files (`git diff`). Remove from each hub's
+   `.env` what is now set once: `HUBZOID_AUTH` (now `sign_in:`), `WEBUI_NAME`
+   (now `brand.identity.name`), and the retired 1.x names doctor lists. Move
+   `ENABLE_SIGNUP` and sign-in client settings to the deployment's `.env`.
+   `BRIDGE_PORT` and `BRIDGE_API_KEYS` can go.
+6. **One unit**: `hubzoid service install --data-dir ./gateway-data ...`
+   ([deploying](DEPLOYING.md#5-systemd-unit-one-unit-for-every-hub)), then
+   `systemctl enable --now hubzoid` and `hubzoid status`.
+
+**Going back:** restore the backup (databases, state folder and deployment key
+together), reinstall the previous version and re-enable the old units.
 
 ## Upgrading to 2.0: Open WebUI removed
 
@@ -101,7 +161,7 @@ These names keep their meaning in the web app: `ENABLE_SIGNUP`,
    and not as an administrator. [What moves and what does not](#what-moves-and-what-does-not)
    still applies.
 6. **Rename** the settings in the first table, and remove the ones that warn.
-7. **Start** with `hubzoid run my-hub` (or `hubzoid gateway`), then run
+7. **Start** with `hubzoid run my-hub` (or `hubzoid run` with a `hubzoid.yaml`), then run
    `hubzoid doctor my-hub` and sign in as the owner and as an ordinary user.
 
 What 2.0 does not yet cover compared with Open WebUI is listed in the

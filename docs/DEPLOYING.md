@@ -32,8 +32,8 @@ If you don't have a reason to pick B, C or D, pick A.
 
 | Topology | Databases | Notes |
 |---|---|---|
-| One hub on one machine (`hubzoid run`) | SQLite files under `<hub>/.hubzoid/` | The quick start. Back up with `hubzoid backup`. |
-| Several hubs behind one chat app on one machine (`hubzoid gateway`) | One shared SQLite operational database in the gateway's `--data-dir`, one SQLite DBOS file per hub | The common production shape. |
+| One hub on one machine (`hubzoid run` in the hub folder) | SQLite files under `<hub>/.hubzoid/` | The quick start. Back up with `hubzoid backup`. |
+| Several hubs behind one web app on one machine (`hubzoid run` with a `hubzoid.yaml`) | One shared SQLite operational database in the deployment's state folder (`.hubzoid/`, or `--data-dir`), one SQLite DBOS file per hub | The common production shape. Each hub runs and restarts on its own. |
 | Either of the above with PostgreSQL | `DATABASE_URL` for Hubzoid and DBOS | For production that needs managed backups or a separate database server. |
 | The Docker image | Either SQLite on a volume or PostgreSQL | See Path B. |
 
@@ -42,7 +42,7 @@ Not supported:
 - Two processes serving the same hub at once. Each hub has one bridge.
 - Several machines sharing one set of SQLite files (for example over NFS).
   Use PostgreSQL when processes run on different machines.
-- Several hubs sharing one SQLite DBOS file. The gateway refuses this.
+- Several hubs sharing one SQLite DBOS file. `hubzoid run` refuses this.
 
 ## SQLite or PostgreSQL
 
@@ -62,7 +62,7 @@ workflow health and lock errors. See [backup and restore](BACKUP.md).
 
 ```bash
 pip install "hubzoid[postgres]"
-# in the environment of the hub, or of the gateway and every bridge:
+# in the environment of the hub, or in the deployment's .env (next to hubzoid.yaml):
 DATABASE_URL=postgresql+psycopg://hubzoid:<password>@db.internal:5432/hubzoid
 ```
 
@@ -99,9 +99,9 @@ reaches.
 | # | Layer | Source | Secret named by | Reaches |
 |---|---|---|---|---|
 | 1 | Built-in | Hubzoid defaults | | every process |
-| 2a | Deployment, 0.9.x compatibility | Sign-in keys (`OAUTH_*`, `OPENID_*`, `GOOGLE_CLIENT_*`, `ENABLE_SIGNUP`, `ENABLE_LOGIN_FORM`, `ENABLE_OAUTH_SIGNUP` and similar) and `HUBZOID_PUBLIC_URL` from hub `.env` files, only when 2b and 2c do not set them | | the gateway, and the bridges it launches |
-| 2b | Deployment | The gateway's process environment (systemd `EnvironmentFile`, shell). Standalone `hubzoid run`: the hub `.env` and the process environment | | see below |
-| 2c | Deployment secret | JSON secret | `AWS_SECRET_NAME` in the gateway's environment. Standalone: in the hub `.env` or the environment | see below |
+| 2a | Deployment, 0.9.x compatibility | Sign-in keys (`OAUTH_*`, `OPENID_*`, `GOOGLE_CLIENT_*`, `ENABLE_SIGNUP`, `ENABLE_LOGIN_FORM`, `ENABLE_OAUTH_SIGNUP` and similar) and `HUBZOID_PUBLIC_URL` from hub `.env` files, only when 2b and 2c do not set them | | `hubzoid run`, and the hubs it starts |
+| 2b | Deployment | The deployment's process environment and the `.env` next to `hubzoid.yaml` (systemd `EnvironmentFile`, shell). Standalone `hubzoid run`: the hub `.env` and the process environment | | see below |
+| 2c | Deployment secret | JSON secret | `AWS_SECRET_NAME` in the deployment's environment. Standalone: in the hub `.env` or the environment | see below |
 | 3a | Hub | `<hub>/.env` | | that hub's bridge, inbound, Slack and agent runtime |
 | 3b | Hub secret | JSON secret | `HUBZOID_HUB_SECRET_NAME` in `<hub>/.env` | same as 3a |
 | 4a | Restricted | `<hub>/restricted/.env` | | that hub's restricted tools, in the bridge process |
@@ -109,12 +109,12 @@ reaches.
 
 - **Within a layer, the secret wins over the file.** A key a secret overrides is
   logged by name, never by value.
-- **Across layers, the more specific layer wins.** A hub in a gateway applies
+- **Across layers, the more specific layer wins.** A hub in a deployment of several hubs applies
   the deployment secret before its own `.env`.
 - **A standalone hub treats its `.env` as the deployment layer.** There the
   deployment secret is applied after the `.env` and wins over it. This is the
   familiar `AWS_SECRET_NAME` pattern: load `.env`, then let the secret override.
-- **One hub cannot redirect the deployment.** In a gateway, `AWS_SECRET_NAME` in
+- **One hub cannot redirect the deployment.** In a deployment of several hubs, `AWS_SECRET_NAME` in
   a hub `.env` is ignored with a warning. Use `HUBZOID_HUB_SECRET_NAME` for a
   hub's own secret.
 - **Secret names are read from their own layer only.** `HUBZOID_HUB_SECRET_NAME`
@@ -132,7 +132,7 @@ reaches.
 
 ### What each process gets
 
-- **The gateway** reads the deployment secret once at start. It loads hub
+- **`hubzoid run`** reads the deployment secret once at start. It loads hub
   `.env` files only to plan ports and names, and never fetches a hub or
   restricted secret. It records the deployment secret's name and region (never
   a value) in `deployment.json` as `deployment_secret`.
@@ -142,15 +142,12 @@ reaches.
   settings, `HUBZOID_ARTIFACT_LINK_DAYS`, `HUBZOID_ARTIFACT_ALLOW_ORIGINS`,
   every `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`, `DATABASE_SCHEMA`,
   `HUBZOID_OPERATIONAL_DB`, `HUBZOID_PUBLIC_URL`, `HUBZOID_OTEL_ENDPOINT` and
-  `OTEL_*`. The gateway names the other keys at start (they stay with the
-  gateway). A bridge turns the deployment
+  `OTEL_*`. `hubzoid run` names the other keys at start (they stay with the
+  supervisor). A bridge turns the deployment
   `HUBZOID_PUBLIC_URL` into its own `<url>/b/<hub>` address. Each bridge fetches
   its own hub and restricted secrets.
-- **Bridges the gateway launches** receive the deployment values from the
-  gateway and do not fetch the deployment secret again.
-- **External bridges** (`--no-bridges`) find the deployment secret through the
-  manifest and fetch it themselves, filtered the same way, before their hub
-  layers. Restart them once after the gateway first records the secret.
+- **Hubs `hubzoid run` starts** receive the deployment values from the
+  supervisor and do not fetch the deployment secret again.
 - **Agent child processes.** The `claude` CLI, and the stdio MCP servers it
   starts, get these variables blanked when present:
   - the secret names: `AWS_SECRET_NAME`, `HUBZOID_HUB_SECRET_NAME`,
@@ -215,7 +212,7 @@ Store each secret as a flat JSON object of `NAME: value` pairs:
   in messages or logs. Logs show the key count at INFO and the key names at
   DEBUG.
 
-Example gateway environment file:
+Example deployment `.env`:
 
 ```bash
 AWS_SECRET_NAME=prod/hubzoid/deployment
@@ -233,7 +230,7 @@ HUBZOID_RESTRICTED_SECRET_NAME=prod/hubzoid/sales-tools  # in sales/restricted/.
 
 Values are read once, when a process starts. After rotating a secret, restart:
 
-- the deployment secret: the gateway, then every bridge
+- the deployment secret: `hubzoid run`, then every bridge
 - a hub secret: that hub's bridge, inbound and Slack processes
 - a restricted secret: that hub's bridge
 
@@ -344,33 +341,28 @@ IP before starting your reverse proxy. Any auto-issuing proxy (Caddy,
 certbot-managed nginx) needs DNS to resolve before it can fetch a TLS
 cert.
 
-### 5. systemd unit (one template runs N agents)
+### 5. systemd unit (one unit for every hub)
 
-Drop the following at `/etc/systemd/system/hubzoid@.service`:
+`hubzoid run` supervises every hub of the deployment in its own process: a
+hub that stops is started again on its own, and one hub is restarted, stopped
+or reloaded with `hubzoid restart|stop|start|reload <hub>` while the others
+keep answering. So one unit runs the whole deployment. Write it from the
+deployment folder (the one with `hubzoid.yaml`, or the hub folder for one hub):
+
+```bash
+sudo -iu hubzoid
+cd /opt/hubzoid/agents
+hubzoid service install --port 3080 --host 0.0.0.0 --user hubzoid \
+  | sudo tee /etc/systemd/system/hubzoid.service
+```
+
+Then add what your box needs under `[Service]`, for example:
 
 ```ini
-[Unit]
-Description=Hubzoid agent %i
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=hubzoid
-Group=hubzoid
-WorkingDirectory=/opt/hubzoid/agents
-ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run %i
 # claude-local shells out to the `claude` CLI; the systemd default PATH
 # excludes ~/.local/bin, so name it here. Harmless for API-key hubs.
 Environment=PATH=/opt/hubzoid/.local/bin:/usr/local/bin:/usr/bin:/bin
-Restart=always
-RestartSec=10s
-KillMode=control-group
 OOMPolicy=stop
-TimeoutStopSec=30
-StandardOutput=journal
-StandardError=journal
-
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -383,28 +375,17 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 RestrictSUIDSGID=true
 LockPersonality=true
-
-[Install]
-WantedBy=multi-user.target
 ```
-
-`%i` is replaced by the systemd instance name. Reload and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now hubzoid@devops-agent
-sudo systemctl status hubzoid@devops-agent
+sudo systemctl enable --now hubzoid
+hubzoid status              # every hub: ready, restarting, failed or stopped
+hubzoid logs <hub> -f       # one hub's output (also in journalctl -u hubzoid)
 ```
 
-For each additional agent, repeat with the new hub folder's name:
-`systemctl enable --now hubzoid@sales-agent`. One unit file, any number of
-agents.
-
-Live logs:
-
-```bash
-journalctl -u hubzoid@devops-agent -f
-```
+The unit's `TimeoutStopSec=180` leaves running replies their two-minute grace
+period on a stop.
 
 ### 5b. Running claude-local in production (subscription, no API key)
 
@@ -433,7 +414,7 @@ login — via a long-lived subscription token:
    out to reads `CLAUDE_CODE_OAUTH_TOKEN` automatically. Nothing is passed on
    the command line, and no `claude login` is needed on the box.
 
-3. The shipped `hubzoid@.service` is already claude-local-ready (PATH set,
+3. The unit above is claude-local-ready once you add its PATH line (PATH set,
    `ReadWritePaths=/opt/hubzoid`, no `ProtectHome`). Two prerequisites the
    default hardening would otherwise break, called out so you can verify:
 
@@ -454,7 +435,7 @@ hub to a metered API-key provider.
 #### Claude credential failover
 
 Available in **1.3.2**. Add up to two optional backups alongside the existing
-primary in the bridge environment or each Hub’s secret store. In a gateway, use the
+primary in the hub's `.env` or the host's environment. In a deployment of several hubs, use the
 same slots for Hubs that should share these credentials. Do not put tokens in
 Hub knowledge, chat, source control or agent instructions.
 
@@ -491,7 +472,7 @@ Without backups, the existing login behavior is unchanged.
   environment/secret-store configuration, as for other credentials.
 - Hubs sharing the operational database share cooldowns, keyed by a token digest.
   Raw credentials are never stored in this metadata. Separate standalone stores
-  cannot coordinate; use a gateway or a deliberately shared operational store.
+  cannot coordinate; use one deployment (`hubzoid.yaml`) or a deliberately shared operational store.
 - There are no alerts or admin UI changes. Logs identify the slot (0 = primary,
   1/2 = backups), failure category and recovery without printing token values.
 
@@ -622,46 +603,32 @@ for hub in */AGENTS.md; do .venv/bin/hubzoid backup "$(dirname "$hub")" --out "/
 source .venv/bin/activate
 pip install -r requirements.txt
 exit
-sudo systemctl restart 'hubzoid@*'
+sudo systemctl restart hubzoid
 ```
 
-Expect 10-30 seconds of downtime per agent.
+Expect 10-60 seconds of downtime while the hubs start (three at a time). After
+changing only one hub's files, `hubzoid reload <hub>` restarts that hub alone.
 
-### 9. Slack adapter (optional)
+### 9. Slack, WhatsApp, Telegram and webhooks (optional)
 
-The Slack chat surface uses **Socket Mode**, so it does not need a public
-URL — no Caddy route, no inbound firewall holes. Two shapes:
+Channels turn on by a file in the hub's `channels/` folder, never a flag, and
+run with their hub (restarting the hub restarts them). The Slack assistant app
+uses **Socket Mode**, so it needs no public URL:
 
-**A. Two units (recommended).** Independent restarts. A Slack-side crash
-doesn't drop web sessions.
-
-```bash
-sudo -iu hubzoid
-hubzoid slack systemd /opt/hubzoid/agents/<name> \
-  --python /opt/hubzoid/agents/.venv/bin/python \
-  --user hubzoid \
-  | sudo tee /etc/systemd/system/hubzoid-slack@<name>.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now hubzoid-slack@<name>.service
+```yaml
+# <hub>/channels/slack-assistant.yaml
+version: 1
+id: slack-assistant
+provider: slack_assistant    # SLACK_BOT_TOKEN and SLACK_APP_TOKEN in the hub's .env
+enabled: true
 ```
 
-The unit `Requires=hubzoid@<name>.service`, so the adapter starts only once
-the bridge is healthy.
-
-**B. One unit, inline `--slack`.** Simpler if you do not need independent
-restarts. Edit `/etc/systemd/system/hubzoid@.service` and append `--slack`:
-
-```ini
-ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run /opt/hubzoid/agents/%i --slack
-```
-
-Then `systemctl daemon-reload && systemctl restart hubzoid@<name>`. A
-misconfigured `SLACK_*` token only logs a warning; the bridge + UI stay
-up. A Slack-side crash, however, takes the whole unit down — systemd
-restarts everything together.
-
-Tokens come from the same `<hub>/.env`. Operator walkthrough (manifest,
-app install, troubleshooting) is in [docs/slack.md](slack.md).
+`provider: whatsapp_inbound`, `telegram` and `webhook` turn on the inbound
+server for WhatsApp (`WHATSAPP_*`), Telegram (`TELEGRAM_*`) and generic
+webhooks (`WEBHOOK_INBOUND_*`); they arrive on the public port at
+`/webhooks/<hub>/…`. A file whose secrets are missing stays off, and
+`hubzoid doctor` and the start say which are missing. See [channels](channels.md)
+and the Slack walkthrough in [docs/slack.md](slack.md).
 
 ### 10. Troubleshooting
 
@@ -669,81 +636,101 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 |---|---|
 | Anything | Run `hubzoid doctor <hub>` first. |
 | Scheduled tasks never run; log says the workflow engine did not start | `hubzoid doctor` `deps.sqlite`: on Python 3.12 the engine needs SQLite 3.42+. Use a Python build with a newer SQLite (python.org, uv, Homebrew, Debian 13, Ubuntu 24.04) or PostgreSQL. |
-| `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the ready line and startup errors. |
+| `systemctl start` succeeds but the UI is not reachable | `hubzoid status`, then `hubzoid logs <hub>` (or `journalctl -u hubzoid -f`) for the ready line and startup errors. |
+| One agent answers "This agent is restarting" | `hubzoid status`: it is restarting with backoff or failed (with the reason). Fix it, then `hubzoid start <hub>`. The other agents keep running. |
 | Boot stops naming an Open WebUI setting (`WEBUI_AUTH`, `WEBUI_URL`, `HUBZOID_UI=openwebui`…) | Rename or remove it as the message says; see [upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-webui-removed). |
 | TLS certificate never issues | DNS for the hostname is not yet propagated, or the box can't reach the certificate issuer; check your reverse proxy's logs (e.g. `journalctl -u caddy`, `/var/log/nginx/error.log`). |
-| Multiple agents conflict on startup | Each hub's `.env` must have a unique `PORT` and `BRIDGE_PORT`. |
+| Multiple agents conflict on startup | Two hubs pinning the same `BRIDGE_PORT` in their `.env`. Remove the line and let `hubzoid run` assign ports. |
 | User chats vanish after upgrade | Check the deployment database. Chats from a 1.x Open WebUI deployment need `hubzoid migrate openwebui`; keep the pre-upgrade backup. |
-| Slack adapter loops on restart | `journalctl -u hubzoid-slack@<name>` — usually a missing token or a stale bot token after re-installing the app. See [docs/slack.md](slack.md). |
+| Slack app loops on restart | `hubzoid logs <hub>` — usually a missing token or a stale bot token after re-installing the app. See [docs/slack.md](slack.md). |
 
-## Multi-hub on one address (`hubzoid gateway`)
+## Several hubs on one address (`hubzoid.yaml`)
 
-The gateway serves one Hubzoid web app, with one sign-in and one Settings
-page across all agents. Set unique `BRIDGE_PORT` values in each hub's
-`.env` (for example 8000, 8001 and 8002), then configure the gateway's own
-environment:
+One web app, one sign-in and one Settings page across all agents. Put a
+`hubzoid.yaml` in the folder that holds the hub folders:
 
-```bash
-export HUBZOID_AUTH=true
-export HUBZOID_ADMIN_EMAIL=admin@example.com
-export HUBZOID_ADMIN_PASSWORD='a-strong-bootstrap-password'
-hubzoid gateway sales-agent support-agent finance-agent \
-  --host 0.0.0.0 --port 3080 \
-  --public-url https://hub.example.com --data-dir ./gateway-data
+```yaml
+version: 1
+public_url: https://hub.example.com
+sign_in: true
+owner: admin@example.com
+hubs:                 # the first also answers at /
+  - sales-agent
+  - support-agent
+  - finance-agent
+brand:
+  identity:
+    name: Example Hubs
 ```
 
-On a fresh deployment, sign in with the configured administrator. Add people
-and grant **Use this agent** and restricted capabilities in Settings.
-Administration alone does not grant every agent or every tool. Agent folder
-names, model ids and bridge ports must be unique; collisions stop startup with
-an explanation. A newly initialized hub still defaults to bridge port 8000,
-so change its `.env` before adding it to the gateway.
+Secrets and switches for the whole deployment (`HUBZOID_SECRET_KEY`,
+`DATABASE_URL`, sign-in client secrets, `ENABLE_SIGNUP`, mail) go in `.env`
+next to it, which wins over the process environment. Each hub's `.env` holds
+only that hub's settings; one that sets a deployment setting differently stops
+the start. Then, in that folder:
 
-Settings for shared sign-in, the public URL, deployment secrets and database
-belong in the gateway's environment. Tool/provider settings belong in each
-hub's `.env`. The gateway records the deployment manifest and a discovery
-pointer in each hub; CLI commands and bridges use those to find shared access
-and accounts. Each SQLite hub keeps its own DBOS file.
+```bash
+export HUBZOID_ADMIN_PASSWORD='a-strong-bootstrap-password'   # first start only
+hubzoid run --host 0.0.0.0 --port 3080
+```
 
-For independently supervised bridges, use `--no-bridges`. On the first
-deployment, start the gateway to record its manifest, then start or restart the
-bridges while the gateway waits for their health checks. On later upgrades,
-upgrade/restart the bridges first and the gateway last. Keep each bridge's
-`MODEL_LABEL` consistent with the hub configuration read by the gateway. The
-bridge paths and databases must be accessible to all those processes. Do not
-point a bridge at a conflicting operational database.
-See [administration](ADMINISTRATION.md) for owner bootstrap and inspection.
+On a fresh deployment, sign in with the configured owner. Add people and grant
+**Use this agent** and restricted capabilities in Settings. Administration alone
+does not grant every agent or every tool. Hub folder names and model ids must be
+unique; collisions stop startup with an explanation. Bridge ports are assigned
+for you (a `BRIDGE_PORT` in a hub's `.env` is still honoured).
 
-When the gateway launches bridges, it supervises one deployment: any owned
-bridge, edge or chat process exiting ends the gateway with status 1 and stops
-its remaining children. A service manager restarts the complete unit. Use
-separate bridge units with `--no-bridges` for independent per-hub restarts; the
-gateway leaves those independently managed bridges running.
+**Each hub is its own process.** A hub that exits is started again, waiting
+1 s, then doubling to 60 s; after 5 failed starts in 10 minutes it is marked
+failed and stays stopped until `hubzoid start <hub>`. Meanwhile its pages and
+API answer 503 "This agent is restarting", and the other agents keep
+answering. A broken `tools_local` file fails only its hub.
 
-SIGTERM or Ctrl-C performs bounded child cleanup, including during startup.
-SIGKILL and OOM can prevent the CLI from cleaning up its child process groups.
-For production use the systemd unit above, including `KillMode=control-group`
-and `OOMPolicy=stop`, or a container supervisor that owns the complete process
-lifecycle. These systemd settings stop the unit's remaining processes after a
-stop or OOM failure ([KillMode](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml),
-[OOMPolicy](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml#L1244)).
-After force-killing a manual run, identify and stop the processes it started
-before launching it again. The occupied-port check deliberately leaves an
-unknown listener running; it never kills a process merely to reclaim a port.
+**Control a running deployment** from its folder (or with `--data-dir`):
 
-### Gateway branding
+| Command | What it does |
+|---|---|
+| `hubzoid status` | Each hub's state, restarts, last exit, and whether a reload is needed |
+| `hubzoid restart <hub> [<hub>…]` | Drain, then restart those hubs one after the other |
+| `hubzoid reload <hub>` | Check the hub folder, then restart it; a folder with problems changes nothing |
+| `hubzoid stop <hub>`, `hubzoid start <hub>` | Stop a hub until started again; start a stopped or failed one |
+| `hubzoid logs <hub> [-f]` | That hub's output |
 
-Shared login, favicon and tab chrome are deployment-wide. Put branding files
-in `<data-dir>/branding/`, or select a source with
-`HUBZOID_GATEWAY_BRANDING`. Per-agent names and avatars identify agents in the
-picker. See [branding](branding.md).
+A restart drains first: webhooks to that hub wait (senders retry), its 1.x
+channels finish what they acknowledged, it takes no new replies, and running
+ones get `--grace` seconds (default 120) before the process stops. A reply cut
+off then is marked interrupted and its queue is kept. Workflow runs and
+approvals waiting for a person resume after a restart on the same code; an
+upgrade cancels runs started by older code, so let them finish first.
+
+Brand, chat defaults and diagnostics limits are sections of `hubzoid.yaml`
+that every agent reads again when the file changes; agents' own files (
+instructions, skills, channels, connectors, `.env`, `tools_local/`) take effect
+with `hubzoid reload <hub>`. `hubzoid status` says when a hub needs one.
+
+`hubzoid gateway <hubs>` still works for one release: it prints the
+`hubzoid.yaml` that says the same and runs it. `--no-bridges` and separate
+units per hub are gone; `hubzoid restart` is the per-hub restart. To move a
+running gateway, see [upgrading](UPGRADING.md#one-run-mode).
+
+SIGTERM or Ctrl-C stops every hub (each with its grace period), then the
+edge. If `hubzoid run` itself is killed, its children notice and stop, so no
+process keeps a port; systemd (`KillMode=mixed` in the unit above) or the
+container platform restarts the deployment.
+
+### Branding
+
+The brand is the `brand:` section of `hubzoid.yaml` with its images under
+`branding/` next to it; Settings shows it read-only. Per-agent names and
+avatars (each hub's own `branding/` logo) identify agents in the picker. See
+[branding](branding.md).
 
 **Artifact downloads** route per hub: each bridge advertises
 `<public-url>/b/<hub-slug>` so its download links come back through the edge
-to the right bridge. Leave `HUBZOID_PUBLIC_URL` unset in each hub's `.env`
-when using the gateway — `--public-url` injects the per-hub value. (Hard
+to the right bridge. Leave `HUBZOID_PUBLIC_URL` unset in each hub's `.env`;
+`public_url` in `hubzoid.yaml` sets it for every hub. (Hard
 per-team URL isolation — separate login realms — still needs separate
-instances; the gateway shares one login surface by design.)
+instances; a deployment shares one login surface by design.)
 
 ## Path B: Docker
 
@@ -767,7 +754,7 @@ docker run -d --restart unless-stopped \
 
 The image is a drop-in replacement for `hubzoid run` (it runs
 `hubzoid run /hub`; pass other arguments after the image name, e.g.
-`hubzoid:<version> run /hub --slack`). State persists in the bind-mounted
+`hubzoid:<version> run /hub --port 3080`; channels turn on by files in the hub). State persists in the bind-mounted
 hub folder. Publish only port 3080: the edge there serves the chat UI,
 artifact downloads, the portal and MCP, while the bridge stays on
 127.0.0.1 inside the container. `docker/docker-compose.yml` does the same.
@@ -816,7 +803,7 @@ start:
   multiple machines and rehearse workflow recovery and upgrades.
 - **SQLite on a network filesystem is not safe.** On ECS Fargate
   specifically, do not put the SQLite databases (`.hubzoid/*.db` and the
-  gateway's data directory) on EFS - file locking semantics over NFS will
+  deployment's state folder) on EFS - file locking semantics over NFS will
   eventually corrupt them. Use the EC2 launch type with an EBS-backed volume,
   or PostgreSQL. The same caveat applies to any networked filesystem.
 
