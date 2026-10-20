@@ -86,7 +86,7 @@ export function HomeScreen({ hubs, reloadHubs, embedded = false }: { hubs: Hub[]
   if (embedded)
     return (
       <>
-        <PageHeader title="Agents" description={`${hubs.length} ${hubs.length === 1 ? "agent" : "agents"}. Each one is a folder of instructions, knowledge and tools. Open one to see who uses it and what it does.`} />
+        <PageHeader title="Agents" description="Each agent is a folder of instructions, knowledge and tools." />
         {workflows.error && <Alert type="warning" showIcon className="home-note"
           title="Couldn’t refresh workflow status" description="Open an agent to check its workflows, or try refreshing again." />}
         <AgentGrid hubs={hubs} workflows={workflows.data?.workflows} usage={s?.hubs} />

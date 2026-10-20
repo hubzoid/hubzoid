@@ -40,7 +40,7 @@ import { post } from "../lib/api";
 import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
-import { AgentAvatar, Button, Notice, PageSpinner, cx } from "../components/ui";
+import { Button, Notice, PageSpinner, cx } from "../components/ui";
 import { get } from "../lib/api";
 import { displayName } from "../lib/format";
 import { toast } from "../components/toast";
@@ -274,7 +274,6 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const q = query.trim().toLowerCase();
   const matches = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
   const hubs = useManagedHubs(team);
-  const agentKey = active === "agents" ? decodeURIComponent(hash.replace(/^#\/?/, "").split(/[/?]/)[1] ?? "") : "";
   const link = (target: string, label: ReactNode, current: boolean, className = "hz-nav", icon?: ReactNode, extra?: ReactNode) => (
     <a
       href={`/settings#${target}`}
@@ -297,12 +296,6 @@ export default function SettingsPage({ section }: { section: string | null }) {
       <div key={g.id} className="hz-set-big-wrap">
         {link(first.hash, g.label, current, cx("hz-nav", g.big && "hz-set-big"), g.icon,
           g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count">{hubs.length}</span> : undefined)}
-        {g.id === "agents" && current && hubs.length > 0 && (
-          <div className="hz-set-agents" aria-label="Agents">
-            {hubs.map((h) => link(`/agents/${encodeURIComponent(h.key)}`, h.name, agentKey === h.key, "hz-nav hz-set-agent",
-              <AgentAvatar name={h.name} src={h.avatar} size={20} />))}
-          </div>
-        )}
       </div>
     );
   };

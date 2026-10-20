@@ -23,7 +23,9 @@ export type SignInOptions = {
   google_domains?: string[];
 };
 export type SignIn = "password" | "google" | "directory";
-export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean };
+/** What the hub folder holds, counted without loading it (GET /hubs). */
+export type HubContents = { knowledge: number; skills: number; subagents: number; tool_files: number; connectors: number };
+export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean; contents?: HubContents };
 export type Permission = {
   permission: string;
   label: string;

@@ -429,6 +429,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @router.get("/hubs")
     def hubs(admin=Depends(require_admin)):
         from .loaders import agents as agents_loader
+        from .loaders import contents as contents_loader
 
         gs = store_for(hub_dir)
         return {
@@ -439,6 +440,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     path=str(Path(h["path"]).resolve()),
                     model_id=h["model_id"],
                     can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
+                    contents=contents_loader.counts(Path(h["path"])),
                 )
                 for h in allowed_hubs(admin)
             ]

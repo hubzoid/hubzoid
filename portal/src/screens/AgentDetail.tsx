@@ -73,10 +73,10 @@ export function AgentDetail({
         <AgentAvatar name={name} src={agent?.avatar_url} size={44} />
         <div className="min-w-0 flex-1">
           <h1>{name}</h1>
-          <p>{agent?.description || <span className="text-mute">No description yet. Add one to the agent's AGENTS.md.</span>}</p>
+          {agent?.description && <p>{agent.description}</p>}
         </div>
         {chat && (
-          <a className="hz-btn hz-btn-neutral" href={chat}>
+          <a className="hz-btn hz-btn-secondary" href={chat}>
             <MessageSquare size={15} aria-hidden /> Open chat
           </a>
         )}

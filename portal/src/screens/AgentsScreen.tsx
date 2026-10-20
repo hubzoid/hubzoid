@@ -147,81 +147,117 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
   );
 }
 
-/** Evals as a dot and a word on an agent card. Nothing without eval cases. */
-function EvalStatus({ hub }: { hub: Hub }) {
+/** One agent's status: a failing workflow first, then failing evals. */
+function AgentStatus({ hub, broken }: { hub: Hub; broken: boolean }) {
   const data = useData<{ cases: number; runs: number; latest: EvalScore | null }>(
     "/evals/summary?hub=" + encodeURIComponent(hub.key),
   );
+  if (broken) return <span className="hz-status is-bad"><i aria-hidden />Workflow failing</span>;
   const d = data.data;
-  if (!d || d.cases === 0) return null;
-  const ok = !!d.latest && d.latest.passed === d.latest.total;
-  return (
-    <a href={agentHref(hub.key, "evals")} className={`hz-status ${!d.latest ? "is-muted" : ok ? "is-ok" : "is-bad"} hz-agent-card-act`}>
-      <i aria-hidden />
-      {d.latest ? `Evals ${d.latest.passed}/${d.latest.total}` : "Evals not run"}
-    </a>
-  );
+  if (d?.latest && d.latest.passed < d.latest.total)
+    return <span className="hz-status is-warn"><i aria-hidden />Evals {d.latest.passed} of {d.latest.total}</span>;
+  return <span className="hz-status is-ok"><i aria-hidden />Ready</span>;
 }
 
-/** Agents as a grid of cards: who it is, what it is for, and how it is used.
- *  The whole card opens the agent; Chat opens a new chat with it. */
+const PARTS: [keyof NonNullable<Hub["contents"]> | "workflows", string, string][] = [
+  ["knowledge", "knowledge", "knowledge"],
+  ["skills", "skill", "skills"],
+  ["workflows", "workflow", "workflows"],
+  ["subagents", "sub-agent", "sub-agents"],
+  ["connectors", "connector", "connectors"],
+  ["tool_files", "tool file", "tool files"],
+];
+
+/** What the agent's folder holds, as a short line: the numbers stand out. */
+function FolderLine({ hub, workflows }: { hub: Hub; workflows: number | null }) {
+  const c = hub.contents;
+  if (!c) return <span className="hz-agent-folder is-empty">—</span>;
+  const parts = PARTS.map(([key, one, many]) => {
+    const n = key === "workflows" ? workflows ?? 0 : c[key];
+    return n ? <span key={key}><b>{n}</b> {n === 1 ? one : many}</span> : null;
+  }).filter(Boolean).slice(0, 3);
+  if (!parts.length) return <span className="hz-agent-folder is-empty">Only instructions</span>;
+  return <span className="hz-agent-folder">{parts}</span>;
+}
+
+type Filter = "all" | "attention" | "unused";
+
+/** Agents as one row each: who it is, what its folder holds, who uses it and
+ *  whether it is healthy. The row opens the agent; Chat starts a chat. */
 export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?: Workflow[]; usage?: SummaryHub[] }) {
   const app = useContext(AppContext);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const q = search.trim().toLowerCase();
-  const named = hubs.map((h) => {
+  const rows = hubs.map((h) => {
     const agent = app?.agents.list.find((a) => a.hub === h.key);
-    return { hub: h, agent, name: agentName(agent?.name, h.name, h.key) };
+    const flows = (workflows ?? []).filter((w) => w.hub === h.key);
+    return {
+      hub: h, agent, name: agentName(agent?.name, h.name, h.key),
+      flows: workflows ? flows.length : null,
+      broken: flows.some((w) => w.state === "error" || w.state === "stale"),
+      m: usage?.find((row) => row.key === h.key),
+    };
   });
-  const list = named.filter(({ hub, name, agent }) =>
-    !q || `${name} ${hub.key} ${agent?.description ?? ""}`.toLowerCase().includes(q));
+  const attention = rows.filter((r) => r.broken).length;
+  const unused = rows.filter((r) => usage && !r.m?.last_activity).length;
+  const list = rows.filter((r) =>
+    (!q || `${r.name} ${r.hub.key}`.toLowerCase().includes(q))
+    && (filter === "all" || (filter === "attention" ? r.broken : usage && !r.m?.last_activity)));
+  const filters: [Filter, string, number][] = [["all", "All", rows.length], ["attention", "Needs attention", attention], ["unused", "Not used yet", unused]];
   return (
     <>
-      {hubs.length > 6 && (
+      <div className="hz-agents-bar">
         <label className="hz-set-find hz-agents-find">
           <Search size={14} aria-hidden className="text-mute" />
           <input aria-label="Find an agent" placeholder="Find an agent" value={search} onChange={(e) => setSearch(e.target.value)} />
         </label>
-      )}
+        <div className="hz-agents-filters" role="group" aria-label="Show">
+          {filters.filter(([key, , n]) => key === "all" || n > 0).map(([key, label, n]) => (
+            <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>
+              {label} <span>{n}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       {list.length === 0 ? (
         <div className="hz-inbox-none">
-          <strong>{q ? `No agent matches “${search}”` : "No agents yet"}</strong>
-          <p>{q ? "Try another name." : "Add an agent folder to this deployment, or ask an administrator for access."}</p>
+          <strong>{q ? `No agent matches “${search}”` : "Nothing here"}</strong>
+          <p>{q ? "Try another name." : "No agent fits this filter."}</p>
         </div>
       ) : (
-        <div className="hz-agent-grid" role="list" aria-label="Agents">
-          {list.map(({ hub: h, agent, name }) => {
-            const flows = (workflows ?? []).filter((w) => w.hub === h.key);
-            const scheduled = flows.filter((w) => w.schedule).length;
-            const broken = flows.some((w) => w.state === "error" || w.state === "stale");
-            const m = usage?.find((row) => row.key === h.key);
-            return (
-              <div key={h.key} className="hz-agent-card" role="listitem">
-                <a href={agentHref(h.key)} className="hz-agent-card-link" aria-label={`Open ${name}`} />
-                <div className="hz-agent-card-head">
-                  <AppAvatar name={name} src={agent?.avatar_url} size={40} />
-                  <div className="min-w-0 flex-1">
-                    <div className="hz-agent-card-name">{name}</div>
-                    <div className="hz-agent-card-key">{h.key}</div>
-                  </div>
-                  {h.can_chat && agent && (
-                    <a className="hz-btn hz-btn-secondary hz-btn-sm hz-agent-card-act" href={`/new/${encodeURIComponent(agent.id)}`}>Chat</a>
-                  )}
-                </div>
-                <p className="hz-agent-card-desc">{agent?.description || "No description yet."}</p>
-                <dl className="hz-agent-card-facts">
-                  <div><dt>People</dt><dd>{!m ? "—" : m.everyone ? "Everyone" : m.users_with_access}</dd></div>
-                  <div><dt>Workflows</dt><dd title={scheduled ? `${scheduled} on a schedule` : undefined}>{workflows ? (flows.length || "None") : "—"}</dd></div>
-                  <div><dt>Last used</dt><dd>{m?.last_activity ? formatRelative(m.last_activity) : "Not yet"}</dd></div>
-                </dl>
-                <div className="hz-agent-card-foot">
-                  {broken ? <span className="hz-status is-bad"><i aria-hidden />A workflow needs attention</span>
-                    : <span className="hz-status is-ok"><i aria-hidden />Ready</span>}
-                  <EvalStatus hub={h} />
-                </div>
-              </div>
-            );
-          })}
+        <div className="hz-agent-list" role="table" aria-label="Agents">
+          <div className="hz-agent-row is-head" role="row">
+            <span role="columnheader">Agent</span>
+            <span role="columnheader">In its folder</span>
+            <span role="columnheader">People</span>
+            <span role="columnheader">Last used</span>
+            <span role="columnheader">Status</span>
+            <span />
+          </div>
+          {list.map(({ hub: h, agent, name, flows, broken, m }) => (
+            <div key={h.key} className="hz-agent-row" role="row">
+              <a href={agentHref(h.key)} className="hz-agent-row-link" aria-label={`Open ${name}`} />
+              <span className="hz-agent-who" role="cell">
+                <AppAvatar name={name} src={agent?.avatar_url} size={32} />
+                <span className="min-w-0">
+                  <span className="hz-agent-name">{name}</span>
+                  <span className="hz-agent-key">{h.key}</span>
+                </span>
+              </span>
+              <span role="cell"><FolderLine hub={h} workflows={flows} /></span>
+              <span role="cell" className="hz-agent-num">{!m ? "—" : m.everyone ? "Everyone" : m.users_with_access}</span>
+              <span role="cell" className={m?.last_activity ? "hz-agent-when" : "hz-agent-when is-empty"}>
+                {m?.last_activity ? formatRelative(m.last_activity) : "Not yet"}
+              </span>
+              <span role="cell"><AgentStatus hub={h} broken={broken} /></span>
+              <span role="cell" className="hz-agent-acts">
+                {h.can_chat && agent && (
+                  <a className="hz-btn hz-btn-secondary hz-btn-sm" href={`/new/${encodeURIComponent(agent.id)}`}>Chat</a>
+                )}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </>
