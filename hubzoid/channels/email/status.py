@@ -9,6 +9,8 @@ from .. import store
 
 
 def status(conn) -> dict:
+    from .history import summary
+
     state = conn.state or {}
     cursor = state.get("email_cursor")
     return {"transport": conn.settings.transport, "mailbox": conn.settings.mailbox, "enabled": conn.enabled,
@@ -17,6 +19,7 @@ def status(conn) -> dict:
             "pending": len((cursor or {}).get("pending") or []), "gap": state.get("email_gap"),
             "connected": conn.settings.transport == "imap" or bool(state.get("email_scopes")),
             "senders_allowed": len(conn.settings.sender_policy.allowed),
+            "history_import": summary(state.get("email_import")),
             "authentication": conn.settings.sender_policy.authentication}
 
 
