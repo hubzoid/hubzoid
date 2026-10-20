@@ -1,5 +1,5 @@
 """The per-turn personal servers in the default UI mode, and the runtimes'
-single entry point to them (``owui_mcp.per_user_servers`` dispatches here).
+single entry point to them (``personal_mcp.per_user_servers`` dispatches here).
 
 Real MCP servers on loopback answer only the bearers they know and say whom
 they think they serve. Tokens are stored directly (the OAuth flow has its own
@@ -14,7 +14,7 @@ import time
 import pytest
 from agents import Agent, FunctionTool, function_tool
 
-from hubzoid import owui_mcp
+from hubzoid import personal_mcp
 from hubzoid.access import Identity, identity_scope, store_for
 from hubzoid.connectors import per_user, registry, tokens
 from tests import connectors_fakes as f
@@ -68,7 +68,7 @@ def keys(servers_):
 # ---------------------------------------------------------------------------
 def test_each_caller_gets_their_own_servers_and_token(hub, servers):
     (mail,) = per_user.per_user_servers(hub, who(X))
-    assert isinstance(mail, owui_mcp.PerUserServer)
+    assert isinstance(mail, personal_mcp.PerUserServer)
     assert (mail.key, mail.url, mail.server_id, mail.app) == ("my_mail", servers["mail"], "mail", "mail")
     assert mail.headers == {"Authorization": "Bearer tok-x"} and mail.allowed_tools is None
     assert "tok-x" not in repr(mail)
@@ -82,37 +82,12 @@ def test_the_current_identity_is_the_default(hub):
         assert keys(per_user.per_user_servers(hub)) == ["my_mail"]
 
 
-def test_owui_mcp_dispatches_here_in_the_default_mode(hub, servers):
-    assert owui_mcp.per_user_servers(hub, who(X)) == per_user.per_user_servers(hub, who(X))
-    specs, allowed = owui_mcp.per_user_specs(hub, who(X))
+def test_personal_mcp_dispatches_here_in_the_default_mode(hub, servers):
+    assert personal_mcp.per_user_servers(hub, who(X)) == per_user.per_user_servers(hub, who(X))
+    specs, allowed = personal_mcp.per_user_specs(hub, who(X))
     assert specs == {"my_mail": {"type": "http", "url": servers["mail"],
                                  "headers": {"Authorization": "Bearer tok-x"}}}
     assert allowed == ["mcp__my_mail__*"]
-
-
-def test_open_webui_mode_uses_the_console_connectors(hub, monkeypatch):
-    """Open WebUI mode reads the same Console connectors, keyed by the verified
-    Open WebUI account (bound from Open WebUI's forwarded headers each turn).
-    A new account that takes the email over inherits nothing."""
-    from hubzoid.access.session import bind_owui_account
-
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")  # retired: changes nothing
-    assert per_user.per_user_servers(hub, who(X, "owui")) == []  # no verified account yet
-    store_for(hub).upsert_identity(email=X, owui_id="u-x")
-    assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
-    # An Open WebUI chat turn must carry that same account id, not only the email.
-    from hubzoid import _request_ctx
-
-    with _request_ctx.owui_account_scope("u-x"):
-        assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
-    for forwarded in (None, "u-someone-else"):
-        with _request_ctx.owui_account_scope(forwarded):
-            assert per_user.per_user_servers(hub, who(X, "owui")) == []
-    bind_owui_account(hub, X, "u-other")
-    assert per_user.per_user_servers(hub, who(X, "owui")) == []
-    assert tokens.for_user(hub, "u-x") == []
-
 
 def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, servers):
     registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
@@ -194,6 +169,17 @@ def test_workflows_act_as_their_person(hub):
     assert keys(per_user.per_user_servers(hub, who(Y, "workflow"))) == ["my_cal", "my_mail"]
 
 
+def test_a_faked_eval_case_gets_no_connectors_unless_it_allows_real_mcp(hub):
+    from hubzoid import tool_fakes
+
+    faked = tool_fakes.Session(fakes=[])
+    with tool_fakes.scope(faked):
+        assert per_user.per_user_servers(hub, who(Y, "workflow")) == []
+    assert faked.left_out == ["cal", "mail"]
+    with tool_fakes.scope(tool_fakes.Session(fakes=[], allow_mcp=True)):
+        assert keys(per_user.per_user_servers(hub, who(Y, "workflow"))) == ["my_cal", "my_mail"]
+
+
 def test_nobody_unknown_or_blocked_gets_nothing(hub):
     assert per_user.per_user_servers(hub, Identity.make(user=None, surface="web")) == []
     assert per_user.per_user_servers(hub, who("ghost@example.org")) == []
@@ -233,7 +219,7 @@ def test_each_server_needs_the_connector_capability(hub):
 
 def test_a_personal_server_never_replaces_a_hub_server(hub):
     assert per_user.per_user_servers(hub, who(X), reserved={"my_mail"}) == []
-    specs, _ = owui_mcp.per_user_specs(hub, who(Y), reserved={"hubzoid", "my_cal"})
+    specs, _ = personal_mcp.per_user_specs(hub, who(Y), reserved={"hubzoid", "my_cal"})
     assert set(specs) == {"my_mail"}
     # The hub's own MCP servers are reserved by default.
     (hub / "connectors").mkdir()
@@ -246,7 +232,7 @@ def test_the_allow_list_limits_the_tools(hub):
     registry.update(hub, "mail", {"tool_allowlist": ["whoami"]}, actor="test")
     (mail,) = per_user.per_user_servers(hub, who(X))
     assert mail.allowed_tools == ("whoami",)
-    _, allowed = owui_mcp.per_user_specs(hub, who(X))
+    _, allowed = personal_mcp.per_user_specs(hub, who(X))
     assert allowed == ["mcp__my_mail__whoami"]
 
 

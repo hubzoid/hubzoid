@@ -12,11 +12,24 @@ When frontmatter is missing, defaults are derived:
 
 Frontmatter schema when present:
   name:        agent identifier (optional)
+  display_name: the name people see in the web app, kept as written ("IRS Hub").
+               Optional; without it the app shows `name` (a slug like irs-hub
+               becomes "Irs Hub").
   description: one-line summary used as handoff trigger for sub-agents (optional)
   model:       optional LiteLLM model id; overrides .env MODEL
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents
                in v1. The main agent always has the full pre-shipped plus tools_local set
                plus the dynamic load_skill / read_knowledge tools.
+
+Isolated agents (stations), all optional, on sub-agents only:
+  isolated:    true makes the agent a station: called from a workflow, with only
+               its own instructions and exactly the tools it lists (none when empty).
+               It is never loaded as a skill or delegate of the main agent.
+  engine:      claude-local or codex-local (default: the hub's runtime).
+  response_schema: a JSON Schema file in the agent's folder for its result.
+  input:       forward (default) or never.
+  sandbox:     a sandbox profile for the agent's workspace.
+  timeout_seconds: an optional limit on its active time.
 """
 from __future__ import annotations
 
@@ -33,11 +46,19 @@ from .._fs import agent_read_refusal
 class AgentSpec(BaseModel):
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    display_name: str | None = Field(default=None, max_length=80)
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
     # Quick-start prompts shown on the empty new-chat screen as click-to-send
     # buttons. Only honored on the main agent; ignored on sub-agents.
     suggestions: list[str] = Field(default_factory=list)
+    # Isolated agents (stations): see the module notes. All optional.
+    isolated: bool = False
+    engine: str | None = None
+    response_schema: str | None = None
+    input: str = "forward"
+    sandbox: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
 
 
 @dataclass
@@ -45,6 +66,16 @@ class LoadedAgent:
     spec: AgentSpec
     instructions: str
     source_path: Path
+
+
+def display_name(hub_dir: Path, fallback: str | None = None) -> str:
+    """The main agent's name for people: ``display_name``, else ``name``, else
+    ``fallback`` or the folder name (a broken AGENTS.md still gets a name)."""
+    try:
+        spec = load_main(Path(hub_dir)).spec
+    except Exception:  # noqa: BLE001 — naming never fails a page
+        return fallback or Path(hub_dir).name
+    return (spec.display_name or "").strip() or spec.name
 
 
 def load_main(hub_dir: Path) -> LoadedAgent:
@@ -62,7 +93,16 @@ def load_main(hub_dir: Path) -> LoadedAgent:
     reason = agent_read_refusal(hub_dir, path)
     if reason:
         raise ValueError(f"Agent definition refused: {reason}")
-    return _load_one(path, default_name=_safe_id(hub_dir.name))
+    return _with_settings(hub_dir, _load_one(path, default_name=_safe_id(hub_dir.name)))
+
+
+def _with_settings(hub_dir: Path, loaded: LoadedAgent) -> LoadedAgent:
+    """Fill ``{{settings.KEY}}`` from the hub's settings (hubzoid.hubs.settings).
+    Every runtime reads instructions through here, so all see the same text."""
+    from ..hubs.settings import render
+
+    loaded.instructions = render(hub_dir, loaded.instructions, loaded.source_path)
+    return loaded
 
 
 def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
@@ -103,11 +143,11 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                     match = mds[0]
             if match is None or agent_read_refusal(hub_dir, match):
                 continue
-            out.append(_load_one(match, default_name=_safe_id(child.name)))
+            out.append(_with_settings(hub_dir, _load_one(match, default_name=_safe_id(child.name))))
         elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
-            out.append(_load_one(child, default_name=_safe_id(child.stem)))
+            out.append(_with_settings(hub_dir, _load_one(child, default_name=_safe_id(child.stem))))
     return out
 
 
@@ -146,6 +186,8 @@ def split_subagents(hub_dir: Path, hub_model: str | None):
     skill_agents: list[LoadedAgent] = []
     delegate_agents: list[LoadedAgent] = []
     for loaded in load_subagents(hub_dir):
+        if loaded.spec.isolated:
+            continue   # a station: called from workflows, never a skill or delegate
         if handover.classify(loaded.spec.model, hub_model) == "delegate":
             delegate_agents.append(loaded)
         else:

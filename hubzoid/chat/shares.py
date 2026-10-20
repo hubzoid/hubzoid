@@ -1,15 +1,13 @@
-"""Read-only shares of a conversation.
+"""Pre-2.0 read-only links (``hz_shares``, one per conversation).
 
-  GET    /api/conversations/{id}/share   the owner's current link: {share_id, url}
-  POST   /api/conversations/{id}/share   snapshot the active branch, return the link
-  DELETE /api/conversations/{id}/share   revoke the link (204)
-  GET    /api/shares/{share_id}          any signed-in person of the deployment
+  GET    /api/conversations/{id}/share   the owner's pre-2.0 link, if any: {share_id, url}
+  DELETE /api/conversations/{id}/share   turn that link off (204)
 
-A share is a snapshot of the active branch (root to ``head_id``) taken when the
-owner shares, so later edits never reach a link someone already opened. Sharing
-again refreshes the snapshot behind the same link. The snapshot keeps answer
-text, reasoning, which tools ran and how they ended (not their arguments), and
-attachment names and types, never a way to download the attachments.
+New links are previewed snapshots (``hubzoid.chat.sharing``); there is no way
+to make or refresh a pre-2.0 link any more, because it skipped the preview, the
+sharing settings and the omission rules. Existing ones stay readable at
+``GET /api/shares/{id}`` for signed-in people while their owner is active, with
+reasoning and signed download links removed (``sharing_routes._legacy``).
 """
 from __future__ import annotations
 
@@ -83,32 +81,9 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
             raise error(404, "not_shared", "This conversation is not shared.")
         return {"share_id": share["id"], "url": share_url(share["id"])}
 
-    @app.post("/api/conversations/{conv_id}/share")
-    async def create_share(conv_id: str, request: Request):
-        user = await ctx.mutation(request)
-        conv = await ctx.owned(user, conv_id)
-        snap = await db(snapshot, store, conv, user.name or user.email)
-        if not snap["messages"]:
-            raise error(409, "nothing_to_share", "Send a message before sharing this conversation.")
-        share = await db(store.save_share, conversation_id=conv["id"], owner_id=user.id,
-                         title=conv.get("title"), agent=conv.get("agent"), snapshot=snap)
-        return JSONResponse({"share_id": share["id"], "url": share_url(share["id"])})
-
     @app.delete("/api/conversations/{conv_id}/share", status_code=204)
     async def delete_share(conv_id: str, request: Request):
         user = await ctx.mutation(request)
         conv = await ctx.owned(user, conv_id)
         await db(store.delete_shares, conv["id"])
         return Response(status_code=204)
-
-    @app.get("/api/shares/{share_id}")
-    async def read_share(share_id: str, request: Request):
-        await ctx.user(request)
-        share = await db(store.get_share, share_id) if 8 <= len(share_id) <= 64 else None
-        if (share is None or _disabled_import(share)
-                or await db(users.get, ctx.hub_dir, share["owner_id"]) is None):
-            raise not_found("shared conversation")
-        snap = share.get("snapshot") or {}
-        return {"title": snap.get("title"), "agent": snap.get("agent"),
-                "owner_name": snap.get("owner_name"), "created_at": snap.get("created_at"),
-                "messages": snap.get("messages") or []}

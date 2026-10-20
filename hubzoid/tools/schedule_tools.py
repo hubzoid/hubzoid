@@ -37,6 +37,7 @@ from typing import Callable
 
 from agents import function_tool
 
+from .. import datadir
 from .._fs import resolve_bucket
 
 log = logging.getLogger("hubzoid.schedule")
@@ -97,7 +98,11 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
         # guard's threat model.
         if ".git" in Path(rel).parts:
             raise PermissionError(f"{rel!r} is under a .git/ directory, which is never writable.")
-        target = (hub / rel).resolve()
+        target = datadir.resolve(hub, rel).resolve()
+        if datadir.hub_read_only(hub) and not target.is_relative_to(datadir.root(hub)):
+            raise PermissionError(f"{rel!r} is one of this hub's own files, which come from its Git "
+                                  "repository: a scheduled task here writes only its own state "
+                                  "(.hubzoid/, output/). Change hub files in Git.")
         for root in _forbidden_roots:
             if target == root or root in target.parents:
                 raise PermissionError(
@@ -105,7 +110,7 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
                     "is never writable by a task (it defines the schedule itself)."
                 )
         for root in writable:
-            root_abs = (hub / root).resolve()
+            root_abs = datadir.resolve(hub, root).resolve()
             if target == root_abs or root_abs in target.parents:
                 return target
         raise PermissionError(
@@ -205,7 +210,10 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
             return f"[write_hub_file refused: {exc}]"
         target.parent.mkdir(parents=True, exist_ok=True)
         data = content if isinstance(content, str) else str(content)
-        target.write_text(data, encoding="utf-8")
+        from ..hub_changes.service import write_lock
+
+        with write_lock(hub_dir):  # never between a reviewed hub change's check and its commit
+            target.write_text(data, encoding="utf-8")
         emit(event="tool", tool="write_hub_file", path=str(path), bytes=len(data))
         log.info("schedule[%s] wrote %s (%d bytes)", task.name, path, len(data))
         return f"wrote {path} ({len(data)} bytes)"
@@ -230,7 +238,7 @@ def _publishable(hub: Path, task, target: Path) -> bool:
 
     try:
         real = Path(target).resolve(strict=True)
-        scratch = (hub / task.scratch_rel).resolve()
+        scratch = datadir.resolve(hub, task.scratch_rel).resolve()
     except (OSError, RuntimeError):
         return False
     if not real.is_file():

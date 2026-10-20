@@ -106,9 +106,6 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
                     <a href={agentHref(h.key)} className="agent-name agent-card-link">
                       {h.name}
                     </a>
-                    <Text type="secondary" className="identity">
-                      {h.key}
-                    </Text>
                   </div>
                   <ChevronRight className="agent-card-chevron" size={20} aria-hidden />
                 </div>

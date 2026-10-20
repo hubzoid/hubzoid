@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 FORMAT = 1
-_PACKAGES = ("hubzoid", "open-webui", "dbos", "litellm", "openai-agents", "claude-agent-sdk",
+_PACKAGES = ("hubzoid", "dbos", "litellm", "openai-agents", "claude-agent-sdk",
              "alembic", "sqlalchemy", "casbin", "fastmcp", "pwdlib", "authlib")
 _BACKUP_WARN_DAYS = 7
 
@@ -191,6 +191,30 @@ def _versions() -> Check:
     return Check("deps.versions", "info", f"hubzoid {found.get('hubzoid')}", found)
 
 
+def _data_dir(hub: Path) -> Check | None:
+    """Where this hub's state lives, when HUBZOID_DATA_DIR keeps it apart from
+    the hub folder. Nothing for a hub that keeps its state in its own folder."""
+    import os
+
+    from . import datadir
+
+    data = datadir.configured()
+    if data is None or data == hub.resolve():
+        return None
+    fix = {"recovery": f"Set {datadir.ENV} to a folder on a durable volume (for example /data) that this "
+                       "process can write."}
+    if not data.is_dir() or not os.access(data, os.W_OK):
+        return Check("data.dir", "fail", f"{datadir.ENV}={data} is not a folder this process can write", fix)
+    if (hub / datadir.STATE / "hub.db").is_file():
+        return Check("data.dir", "warn",
+                     f"State lives in {data}, but {hub / datadir.STATE} still holds an older copy. Move it into "
+                     f"{data} or remove it, so only one copy is used.",
+                     {"recovery": f"Stop the hub, move {hub / datadir.STATE} to {data / datadir.STATE}, start it."})
+    return Check("data.dir", "info",
+                 f"State lives in {data} ({datadir.ENV}). This hub's own files are read from {hub} "
+                 "and are read-only in Settings: change them in Git and redeploy.")
+
+
 def _sqlite(hub: Path) -> Check | None:
     import sqlite3
 
@@ -251,9 +275,6 @@ def _schema(hub: Path) -> list[Check]:
 
 
 def _auth(hub: Path | None = None) -> list[Check]:
-    from . import appmode
-    from .webui import _TRUTHY, _validate_auth_env
-
     out = []
     keys = [k.strip() for k in os.environ.get("BRIDGE_API_KEYS", "").split(",") if k.strip()]
     if not keys:
@@ -266,26 +287,12 @@ def _auth(hub: Path | None = None) -> list[Check]:
     else:
         out.append(Check("auth.bridge_keys", "ok", f"{len(keys)} bridge key(s) set"))
 
-    if not appmode.is_openwebui(hub):
-        out.append(_web_app_signin(hub))
-        return out
-    auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in _TRUTHY
-    if auth_on:
-        try:
-            _validate_auth_env(dict(os.environ))
-            out.append(Check("auth.chat_signin", "ok", "Chat app sign-in is on"))
-        except RuntimeError as exc:
-            out.append(Check("auth.chat_signin", "fail", str(exc).splitlines()[0]))
-    else:
-        exposed = _exposed()
-        out.append(Check("auth.chat_signin", "fail" if exposed else "info",
-                         "Chat app sign-in is off and the port is exposed" if exposed
-                         else "Chat app sign-in is off (fine for local use only)"))
+    out.append(_web_app_signin(hub))
     return out
 
 
 def _web_app_signin(hub: Path | None) -> Check:
-    """Sign-in for the Hubzoid web app (HUBZOID_AUTH, or the 1.0 name WEBUI_AUTH).
+    """Sign-in for the Hubzoid web app (HUBZOID_AUTH).
     Exposure without sign-in is the `exposure.local_mode` check."""
     from . import appmode, upgrade
 
@@ -300,7 +307,7 @@ def _web_app_signin(hub: Path | None) -> Check:
                      f"Sign-in is on, but the Hubzoid accounts could not be read ({exc}). "
                      "See the db.operational check.", {"mode": "accounts", "accounts": None})
     bootstrap = any((os.environ.get(k) or "").strip()
-                    for k in ("HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL"))
+                    for k in ("HUBZOID_ADMIN_EMAIL",))
     detail = {"mode": "accounts", "accounts": accounts, "first_admin_configured": bootstrap}
     if not accounts and not bootstrap:
         return Check("auth.chat_signin", "warn",
@@ -325,39 +332,22 @@ def _exposure() -> Check:
 
 
 def _app_checks(hub: Path) -> list[Check]:
-    """The web experience: which one runs, what it needs, and what an upgrade
-    from Open WebUI still has to do. Read-only like every check."""
+    """The web experience, Open WebUI settings still present, and what an
+    upgrade from Open WebUI still has to do. Read-only like every check."""
     from . import appmode
 
     summary = appmode.mode_summary(hub)
-    owui = summary["ui_mode"] == appmode.UI_OPENWEBUI
-    source = ("HUBZOID_UI" if (os.environ.get("HUBZOID_UI") or "").strip()
-              else "deployment record" if owui else "default")
-    out = [Check("ui.mode", "info",
-                 "Chat UI: Open WebUI (Open WebUI mode)" if owui
-                 else "Chat UI: Hubzoid web app", {**summary, "source": source})]
-    if owui:
-        out.append(_openwebui_extra())
-    else:
-        found = _openwebui_data(hub, auth_on=summary["auth"])
-        if found:
-            out.append(found)
-        out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out = [Check("ui.mode", "info", "Chat UI: Hubzoid web app", summary)]
+    out += [Check("ui.retired_setting", "fail" if r.fatal else "warn",
+                  f"{r.name} is an Open WebUI setting Hubzoid 2.0 no longer uses. {r.advice}",
+                  {"setting": r.name, "blocks_start": r.fatal})
+            for r in appmode.retired_settings(hub)]
+    found = _openwebui_data(hub, auth_on=summary["auth"])
+    if found:
+        out.append(found)
+    out.append(_local_mode_guard(auth_on=summary["auth"]))
     out.append(_deployment_key(hub))
     return [c for c in out if c is not None]
-
-
-def _openwebui_extra() -> Check:
-    import importlib.util
-
-    from . import webui
-
-    binary = webui._find_binary()
-    if binary and importlib.util.find_spec("open_webui") is not None:
-        return Check("ui.openwebui_extra", "ok", "The openwebui extra is installed", {"binary": binary})
-    return Check("ui.openwebui_extra", "fail",
-                 'HUBZOID_UI=openwebui needs the openwebui extra: pip install "hubzoid[openwebui]" '
-                 "(or remove HUBZOID_UI to use the Hubzoid web app)")
 
 
 def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
@@ -385,7 +375,7 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
     if auth_on:
         return Check("ui.openwebui_data", "fail",
                      f"Open WebUI has {people} account(s) ({where}) and Hubzoid has none: hubzoid run "
-                     "stops until you run `hubzoid migrate openwebui` or set HUBZOID_UI=openwebui", detail)
+                     "stops until you run `hubzoid migrate openwebui`, or stay on Hubzoid 1.x", detail)
     return Check("ui.openwebui_data", "info",
                  f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
 
@@ -466,6 +456,28 @@ def _model(hub: Path) -> Check:
                  f"{model}: missing {', '.join(missing) or 'provider credentials'}", missing)
 
 
+def _backup_age(last: dict | None, failed: dict | None) -> Check:
+    """The last verified backup, or why the last one failed."""
+    from . import backup_schedule
+
+    try:
+        every = backup_schedule.interval()
+        schedule = "Scheduled backups are off (HUBZOID_BACKUPS=off)." if every is None else \
+            f"Scheduled backups run {'weekly' if every > 86400 else 'daily'}."
+    except backup_schedule.ScheduleError as exc:
+        return Check("backup.age", "fail", str(exc), {"recovery": "Set HUBZOID_BACKUPS to weekly, daily or off."})
+    if failed and float(failed.get("at") or 0) > float((last or {}).get("at") or 0):
+        days = (time.time() - float(failed["at"])) / 86400
+        return Check("backup.age", "warn", f"The last backup failed {days:.1f} days ago: {failed.get('error', '')}"[:400],
+                     {**failed, "recovery": "Fix the cause, then run `hubzoid backup`."})
+    if not last:
+        return Check("backup.age", "warn", f"No backup recorded. {schedule} Run `hubzoid backup` now.")
+    days = (time.time() - float(last.get("at", 0))) / 86400
+    verified = "" if last.get("verified") else " (not verified: made by an earlier release)"
+    return Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
+                 f"Last backup {days:.1f} days ago{verified}. {schedule}", last)
+
+
 def _meta(engine, key: str, default=None):
     import json
 
@@ -501,13 +513,7 @@ def _store_checks(hub: Path) -> list[Check]:
     try:
         if not inspect(engine).has_table("hz_meta"):
             return []
-        last = _meta(engine, "backup:last")
-        if not last:
-            out.append(Check("backup.age", "warn", "No backup recorded. Run `hubzoid backup`."))
-        else:
-            days = (time.time() - float(last.get("at", 0))) / 86400
-            out.append(Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
-                             f"Last backup {days:.1f} days ago", last))
+        out.append(_backup_age(_meta(engine, "backup:last"), _meta(engine, "backup:failed")))
         out.append(_scheduler(hub, engine))
         if inspect(engine).has_table("hz_grants"):
             out.append(_who_may_use(hub, engine))
@@ -588,6 +594,117 @@ def _legacy_management_flag() -> Check | None:
                  "the Console to the managers who use them, then remove the setting.")
 
 
+def _eval_checks(hub: Path) -> list[Check]:
+    """The evals the hub requires in quality/manifest.yaml: one row each, ok,
+    fail or pending (never run, or the case or the hub changed since).
+    Nothing for a hub without the manifest."""
+    from .evals import quality
+
+    try:
+        rows = quality.evidence(hub)
+    except quality.QualityError as exc:
+        return [Check("evals.quality", "fail", str(exc))]
+    except Exception as exc:  # noqa: BLE001 - one unreadable report never hides the rest of doctor
+        # The hub requires evals; results that cannot be read do not show them passing.
+        return [Check("evals.quality", "fail", f"Eval results could not be read ({type(exc).__name__})")]
+    return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
+
+
+def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[str, str],
+                   base_env: dict[str, str]) -> list[Check]:
+    """Stored secrets and the secrets the hub expects: names and status only.
+
+    secrets.store      what the store holds and whether each is used
+    secrets.missing    names the hub expects that nothing sets
+    secrets.blank      names a file sets to an empty value
+    secrets.overrides  hub files that set a different value than the deployment
+    """
+    from . import config_secrets as cs
+    from .secretstore import layer as secret_layer
+    from .secretstore import report as secret_report
+
+    out: list[Check] = []
+    rows = secret_report.rows(hub, env=base_env, fetch_secrets=fetch_secrets)
+    stored = [r for r in rows if r["stored"]]
+    if stored:
+        unused = [r["name"] for r in stored if r["stored_status"] == secret_layer.OVERRIDDEN]
+        broken = [r["name"] for r in stored
+                  if r["stored_status"] in (secret_layer.UNREADABLE, secret_layer.REBIND)]
+        detail = [{"name": r["name"], "scope": r["stored"]["scope"], "level": r["level"],
+                   "status": r["stored_status"]} for r in stored]
+        if broken:
+            out.append(Check("secrets.store", "warn",
+                             f"{len(broken)} stored secret(s) cannot be used: {', '.join(broken)}. Set them "
+                             "again with hubzoid secrets set (the deployment key or their destination "
+                             "changed).", detail))
+        elif unused:
+            out.append(Check("secrets.store", "warn",
+                             f"Stored but unused, because an operator source sets them: {', '.join(unused)}. "
+                             "Remove one of the two.", detail))
+        else:
+            out.append(Check("secrets.store", "ok",
+                             f"{len(stored)} stored secret(s), in use from the next bridge start", detail))
+    missing = [r for r in rows if r["status"] == "missing" and r["expected"]]
+    if missing:
+        out.append(Check("secrets.missing", "warn",
+                         f"{len(missing)} expected secret(s) not set: {', '.join(r['name'] for r in missing)}",
+                         [{"name": r["name"], "level": r["level"], "why": r["expected"],
+                           "fix": f"hubzoid secrets set {hub} --name {r['name']}"
+                                  + (" --restricted" if r["level"] == "restricted" else "")}
+                          for r in missing]))
+    blank = [r["name"] for r in rows if r["status"] == "blank"]
+    if blank:
+        out.append(Check("secrets.blank", "warn",
+                         f"Set to an empty value: {', '.join(blank)}. Give each a value or remove the line.",
+                         blank))
+    files = {**cs._read_file(hub / ".env"), **cs._read_file(hub / "restricted" / ".env")}
+    deployment = {**base_env, **deployment_values}
+    differs = sorted(k for k, v in files.items()
+                     if v.strip() and (deployment.get(k) or "").strip() and deployment[k] != v)
+    if differs:
+        out.append(Check("secrets.overrides", "warn",
+                         f"The hub files set a different value than the deployment for: {', '.join(differs)}. "
+                         "Keep shared values in one place.", differs))
+    return out
+
+
+def _hub_setup_checks(hub: Path) -> list[Check]:
+    """The hub's own declarations, only when it has them (hubzoid.hubs):
+
+    settings.files   settings.yaml, hub.settings.yaml and hub.manifest.yaml parse
+    settings.values  every declared setting has a valid value or reference
+    probe.<id>       each check the hub declares in hub.manifest.yaml
+    """
+    from .hubs import probes as probes_lib
+    from .hubs import settings as hub_settings
+    from .hubs.yamlfile import HubFileError
+
+    present = [n for n in (hub_settings.DECLARATIONS, hub_settings.VALUES, probes_lib.MANIFEST)
+               if (hub / n).is_file()]
+    if not present:
+        return []
+    out: list[Check] = []
+    try:
+        resolved, problems = hub_settings.validate(hub)
+        probes_lib.manifest(hub)
+    except HubFileError as exc:
+        return [Check("settings.files", "fail", str(exc))]
+    out.append(Check("settings.files", "ok", f"Read {', '.join(present)}"))
+    if resolved or problems:
+        if problems:
+            out.append(Check("settings.values", "fail",
+                             f"{len(problems)} setting problem(s): " + "; ".join(p.message for p in problems[:5]),
+                             [p.public() for p in problems]))
+        else:
+            out.append(Check("settings.values", "ok", f"{len(resolved)} declared setting(s) set",
+                             [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
+    for result in probes_lib.run(hub):
+        detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \
+            else None
+        out.append(Check(f"probe.{result.id}", result.status, result.summary, detail))
+    return out
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -595,6 +712,7 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     from . import settings as settingslib
 
     hub = Path(hub).resolve()
+    base_env = config_secrets._start_env()  # before the hub's layers load below
     config, deployment_values, unreadable = _config_checks(hub, fetch_secrets=fetch_secrets)
     # Past an unreadable secret, check the rest from the files alone.
     files_only = config_secrets.fetching_disabled() if (unreadable or not fetch_secrets) else nullcontext()
@@ -603,10 +721,14 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         checks[2:2] = config
         settingslib.load(hub)
         checks.append(_versions())
+        data_check = _data_dir(hub)
+        if data_check:
+            checks.append(data_check)
         sqlite_check = _sqlite(hub)
         if sqlite_check:
             checks.append(sqlite_check)
         checks += _schema(hub)
+        checks += _eval_checks(hub)
         checks += _auth(hub)
         checks += _app_checks(hub)
         google = _google_merge(deployment_values)
@@ -624,6 +746,16 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
             checks += _store_checks(hub)
         except Exception as exc:  # noqa: BLE001
             checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
+        try:
+            checks += _hub_setup_checks(hub)
+        except Exception as exc:  # noqa: BLE001 - one broken check never hides the rest
+            checks.append(Check("settings.files", "fail", f"Hub settings could not be checked ({type(exc).__name__})"))
+        try:
+            checks += _secret_checks(hub, fetch_secrets=fetch_secrets and not unreadable,
+                                     deployment_values=deployment_values, base_env=base_env)
+        except Exception as exc:  # noqa: BLE001 - reported by class only, never a value
+            checks.append(Check("secrets.store", "warn",
+                                f"Stored secrets could not be checked ({type(exc).__name__})"))
     return checks
 
 
@@ -631,5 +763,6 @@ def report(hub: Path, checks: list[Check]) -> dict:
     from . import __version__
 
     return {"format": FORMAT, "hub": str(Path(hub).resolve()), "hubzoid": __version__,
-            "ok": not any(c.status == "fail" for c in checks),
+            # A pending required eval has not passed yet: the hub is not ready.
+            "ok": not any(c.status in ("fail", "pending") for c in checks),
             "checks": [asdict(c) for c in checks]}

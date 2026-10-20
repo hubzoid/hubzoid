@@ -9,14 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
 from hubzoid import _request_ctx
-
-
-@pytest.fixture(autouse=True)
-def _legacy_ui(monkeypatch):
-    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui), where the bridge
-    trusts Open WebUI's forwarded identity; the web app mode is covered by
-    tests/test_assertions*.py."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+from hubzoid.assertions import identity_headers
 
 
 @pytest.fixture
@@ -60,7 +53,7 @@ def test_chat_turn_writes_a_usage_row(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=_answer):
         r = c.post("/v1/chat/completions",
                    headers={"Authorization": "Bearer k-usage",
-                            "X-OpenWebUI-User-Email": "ann@example.org"},
+                            **identity_headers(hub, surface="web", email="ann@example.org")},
                    json={"model": "sales", "chat_id": "c-1",
                          "messages": [{"role": "user", "content": "who owns checkout?"}]})
     assert r.status_code == 200
@@ -76,26 +69,11 @@ def test_streamed_slack_turn_counts_as_slack(client):
     c, hub = client
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.stream", new=_stream_answer):
         r = c.post("/v1/chat/completions",
-                   headers={"Authorization": "Bearer k-usage", "X-Hubzoid-Surface": "slack",
-                            "X-Hubzoid-User": "bo@example.org"},
+                   headers={"Authorization": "Bearer k-usage",
+                            **identity_headers(hub, surface="slack", email="bo@example.org")},
                    json={"model": "sales", "stream": True, "chat_id": "s-1",
                          "messages": [{"role": "user", "content": "hi"}]})
         assert r.status_code == 200 and "[DONE]" in r.text
     (row,) = _rows(hub)
     assert (row["surface"], row["subject"], row["input_tokens"]) == ("slack", "bo@example.org", 900)
 
-
-def test_owui_background_call_is_not_another_chat_message(client):
-    c, hub = client
-    with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=_answer):
-        for task in ("", "title_generation"):
-            r = c.post("/v1/chat/completions",
-                       headers={"Authorization": "Bearer k-usage",
-                                "X-OpenWebUI-User-Email": "ann@example.org",
-                                "X-OpenWebUI-Chat-Id": "actual-chat-id",
-                                "X-Hubzoid-Task": task},
-                       json={"model": "sales", "messages": [{"role": "user", "content": "hello"}]})
-            assert r.status_code == 200
-    rows = _rows(hub)
-    assert [r["kind"] for r in rows] == ["chat", "background"]
-    assert {r["chat_id"] for r in rows} == {"actual-chat-id"}

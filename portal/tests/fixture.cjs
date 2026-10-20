@@ -50,7 +50,6 @@ function createFixture() {
     delays: {}, // endpoint -> ms (e.g. { "/access": 700 })
     failNext: null, // { match: (endpoint, body) => boolean, status, detail }
     failNextGet: null, // { endpoint, status, detail } — fail the next matching GET once
-    visibility: { state: "ok", updated: NOW - 40 },
     schedulerHeartbeat: iso(30),
     hubs: [
       { key: "finance", path: "/srv/hubs/finance", name: "Finance Assistant" },
@@ -707,10 +706,6 @@ function createFixture() {
         const limit = Number(params.limit || 50);
         return { rows: rows.slice(offset, offset + limit) };
       }
-      case "/sync":
-        if (!a.org) throw error(403, "Organization admin required");
-        state.visibility = { state: "ok", models: 2, updated: NOW };
-        return state.visibility;
       case "/summary": {
         const periods = { "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400 };
         const period = params.period || "7d";
@@ -722,7 +717,7 @@ function createFixture() {
           itops: { chats: 0, messages: 0, active_users: 0, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, last_activity: null, denials: 0 },
         };
         const hubs = allowedHubs(a).map((h) => {
-          const u = usage[h.key];
+          const u = usage[h.key] || {chats: 0, messages: 0, active_users: 0, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, last_activity: null, denials: 0};
           const flows = state.workflows[h.key] || [];
           const subjects = new Set(state.grants.filter(([s, hub]) => hub === h.key && !s.startsWith("workflow:")).map(([s]) => s));
           return {
@@ -765,7 +760,6 @@ function createFixture() {
           hubs: hs.length,
           grants: grants.length,
           people: new Set(grants.filter(([s]) => s !== EVERYONE).map(([s]) => s)).size,
-          visibility: state.visibility,
         };
       }
       default:

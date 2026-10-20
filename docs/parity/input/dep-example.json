@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "deployment_id": "dep-example",
+  "sdk_version": "1.3.2",
+  "topology": "gateway",
+  "hubs": ["hub-a", "hub-b"],
+  "sign_in_methods": ["password", "google"],
+  "settings": [
+    {"key": "ENABLE_MEMORIES", "declared_value": false, "sdk_default": false, "effective_value": false,
+     "evidence_kind": "observed", "mapping": "memory deferred (B037)"},
+    {"key": "ENABLE_MEMORY", "declared_value": false, "effective_value": true, "evidence_kind": "ineffective",
+     "mapping": "Wrong name: Open WebUI reads ENABLE_MEMORIES, so this flag never turned memory off."},
+    {"key": "DEFAULT_PROMPT_SUGGESTIONS", "declared_value": "present", "policy_scope": "deployment",
+     "effective_value": "present", "evidence_kind": "observed", "mapping": "HUB-76 authored starters"},
+    {"key": "ENABLE_FOLLOW_UP_GENERATION", "declared_value": null, "effective_value": false,
+     "evidence_kind": "absent", "mapping": "HUB-76 generated follow-ups, off by default"},
+    {"key": "WEBUI_SECRET_KEY", "declared_value": "present", "effective_value": "present",
+     "policy_scope": "gateway_inherited", "evidence_kind": "observed", "mapping": "retired with Open WebUI"},
+    {"key": "OAUTH_CLIENT_SECRET", "declared_value": "redacted", "effective_value": "redacted",
+     "evidence_kind": "observed", "mapping": "HUB-86 secret store"},
+    {"key": "ENABLE_CHANNELS", "evidence_kind": "unknown",
+     "unknown_reason": "The owner has not exported persisted admin settings yet."}
+  ],
+  "categories": [
+    {"category": "users", "count": 12},
+    {"category": "chats", "count": 340},
+    {"category": "folders", "count": "unknown"},
+    {"category": "feedback", "count": 25}
+  ],
+  "providers": ["storage-local"],
+  "attestation": {"status": "partial", "by": "owner-example", "covered": ["hubs", "sign_in_methods"]}
+}

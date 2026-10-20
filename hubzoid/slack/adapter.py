@@ -246,9 +246,8 @@ def build_app(
 
     `identity_mapping` (SLACK_IDENTITY_MAPPING): when true, resolve each
     sender's verified Slack profile email and forward it to the bridge so the
-    caller's groups apply: their Open WebUI groups in Open WebUI mode, their
-    Hubzoid account and its groups in the web app mode (an email without an
-    active account is sent as nobody; see hubzoid.channel_identity). Needs the
+    caller's Hubzoid account and its groups apply (an email without an active
+    account is sent as nobody; see hubzoid.channel_identity). Needs the
     `users:read.email` scope.
     """
     app = App(
@@ -293,9 +292,8 @@ def build_app(
         return _as_account(email)
 
     def _as_account(email: str | None) -> str | None:
-        """The verified Slack email as the bridge should see it: unchanged in
-        Open WebUI mode; the sender's Hubzoid account (or nobody) in the web
-        app mode. Looked up on every turn, never cached, so blocking someone
+        """The verified Slack email as the bridge should see it: the sender's
+        Hubzoid account (or nobody). Looked up on every turn, never cached, so blocking someone
         or removing their account takes effect at once."""
         if email is None:
             return None
@@ -357,6 +355,75 @@ def build_app(
         msgs = with_slack_format_hint(msgs)
         return msgs, chat_id
 
+    # -- approvals and questions (hubzoid.hitl) ---------------------------------------
+    def _offer_requests(client, *, channel: str, thread_ts: str, chat_id: str, user_id: str | None,
+                        since: float, private: bool) -> None:
+        """Requests this turn created go to the requester with the exact action
+        and buttons: in this thread when it is their 1:1 DM, otherwise as a DM
+        (the shared thread only says it waits)."""
+        from ..hitl import channels as hitl_channels
+
+        email = _sender_email(client, user_id)
+        if not email:
+            return
+        for req in hitl_channels.pending_in_chat(hub_dir, chat_id, email, since=since):
+            blocks = hitl_channels.slack_blocks(req)
+            if private:
+                client.chat_postMessage(channel=channel, thread_ts=thread_ts, blocks=blocks, text=req["title"])
+                continue
+            dm = client.conversations_open(users=user_id)
+            client.chat_postMessage(channel=dm["channel"]["id"], blocks=blocks, text=req["title"])
+            client.chat_postMessage(channel=channel, thread_ts=thread_ts,
+                                    text=f"Waiting for <@{user_id}>'s answer. I sent the details in a direct message.")
+
+    def _continue_in_thread(client, context, request: dict) -> None:
+        """After a decision: run the agent again in the thread that asked, with
+        the outcome as the person's next message."""
+        from ..hitl import service as hitl_service
+
+        chat_id = request.get("conversation_id") or ""
+        if not chat_id.startswith("slack-") or not hitl_service.mark_continued(hub_dir, request["id"]):
+            return
+        _, channel, thread_ts = chat_id.split("-", 2)
+        msgs, _ = _gather_messages(client, context, channel, thread_ts)
+        msgs = msgs + [{"role": "user", "content": hitl_service.outcome_text(request)}]
+        placeholder = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="…")
+
+        def _post(text: str) -> None:
+            client.chat_update(channel=channel, ts=placeholder["ts"], text=text or "…")
+
+        writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
+        stream_reply(bridge_url=bridge_url, api_key=api_key, model=model_label, messages=msgs,
+                     on_delta=writer.feed, chat_id=chat_id, hub_dir=hub_dir,
+                     user_email=request.get("requester_email"),
+                     # A DM channel id starts with D; anything else is a shared channel thread.
+                     surface="slack-dm" if channel.startswith("D") else "slack-channel")
+        writer.done()
+
+    import re as _re
+
+    @app.action(_re.compile(r"^hz_hitl_"))
+    def _on_request_button(ack, body, client, context):
+        ack()
+        from ..hitl import channels as hitl_channels
+        from ..hitl import service as hitl_service
+
+        action = (body.get("actions") or [{}])[0]
+        user_id = (body.get("user") or {}).get("id")
+        container = body.get("container") or {}
+        try:
+            req = hitl_channels.slack_decide(hub_dir, action_id=action.get("action_id", ""),
+                                             value=action.get("value", ""), email=_sender_email(client, user_id))
+        except hitl_service.RequestError as exc:
+            client.chat_postEphemeral(channel=container.get("channel_id"), user=user_id, text=exc.message)
+            return
+        client.chat_update(channel=container.get("channel_id"), ts=container.get("message_ts"),
+                           text=f"{hitl_service.visible_outcome(req)}: {req['title']}", blocks=[])
+        try:
+            _continue_in_thread(client, context, req)
+        except Exception:  # noqa: BLE001 - the decision stands; the person can write to continue
+            log.exception("slack: could not continue after request %s", req.get("id"))
+
     @assistant.thread_started
     def _on_thread_started(say, set_suggested_prompts, **_):
         say(f"Hi — I'm {hub_dir.name}. Ask me anything.")
@@ -379,6 +446,7 @@ def build_app(
         thread_ts = payload["thread_ts"]
         try:
             set_status("Thinking...")
+            turn_started = time.time() - 0.25
             msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 say("(no question detected — try asking something specific)")
@@ -405,6 +473,8 @@ def build_app(
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
+            _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
+                            user_id=payload.get("user"), since=turn_started, private=True)
         except Exception as exc:  # noqa: BLE001
             log.exception("assistant user_message handler failed")
             say(f":warning: error: {type(exc).__name__}: {exc}")
@@ -416,6 +486,7 @@ def build_app(
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
         try:
+            turn_started = time.time() - 0.25
             msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 say(text="(empty mention)", thread_ts=thread_ts)
@@ -444,6 +515,8 @@ def build_app(
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
+            _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
+                            user_id=event.get("user"), since=turn_started, private=False)
         except Exception as exc:  # noqa: BLE001
             log.exception("app_mention handler failed")
             say(text=f":warning: error: {type(exc).__name__}: {exc}", thread_ts=thread_ts)
@@ -469,6 +542,7 @@ def build_app(
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
         try:
+            turn_started = time.time() - 0.25
             msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 return
@@ -493,6 +567,8 @@ def build_app(
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
+            _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
+                            user_id=event.get("user"), since=turn_started, private=True)
         except Exception as exc:  # noqa: BLE001
             log.exception("im handler failed")
             client.chat_postMessage(
@@ -517,6 +593,12 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
 
     env = env if env is not None else os.environ
     validate_env(env)
+    conflict = _channel_conflict(hub_dir)
+    if conflict:
+        log.error("hubzoid slack adapter not started: channel %s already serves Slack for this hub. Two "
+                  "listeners on one Slack app would answer twice. The bridge runs it; see docs/channels/slack.md.",
+                  conflict)
+        return 0
     settings = settingslib.load(hub_dir)
 
     try:
@@ -554,6 +636,19 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
     handler = SocketModeHandler(app, env["SLACK_APP_TOKEN"])
     handler.start()
     return 0
+
+
+def _channel_conflict(hub_dir: Path) -> str | None:
+    """An enabled Slack channel connection (channels/<id>.yaml) for this hub."""
+    try:
+        from ..channels import config as channel_config
+
+        for conn in channel_config.active_all(hub_dir):
+            if conn.provider == "slack" and conn.enabled:
+                return conn.id
+    except Exception:  # noqa: BLE001 - no channel store: the legacy adapter is the only one
+        return None
+    return None
 
 
 def _slugify(text: str) -> str:

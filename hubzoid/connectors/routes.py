@@ -1,7 +1,6 @@
-"""HTTP for personal connections, in both UI modes (mounted by ``hubzoid.webapp``,
-or by the bridge in Open WebUI mode, before the Console's static files so
-``/portal/api/connectors`` is not shadowed). Who is signed in comes from a live
-check of the session: Hubzoid's, or Open WebUI's in Open WebUI mode.
+"""HTTP for personal connections (mounted by ``hubzoid.webapp``, before the
+Console's static files so ``/portal/api/connectors`` is not shadowed). Who is
+signed in comes from a live check of the Hubzoid session.
 
   Console (organization administrators)
     GET    /portal/api/connectors                 the registry, never a secret
@@ -42,29 +41,18 @@ log = logging.getLogger("hubzoid.connectors")
 _NO_STORE = {"Cache-Control": "no-store"}
 _REDIRECT_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 ACCOUNT_PAGE = "/account/connections"
-PORTAL_PAGE = "/portal/connections"  # Open WebUI mode has no chat-app account pages
 
 
-def account_page(hub_dir: Path) -> str:
-    """Where a person manages their connections in this UI mode."""
-    from .. import appmode
-
-    return PORTAL_PAGE if appmode.is_openwebui(hub_dir) else ACCOUNT_PAGE
+def account_page(hub_dir: Path) -> str:  # noqa: ARG001 — one web app
+    """Where a person manages their connections."""
+    return ACCOUNT_PAGE
 
 
 def signed_in(request: Request, hub_dir: Path):
-    """The signed-in account (``AuthUser``) or None. In Open WebUI mode it is
-    built from a live check of the Open WebUI session: its account id and
-    email, never an email lookup or a forwarded chat header."""
-    from .. import appmode
-    from ..auth import AuthUser, current_user
+    """The signed-in account (``AuthUser``) or None."""
+    from ..auth import current_user
 
-    if not appmode.is_openwebui(hub_dir):
-        return current_user(request, hub_dir)
-    from ..access.session import verified_person
-
-    who = verified_person(request, hub_dir)
-    return AuthUser(id=who[0], email=who[1]) if who else None
+    return current_user(request, hub_dir)
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -122,16 +110,10 @@ def build_router(hub_dir: Path) -> APIRouter:
                                                 "HUBZOID_PUBLIC_URL to the address people use.")
 
     def person(request: Request):
-        from .. import appmode
         from ..auth import require_user
 
-        if not appmode.is_openwebui(hub_dir):
-            trusted_host(request)
-            return require_user(request, hub_dir)
-        user = signed_in(request, hub_dir)
-        if user is None:
-            raise _error(401, "unauthenticated", "Sign in to continue.")
-        return user
+        trusted_host(request)
+        return require_user(request, hub_dir)
 
     def admin(request: Request):
         """Organization administrators, as the Console decides them: an
@@ -141,15 +123,10 @@ def build_router(hub_dir: Path) -> APIRouter:
         from ..access.service import AccessService, Actor, Denied
         from ..auth import LOCAL_OWNER_EMAIL, require_admin
 
-        if appmode.is_openwebui(hub_dir):
-            # Open WebUI's own admin role decides nothing here: the Console's
-            # organization-wide Manage access does, as for everything else.
-            user = person(request)
-        else:
-            trusted_host(request)
-            user = require_admin(request, hub_dir)
-            if not appmode.auth_enabled(hub_dir) and normalize(user.email) == LOCAL_OWNER_EMAIL:
-                return user
+        trusted_host(request)
+        user = require_admin(request, hub_dir)
+        if not appmode.auth_enabled(hub_dir) and normalize(user.email) == LOCAL_OWNER_EMAIL:
+            return user
         try:
             scope = AccessService(hub_dir).scope(Actor(normalize(user.email), "console", "session"))
         except Denied as exc:

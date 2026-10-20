@@ -96,14 +96,6 @@ def test_real_bridge_key_still_works_for_api_callers(hub, monkeypatch):
     r = client.get("/artifacts/c1/report.txt", headers={"Authorization": "Bearer k-7f3a9c"})
     assert r.status_code == 200
 
-
-def test_links_never_expire_by_default_in_legacy_mode(hub, monkeypatch):
-    # The Hubzoid web app (default UI mode) issues 7-day links instead; see
-    # tests/test_chat_artifacts_session.py.
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    assert "&e=" not in _signing.artifact_query("c1", "report.txt", hub_dir=hub)
-
-
 def test_ttl_links_expire(hub, monkeypatch):
     client = _client(monkeypatch)
     monkeypatch.setenv("HUBZOID_ARTIFACT_LINK_TTL", "60")

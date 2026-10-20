@@ -7,10 +7,6 @@
 # Build:
 #   docker build -t hubzoid .
 #
-# The Open WebUI chat app (HUBZOID_UI=openwebui) adds
-# Open WebUI, PyTorch (CPU build) and ffmpeg, several GB more:
-#   docker build --build-arg WITH_OPENWEBUI=true -t hubzoid:openwebui .
-#
 # Run (single hub). The published port is reachable from other machines, so
 # sign-in is on: put HUBZOID_AUTH=true and the first administrator
 # (HUBZOID_ADMIN_EMAIL, HUBZOID_ADMIN_PASSWORD) in the hub's .env, then:
@@ -46,24 +42,13 @@
 # not start.
 FROM python:3.12-slim-trixie
 
-# true adds the openwebui extra for the optional supported chat interface.
-ARG WITH_OPENWEBUI=false
-
-# The default image needs no system packages: every dependency ships wheels for
-# amd64 and arm64. Open WebUI needs ffmpeg at runtime for audio, and PyAV's
-# build dependencies in case a prebuilt wheel is missing for the architecture.
-RUN if [ "$WITH_OPENWEBUI" = "true" ]; then \
-      apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        pkg-config build-essential \
-        libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
-        libswscale-dev libswresample-dev \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
-
-# Non-root user.
-RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
-USER hubzoid
+# Every Python dependency ships wheels for amd64 and arm64. The one system
+# package is the PostgreSQL client, for `hubzoid backup` of a deployment on
+# PostgreSQL: pg_dump must be the server's major version or newer (Debian 13
+# ships 17).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/home/hubzoid/.local/bin:$PATH \
     PIP_NO_CACHE_DIR=1 \
@@ -72,21 +57,26 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
     BRIDGE_PORT=8000 \
     HUBZOID_HOST=0.0.0.0
 
-# Reviewed dependencies first (cached layer), then the package itself. The
-# Open WebUI lock pins the CPU build of PyTorch, so no CUDA libraries are installed.
-COPY --chown=hubzoid requirements.lock requirements-openwebui.lock /tmp/hubzoid-src/
-RUN if [ "$WITH_OPENWEBUI" = "true" ]; then \
-      pip install --user --extra-index-url https://download.pytorch.org/whl/cpu \
-        -r /tmp/hubzoid-src/requirements-openwebui.lock; \
-    else \
-      pip install --user -r /tmp/hubzoid-src/requirements.lock; \
-    fi
-COPY --chown=hubzoid pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
-COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
-RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
+# Reviewed dependencies first (cached layer), then the package itself.
+# Installed for every user, so the image also runs as root where a provider's
+# volume needs it (Railway: RAILWAY_RUN_UID=0).
+COPY requirements.lock /tmp/hubzoid-src/
+RUN pip install -r /tmp/hubzoid-src/requirements.lock
+COPY pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
+COPY hubzoid /tmp/hubzoid-src/hubzoid
+RUN pip install --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
 
+# Non-root user. /data, the durable folder a hosted hub writes to
+# (HUBZOID_DATA_DIR), is theirs: a volume mounted there starts with that owner.
+# /hub, where a hosted hub's own files are, stays root's: they are only read.
+RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid \
+    && mkdir -p /data && chown hubzoid:hubzoid /data
 WORKDIR /hub
+USER hubzoid
 EXPOSE 3080
+# The public health check, on the port the provider gives (PORT).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','3080'),timeout=4)"
 
 ENTRYPOINT ["hubzoid"]
 CMD ["run", "/hub"]

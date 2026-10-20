@@ -187,13 +187,20 @@ def test_delete_removes_sessions_identities_and_links(store):
         chat.save_share(conversation_id=cid, owner_id=owner, title=None, agent="sales",
                         snapshot={"messages": ["private"]})
     assert store.delete(uid) is True
-    assert chat.get_conversation("c_deleted01") is None
-    assert chat.get_message("m_deleted01") is None
+    # A tombstone: the conversation and its messages stay with the account id,
+    # its share link stops, and the email is free for a new account.
+    assert chat.get_conversation("c_deleted01") is not None
+    assert chat.get_message("m_deleted01") is not None
     assert chat.share_for("c_deleted01") is None
     assert chat.get_conversation("c_retained1") is not None
     assert chat.get_message("m_retained1") is not None
     assert chat.share_for("c_retained1") is not None
-    assert store.get(uid) is None and store.find_identity("https://idp", "s1") is None
+    gone = store.get(uid)
+    assert gone["status"] == "deleted" and gone["email"].endswith("@deleted.invalid")
+    assert gone["auth_epoch"] == 1 and store.find_by_email("e@example.com") is None
+    assert store.find_identity("https://idp", "s1") is None
+    assert store.delete(uid) is False
+    assert store.create(email="e@example.com")["id"] != uid
     with store.engine.connect() as conn:
         for table in ("hz_sessions", "hz_auth_links"):
             assert conn.execute(text(f"SELECT count(*) FROM {table} WHERE user_id=:u"),
@@ -252,7 +259,7 @@ def test_local_owner_gets_a_new_id_and_an_identity(hub):
     assert store_for(hub).identity(LOCAL_OWNER_EMAIL)["owui_id"] == owner["id"]
 
 
-def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch):
+def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch, caplog):
     from hubzoid.access import store_for
 
     monkeypatch.setenv("HUBZOID_AUTH", "true")
@@ -271,15 +278,8 @@ def test_bootstrap_admin_from_env_creates_the_owner_once(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "other@example.com")
     assert users.bootstrap_admin_from_env(hub) is None
     assert users.find_by_email(hub, "other@example.com") is None
-
-
-def test_bootstrap_falls_back_to_open_webui_names_and_ignores_the_local_owner(hub, monkeypatch):
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    users.ensure_local_owner(hub)  # from an earlier run with sign-in off
-    monkeypatch.setenv("WEBUI_ADMIN_EMAIL", "first@example.com")
-    monkeypatch.setenv("WEBUI_ADMIN_PASSWORD", "another good password")
-    assert users.bootstrap_admin_from_env(hub)["email"] == "first@example.com"
-
+    # ...but the start says why the configured owner can't sign in.
+    assert "hubzoid admin create other@example.com --owner" in caplog.text
 
 @pytest.mark.parametrize("env", [
     {"HUBZOID_ADMIN_EMAIL": "a@example.com", "HUBZOID_ADMIN_PASSWORD": "short"},
@@ -319,7 +319,7 @@ def test_mcp_account_requires_an_active_bound_unblocked_account(hub):
 
     user = users.create(hub, email="m@example.com")
     users.sync_identity(hub, user)
-    assert users.mcp_account(hub, email="m@example.com") == {"account_id": user["id"],
+    assert users.mcp_account(hub, email="m@example.com") == {"auth_epoch": 0, "account_id": user["id"],
                                                                "email": "m@example.com"}
     assert users.mcp_account(hub, account_id=user["id"])["email"] == "m@example.com"
     store_for(hub).suspend("m@example.com", actor="test")

@@ -35,3 +35,8 @@ One or two plain sentences: what is wrong and what it breaks. Name the team
 rule or repo instruction it rests on in `rule`. No praise, no narration of
 what the code does, no "consider". Cite the new-file line number from the
 diff.
+
+When the fix is a small mechanical change to that one line, put the corrected
+line in `suggestion`, exactly as it should read, with its indentation. GitZoid
+offers it as a one-click change only after the second pass confirms the
+finding. Leave it empty for anything larger.

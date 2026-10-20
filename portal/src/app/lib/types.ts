@@ -11,9 +11,15 @@ export type SessionUser = {
   role: Role | string;
   /** True when the Console opens for this person (Manage access on an agent or more). */
   console?: boolean;
+  /** May read this hub's proposed changes (curators as well as managers). */
+  hub_changes?: boolean;
+  /** The Open WebUI parity ledger tab (HUBZOID_PARITY_LEDGER, maintainers only). */
+  parity?: boolean;
+  /** The Hubzoid version; sent only to people the Console opens for. */
+  version?: string;
 };
 
-export type Provider = { id: string; name: string };
+export type Provider = { id: string; name: string; kind?: string; login_url?: string };
 
 export type Session = {
   authenticated: boolean;
@@ -23,6 +29,8 @@ export type Session = {
   password?: boolean;
   signup?: boolean;
   branding_name?: string;
+  /** Sign-in is off and the server listens beyond this computer (an explicit opt-out). */
+  unsafe_network?: boolean;
 };
 
 export type Agent = {
@@ -37,11 +45,40 @@ export type Agent = {
 
 export type AgentsResponse = { agents: Agent[]; default_agent?: string | null };
 
+/** The deployment's activated brand (GET /api/branding `manifest`, or a
+ *  draft's private preview). */
+export type BrandManifest = {
+  revision?: string;
+  generation?: number;
+  identity: { name: string; short_name: string; description: string };
+  assets: Partial<Record<
+    | "logo_light" | "logo_dark" | "wordmark" | "favicon" | "icon_192" | "icon_512" | "touch_icon"
+    | "splash_light" | "splash_dark" | "signin_background" | "decorative_css",
+    string
+  >>;
+  copy: {
+    welcome_title?: string | null;
+    welcome_body?: string | null;
+    signin_title?: string | null;
+    signin_body?: string | null;
+    footer?: string | null;
+    suggestions?: string[];
+  };
+  links: { help?: string | null; privacy?: string | null; terms?: string | null };
+  legal: { version?: string | null; require_acceptance: boolean; policy_hash?: string | null };
+  announcement?: { id: string; text_by_locale: { en: string }; dismissible: boolean } | null;
+  presentation: { hidden_features: string[]; response_watermark?: string | null };
+  decorative_css_url?: string | null;
+  preview_only?: boolean;
+};
+
 export type Branding = {
   name?: string | null;
   logo_url?: string | null;
+  logo_dark_url?: string | null;
   favicon_url?: string | null;
   custom_css_url?: string | null;
+  manifest?: BrandManifest | null;
 };
 
 /** Timestamps arrive as epoch seconds (the store keeps floats) or ISO strings. */
@@ -109,6 +146,11 @@ export type SharedConversation = {
   agent?: string | null;
   owner_name?: string | null;
   created_at?: Timestamp;
+  /** "snapshot" (2.0 link) or "legacy" (pre-2.0 link). */
+  kind?: "snapshot" | "legacy";
+  audience?: "named" | "deployment" | "public";
+  allow_copy?: boolean;
+  omissions?: string[];
   messages: ServerMessage[];
 };
 

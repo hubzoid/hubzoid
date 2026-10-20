@@ -9,3 +9,12 @@ ca03e0d18ba256e3c4e771df215abb7382efe8fb:.webui_secret_key:key-file:0
 
 # A fake OpenRouter-style key in a test fixture (it spells "test" and "SECRET").
 80b463fc1ca3662a729998adea57bf198d3c68c3:tests/test_workflow_jev.py:generic-api-key:23
+
+# A fake key in a test that checks a crash message never shows it (branch f-settings-doctor).
+bce5f60a503a202fb7e2683e0ada8176cc8da0aa:tests/test_hub_settings.py:generic-api-key:355
+
+# RFC 6238 appendix B test vector (the published ASCII "12345678901234567890"
+# in base32), used to check the TOTP code generator. Not a credential.
+2e33981f4ec26af3b5c9892e304b3174139f22ef:tests/test_auth_mfa.py:generic-api-key:57
+1910d060d2fd5e40dd102c4454707fa730409fd0:tests/test_auth_mfa.py:generic-api-key:57
+d2bade0e2166c1645c8d1bbc136da50fe25c48cf:tests/test_auth_mfa.py:generic-api-key:57

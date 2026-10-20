@@ -244,7 +244,6 @@ def edge_url():
     app = edge.build_edge_app(
         default_base=f"http://127.0.0.1:{oport}",
         routes=[edge.EdgeRoute(prefix="/artifacts", upstream=f"http://127.0.0.1:{bport}")],
-        web_app=False,  # the Open WebUI topology
     )
     front = _Server(app, eport)
     bridge.start()
@@ -265,12 +264,16 @@ def test_artifacts_route_to_bridge(edge_url):
     assert r.text == "BRIDGE:/artifacts/chat-1/report.json"
 
 
-def test_non_artifacts_route_to_owui(edge_url):
+def test_other_paths_go_to_the_default_upstream_but_never_the_bridge_api(edge_url):
     base, _ = edge_url
-    for path in ("/", "/chat", "/v1/models", "/uploads/x"):
+    for path in ("/", "/chat"):
         r = httpx.get(base + path, timeout=10)
         assert r.status_code == 200
         assert r.text == f"OWUI:{path}", path
+    # The chat API needs a personal key (401 without one); the rest of the
+    # bridge's own API is never reachable from the public port.
+    assert httpx.get(base + "/v1/models", timeout=10).status_code == 401
+    assert httpx.get(base + "/uploads/x", timeout=10).status_code == 404
 
 
 def test_sse_streams_through(edge_url):
@@ -278,18 +281,6 @@ def test_sse_streams_through(edge_url):
     with httpx.stream("GET", base + "/sse", timeout=10) as r:
         body = "".join(chunk for chunk in r.iter_text())
     assert body == "data: 0\n\ndata: 1\n\ndata: 2\n\n"
-
-
-def test_websocket_relays_through(edge_url):
-    _, ws_base = edge_url
-
-    async def roundtrip():
-        async with websockets.connect(ws_base + "/ws", open_timeout=10) as ws:
-            await ws.send("hello")
-            return await ws.recv()
-
-    assert asyncio.run(roundtrip()) == "echo:hello"
-
 
 def test_multiple_set_cookies_all_forwarded(edge_url):
     # Bug 2: an OAuth-style multi-cookie response must reach the browser intact.
@@ -311,42 +302,6 @@ def test_upstream_sees_public_host_and_scheme(edge_url):
     )
     assert "host=hub.example.com" in r.text
     assert "proto=https" in r.text
-
-
-def test_portal_html_injection_preserves_compressed_response_cookies(monkeypatch):
-    import gzip
-    from starlette.testclient import TestClient
-
-    html = b'<html><body>Chat</body></html>'
-    real_client = httpx.AsyncClient
-
-    def upstream(request):
-        return httpx.Response(200, stream=httpx.ByteStream(gzip.compress(html)), headers=[
-            ('content-type', 'text/html; charset=utf-8'),
-            ('content-encoding', 'gzip'), ('etag', 'old-body'),
-            ('set-cookie', 'token=one; HttpOnly; Path=/'),
-            ('set-cookie', 'session=two; Secure; Path=/'),
-            ('x-content-type-options', 'nosniff'),
-        ])
-
-    monkeypatch.setattr(edge.httpx, 'AsyncClient', lambda **kwargs: real_client(
-        **kwargs, transport=httpx.MockTransport(upstream)))
-    app = edge.build_edge_app(default_base='http://owui', routes=[edge.EdgeRoute('/portal', 'http://bridge')],
-                              web_app=False)
-    with TestClient(app) as client:
-        result = client.get('/')
-        assert result.status_code == 200
-        assert result.text.count('/hubzoid-portal-navigation.js') == 1
-        assert 'Chat</body>' not in result.text
-        assert result.headers.get_list('set-cookie') == [
-            'token=one; HttpOnly; Path=/', 'session=two; Secure; Path=/']
-        assert result.headers['x-content-type-options'] == 'nosniff'
-        assert 'etag' not in result.headers
-        assert 'content-encoding' not in result.headers
-        assert int(result.headers['content-length']) == len(result.content)
-        # Bridge/portal HTML must pass through untouched.
-        assert client.get('/portal/').content == html
-
 
 def _raw_get(base: str, path: str, headers: dict | None = None) -> tuple[int, str]:
     """GET without client-side path normalization (httpx collapses `..`)."""
@@ -409,43 +364,7 @@ def _failover_app(monkeypatch, bridge_answers):
     monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(upstream)))
     route = edge.EdgeRoute("/portal", "http://bridge1", fallbacks=("http://bridge2",))
-    return edge.build_edge_app(default_base="http://owui", routes=[route], web_app=False), asked
-
-
-@pytest.mark.parametrize("first", [httpx.ConnectError("refused"), (503, {"detail": "starting"})])
-def test_model_list_asks_the_next_bridge_when_the_first_is_down(monkeypatch, first):
-    """Restarting the first hub must not empty everyone's model picker: every
-    bridge shares the access database, so the edge asks the next one."""
-    from starlette.testclient import TestClient
-
-    app, asked = _failover_app(monkeypatch, {"bridge1": first, "bridge2": (200, {"denied": ["support"]})})
-    with TestClient(app) as client:
-        r = client.get("/api/models")
-    assert r.status_code == 200
-    assert [m["id"] for m in r.json()["data"]] == ["sales"]
-    assert [h for h, *_ in asked] == ["bridge1", "bridge2"]
-
-
-def test_model_list_fails_closed_when_no_bridge_answers(monkeypatch):
-    from starlette.testclient import TestClient
-
-    app, _ = _failover_app(monkeypatch, {"bridge1": httpx.ConnectError("refused"),
-                                         "bridge2": httpx.ReadTimeout("slow")})
-    with TestClient(app) as client:
-        r = client.get("/api/models")
-    assert r.status_code == 503
-
-
-def test_model_list_sign_in_answer_is_final(monkeypatch):
-    """A 401 is an answer about the viewer, not a bridge failure."""
-    from starlette.testclient import TestClient
-
-    app, asked = _failover_app(monkeypatch, {"bridge1": (401, {}), "bridge2": (200, {"denied": []})})
-    with TestClient(app) as client:
-        r = client.get("/api/models")
-    assert r.status_code == 401
-    assert [h for h, *_ in asked] == ["bridge1"]
-
+    return edge.build_edge_app(default_base="http://owui", routes=[route]), asked
 
 def test_portal_request_moves_to_the_next_bridge_with_its_body(monkeypatch):
     from starlette.testclient import TestClient
@@ -495,3 +414,94 @@ def test_edge_client_never_carries_one_visitors_cookie_to_another(monkeypatch):
         browser.get("/api/v1/auths/")
         browser.get("/api/models")
     assert len(seen) >= 3 and all(cookie is None for cookie in seen[1:])
+
+
+def _peer_request(peer: str, headers: list[tuple[bytes, bytes]]) -> Request:
+    return Request({"type": "http", "method": "POST", "path": "/api/auth/login", "query_string": b"",
+                    "headers": headers, "client": (peer, 5000)})
+
+
+@pytest.mark.parametrize("peer,sent,trusted,seen", [
+    ("8.8.4.4", b"127.0.0.1", "", "8.8.4.4"),                  # a forged address is replaced
+    ("8.8.4.4", b"1.2.3.4, 5.6.7.8", "", "8.8.4.4"),
+    ("10.0.0.5", b"34.120.0.7", "", "34.120.0.7"),                  # a private-network proxy appends
+    ("10.0.0.5", b"9.9.9.9, 34.120.0.7, 10.0.0.4", "", "34.120.0.7"),
+    ("104.16.0.1", b"34.120.0.7", "104.16.0.0/13", "34.120.0.7"),  # a listed CDN
+    ("104.16.0.1", b"34.120.0.7", "", "104.16.0.1"),                  # an unlisted one is the client
+    ("104.16.0.1", b"34.120.0.7", "*", "34.120.0.7"),
+    ("10.0.0.4", b"9.9.9.9", "104.16.0.0/13", "10.0.0.4"),            # a list narrows: a LAN client is a client
+])
+def test_the_edge_decides_the_client_address(monkeypatch, peer, sent, trusted, seen):
+    monkeypatch.setenv("HUBZOID_TRUSTED_PROXIES", trusted)
+    req = _peer_request(peer, [(b"x-forwarded-for", sent), (b"x-real-ip", b"1.1.1.1"),
+                               (b"forwarded", b"for=1.1.1.1")])
+    out = edge._request_headers(req)
+    assert [v for k, v in out if k == b"x-forwarded-for"] == [seen.encode()]
+    assert not any(k in (b"x-real-ip", b"forwarded") for k, _ in out)
+
+
+def test_a_dropped_read_is_retried_for_get_and_502_otherwise(monkeypatch):
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        if len(calls) == 1 or request.method == "POST":
+            raise httpx.ReadError("connection reset")
+        return httpx.Response(200, stream=httpx.ByteStream(b"chunk"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.get("/portal/assets/SchedulesScreen.js")
+        assert (got.status_code, got.content, calls) == (200, b"chunk", ["GET", "GET"])
+        sent = client.post("/api/chat", content=b"{}")
+        assert sent.status_code == 502 and calls[-1] == "POST" and calls.count("POST") == 1  # never sent twice
+
+
+def test_a_large_get_body_streams_once_instead_of_being_held(monkeypatch):
+    # Only a body within the retry limit is held for a resend: a larger one
+    # (nothing needs one on a GET) must not fill the edge's memory.
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    seen = []
+
+    async def upstream(request):
+        seen.append(len(await request.aread()))
+        raise httpx.ReadError("connection reset")
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1")
+    big = b"x" * (edge._RETRY_BODY_LIMIT + 1)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.request("GET", "/portal/assets/x.js", content=big)
+    assert got.status_code == 502 and seen == [len(big)]  # sent whole, once, never retried
+
+
+def test_a_get_behind_a_gateway_with_fallbacks_is_served_and_retried(monkeypatch):
+    """A gateway's default route has fallback bridges: the body is read once
+    (for a resend) and a dropped GET is retried, not a 'Stream consumed' 500."""
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    calls = []
+
+    def upstream(request):
+        calls.append((request.url.host, request.method))
+        if len(calls) == 1:
+            raise httpx.ReadError("connection reset")
+        return httpx.Response(200, stream=httpx.ByteStream(b"page"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1", default_fallbacks=("http://bridge2",))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        r = client.get("/")
+        assert (r.status_code, r.content) == (200, b"page")
+        assert calls == [("bridge1", "GET"), ("bridge1", "GET")]
+        assert client.post("/api/x", content=b"{}").status_code == 200  # a small body still goes through

@@ -58,7 +58,9 @@ def make(ctx) -> list:
             File contents. Large results are truncated with a hint pointing
             at an overflow file under output/<session>/ that holds the full text.
         """
-        target = hub_dir / path
+        from ..datadir import resolve
+
+        target = resolve(hub_dir, path)  # output/... may live in the data folder
         reason = _read_refusal(hub_dir, target)
         if reason:
             return f"[read_file refused: {path!r}: {reason}]"
@@ -337,12 +339,22 @@ def _read_refusal(hub_dir: Path, target: Path) -> str | None:
         scheduled = _request_ctx.get_schedule_read_scope()
         if scheduled and scheduled[0] == hub_dir.resolve():
             scopes.append(scheduled[1])
+    from ..datadir import root as data_root
+
+    if data_root(hub_dir).resolve() != hub_dir.resolve():
+        # output/ is the agent's own, readable like the hub's: in the data folder here.
+        scopes.append(data_root(hub_dir) / "output")
     # Only explicit execution scopes may cross the private state wall. Keep
     # the content guard inside the scope, so dotenv files, databases and
     # restricted folders are still refused even in the run's own scratch.
+    from ..datadir import roots
+
     for scope in scopes:
         try:
-            scope.resolve().relative_to(hub_dir.resolve())
+            # The scope sits in the hub folder, or in its data folder when the
+            # hub's state lives apart from it (HUBZOID_DATA_DIR).
+            if not any(scope.resolve().is_relative_to(r) for r in roots(hub_dir)):
+                continue
             target.absolute().relative_to(scope.absolute())
             if scope.resolve() != scope.absolute():
                 continue
@@ -368,11 +380,8 @@ def _artifact_url(filename: str, hub_dir: Path | None = None) -> str | None:
     Bearer header. See `hubzoid._signing` for the token scheme.
 
     Pulls the public base URL from HUBZOID_PUBLIC_URL (operator override
-    when the bridge is fronted by a reverse proxy). Falls back to WEBUI_URL
-    — behind a proxy the same public host fronts both Open WebUI and the
-    edge's `/artifacts` route, and operators routinely set WEBUI_URL (for
-    OAuth callbacks) while forgetting HUBZOID_PUBLIC_URL. Final fallback is
-    the bridge's loopback listen address derived from BRIDGE_PORT.
+    when the bridge is fronted by a reverse proxy). The fallback is the
+    bridge's loopback listen address derived from BRIDGE_PORT.
 
     Returns None when no chat is in scope — in that case the agent should
     show the user the local path instead (handled by the caller).
@@ -380,10 +389,7 @@ def _artifact_url(filename: str, hub_dir: Path | None = None) -> str | None:
     chat_id = _request_ctx.get_chat_id()
     if not chat_id:
         return None
-    base = (
-        os.environ.get("HUBZOID_PUBLIC_URL", "")
-        or os.environ.get("WEBUI_URL", "")
-    ).rstrip("/")
+    base = os.environ.get("HUBZOID_PUBLIC_URL", "").rstrip("/")
     if not base:
         port = os.environ.get("BRIDGE_PORT", "8000")
         base = f"http://127.0.0.1:{port}"

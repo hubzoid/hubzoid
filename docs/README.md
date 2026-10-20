@@ -7,15 +7,16 @@ testing an unreleased branch.
 
 | Journey | Guides |
 |---|---|
-| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md), [authoring](authoring-a-hub.md) |
+| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md), [authoring](authoring-a-hub.md), [hub settings and checks](hub-settings.md) |
 | Understand the direction | [Product context](PRODUCT_CONTEXT.md) |
 | Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md) |
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |
+| People in the loop | [Approvals, questions, workflow access, hub changes and memory](approvals-and-hub-changes.md) |
 | Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131), [Watchtower walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131) |
 | Try PR reviews and engineering reports | [GitZoid sample and GitHub setup](../hubzoid/templates/gitzoid/README.md) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |
-| Operate and recover | [Deployment](DEPLOYING.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
+| Operate and recover | [Deployment](DEPLOYING.md), [secrets](secrets.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
 | Evaluate and observe | [Evals](evals.md), [observability](OBSERVABILITY.md) |
 | Brand a deployment | [Branding and attribution](branding.md) |
 

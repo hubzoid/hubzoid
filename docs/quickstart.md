@@ -34,7 +34,7 @@ py -3.12 -m venv .venv
 ```
 
 `pip install hubzoid` installs the Hubzoid web app and the Python runtime
-adapters. It no longer installs Open WebUI (see [upgrading](UPGRADING.md)).
+adapters. Open WebUI is not part of Hubzoid 2.0 (see [upgrading](UPGRADING.md#upgrading-to-20-open-webui-removed)).
 
 **Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
 schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
@@ -83,8 +83,8 @@ administrator, and the public port listens on `127.0.0.1` only. `hubzoid run
 --host 0.0.0.0` stops with an explanation until you turn sign-in on. Local mode
 must not be exposed as a shared deployment.
 
-Open **Admin Console** from the account menu (or `/portal/`) for Agents,
-People and Activity. Usage totals sit above the agent cards. Each agent holds
+Open **Settings** from the account menu for Agents, People & access and
+Activity. Usage totals sit under **Usage overview** above the agents. Each agent holds
 its access, connectors, runs and schedules, and evals. A new deployment starts with
 empty usage and run history.
 
@@ -137,7 +137,7 @@ The hub's tools and knowledge are then available there under your access. See
    Its `suggestions:` become the buttons on the empty chat screen.
 2. Replace the files in `knowledge/` with your own and ask about them.
 3. Add tools only when the agent needs to act. Put permission-sensitive tools
-   under `restricted/` and grant their capabilities in the Console.
+   under `restricted/` and grant their capabilities in Settings.
 4. Save a correction explicitly in the relevant knowledge or instruction file,
    using Claude Code, Codex or your editor. A chat correction alone is not saved
    shared knowledge. Run `hubzoid doctor my-hub`, restart after configuration
@@ -155,7 +155,7 @@ hubzoid new workflow first-check my-hub
 hubzoid schedule run my-hub first_check
 ```
 
-Open **Console → Agents → your agent → Runs & schedules** to inspect its result
+Open **Settings → Agents → your agent → Runs & schedules** to inspect its result
 and steps. The scaffold is manual. Scheduling is a separate, deliberate choice.
 See [workflows.md](workflows.md) for scheduling, retries and recovery.
 
@@ -180,7 +180,7 @@ hubzoid run my-hub
 
 `hubzoid admin create` prints a one-time sign-in link. Open it, set a password,
 and you are signed in as an Administrator with access to the hub. Add
-teammates under **People → Add user** in the Admin Console: choose their
+teammates under **People & access → Add user** in Settings: choose their
 access, then share the one-time sign-in link it gives you. Nothing is emailed.
 With Google, Microsoft or an OpenID Connect provider configured, people can
 sign in with it instead ([authentication](auth.md)).
@@ -217,7 +217,7 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-The web app and the Console are served from the built bundle in
+The web app, Settings included, is served from the built bundle in
 `hubzoid/portal_dist`. After changing anything in `portal/`, rebuild it with
 `cd portal && npm ci && npm run build`. Checkout-specific tests use this source
 installation. Installing from PyPI tests the published version instead.
@@ -227,8 +227,8 @@ installation. Installing from PyPI tests the published version instead.
 - **No reply:** check the CLI login, or the provider key and `MODEL`, in `.env`.
 - **"You don't have access to an agent yet":** with sign-in on, an
   administrator grants **Use this agent** (or a capability that includes it)
-  in the Console. Organization-wide admin rights alone do not grant chat.
-- **The Console says you can't manage access:** use an Administrator account,
+  in Settings. Organization-wide admin rights alone do not grant chat.
+- **Settings says you can't manage access:** use an Administrator account,
   or ask one for **Manage access** on the agent.
 - **`hubzoid run` refuses `--host 0.0.0.0`:** that is local mode protecting
   you. Turn sign-in on first ([authentication](auth.md)).

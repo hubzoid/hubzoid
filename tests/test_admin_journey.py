@@ -41,7 +41,6 @@ def deployment_client(tmp_path, monkeypatch):
             for p in dirs
         ],
         operational_url=f"sqlite:///{tmp_path}/ops.db",
-        owui_url="http://owui",
         owui_db=str(tmp_path / "owui.db"),
     )
     gs = store_for(dirs[0])
@@ -65,6 +64,8 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
     }
     ps = c.get("/portal/api/permissions?hub=ops").json()["permissions"]
     assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator",
+                                             "chat_dictation", "chat_read_aloud", "chat_web_search",
+                                             "chat_model_compare",
                                              "share_public_links", "jev", "workflows_view",
                                              "workflows_manage", "access_tools", "schedule_reports",
                                              "share_domain_links"}
@@ -157,7 +158,6 @@ def test_cli_and_bridges_use_same_deployment(deployment_client):
     assert r.exit_code == 0, r.output
     assert gs.can("bob", "ops", "inventory")
     assert db.operational_url(dirs[0]) == db.operational_url(dirs[1])
-    assert deployment.owui_url(dirs[1]) == "http://owui"
 
 
 def test_offboarding_denies_public_and_keeps_admin(deployment_client):
@@ -218,53 +218,6 @@ def test_bad_workflow_schedule_visible_without_import(tmp_path):
     (w / "main.py").write_text('@workflow("every 0 minutes")\ndef broken(): pass\n')
     assert definitions(tmp_path)[0]["error"]
 
-
-def test_sync_replaces_acl_with_empty_after_last_revoke(deployment_client, monkeypatch):
-    from contextlib import contextmanager
-    from hubzoid.access.reconcile import sync_owui
-    import hubzoid.access.owui as owui
-
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI picker mirror is legacy-only
-    c, gs, role, dirs = deployment_client
-    writes = []
-
-    def handler(req):
-        if req.url.path == "/api/v1/users/":
-            return httpx.Response(
-                200,
-                json={"users": [dict(id="a", email="alice", role="user")], "total": 1},
-            )
-        if req.method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "id": req.url.params["id"],
-                    "name": "Agent",
-                    "params": {},
-                    "meta": {},
-                },
-            )
-        import json
-
-        writes.append(json.loads(req.content))
-        return httpx.Response(200, json={})
-
-    @contextmanager
-    def client(_):
-        with httpx.Client(
-            base_url="http://owui", transport=httpx.MockTransport(handler)
-        ) as x:
-            yield x
-
-    monkeypatch.setattr(owui, "client_for", client)
-    assert sync_owui(dirs[0])["state"] == "ok"
-    assert next(w for w in writes if w["id"] == "finance")["access_grants"]
-    gs.revoke("alice", "finance", "use_hub")
-    writes.clear()
-    assert sync_owui(dirs[0])["state"] == "ok"
-    assert next(w for w in writes if w["id"] == "finance")["access_grants"] == []
-
-
 @pytest.mark.slow
 def test_real_dbos_run_history_and_duplicate_dispatch(tmp_path):
     import subprocess
@@ -309,38 +262,3 @@ print('HISTORY_AND_DEDUP_OK')
     )
     assert p.returncode == 0 and "HISTORY_AND_DEDUP_OK" in p.stdout, p.stdout + p.stderr
 
-
-def test_edge_locks_every_agent_model_acl(deployment_client, monkeypatch):
-    from hubzoid.edge import build_edge_app, EdgeRoute
-    from hubzoid.portal_navigation import inject
-
-    c, gs, role, dirs = deployment_client
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # Open WebUI's rewrites
-    cfg = __import__("json").loads(
-        (dirs[0] / ".hubzoid" / "deployment.json").read_text()
-    )["manifest"]
-    monkeypatch.setenv("HUBZOID_DEPLOYMENT", cfg)
-    edge = build_edge_app(
-        default_base="http://127.0.0.1:1",
-        routes=[EdgeRoute("/portal", "http://127.0.0.1:2")],
-    )
-    with TestClient(edge) as x:
-        assert (
-            x.post(
-                "/api/v1/models/model/update",
-                json={"id": "finance", "access_grants": []},
-            ).status_code
-            == 403
-        )
-        assert (
-            x.post(
-                "/api/v1/models/model/update", json={"id": "ops", "access_grants": []}
-            ).status_code
-            == 403
-        )
-        assert (
-            x.post("/api/v1/groups/create", json={"name": "old-team"}).status_code
-            != 403
-        )
-        assert "Hubzoid Admin Console" in x.get("/hubzoid-portal-navigation.js").text
-    assert b"/hubzoid-portal-navigation.js" in inject(b"<html><body>Chat</body></html>")

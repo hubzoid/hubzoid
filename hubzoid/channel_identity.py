@@ -1,17 +1,13 @@
 """Who a channel's verified sender is, as the bridge should see them.
 
 Slack verifies a sender's profile email server-side (``users.info``), so the
-Slack adapter can say who is asking. What that email means depends on the mode:
-
-  * Open WebUI mode (1.0.x, unchanged): the email is forwarded as it is
-    and the bridge maps it to the person's Open WebUI groups.
-  * Web app mode: the email must belong to a Hubzoid account that may sign in,
-    active and not blocked. The bridge then applies that account's Hubzoid
-    groups and grants (``access.effective_groups``, ``GrantStore.can``). An
-    email without such an account is sent as nobody: an agent whose access is
-    managed in the Console refuses it, any other agent answers without
-    restricted tools. With sign-in off (local mode) there are no accounts to
-    map to, so the verified email is used as it is.
+Slack adapter can say who is asking. The email must belong to a Hubzoid
+account that may sign in, active and not blocked. The bridge then applies that
+account's Hubzoid groups and grants (``access.effective_groups``,
+``GrantStore.can``). An email without such an account is sent as nobody: an
+agent whose access is managed in the Console refuses it, any other agent
+answers without restricted tools. With sign-in off (local mode) there are no
+accounts to map to, so the verified email is used as it is.
 
 Any lookup error sends nobody (fail closed).
 """
@@ -33,8 +29,6 @@ def account_email(hub_dir, email: str | None, *, env=None) -> str | None:
 
     hub_dir = Path(hub_dir)
     try:
-        if appmode.is_openwebui(hub_dir, env):
-            return email
         sign_in = appmode.auth_enabled(hub_dir, env)
     except Exception:  # noqa: BLE001
         log.warning("channel identity: mode unreadable; sending the sender as nobody")

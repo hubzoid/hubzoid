@@ -1,0 +1,9 @@
+version: 1
+ledger: docs/parity/obligations.jsonl
+sources: docs/parity/sources.json
+providers: docs/parity/providers.jsonl
+deployments:
+  - id: dep-example
+    inventory: docs/parity/input/dep-example.json
+source_release: "0.12.3"
+report_dir: docs/parity/reports

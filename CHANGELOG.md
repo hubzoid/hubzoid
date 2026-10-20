@@ -5,14 +5,84 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Removed (Hubzoid 2.0)
+- Open WebUI. There is no `hubzoid[openwebui]` extra, `HUBZOID_UI` switch,
+  Open WebUI image build, account sync or model-visibility mirror. Deployments
+  that still need Open WebUI stay on 1.x (`pip install "hubzoid<2"`).
+- The standalone Admin Console shell. Its screens are sections of the web
+  app's Settings; `/portal/` sends old links and bookmarks to the same section.
+- `hubzoid access sync`, the Console's `/sync` and `/chat-access` routes, and
+  Open WebUI API keys on the management API.
+
+### Changed
+- Open WebUI settings are named, never ignored. `WEBUI_AUTH`, `WEBUI_URL`,
+  `WEBUI_ADMIN_EMAIL`/`_PASSWORD`, `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD`,
+  `HUBZOID_UI` other than `hubzoid` and a deployment recorded in Open WebUI
+  mode stop `hubzoid run`, `hubzoid gateway`, a separately started bridge and
+  `hubzoid admin`, with the rename to make. Other Open WebUI settings are
+  warnings at start and in `hubzoid doctor`. See docs/UPGRADING.md.
+- Settings gains **Advanced** and **Compatibility** tabs under Workspace
+  settings (the Console's admin settings and parity ledger, which had no link).
+- Links that agents and notices send (access confirmations, workflow alerts,
+  schedules, connections) point at Settings directly.
+- The Open WebUI database reader moved to `hubzoid/migration/openwebui/`
+  (read-only, for `hubzoid migrate openwebui` and `hubzoid migrate readiness`).
+  `hubzoid/owui_mcp.py` is now `hubzoid/personal_mcp.py`.
+- Failure alerts are off by default. With no destination configured (no
+  `alerts:`, `alert_to`, `on_failure` or `HUBZOID_ALERT_URL`), nothing is
+  recorded or sent. Before, each alert was recorded as undeliverable and
+  retried five times with warnings. Failed runs still show in the Console.
+- GitZoid emails use GitZoid's own layout again (chip, title matching the
+  subject, stats bar, summary box, grouped security cards, one link to the page).
+  The security watch skips lockfiles in test, sample, fixture and example
+  folders; the deep audit skips large minified and generated files. Both take
+  `exclude_paths` globs.
+- GitZoid's pull request comments keep the verdict and merge-risk header and
+  use GitZoid's own layout below it (summary, `_high_` finding rows, collapsed
+  suggestions, resolved findings and run details). A confirmed finding can carry a one-line
+  committable suggestion; a package's advisories are one finding with the
+  upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
+- GitZoid reads up to 200,000 characters of a pull request's diff (was 60,000),
+  code first, then other files, tests, docs and lockfiles. Large build output
+  and minified or generated files are skipped (secret checks still read
+  them) and listed under run details.
+
 ### Fixed
-- Open WebUI's per-user memory is now off in Open WebUI mode. Hubzoid set
-  `ENABLE_MEMORY`, which Open WebUI does not read. It now sets
-  `ENABLE_MEMORIES`, `ENABLE_MEMORY_SYSTEM_CONTEXT` and
-  `ENABLE_MEMORY_BACKGROUND_REVIEW`. `ENABLE_MEMORIES=true` turns it back on,
-  and an existing `ENABLE_MEMORY` value is honoured as `ENABLE_MEMORIES`.
-- Open WebUI's web search is turned off with `ENABLE_WEB_SEARCH`, the name
-  Open WebUI 0.11.4 reads, in place of `ENABLE_RAG_WEB_SEARCH`.
+- An unknown or not-permitted Settings address opened an empty pane; it now
+  opens the first section (a person's own Schedules for the team's schedules).
+- Shared snapshots and their copies no longer carry signed download links; the
+  old create-link route is removed; a deleted or blocked person's links stop.
+- `hubzoid migrate openwebui --rehearse` copies a whole gateway. `--apply`
+  creates the configured owner when needed, imports the sign-in-off account
+  blocked, and the dry run counts people who would have no agent access.
+- Tool overflow files stay internal instead of opening as documents.
+- Agent instructions shows flat `skills/<name>.md` skills; publishing commits
+  under the hub write lock.
+- `hubzoid --version` prints the installed version.
+- GitZoid's deep audit no longer re-alerts a finding the model words
+  differently. An open finding of the same kind in the same function (or
+  within 20 lines outside one) is the same finding, and the audit is shown
+  the open findings to repeat. Audit progress kept across commits now re-reads
+  any window whose content changed. A second pass (`audit.verify`, on by default) tries to refute each
+  finding before anyone is alerted. The audit instructions name what is not
+  a finding on its own (public docs and health routes, public frontend keys,
+  test and sample code).
+- Hubzoid declares its `Markdown` dependency. 1.3.2 imported it for formatted
+  email without declaring it, so Markdown emails failed with
+  `No module named 'markdown'` unless the Open WebUI extra was installed.
+- GitZoid's deep audit no longer starts over whenever the default branch moves,
+  so it finishes on busy repositories, and an audit still in progress is no
+  longer emailed as a check that could not run.
+
+### Added
+- `display_name:` in `AGENTS.md` sets the agent's name as people see it.
+- Workflow email can send its own layout with `body_format="html"`. Hubzoid keeps
+  only email-safe tags, inline styles and HTTP(S) or mailto links, removes
+  scripts, styles, forms and images, derives the plain-text part, and adds report
+  links and the list footer after the layout. A list email shows at most 5,000
+  characters of text. See [Artifacts and email](docs/reports-and-email.md#email).
+- `alerts: {to: []}` (or `alert_to=[]`) turns failure alerts off: nothing is
+  recorded or sent, and `HUBZOID_ALERT_URL` is not used for that hub.
 
 ## [1.3.2]
 

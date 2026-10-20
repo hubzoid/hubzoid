@@ -182,11 +182,14 @@ def test_push_posts_the_batch_with_basic_auth(hub, monkeypatch):
     _configured(monkeypatch)
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    status = lf.push(hub, _suite(), run_name="run1")
+    suite = _suite()
+    suite.cases[0].response = "Done. api_key: sk-live-123"
+    status = lf.push(hub, suite, run_name="run1")
     assert "2 case(s)" in status
     assert seen["url"] == "https://langfuse.internal/api/public/ingestion"
     assert seen["headers"]["Authorization"].startswith("Basic ")
     assert len(seen["json"]["batch"]) > 4
+    assert "sk-live-123" not in str(seen["json"])          # redacted as the saved results are
 
 
 def test_push_raises_on_an_error_response(hub, monkeypatch):

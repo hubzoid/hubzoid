@@ -73,7 +73,8 @@ def test_session_lists_providers_and_options(hub, monkeypatch):
     assert body == {"authenticated": False, "mode": "accounts",
                     "providers": [{"id": "google", "name": "Google"},
                                   {"id": "oidc", "name": "Acme SSO"}],
-                    "password": True, "signup": True, "branding_name": "Sales Helper"}
+                    "password": True, "signup": True, "branding_name": "Sales Helper",
+                    "public_origin": None}              # HUBZOID_PUBLIC_URL's, for deploy verify
     monkeypatch.setenv("ENABLE_LOGIN_FORM", "false")
     assert client(hub).get("/api/auth/session").json()["password"] is False
 
@@ -106,6 +107,8 @@ def test_session_says_whether_the_console_opens(hub, monkeypatch):
         c = client(hub)
         sign_in(c, email=email)
         seen[email] = me(c)["console"]
+        # Only people who manage the deployment see the Hubzoid version (Settings).
+        assert ("version" in me(c)) is people[email]
     assert seen == people
 
     def unavailable(self, actor):
@@ -116,6 +119,21 @@ def test_session_says_whether_the_console_opens(hub, monkeypatch):
     sign_in(c, email="cy@example.com")
     r = c.get("/api/auth/session")
     assert r.status_code == 200 and r.json()["user"]["console"] is False
+
+
+def test_a_curator_is_told_settings_shows_hub_changes(hub):
+    # Curators may propose and read hub changes without managing access.
+    from hubzoid.access import store_for
+
+    for email in ("ana@example.com", "dee@example.com"):
+        person(hub, email=email)
+    store_for(hub).grant("dee@example.com", hub.name, "curator")
+    seen = {}
+    for email in ("ana@example.com", "dee@example.com"):
+        c = client(hub)
+        sign_in(c, email=email)
+        seen[email] = (me(c)["console"], me(c)["hub_changes"])
+    assert seen == {"ana@example.com": (False, False), "dee@example.com": (False, True)}
 
 
 def test_the_local_owner_can_open_the_console(hub, monkeypatch):
@@ -514,3 +532,18 @@ def test_current_user_is_thread_safe(hub, monkeypatch):
     assert {e for m, e in seen if m == "accounts"} == {"ana@example.com"}
     assert {e for m, e in seen if m == "local"} == {"admin@localhost"}
     assert len(users.list_users(hub)) == 2  # one local owner, however many threads raced
+
+
+def test_the_parity_ledger_is_for_maintainers_only(monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hubzoid.auth import routes
+
+    monkeypatch.setattr(routes, "_console", lambda hub, user: True)
+    monkeypatch.setattr(routes.users, "get", lambda hub, uid: {})
+    user = SimpleNamespace(id="u1", method="password", public=lambda: {"id": "u1"})
+    monkeypatch.delenv("HUBZOID_PARITY_LEDGER", raising=False)
+    assert routes._user_view(Path("."), user)["parity"] is False
+    monkeypatch.setenv("HUBZOID_PARITY_LEDGER", "1")
+    assert routes._user_view(Path("."), user)["parity"] is True

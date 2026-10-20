@@ -34,6 +34,7 @@ that person's connections, never the author's or an administrator's.
 """
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .state import WorkflowState
+
+log = logging.getLogger(__name__)
 
 # Injectable seams so the façade stays model-free and testable. server.py/cli.py
 # wire the real hub runtime; tests set fakes. Signature mirrors the POC.
@@ -54,6 +57,11 @@ _JEV: Callable[..., Any] | None = None     # (spec: dict, hub_dir, subject) -> d
 _LLM_STEP: Callable[..., Any] | None = None
 _AGENT_STEP: Callable[..., Any] | None = None
 _JEV_STEP: Callable[..., Any] | None = None
+# Approvals and questions (hubzoid.hitl): creating and reading a request are
+# checkpointed steps, and the wait between them is a durable DBOS receive.
+_HITL_CREATE_STEP: Callable[..., Any] | None = None
+_HITL_READ_STEP: Callable[..., Any] | None = None
+HITL_POLL_SECONDS = 600
 
 
 def configure(*, llm: Callable[..., Any] | None = None,
@@ -85,6 +93,7 @@ class RunCtx:
     inputs: Any = None                # the validated `hub.input`, or None
     run: dict = field(default_factory=dict)        # how this run started (its envelope)
     published: list = field(default_factory=list)  # report links this run touched
+    work: dict = field(default_factory=dict)       # the work item this run executes, and its stage
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -111,6 +120,9 @@ def _owned(ctx: RunCtx) -> None:
     owner = ctx.owner or runtime._OWNER
     if owner is not None:
         owner.assert_owned()
+
+
+_UNSET = object()
 
 
 def _recheck(ctx: RunCtx, what: str) -> None:
@@ -254,10 +266,31 @@ class Hub:
         return data_dir(_ctx().hub_dir)
 
     def setting(self, key: str, default=None):
-        return _ctx().settings.get(key, default)
+        """A workflow setting (workflows/settings.yaml), else a hub setting the
+        hub declares in settings.yaml (hubzoid.hubs.settings), else `default`.
+        A secret setting is never returned here: use `hub.secret`."""
+        ctx = _ctx()
+        if key in ctx.settings:
+            return ctx.settings[key]
+        from ..hubs import settings as hub_settings
+
+        return hub_settings.effective(ctx.hub_dir).get(key, default)
 
     def secret(self, key: str, default=None):
-        # From hub env at call time, resolved inside whatever step calls it.
+        """A secret, resolved at call time inside whatever step calls it. A
+        secret setting the hub declares follows its reference (secret:... or
+        env:...). Anything else comes from the hub's environment."""
+        ctx = _ctx()
+        from ..hubs import settings as hub_settings
+
+        ref = hub_settings.secret_ref(ctx.hub_dir, key.upper())
+        if ref is not None:
+            from ..secretstore import SecretError, resolve
+
+            try:
+                return resolve(ref, ctx.hub_dir)
+            except SecretError:
+                return default
         return os.environ.get(key.upper(), default)
 
     @property
@@ -279,6 +312,30 @@ class Hub:
         return WorkflowState(ctx.engine, ctx.hub, ctx.workflow, owner=SHARED)
 
     @property
+    def work_item(self):
+        """The durable work item this run executes (`hubzoid.work_items`):
+        `checkpoint`, `allows`, `narrow`, `messages` and `reserve`."""
+        from ..work_items.facade import WorkItem
+
+        return WorkItem()
+
+    @property
+    def thread(self):
+        """The channel thread this work came from (`hubzoid.channels`):
+        `post(text, key=...)` replies in that thread and nowhere else."""
+        from ..channels.thread import for_current_run
+
+        return for_current_run()
+
+    @property
+    def operation(self):
+        """`hub.operation.run(...)`: one recorded, recoverable external write
+        with its write mode and exact approval (`hubzoid.work_items`)."""
+        from ..work_items.facade import Operation
+
+        return Operation()
+
+    @property
     def user(self) -> HubUser:
         return HubUser(_ctx())
 
@@ -291,7 +348,9 @@ class Hub:
 
         ctx = _ctx()
         run = re.sub(r"[^A-Za-z0-9._-]+", "-", ctx.run_id or "local").strip("-.") or "local"
-        path = Path(ctx.hub_dir) / ".hubzoid" / "runs" / ctx.workflow / run
+        from ..datadir import state
+
+        path = state(ctx.hub_dir) / "runs" / ctx.workflow / run
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -321,7 +380,9 @@ class Hub:
         ctx = _ctx()
         source = Path(path)
         if not source.is_absolute():
-            source = Path(ctx.hub_dir) / source
+            from ..datadir import resolve
+
+            source = resolve(ctx.hub_dir, source)
         from . import inputs as inputs_lib
 
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
@@ -355,13 +416,16 @@ class Hub:
         run never sends an accepted message twice, and an interrupted send is
         reported as ambiguous rather than repeated. ``body_format="markdown"``
         opts into headings, lists and emphasis with fixed email styles. Raw HTML is escaped;
-        images and unsafe links are stripped; a plain-text MIME part is retained."""
+        images and unsafe links are stripped; a plain-text MIME part is retained.
+        ``body_format="html"`` sends the workflow's own email-safe layout: an
+        allowlist of tags and inline styles, HTTP(S) links, no images or scripts;
+        the plain-text part is derived from it."""
         from ..email_delivery import EmailError
 
         ctx = _ctx()
         ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
-        if body_format not in {"text", "markdown"}:
-            raise ValueError("Email body_format must be text or markdown.")
+        if body_format not in {"text", "markdown", "html"}:
+            raise ValueError("Email body_format must be text, markdown or html.")
         request = {"subject": subject, "body": body, "artifacts": ids}
         if body_format != "text":
             request["body_format"] = body_format
@@ -418,11 +482,31 @@ class Hub:
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
 
-    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600):
+    def call_agent(self, task: str, *, response_model=None, timeout: float | str | None = _UNSET,
+                   agent: str | None = None, stage: str | None = None, revision: int = 1,
+                   checkout: dict | None = None):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
         `response_model`, the agent ends with JSON and a validated instance is
-        returned; otherwise its reply text."""
+        returned; otherwise its reply text.
+
+        With `agent=`, calls that isolated agent (a station) for this work
+        item's `stage` instead: its own instructions and tools only, a result
+        checked against its schema, saved so it never runs twice. A failed or
+        malformed result raises `hubzoid.stations.StationOutputError` (or
+        `StationError`) carrying the `call_id` for `hub.retry_station`. For a
+        station with a sandbox, `checkout={"url": ..., "ref": ...}` copies a
+        repository into it first, without any credential."""
+        if agent is not None:
+            from ..stations import service as station_service
+
+            if stage is None:
+                raise ValueError("A station call needs stage=, the work item stage it runs in.")
+            return station_service.call(agent, task, stage=stage, revision=revision,
+                                        response_model=response_model,
+                                        timeout=None if timeout is _UNSET else timeout, checkout=checkout)
+        if timeout is _UNSET:
+            timeout = 600
         if _AGENT is None:
             raise RuntimeError(
                 "hub.call_agent is not configured; call workflows.configure(agent=...) "
@@ -447,6 +531,109 @@ class Hub:
 
         return _validated(extract_json(text), response_model, text)
 
+    def retry_station(self, call_id: str, clarification: str, *, response_model=None):
+        """The one retry of a failed or malformed station call, with a
+        clarification for the agent. A second retry is refused."""
+        from ..stations import service as station_service
+
+        return station_service.retry(call_id, clarification, response_model=response_model)
+
+    def save_handoff(self, kind: str, title: str, markdown: str) -> dict:
+        """Save a document for the stations of this work item. Returns its id."""
+        from ..stations import service as station_service
+
+        return station_service.save_handoff_here(kind, title, markdown)
+
+    def read_handoff(self, handoff_id: str) -> dict:
+        """A document of this work item, by id."""
+        from ..stations import service as station_service
+
+        return station_service.read_handoff_here(handoff_id)
+
+    # -- a person in the loop -------------------------------------------------------
+    def approve(self, action: str, *, details=None, approvers=None) -> dict:
+        """Stop until a person approves ``action`` (shown with ``details``,
+        exactly). Waits durably: the run holds no process while it waits and
+        continues after a restart. The person who asks is the account this run
+        acts as, unless ``approvers`` names people (emails or account ids).
+        Returns ``{"approved": bool, "note": str | None, "by": email}``."""
+        req = self._wait_for(kind="approval", title=action, arguments=details, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def ask(self, question: str, *, options=None, approvers=None) -> str:
+        """Ask a person one question and wait durably for the answer. ``options``
+        is a list of 2 or 3 labels; the person may also type their own answer."""
+        opts = [o if isinstance(o, dict) else {"label": str(o)} for o in (options or [])] or None
+        req = self._wait_for(kind="question", title=question[:200], question=question, options=opts,
+                             approvers=approvers)
+        return req.get("answer") or ""
+
+    def review_plan(self, path, *, title: str | None = None, approvers=None) -> dict:
+        """Ask a person to approve one exact plan document (a file this run
+        wrote, published as an artifact version). Editing the plan makes a new
+        version, which needs its own approval. Returns ``{"approved": bool,
+        "note": str | None, "by": email}``; a request for changes is not approved."""
+        import hashlib
+
+        from ..datadir import resolve
+
+        source = Path(path) if Path(path).is_absolute() else resolve(_ctx().hub_dir, path)
+        data = source.read_bytes()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        # Publish a copy named by its digest, so the approved bytes are exactly
+        # the published ones even if the source changes meanwhile.
+        import re as _re
+
+        slug = _re.sub(r"[^a-z0-9]+", "-", (title or source.stem).lower()).strip("-")[:60] or "plan"
+        snap = self.data_dir / "plans" / digest[7:23] / f"{slug}{source.suffix}"  # named for people
+        snap.parent.mkdir(parents=True, exist_ok=True)
+        if not snap.exists():
+            snap.write_bytes(data)
+        people = [a for a in (approvers or []) if isinstance(a, str) and "@" in a]
+        art = self.publish_artifact(snap, title=title or source.name,
+                                    **({"audience": "people", "share_with": people} if people else {}))
+        # The version number is assigned when the request is created (a
+        # durable step): 1 + the earlier plans this run asked about.
+        subject = {"name": title or source.name, "url": art.get("share_url") or art.get("url"),
+                   "digest": digest, "plan": True}
+        req = self._wait_for(kind="approval", title=subject["name"], subject=subject, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def _wait_for(self, **spec) -> dict:
+        ctx = _ctx()
+        _recheck(ctx, "Asking a person")
+        ident = _identity(ctx)
+        spec["approvers"] = list(spec.get("approvers") or ["requester"])
+        payload = {"hub_dir": str(ctx.hub_dir), "hub": ctx.hub, "workflow_id": ctx.run_id or "",
+                   "requester": ident.email or ident.subject, "account_id": ident.account_id or "", **spec}
+        create = _HITL_CREATE_STEP or _hitl_create
+        read = _HITL_READ_STEP or _hitl_read
+        req = create(payload)
+        if req["status"] == "pending":
+            from .chat_link import post_request
+
+            post_request(ctx.hub_dir, ctx.run or {}, ctx.workflow, req)  # the card, in the chat that started the run
+        if req["status"] == "pending" and spec["approvers"] == ["requester"]:
+            # Nobody watches a scheduled run: email the person a link to answer.
+            from ..hitl.service import requests_url
+            from .runtime import title_for
+
+            what = spec.get("question") or spec["title"]
+            who = f"{title_for(ctx.workflow)} on {ctx.hub}"
+            self.send_email(f"Waiting for you: {spec['title'][:150]}",
+                            f"{who} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {requests_url()}\n", raise_on_failure=False)
+        while req["status"] == "pending":
+            if not _hitl_receive(req["id"]):
+                import time
+
+                time.sleep(1.0)
+            req = read(str(ctx.hub_dir), ctx.hub, req["id"])
+        _wait_out_hold(ctx.hub_dir, ctx.run_id or "")
+        return req
+
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
         """Typed decisions from TypeSafe's Jev through OpenRouter.
         Each question is a "noul" (does it hold?), "choice" (which label?) or
@@ -467,6 +654,97 @@ class Hub:
         else:
             data = _JEV(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
         return data["answers"]
+
+
+def _hitl_create(payload: dict) -> dict:
+    from ..hitl import service
+
+    hub_dir, hub_id = Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower()
+    if payload.get("workflow_id"):
+        # A replay after a crash (the request was saved, the step was not)
+        # finds the same pending request instead of asking twice.
+        same = service.pending_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["kind"],
+                                            payload["title"], (payload.get("subject") or {}).get("digest"))
+        if same is not None:
+            return same
+    subject = payload.get("subject")
+    if subject and subject.get("plan") and payload.get("workflow_id"):
+        earlier = service.count_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["title"])
+        payload["subject"] = {**subject, "version": earlier + 1}
+
+    caller = service.Caller(account_id=payload.get("account_id") or payload["requester"],
+                            email=payload["requester"], present=True, origin="workflow")
+    return service.create(Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower(), caller, kind=payload["kind"],
+                          title=payload["title"], arguments=payload.get("arguments"),
+                          question=payload.get("question"), options=payload.get("options"),
+                          subject=payload.get("subject"), approvers=tuple(payload["approvers"]),
+                          workflow_id=payload.get("workflow_id") or None)
+
+
+def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
+    from ..hitl import service
+
+    return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
+
+
+# The hz_meta key a run waiting out a backup's hold leaves, so the backup
+# does not wait for it in turn (``backup._waiting_for_people``).
+HOLD_WAITING = "hold-waiting:"
+HOLD_WAIT_LIMIT = 1800
+
+
+def _wait_out_hold(hub_dir, run_id: str = "") -> None:
+    """A backup copies the hub's state without waiting for runs parked on a
+    person (``backup.running_runs``): one woken by a decision meanwhile waits
+    until the backup's hold ends (a hold expires on its own), marked so the
+    backup knows it is waiting too. A hold it cannot read is looked at again,
+    for at most ``HOLD_WAIT_LIMIT`` seconds without an answer. The mark is
+    always cleared on the way out, also when a recovered run replays this."""
+    import time
+
+    from ..access import store_for
+
+    key = f"{HOLD_WAITING}{run_id}" if run_id else None
+    marked = False
+    unreadable_since = None
+    try:
+        while True:
+            try:
+                st = store_for(Path(hub_dir))
+                if not st.schedule_hold():
+                    return
+                unreadable_since = None
+                if key and not marked:
+                    st.set_metadata(key, {"at": time.time()})
+                    marked = True
+            except Exception:  # noqa: BLE001 - cannot tell: look again shortly
+                unreadable_since = unreadable_since or time.monotonic()
+                if time.monotonic() - unreadable_since > HOLD_WAIT_LIMIT:
+                    log.warning("workflows: the backup hold for %s could not be read for %d s; carrying on",
+                                run_id or "a run", HOLD_WAIT_LIMIT)
+                    return
+                log.warning("workflows: could not read the backup hold; waiting", exc_info=True)
+            time.sleep(5.0)
+    finally:
+        if key:
+            try:
+                store_for(Path(hub_dir)).clear_metadata(key)
+            except Exception:  # noqa: BLE001 - the backup ignores an old mark
+                log.warning("workflows: could not clear %s", key, exc_info=True)
+
+
+def _hitl_receive(request_id: str) -> bool:
+    """Inside a DBOS workflow: wait for the decision's message (or a periodic
+    re-check). Elsewhere (a bare run in tests): False, and the caller polls."""
+    try:
+        from dbos import DBOS
+
+        if not DBOS.workflow_id:
+            return False
+        DBOS.recv(topic=f"hitl:{request_id}", timeout_seconds=HITL_POLL_SECONDS)
+        return True
+    except Exception:  # noqa: BLE001 - outside a workflow
+        return False
 
 
 def _validated(value, response_model, raw_text: str):
@@ -507,7 +785,9 @@ def data_dir(hub_dir=None) -> Path:
     """A private folder for a hub's own data files: `<hub>/.hubzoid/data/`.
     Agent file tools can't read it and backups include it. Workflows reach the
     same folder as `hub.data_dir`."""
-    path = _hub_dir_here(hub_dir) / ".hubzoid" / "data"
+    from ..datadir import state
+
+    path = state(_hub_dir_here(hub_dir)) / "data"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -556,7 +836,8 @@ def current_user(hub_dir=None):
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
               identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None,
-              inputs=None, run: dict | None = None, published: list | None = None) -> Iterator[None]:
+              inputs=None, run: dict | None = None, published: list | None = None,
+              work: dict | None = None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -569,6 +850,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
         identity=identity, run_id=run_id or "", event=event, owner=owner,
         inputs=inputs, run=dict(run or {}), published=published if published is not None else [],
+        work=work if work is not None else {},
     )
     token = _run.set(ctx)
     from ..usage import run_tag
@@ -578,9 +860,39 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
             if identity:
                 from ..access import Identity, identity_scope
 
-                with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+                with identity_scope(_workflow_identity(hub_dir, hub, workflow, run_id, identity,
+                                                       ctx.subject)):
                     yield
             else:
                 yield
     finally:
         _run.reset(token)
+
+
+def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: str):
+    """The request identity of a workflow run, with its run identity record
+    (``access.run_identity``). Written once per run id: a run recovering after
+    a restart gets its first record back, built from the account id stored
+    with the run, never by looking the email up again. A run whose stored
+    identity is a pre-account service subject is recorded as legacy."""
+    from ..access import Identity, run_identity
+
+    base = Identity.make(subject, surface="workflow")
+    if not run_id:
+        return base
+    legacy = identity.get("source") == "legacy-service" or "@" not in (subject or "")
+    fields = dict(run_kind="workflow", run_id=f"{hub}:{run_id}",
+                  acts_as_id=None if legacy else identity.get("account_id"),
+                  acts_as_email=None if legacy else subject, requested_by=subject,
+                  started_from="workflow", origin_id=workflow, person_present=False,
+                  credential_kind="workflow", legacy=legacy)
+    if legacy:
+        # A legacy run gets no extra trust from its record: it runs on its
+        # grants alone whether or not the record is written.
+        try:
+            run_identity.admit(Path(hub_dir), **fields)
+        except Exception:  # noqa: BLE001
+            log.warning("workflow: legacy run identity not recorded", exc_info=True)
+        return base
+    record = run_identity.admit_or_refuse(Path(hub_dir), **fields)
+    return run_identity.identity(record, "workflow")

@@ -203,6 +203,35 @@ def _make_default_ingest(bridge_url, api_key, max_upload_bytes):
     return ingest
 
 
+def _whatsapp_channel_conflict(hub_dir: Path, phone_number_id: str) -> str | None:
+    """An enabled WhatsApp channel connection (channels/<id>.yaml) for the same
+    number: one number is served by one listener."""
+    try:
+        from ..channels import config as channel_config
+
+        for conn in channel_config.active_all(hub_dir):
+            if conn.provider == "whatsapp_cloud" and conn.enabled and \
+                    conn.settings.phone_number_id == str(phone_number_id):
+                return conn.id
+    except Exception:  # noqa: BLE001 - no channel store: the older listener is the only one
+        return None
+    return None
+
+
+async def _to_channel(hub_dir, cid: str, raw: bytes, headers: dict):
+    import asyncio
+
+    from ..channels import admission
+    from ..channels.errors import ChannelError
+
+    try:
+        await asyncio.to_thread(admission.receive, Path(hub_dir), cid, raw, headers, {})
+    except ChannelError as exc:
+        return PlainTextResponse(exc.code, status_code=exc.status)
+    log.warning("whatsapp: delivery handed to channel %s; point Meta's callback URL at the channel webhook", cid)
+    return PlainTextResponse("ok")
+
+
 def build_app(
     *, hub_dir, bridge_url, api_key, model, resolver,
     slug: str = "",
@@ -229,7 +258,9 @@ def build_app(
         import functools
 
         dispatch_fn = functools.partial(default_dispatch, hub_dir=Path(hub_dir))
-    inbound_dir = Path(hub_dir) / ".inbound"
+    from ..datadir import root
+
+    inbound_dir = root(Path(hub_dir)) / ".inbound"
     dedup = Dedup(inbound_dir / "dedup")
     history = History(db.engine_for(hub_dir), max_messages=history_max,
                       ttl_seconds=history_ttl_seconds)
@@ -244,10 +275,14 @@ def build_app(
         connect_journeys = connect_journey.enabled()
     poller = None
 
+    if whatsapp is not None and _whatsapp_channel_conflict(Path(hub_dir), whatsapp.phone_number_id):
+        log.warning("whatsapp: the channel file %s serves this number; the older listener does not start",
+                    _whatsapp_channel_conflict(Path(hub_dir), whatsapp.phone_number_id))
+        whatsapp = None
     if whatsapp is not None:
         routes += _whatsapp_routes(
             base, whatsapp, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
-            msgs, ingest, hub_dir=hub_dir if connect_journeys else None,
+            msgs, ingest, hub_dir=hub_dir if connect_journeys else None, channel_hub_dir=hub_dir,
         )
         if connect_journeys:
             from ..connect_journey.notify import Poller
@@ -330,7 +365,7 @@ def _journey_after_turn(hub_dir, *, email, chat_id, since, user_text, reply) -> 
 # WhatsApp
 # ---------------------------------------------------------------------------
 def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest,
-                     hub_dir=None):
+                     hub_dir=None, channel_hub_dir=None):
     async def get_handler(request):
         challenge = verify_challenge(dict(request.query_params), wa.verify_token)
         if challenge is None:
@@ -339,6 +374,11 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
 
     async def post_handler(request):
         raw = await request.body()
+        cid = _whatsapp_channel_conflict(Path(channel_hub_dir), wa.phone_number_id) if channel_hub_dir else None
+        if cid:
+            # A channel file took over this number after start: it handles the
+            # delivery (saved for review, no automatic reply), not this listener.
+            return await _to_channel(channel_hub_dir, cid, raw, dict(request.headers))
         if not verify_signature(raw, request.headers.get("X-Hub-Signature-256"), wa.app_secret):
             return PlainTextResponse("forbidden", status_code=403)
         try:
@@ -385,6 +425,18 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
                                                text=m.text, has_media=bool(m.media))
                 if waiting:
                     user_text = waiting
+                # A reply to a waiting approval or question (hubzoid.hitl):
+                # "1"/"2", an option number or an answer settles it, and the
+                # agent continues with the outcome.
+                if not m.media:
+                    from ..hitl import channels as hitl_channels
+                    from ..hitl import service as hitl_service
+
+                    settled = hitl_channels.answer_by_reply(hub_dir, chat_id=chat_id, email=email,
+                                                            text=m.text, via="whatsapp")
+                    if settled is not None:
+                        hitl_channels.mark_continued(hub_dir, settled)
+                        user_text = hitl_service.outcome_text(settled)
             turn_started = time.time() - 0.25
             prior = history.load(chat_id)
             reply = dispatch_fn(
@@ -400,6 +452,10 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
                                             reply=reply or "")
                 if extra:
                     text = f"{text.rstrip()}\n\n{extra}" if text.strip() else extra
+                from ..hitl import channels as hitl_channels
+
+                for req in hitl_channels.pending_in_chat(hub_dir, chat_id, email, since=turn_started):
+                    text = f"{text.rstrip()}\n\n{hitl_channels.describe(req)}"
             # A blank rendered reply (e.g. all think/tool blocks) must still acknowledge
             # the user — WhatsApp has no placeholder to fall back on. (code-review #4)
             wa.send_text(phone_number_id=wa.phone_number_id, token=wa.token,

@@ -29,6 +29,8 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "evals": ("evals", "eval", "evaluations"),
     "restricted": ("restricted",),
     "identity": ("identity",),
+    "channels": ("channels", "channel"),
+    "cards": ("cards", "card"),
 }
 
 

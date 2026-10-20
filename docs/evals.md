@@ -1,4 +1,4 @@
-# Evals — `<hub>/evals/*.md`
+# Evals: `<hub>/evals/**/*.md`
 
 Is this hub still doing what it is supposed to do?
 
@@ -79,6 +79,9 @@ exception process.
 | `## Criteria` | **yes** | Graded 1–10 against `AGENTS.md` + these criteria. |
 | `threshold` | — | The pass mark. 7 means "clearly acceptable", not "perfect". |
 | `schedule` | — | See [Running on a schedule](#running-on-a-schedule). |
+| `run_as` | no | Run the case as this account (workflow identity rules). Grants nothing. |
+| `expect_tool_args` | no | Arguments one call of a tool must have, for example `{read_knowledge: {name: refund-policy}}`. |
+| `fake_tools` / `real_tools` / `allow_real_mcp` | no | See [Fake tool results](#fake-tool-results). |
 
 **Model-free checks run first, and the judge only runs if they all pass.**
 There is no point paying for a second model call to grade an answer already
@@ -147,9 +150,16 @@ the full response, the tools that were called, every assertion's verdict, the
 judge's reasoning, and the paths to the two files you will probably edit — the
 case file and `AGENTS.md`. Editing instructions, not code, is the usual fix.
 
-Every run also writes `<hub>/.hubzoid/evals/<timestamp>.json` with the full
+Every run also writes `<hub>/.hubzoid/evals/<timestamp>_<id>.json` with the full
 responses. That is the durable record, the CI artifact, and what `--compare`
-diffs. The last 50 runs are kept.
+diffs. The newest 200 runs are kept (`HUBZOID_EVAL_KEEP_RUNS`, 0 keeps all).
+
+`--json` prints the same record as JSON and nothing else, for scripts and
+assistants. `eval list --json`, `eval status --json` and
+`eval explain <hub> <case> --json` do the same for their output. `--junit
+FILE` also writes a JUnit XML report that CI systems display: one test case
+per eval, a failed check or judge verdict as a failure, a crash or timeout as
+an error.
 
 ### Regressions
 
@@ -231,7 +241,7 @@ together.
 
 | Trigger | Scope | Catches |
 |---|---|---|
-| CI, on push | everything | you changed `AGENTS.md`, a skill, a tool |
+| CI, on push (`trigger: ci`) | everything | you changed `AGENTS.md`, a skill, a tool |
 | Cron, via `schedule:` | a few canary cases | drift you did not cause: a provider updates a model, a data source shifts |
 | After a scheduled task commits | everything | a `schedule/*.md` job that rewrote `knowledge/` and pushed — the push triggers CI |
 
@@ -337,14 +347,18 @@ what the tool returned".
 
 - **Cases are sequential.** Hub tools touch real systems; a parallel suite
   would make failures depend on ordering.
-- **One case = one prompt = one agent run**, each in its own chat scope.
-  Multi-turn scenarios (several `## Prompt` sections run as consecutive turns)
-  are the intended extension of this format, but are not implemented yet.
-- **Evals use real credentials** — the hub's own. A case that calls a
-  write-capable tool will really write. Prefer read-only prompts, or point
-  scheduled evals at a hub configured against a sandbox.
-- Files starting with `_` or `.` under `evals/` are ignored, so drafts and
-  notes can live alongside cases.
+- **One case = one agent run** in its own chat scope: one `## Prompt`, or
+  `## Turn 1`, `## Turn 2`, ... for a conversation (below).
+- **Evals use real credentials**, the hub's own. A case that calls a
+  write-capable tool will really write, unless the case declares
+  [fake tool results](#fake-tool-results). Prefer fakes, read-only prompts, or
+  a hub configured against a sandbox for scheduled evals.
+- **Cases can live in subfolders.** A case's id is its path under `evals/`
+  without `.md`, so `evals/approvals/reply-reject.md` is
+  `approvals/reply-reject`. `--case 'approvals/*'` selects a folder.
+- Files and folders starting with `_` or `.`, and the `evals/fixtures/`
+  folder, are not cases, so drafts, notes and test data can live alongside
+  them.
 - An unknown frontmatter key is an error, not a warning. A typo'd
   `expected_tools:` would otherwise make a case look green while asserting
   nothing.
@@ -379,12 +393,12 @@ put `MODEL=hubzoid-test/scripted` in the test hub's own `.env`.
 The agent's read-only Evals tab opens with the score: the latest run's passed
 of total, its time and trigger, a bar for each of the last 10 runs, the cases
 failing now and those never run. Each case shows its last 10 results as dots.
-The agent's card in the Console shows **Evals 8/10** (or **Evals not run**)
+The agent in Settings → Agents shows **Evals 8/10** (or **Evals not run**)
 when the agent has cases. Below that are the cases, paged history and result
 details. Case names and pass or fail results are operational data shown for
 every case.
-There is no Console run button. Managers can see verdicts, but details of a run
-with `run_as` belong only to that account (which must also have Console/agent
+There is no run button in Settings: run evals with the CLI, from CI or on a schedule. Managers can see verdicts, but details of a run
+with `run_as` belong only to that account (which must also have Settings/agent
 access). Other viewers see an explicit private-result notice. Scheduled suites
 save results before reporting failure to workflow monitoring.
 
@@ -396,3 +410,84 @@ not a transcript. The newest 200 results are retained by default.
 previews, errors, transcripts and judge reasoning using secret-key and token
 patterns. It cannot identify every arbitrary secret embedded in prose. Use
 synthetic data and protect the hub's backups. `.hubzoid/` stays outside git.
+
+## Fake tool results
+
+A case can answer the hub's own tools with declared results instead of
+running them, so the behaviour that matters (the agent deciding to send,
+refund or post) can be tested without doing it:
+
+```markdown
+---
+fake_tools:
+  - tool: lookup_order
+    args: {order_id: A-1001}        # optional: only calls with these arguments
+    output: {status: cancelled, paid: 49}
+  - tool: create_refund
+    output: {refund_id: R-1, status: queued}
+  - tool: send_email
+    error: SMTP is down             # the call fails, as a tool that raised this
+real_tools: [read_knowledge]        # may still run for real in this case
+expect_tools: [create_refund]
+---
+## Prompt
+Refund order A-1001.
+```
+
+How a faked case runs:
+
+- **Matching calls are answered by their fake.** The first fake whose tool and
+  arguments match answers. Arguments match as `expect_tool_args` does: every
+  listed argument must be present and equal.
+- **Every other call is blocked.** A call of a hub tool with no matching fake,
+  and not in `real_tools`, is blocked. The agent reads "Blocked in this eval",
+  nothing runs, and the case fails with a `fake_tools` check naming the call.
+  A missing fake can never cause a real effect. This includes the tools a
+  station adds (sandbox commands and handoffs) when a real tool calls one.
+- **An error fake is a failed call.** The agent reads the text a tool that
+  raised returns, and the case's tool list shows the call as failed with
+  that message, on every runtime.
+- **Access checks and approval rules still apply.** A restricted tool's access
+  check runs before its fake, so a person who may not use the tool is still
+  refused. A tool whose approval rule asks first waits for approval, as in any
+  eval. `ask_question` is a hub tool like any other: fake it or it is blocked.
+- **MCP servers are not covered.** Their calls do not pass through Hubzoid's
+  tool layer. A faked case on a hub with MCP servers fails unless it sets
+  `allow_real_mcp: true` (do that only when those servers just read). A
+  case with `run_as` gets none of that person's own connectors either; the
+  `fake_tools` check names the ones left out. `allow_real_mcp` takes `true`
+  or `false`, unquoted.
+- **Other cases are untouched.** Cases without `fake_tools` run every tool for
+  real, as before.
+
+## Required evals in doctor
+
+A hub can say which evals must pass before it is ready, in
+`<hub>/quality/manifest.yaml`:
+
+```yaml
+version: 1
+required: [refund-window, approvals/*]   # case ids, or globs over them
+required_tags: [safety]                  # every case with one of these tags
+```
+
+`hubzoid doctor` then shows one `eval.<id>` row per required case:
+
+| Row | Meaning |
+|---|---|
+| `ok` | its latest result passed, for the case and the hub as they are now |
+| `fail` | its latest result failed (`hubzoid eval explain` shows why), or the case file cannot be read |
+| `pending` | it never ran, it last ran with `--no-judge` although it has criteria, or the case file or the hub's instructions, skills, knowledge, tools, workflows, settings or configuration changed since it ran. Run it again |
+
+Configuration means the names in the hub's `.env` and `restricted/.env`, the
+values of the ones that are not secret, and the model the hub runs on (`MODEL`
+from the environment or `.env`, or the run's `--model`): switching the model
+makes results pending, rotating an API key does not. It also means the files
+that change what the agent may do: approval rules (`hitl.yaml`), budgets
+(`budgets.yaml`), sandboxes (`sandbox.yaml`, `sandboxes/`) and write modes
+(`work-items.yaml`). Other files, such as branding or saved output, do not
+make results pending.
+
+A requirement that matches no case fails the `evals.quality` row, so a typo
+never reads as satisfied. A pending case never counts as passing: doctor
+exits 1 until every required eval is `ok`.

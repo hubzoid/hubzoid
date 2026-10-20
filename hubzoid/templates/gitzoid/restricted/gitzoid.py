@@ -1,7 +1,7 @@
 """GitZoid's chat and MCP tools for people allowed to use them (the `gitzoid`
 capability, granted per agent in the Console). They read GitZoid's own data
 and GitHub, never the hub's files. Hubzoid refuses restricted tools on Slack
-and Telegram, so these answer in web chat (native or Open WebUI) and over MCP
+and Telegram, so these answer in web chat and over MCP
 from Claude Code or Codex.
 """
 from __future__ import annotations
@@ -133,7 +133,7 @@ def pr_details(repo: str, number: int) -> str:
         "status_check": settings.status_for(name),
         "publication": "preview" if not settings.review.post_to_github else (row or {}).get("state"),
         "reviewed_sha": (row or {}).get("reviewed_sha"), "published_sha": (row or {}).get("published_sha"),
-        "coverage": {k: view.get(k) for k in ("reviewed_files", "total_files", "left_out", "ignored", "truncated", "notes")},
+        "coverage": {k: view.get(k) for k in ("reviewed_files", "total_files", "left_out", "built", "ignored", "truncated", "notes")},
         "blocking": sum(1 for f in open_f if gz.lifecycle.blocking(f)),
         "open_findings": [{"id": f["id"], "path": f["path"], "line": f["line"], "severity": f["severity"],
                            "category": f["category"], "rule": f["rule"], "body": f["body"],

@@ -1,9 +1,3 @@
-# Reviewed runtime dependency set for the Docker image and deployments: the
-# core install (Hubzoid web app, no Open WebUI) plus PostgreSQL support.
-#   pip install -r requirements.lock
-# The legacy Open WebUI set is requirements-openwebui.lock.
-# Regenerate after changing pyproject.toml (uv keeps the pins already here):
-#   uv pip compile pyproject.toml --extra postgres --python-version 3.12 --universal --no-header -o requirements.lock
 aiofile==3.12.3
     # via py-key-value-aio
 aiohappyeyeballs==2.7.1
@@ -22,8 +16,11 @@ annotated-types==0.8.0
     # via pydantic
 anyio==4.15.1
     # via
+    #   anysqlite
     #   claude-agent-sdk
     #   composio-client
+    #   githubkit
+    #   hishel
     #   httpx
     #   mcp
     #   openai
@@ -31,6 +28,8 @@ anyio==4.15.1
     #   sse-starlette
     #   starlette
     #   watchfiles
+anysqlite==0.0.5
+    # via hishel
 argon2-cffi==25.1.0
     # via pwdlib
 argon2-cffi-bindings==26.1.0
@@ -40,7 +39,6 @@ attrs==26.1.0
     #   aiohttp
     #   cyclopts
     #   jsonschema
-    #   jsonschema-path
     #   referencing
 authlib==1.7.2
     # via
@@ -83,6 +81,7 @@ click==8.5.0
     #   uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
+    #   qrcode
     #   tqdm
     #   typer
 composio==0.15.0
@@ -102,12 +101,18 @@ cyclopts==5.0.0
     # via fastmcp-slim
 dbos==3.1.0
     # via hubzoid (pyproject.toml)
+defusedxml==0.7.1
+    # via hubzoid (pyproject.toml)
 distro==1.9.0
     # via
     #   composio-client
     #   openai
+dkimpy==1.1.8
+    # via hubzoid (pyproject.toml)
 dnspython==2.8.0
-    # via email-validator
+    # via
+    #   dkimpy
+    #   email-validator
 docstring-parser==0.18.0
     # via cyclopts
 email-validator==2.3.0
@@ -130,6 +135,16 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.9.0
     # via huggingface-hub
+githubkit==0.16.1
+    # via
+    #   hubzoid (pyproject.toml)
+    #   githubkit-schemas
+githubkit-schemas==26.9.29
+    # via
+    #   githubkit
+    #   githubkit-schemas-2026-03-10
+githubkit-schemas-2026-03-10==26.9.29
+    # via githubkit-schemas
 greenlet==3.5.6
     # via sqlalchemy
 griffelib==2.3.0
@@ -142,6 +157,8 @@ h11==0.16.0
     #   uvicorn
 hf-xet==1.6.0 ; platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
     # via huggingface-hub
+hishel==1.4.0
+    # via githubkit
 httpcore==1.0.9
     # via httpx
 httptools==0.8.0
@@ -151,6 +168,8 @@ httpx==0.28.1
     #   hubzoid (pyproject.toml)
     #   composio-client
     #   fastmcp-slim
+    #   githubkit
+    #   hishel
     #   huggingface-hub
     #   litellm
     #   mcp
@@ -166,6 +185,8 @@ idna==3.20
     #   httpx
     #   requests
     #   yarl
+imapclient==3.1.0
+    # via hubzoid (pyproject.toml)
 importlib-metadata==8.9.0
     # via litellm
 itsdangerous==2.2.0
@@ -203,18 +224,28 @@ jsonschema==4.26.0
     #   claude-agent-sdk
     #   litellm
     #   mcp
-jsonschema-path==0.5.0
-    # via fastmcp-slim
+    #   openapi-schema-validator
+    #   openapi-spec-validator
+jsonschema-path==0.3.4
+    # via
+    #   fastmcp-slim
+    #   openapi-spec-validator
 jsonschema-specifications==2025.9.1
-    # via jsonschema
+    # via
+    #   jsonschema
+    #   openapi-schema-validator
 keyring==25.7.0
     # via py-key-value-aio
+lazy-object-proxy==1.13.0
+    # via openapi-spec-validator
 litellm==1.95.0
     # via
     #   hubzoid (pyproject.toml)
     #   openai-agents
 mako==1.4.3
     # via alembic
+markdown==3.10.2
+    # via hubzoid (pyproject.toml)
 markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
@@ -233,6 +264,8 @@ more-itertools==11.1.0
     # via
     #   jaraco-classes
     #   jaraco-functools
+msgpack==1.2.3
+    # via hishel
 multidict==6.9.1
     # via
     #   aiohttp
@@ -247,6 +280,10 @@ openai-agents==0.17.3
     # via hubzoid (pyproject.toml)
 openapi-pydantic==0.5.1
     # via fastmcp-slim
+openapi-schema-validator==0.6.3
+    # via openapi-spec-validator
+openapi-spec-validator==0.7.2
+    # via hubzoid (pyproject.toml)
 opentelemetry-api==1.44.0
     # via fastmcp-slim
 opentelemetry-proto==1.44.0
@@ -255,7 +292,7 @@ packaging==26.3
     # via
     #   fastmcp-slim
     #   huggingface-hub
-pathable==0.6.0
+pathable==0.4.4
     # via jsonschema-path
 pillow==12.2.0
     # via hubzoid (pyproject.toml)
@@ -286,6 +323,7 @@ pydantic==2.13.4
     #   composio-client
     #   fastapi
     #   fastmcp-slim
+    #   githubkit
     #   json-schema-to-pydantic
     #   litellm
     #   mcp
@@ -304,7 +342,9 @@ pygments==2.21.0
     #   rich
     #   rich-rst
 pyjwt==2.13.0
-    # via mcp
+    # via
+    #   githubkit
+    #   mcp
 pypdf==6.7.5
     # via hubzoid (pyproject.toml)
 pyperclip==1.11.0
@@ -340,7 +380,9 @@ pyyaml==6.0.3
     #   huggingface-hub
     #   jsonschema-path
     #   uvicorn
-referencing==0.37.0
+qrcode==8.2
+    # via hubzoid (pyproject.toml)
+referencing==0.36.2
     # via
     #   jsonschema
     #   jsonschema-path
@@ -349,9 +391,12 @@ regex==2026.5.9
     # via tiktoken
 requests==2.34.2
     # via
+    #   jsonschema-path
     #   openai-agents
     #   pysher
     #   tiktoken
+rfc3339-validator==0.1.4
+    # via openapi-schema-validator
 rich==13.9.4
     # via
     #   hubzoid (pyproject.toml)
@@ -374,7 +419,9 @@ shellingham==1.5.4
 simpleeval==1.0.8
     # via casbin
 six==1.17.0
-    # via python-dateutil
+    # via
+    #   python-dateutil
+    #   rfc3339-validator
 slack-bolt==1.30.0
     # via hubzoid (pyproject.toml)
 slack-sdk==3.44.1
@@ -422,6 +469,8 @@ typing-extensions==4.16.0
     #   exceptiongroup
     #   fastapi
     #   fastmcp-slim
+    #   githubkit
+    #   hishel
     #   huggingface-hub
     #   mcp
     #   openai

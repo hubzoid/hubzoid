@@ -50,6 +50,7 @@ from typing import Callable, Iterable
 
 from .. import _request_ctx, run_events
 from . import assertions
+from .assertions import Check
 from . import calls as calls_lib
 from .cases import EvalCase
 from .results import CaseResult, SuiteResult, ToolCallRecord, TurnRecord, now_iso
@@ -95,6 +96,21 @@ class _Turn:
 def _streams(rt) -> bool:
     return (getattr(rt, "stream_events", None) is not None
             or getattr(rt, "stream", None) is not None)
+
+
+async def _record_usage(hub_dir, case, started: float) -> None:
+    """An eval turn spends like any other: its usage row counts toward the
+    hub's usage limits (budgets.yaml) and settles the turn's hold."""
+    from .. import usage as usage_lib
+
+    raw = _request_ctx.drain_usage()
+    if hub_dir is None or not raw:
+        return
+    await asyncio.to_thread(
+        usage_lib.record, hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="eval",
+        subject=None, chat_id=_chat_id(case), model=raw.get("model"), input_tokens=raw.get("input_tokens"),
+        output_tokens=raw.get("output_tokens"), cost_usd=raw.get("cost_usd"), status=raw.get("status") or "ok",
+        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"))
 
 
 async def _consume(rt, prompt: str, turn_no: int, out: _Turn) -> None:
@@ -237,9 +253,22 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                    hub_dir: Path | None = None,
                    run_as: str | None = None) -> CaseResult:
     """Run a single case to a verdict. Never raises — failures become results."""
-    result = CaseResult(name=case.name, tags=list(case.tags), prompt=case.prompts[0])
+    result = CaseResult(name=case.name, tags=list(case.tags), prompt=case.prompts[0],
+                        case_digest=case.digest or None)
     started = time.monotonic()
     hub_dir = Path(hub_dir) if hub_dir is not None else Path(".")
+
+    fakes = None
+    if case.is_faked:
+        servers = _mcp_servers(hub_dir)
+        if servers and not case.allow_real_mcp:
+            result.error = (f"this hub has MCP servers ({', '.join(servers)}), which fake_tools does not cover, so "
+                            "their tools would run for real. Add allow_real_mcp: true if they only read.")
+            return result
+        from .. import tool_fakes
+
+        fakes = tool_fakes.Session(fakes=list(case.fake_tools), real=frozenset(case.real_tools),
+                                   allow_mcp=case.allow_real_mcp)
 
     ident = None
     who = case.run_as or run_as
@@ -259,7 +288,9 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     names: list[str] = []
     turn_no = 0
     try:
-        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)):
+        from .. import tool_fakes
+
+        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes):
             for turn_no, text in enumerate(case.prompts, start=1):
                 if turn_no > 1 and ident is not None:
                     # The account may have been blocked since the last turn.
@@ -269,12 +300,14 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                 done.append(turn)
                 with (_request_ctx.tool_call_recorder() as recorded,
                       _request_ctx.tool_result_recorder() as results):
+                    turn_started = time.monotonic()
                     try:
                         await asyncio.wait_for(_consume(rt, prompt, turn_no, turn),
                                                timeout=max(0, deadline-time.monotonic()))
                     finally:
                         names += [c.get("name", "?") for c in recorded]
                         _finish_turn(turn, turn_no, recorded, results)
+                        await _record_usage(hub_dir, case, turn_started)
                 failure = _request_ctx.run_failure()
                 if failure is not None or _AGENT_ERROR_MARKER in turn.raw:
                     break
@@ -306,8 +339,12 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
         result.error = f"agent error ({failure['kind']}): {result.response.strip()}"[:200]
         return result
 
+    if fakes is not None:
+        _mark_blocked(result.tools, fakes.blocked)
     result.checks = assertions.run_free_checks(
         case, response=result.response, tool_calls=result.tool_calls, tools=result.tools)
+    if fakes is not None:
+        result.checks.append(_fakes_check(fakes))
 
     if judge_fn is not None and case.is_judged and result.free_passed:
         # Both tool lists go to the judge as observed ground truth. Criteria
@@ -330,6 +367,44 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
 
 
     return result
+
+
+def _mcp_servers(hub_dir: Path) -> list[str]:
+    """The MCP servers a runtime of this hub starts (fakes cannot cover them)."""
+    from ..loaders import mcp as mcp_loader
+
+    try:
+        return sorted(mcp_loader.load_all_raw(hub_dir))
+    except Exception:  # noqa: BLE001 - an unreadable .mcp.json fails the runtime build anyway
+        return []
+
+
+def _mark_blocked(tools: list[ToolCallRecord], blocked: list) -> None:
+    """Show each blocked call as failed, not OK: its tool answered with text,
+    but nothing ran."""
+    from ..tool_fakes import BLOCKED
+
+    left = list(blocked)
+    for rec in tools:
+        for i, (name, args) in enumerate(left):
+            if rec.name == name and rec.raw_args == args:
+                rec.ok, rec.preview, rec.error = False, None, BLOCKED.format(name=name)
+                del left[i]
+                break
+
+
+def _fakes_check(session) -> Check:
+    """A faked case passes this check only if no hub tool had to be blocked."""
+    from .calls import key_args, safe_args
+
+    note = (f"; the person's connectors ({', '.join(session.left_out)}) were left out"
+            if session.left_out else "")
+    if session.blocked:
+        shown = "; ".join(f"{name}({key_args(safe_args(args) if isinstance(args, dict) else None)})"
+                          for name, args in session.blocked[:3])
+        return Check(kind="fake_tools", passed=False,
+                     detail=f"blocked {len(session.blocked)} call(s) with no fake result: {shown}{note}")
+    return Check(kind="fake_tools", passed=True, detail=f"{len(session.used)} call(s) answered by fakes{note}")
 
 
 def _on_turn(case: EvalCase, turn_no: int) -> str:
@@ -376,6 +451,9 @@ async def arun_suite(
     suite = SuiteResult(hub=hub_dir.name, started_at=now_iso(),
                         judged=judge_fn is not None, trigger=trigger, run_as=run_as)
 
+    from .quality import hub_digest
+
+    suite.hub_digest = hub_digest(hub_dir, model=model)
     rt = runtime_lib.build(hub_dir, model=model)
     suite.model = getattr(rt, "name", "") or ""
 

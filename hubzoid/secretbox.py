@@ -25,6 +25,8 @@ import os
 import threading
 from pathlib import Path
 
+from . import datadir
+
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 _lock = threading.Lock()
@@ -39,7 +41,7 @@ def key_path(hub_dir: Path, env=None) -> Path:
     """Where the key file lives when ``HUBZOID_SECRET_KEY`` is not set."""
     env = os.environ if env is None else env
     manifest = env.get("HUBZOID_DEPLOYMENT")
-    pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+    pointer = datadir.state(hub_dir) / "deployment.json"
     if not manifest and pointer.exists():
         try:
             manifest = json.loads(pointer.read_text()).get("manifest")
@@ -47,7 +49,7 @@ def key_path(hub_dir: Path, env=None) -> Path:
             manifest = None
     if manifest:
         return Path(manifest).parent / "secret.key"
-    return Path(hub_dir) / ".hubzoid" / "secret.key"
+    return datadir.state(hub_dir) / "secret.key"
 
 
 def _parse(raw: str) -> list[bytes]:

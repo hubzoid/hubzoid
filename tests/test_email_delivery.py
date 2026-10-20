@@ -390,5 +390,33 @@ def test_formatted_email_context_preview_replay_and_invalid_format(hub, monkeypa
     assert "<h2" in msg.get_body(preferencelist=("html",)).get_content()
     again = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request, "formatted-test")
     assert again["delivery_id"] == result["delivery_id"] and again["repeated"]
-    refused = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request | {"body_format": "html"})
+    refused = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request | {"body_format": "rtf"})
     assert refused["status"] == "refused"
+
+
+def test_html_email_keeps_only_email_safe_layout_and_derives_plain_text():
+    body = ('<div style="max-width:600px;background:#fff"><h1>GitZoid Digest</h1>'
+            '<table role="presentation" cellpadding="0"><tr><td style="color:#12c46a">14</td><td>merged</td></tr></table>'
+            '<script>alert(1)</script><style>p{color:red}</style><img src="https://tracker.invalid/p.gif">'
+            '<p onclick="steal()" style="background:url(https://tracker.invalid/bg)">Fixed &lt;b&gt; the loop</p>'
+            '<a href="javascript:alert(1)">bad</a> <a href="https://example.com/pull/16">#16</a>'
+            '<embed src="https://tracker.invalid/x.swf"><p>After the embed</p></div>')
+    msg = mail.build_message(sender=OWNER, recipient=OWNER, subject="Digest", body=body,
+                             links=[("Full digest", "https://reports.company.com/r/1")],
+                             message_id="<html@company.com>", body_format="html", footer="You get this because.")
+    plain, rich = (msg.get_body(preferencelist=(kind,)).get_content() for kind in ("plain", "html"))
+    assert '<td style="color:#12c46a">14</td>' in rich and 'cellpadding="0"' in rich
+    for gone in ("<script", "alert(1)", "<style", "color:red", "<img", "onclick", "url(", "javascript:", "<embed"):
+        assert gone not in rich, gone
+    assert "After the embed" in rich and "After the embed" in plain  # a void tag never hides what follows
+    assert "Fixed &lt;b&gt; the loop" in rich and 'href="https://example.com/pull/16"' in rich
+    assert 'href="https://reports.company.com/r/1"' in rich and "You get this because." in rich
+    assert "GitZoid Digest" in plain and "14 merged" in " ".join(plain.split())
+    assert "#16 (https://example.com/pull/16)" in plain and "Fixed <b> the loop" in plain
+    assert "Full digest: https://reports.company.com/r/1" in plain and plain.rstrip().endswith("You get this because.")
+    assert "alert(1)" not in plain and "color:red" not in plain
+    once = mail.build_message(sender=OWNER, recipient=OWNER, subject="Digest", links=[("Full digest", "https://r.co/1")],
+                              body='<p><a href="https://r.co/1">Open the full digest</a></p>',
+                              message_id="<once@company.com>", body_format="html")
+    rich, plain = (once.get_body(preferencelist=(kind,)).get_content() for kind in ("html", "plain"))
+    assert rich.count("https://r.co/1") == 1 and plain.count("https://r.co/1") == 1  # the layout's own link is enough

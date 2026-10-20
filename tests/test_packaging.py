@@ -85,24 +85,32 @@ def test_template_bytecode_never_ships():
     assert "*.pyc" in excluded and "**/__pycache__/*" in excluded
 
 
+def _normalize(name: str) -> str:
+    """A distribution name as PEP 503 compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _requirement_names(reqs: list[str]) -> dict[str, str]:
     out = {}
     for req in reqs:
-        name = re.split(r"[\s\[<>=!~;]", req, maxsplit=1)[0].lower().replace("_", "-")
+        name = _normalize(re.split(r"[\s\[<>=!~;]", req, maxsplit=1)[0])
         out[name] = req
     return out
 
 
-def test_open_webui_is_an_optional_extra():
+def test_open_webui_is_not_a_dependency_or_an_extra():
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
     assert "open-webui" not in core
-    assert PYPROJECT["project"]["optional-dependencies"]["openwebui"] == ["open-webui==0.11.4"]
+    extras = PYPROJECT["project"]["optional-dependencies"]
+    assert "openwebui" not in extras
+    assert not any("open-webui" in dep for deps in extras.values() for dep in deps)
+    assert not (ROOT / "requirements-openwebui.lock").exists()
 
 
 def test_web_app_dependencies_are_declared_with_bounds():
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
     assert core["pwdlib"].startswith("pwdlib[argon2,bcrypt]")
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "markdown"):
         assert ">=" in core[name] and "<" in core[name], core[name]
 
 
@@ -115,7 +123,8 @@ def test_the_core_install_keeps_open_webuis_release_lines():
     owui_pins = {"openai": "2.29.0", "mcp": "1.27.2", "tiktoken": "0.13",
                  "fastapi": "0.136.3", "uvicorn": "0.51", "httpx": "0.28.1", "pydantic": "2.13.4",
                  "cryptography": "48", "pypdf": "6.7.5", "pillow": "12.2", "sqlalchemy": "2.0.50",
-                 "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2"}
+                 "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2",
+                 "markdown": "3.10.2"}
     for name, floor in owui_pins.items():
         spec = core[name]
         assert f">={floor}" in spec, spec
@@ -145,25 +154,25 @@ def _pins(name: str) -> dict[str, str]:
     for line in (ROOT / name).read_text().splitlines():
         m = re.match(r"^([A-Za-z0-9_.-]+)==([^\s;]+)", line)
         if m:
-            pins[m.group(1).lower()] = m.group(2)
+            pins[_normalize(m.group(1))] = m.group(2)
     return pins
 
 
-def test_core_lock_is_slim_and_legacy_lock_keeps_open_webui():
-    core, legacy = _pins("requirements.lock"), _pins("requirements-openwebui.lock")
+def test_the_lock_is_slim():
+    core = _pins("requirements.lock")
     for heavy in ("open-webui", "torch", "av", "transformers", "sentence-transformers", "chromadb"):
         assert heavy not in core, heavy
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg", "markdown"):
         assert name in core, name
-    assert legacy["open-webui"] == "0.11.4"
-    # One reviewed set: every package both locks pin has the same version.
-    assert {k: v for k, v in core.items() if k in legacy and legacy[k] != v} == {}
-    assert len(core) < len(legacy) / 1.5
 
 
-@pytest.mark.parametrize("lock", ["requirements.lock", "requirements-openwebui.lock"])
+@pytest.mark.parametrize("lock", ["requirements.lock"])
 def test_locks_pin_this_release_line(lock):
     """Each lock satisfies the declared bounds of the web app dependencies."""
     pins = _pins(lock)
     assert pins["pwdlib"].startswith("0.3.")
     assert pins["python-multipart"].startswith("0.0.")
+    # The image installs the lock, then the package with --no-deps: a dependency
+    # the lock does not name is missing there (openapi-spec-validator was). This
+    # checks names only, not environment markers.
+    assert set(_requirement_names(PYPROJECT["project"]["dependencies"])) - set(pins) == set()

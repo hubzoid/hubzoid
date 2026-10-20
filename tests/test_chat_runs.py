@@ -126,7 +126,7 @@ async def test_stop_keeps_the_partial_reply(hub, monkeypatch):
         await _until(lambda: (r := runs.active("m_asst00001")) is not None
                      and "Chunk 2." in r.builder.plain_text())
         r = await client.post("/api/runs/m_asst00001/cancel", headers=ORIGIN)
-        assert r.status_code == 202 and r.json() == {"status": "cancelling"}
+        assert r.status_code == 202 and r.json()["status"] == "cancelling" and r.json()["run_id"]
         response = await asyncio.wait_for(task, timeout=10)
         evs = events(response.text)
         assert evs[-2] == {"type": "finish", "messageMetadata": {"status": "cancelled"}}
@@ -137,7 +137,7 @@ async def test_stop_keeps_the_partial_reply(hub, monkeypatch):
         assert text_.startswith("Chunk 1. Chunk 2.") and "Chunk 40." not in text_
         # stopping again is harmless
         again = await client.post("/api/runs/m_asst00001/cancel", headers=ORIGIN)
-        assert again.status_code == 202 and again.json() == {"status": "cancelled"}
+        assert again.status_code == 202 and again.json()["status"] == "cancelled"
         # the conversation takes a new message right away
         after = await client.post("/api/chat", headers=ORIGIN, json=chat_body(
             "c_stop00001", "thanks", agent=agent, message_id="m_user00002",

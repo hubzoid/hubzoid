@@ -14,18 +14,13 @@ proxy, redact the ``token``, ``code`` and ``state`` query parameters and the
 from __future__ import annotations
 
 import logging
-import re
-
-_PATTERNS = (
-    (re.compile(r"(/api/auth/link/)[^/?#\s\"']+"), r"\1[redacted]"),
-    (re.compile(r"([?&](?:token|code|state)=)[^&#\s\"']+"), r"\1[redacted]"),
-)
-
 
 def redact(text: str) -> str:
-    for pattern, replacement in _PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+    """The sign-in values in a URL or log line, replaced. Shared with every
+    other scrub in `hubzoid.redaction`."""
+    from ..redaction import redact_url_credentials
+
+    return redact_url_credentials(text)
 
 
 class RedactCredentials(logging.Filter):

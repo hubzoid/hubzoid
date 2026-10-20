@@ -13,10 +13,8 @@ Deleting that file (or changing the env value) invalidates every issued link.
 Expiry. In the Hubzoid web app (the default UI mode) newly issued links expire
 after 7 days: the conversation's owner keeps downloading through their signed-in
 session (the bridge's ``/artifacts`` route accepts it), so the link itself only
-needs to outlive a share or a copy for a while. In Open WebUI mode
-links never expire by default, because Open WebUI keeps message text verbatim
-and old links in past chats should keep working. HUBZOID_ARTIFACT_LINK_TTL
-(seconds) overrides both (``0`` never expires). An expiring link carries
+needs to outlive a share or a copy for a while. HUBZOID_ARTIFACT_LINK_TTL
+(seconds) overrides it (``0`` never expires). An expiring link carries
 ``&e=<unix time>``, which is covered by the HMAC. Links issued without an expiry
 stay valid until the secret changes.
 """
@@ -52,7 +50,9 @@ def _secret(hub_dir=None) -> bytes:
             "artifact links need the hub directory (HUBZOID_HUB_DIR) or "
             "HUBZOID_ARTIFACT_SECRET"
         )
-    path = hub.resolve() / ".hubzoid" / _SECRET_FILE
+    from .datadir import state
+
+    path = state(hub.resolve()) / _SECRET_FILE
     key = str(path)
     with _lock:
         cached = _cache.get(key)
@@ -94,7 +94,7 @@ DEFAULT_WEB_APP_TTL = 7 * 24 * 3600
 
 def _ttl(hub_dir=None) -> int:
     """Seconds a new link stays valid (0 = forever): HUBZOID_ARTIFACT_LINK_TTL
-    when set, else 7 days in the web app and forever in Open WebUI mode."""
+    when set, else 7 days."""
     raw = (os.environ.get("HUBZOID_ARTIFACT_LINK_TTL") or "").strip()
     if raw:
         try:
@@ -104,9 +104,7 @@ def _ttl(hub_dir=None) -> int:
 
             logging.getLogger("hubzoid.signing").warning(
                 "HUBZOID_ARTIFACT_LINK_TTL=%r is not a number of seconds; using the default", raw)
-    from . import appmode
-
-    return 0 if appmode.is_openwebui(_hub_dir(hub_dir)) else DEFAULT_WEB_APP_TTL
+    return DEFAULT_WEB_APP_TTL
 
 
 def _mac(chat_id: str, filename: str, expires: int | None, hub_dir) -> str:

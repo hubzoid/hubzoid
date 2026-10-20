@@ -52,7 +52,8 @@ def diff_prepare(repo: str, diff_text: str) -> dict:
     keep, ignored = gz.rules.reviewable(files, repo_controls)
     hub_rules = gz.rules.hub_rules(flow.HUB_DIR)
     rules_now = [r for r in hub_rules if any(gz.rules.rules_for([r], f["filename"]) for f in keep)]
-    text, left_out = gz.diff.format_diff(keep, settings.review.max_diff_chars)
+    built: list[str] = []
+    text, left_out = gz.diff.format_diff(keep, settings.review.max_diff_chars, built=built)
     sweep = gz.checks.sweep(keep)
     paths = {f["filename"] for f in keep}
     pr = {"repo": repo, "number": 0, "title": "Local changes (not pushed)", "body": "", "author": "you",
@@ -65,7 +66,7 @@ def diff_prepare(repo: str, diff_text: str) -> dict:
             "profile": gz.profiles.text(store.profile(repo)), "checks": [c for c in sweep if not c["secret"]],
             "code_findings": [{**f, "checked": True} for f in gz.checks.secret_findings(sweep)
                               + gz.rules.code_checks(rules_now, keep)],
-            "diff": text, "left_out": left_out, "ignored": ignored, "incremental": False,
+            "diff": text, "left_out": left_out, "built": built, "ignored": ignored, "incremental": False,
             "commentable": sorted(gz.diff.commentable(keep)),
             "floor": settings.repo(repo).severity_floor or repo_controls.get("severity_floor") or settings.review.severity_floor,
             "max_findings": settings.review.max_findings, "model": settings.model_for(repo),
@@ -96,7 +97,8 @@ def review_diff():
     findings = [{"path": f["path"], "line": f["line"], "severity": f["severity"], "category": f["category"],
                  "body": f["body"], "rule": f["rule"], "fix_prompt": gz.review.fix_prompt(f, job["pr"])} for f in kept]
     out = {"repo": job["pr"]["repo"], "summary": review["summary"], "findings": findings,
-           "files_reviewed": job["files"] - len(job["left_out"]), "left_out_for_size": job["left_out"],
+           "files_reviewed": job["files"] - len(job["left_out"]) - len(job.get("built", [])),
+           "left_out_for_size": job["left_out"], "built_output": job.get("built", []),
            "ignored_by_review_md": job["ignored"],
            "note": "Nothing was posted. The pull request review also checks each finding against the whole file."}
     return {**out, "answer": gz.review.diff_answer(out)}

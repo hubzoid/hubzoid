@@ -1,7 +1,8 @@
 """Opt-in alert outbox. Importing this module never sends a message.
 
 Only the running product's configured sender calls deliver(). Tests inject a
-local sender. Destinations are configured by the deployment operator.
+local sender. Destinations are configured by the deployment operator; with
+none configured, alerts are off and nothing is recorded.
 """
 from __future__ import annotations
 import asyncio
@@ -26,22 +27,29 @@ def _env(hub_dir, key):
     return value if value is not None else os.environ.get(key, '')
 
 
-def destinations(hub_dir, workflow=None):
+def _selected(hub_dir, workflow=None):
+    """The configured destinations, or None when nothing is configured. An
+    explicit empty list (`alerts: {to: []}`, `alert_to=[]`) means off."""
     from . import runtime
     try:
         cfg = events.settings(hub_dir).get('alerts', {})
     except Exception:
         cfg = {}
     wf = runtime._REGISTRY.get(workflow)
-    selected = wf.alert_to if wf and wf.alert_to is not None else cfg.get('to', [])
+    selected = wf.alert_to if wf and wf.alert_to is not None else (cfg or {}).get('to')
     if workflow and workflow.startswith('md:'):
         from ..scheduling import load_tasks
         task = next((t for t in load_tasks(hub_dir)[0] if t.name == workflow[3:]), None)
         if task and task.alert_to is not None:
             selected = task.alert_to
-    if wf and wf.on_failure and wf.alert_to is None:
-        selected = [{'webhook': wf.on_failure}]
-    if not selected and _env(hub_dir, 'HUBZOID_ALERT_URL'):
+    if wf and wf.on_failure and wf.alert_to is None and selected != []:
+        selected = [{'webhook': wf.on_failure}]  # legacy; a hub that turned alerts off stays off
+    return selected
+
+
+def destinations(hub_dir, workflow=None):
+    selected = _selected(hub_dir, workflow)
+    if selected is None and _env(hub_dir, 'HUBZOID_ALERT_URL'):
         selected = [{'webhook': 'HUBZOID_ALERT_URL'}]
     return selected or []
 
@@ -53,16 +61,27 @@ def record(hub_dir, hub, kind, source, payload):
     base = os.environ.get('HUBZOID_PUBLIC_URL', '').rstrip('/')
     # Explicit allowlist: no workflow outputs or raw exceptions in messages.
     data = {k:payload[k] for k in ('workflow','run_id','count') if k in payload}
-    link = base+'/portal/#/agents/'+quote(hub,safe='')+'/runs'
+    link = base+'/settings#/agents/'+quote(hub,safe='')+'/runs'
     if payload.get('workflow') and payload.get('run_id'):
         link += '/'+quote(payload['workflow'],safe='')+'/'+quote(payload['run_id'],safe='')
     data.update(hub=hub, kind=kind, url=link)
     data = redact(data)
-    targets = destinations(hub_dir, payload.get('workflow')) or [{'unconfigured': True}]
+    targets = destinations(hub_dir, payload.get('workflow'))
+    if not targets:
+        return  # off: nothing configured, or turned off with an empty list
     with events._engine(hub_dir).begin() as conn:
         for target in targets:
             aid = 'alert:' + hashlib.sha256(json.dumps([hub,kind,source,target],sort_keys=True).encode()).hexdigest()
             conn.execute(text("INSERT INTO hz_workflow_alerts (id,hub,kind,payload,destination,state,attempt,due,created) VALUES (:i,:h,:k,:p,:d,'pending',0,:n,:n) ON CONFLICT (id) DO NOTHING"), {'i':aid,'h':hub,'k':kind,'p':json.dumps(data),'d':json.dumps(target),'n':now})
+
+
+def _where(row):
+    """'hub/workflow' for a log line, from the alert's payload."""
+    try:
+        payload = json.loads(row.get('payload') or '{}')
+    except ValueError:
+        return '?'
+    return f"{payload.get('hub', '?')}/{payload.get('workflow', payload.get('kind', '?'))}"
 
 
 def _row(hub_dir, aid):
@@ -113,7 +132,8 @@ def _email(hub_dir, row, recipient, payload):
     msg.set_content(json.dumps(payload,indent=2))
     if cfg.mode == 'preview':
         from pathlib import Path
-        directory = Path(hub_dir)/'.hubzoid'/'alert-preview'
+        from ..datadir import state
+        directory = state(hub_dir)/'alert-preview'
         directory.mkdir(parents=True,exist_ok=True,mode=0o700)
         fd = os.open(directory/(row['id'].split(':')[-1]+'.eml'),os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600)
         with os.fdopen(fd,'wb') as stream:
@@ -153,8 +173,12 @@ async def deliver(hub_dir, aid, *, sender=None):
         await (sender or send)(hub_dir, row)
     except Exception as exc:
         state = 'failed' if attempt >= 5 else 'pending'
-        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__
-        log.warning('Alert %s delivery failed (%s)', aid, error)
+        # A ValueError here is our own configuration problem with a plain reason
+        # ("No alert destination configured"). Other errors can carry a webhook
+        # URL, so only their type is kept.
+        reason = f': {exc}' if isinstance(exc, ValueError) else ''
+        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__+reason
+        log.warning('Alert %s for %s delivery failed (%s)', aid, _where(row), error)
     else:
         state, due, error = 'sent', time.time(), None
     await asyncio.to_thread(_finish, hub_dir, aid, attempt, state, due, error)

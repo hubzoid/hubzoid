@@ -49,7 +49,8 @@ def _bridge_app() -> Starlette:
         return PlainTextResponse("INTERNAL:" + request.url.path)
 
     async def any_path(request: Request):
-        return PlainTextResponse("BRIDGE:" + request.scope["path"], status_code=404)
+        query = request.scope["query_string"].decode()
+        return PlainTextResponse("BRIDGE:" + request.scope["path"] + (" query:" + query if query else ""), status_code=404)
 
     return Starlette(routes=[
         Route("/otel/v1/traces", internal, methods=["POST"]),
@@ -65,8 +66,8 @@ def web_app_edge():
     bridge = _Server(_bridge_app(), bport)
     app = edge.build_edge_app(
         default_base=f"http://127.0.0.1:{bport}",
-        routes=[edge.EdgeRoute("/b/sales/api", f"http://127.0.0.1:{bport}", "/b/sales")],
-        web_app=True)
+        routes=[edge.EdgeRoute("/b/sales/api", f"http://127.0.0.1:{bport}", "/b/sales"),
+                edge.EdgeRoute("/b/sales/v1", f"http://127.0.0.1:{bport}", "/b/sales")])
     front = _Server(app, eport)
     bridge.start()
     front.start()
@@ -96,7 +97,8 @@ def _raw(base: str, method: str, path: str) -> tuple[int, str]:
     ("POST", "/%25%36%66tel/v1/traces", "/%6ftel/v1/traces"),
 ])
 def test_double_encoding_cannot_reach_the_bridges_internal_api(web_app_edge, method, path, seen):
-    assert _raw(web_app_edge, method, unquote(unquote(path)))[0] == 404   # refused by the edge
+    # Refused by the edge: 401 for the chat API (send a personal key), else 404.
+    assert _raw(web_app_edge, method, unquote(unquote(path)))[0] in (401, 404)
     status, body = _raw(web_app_edge, method, path)
     assert "INTERNAL" not in body
     assert (status, body) == (404, "BRIDGE:" + seen)
@@ -107,43 +109,14 @@ def test_double_encoding_cannot_reach_the_bridges_internal_api(web_app_edge, met
     ("/b/sales/api/files/100%25.pdf", "/api/files/100%.pdf"),   # a literal % in a file name
     ("/b/sales/api/files/50%2525off.pdf", "/api/files/50%25off.pdf"),
     ("/b/sales/api/files/caf%C3%A9%20menu.pdf", "/api/files/café menu.pdf"),
-    ("/b/sales/api/a%3Fb", "/api/a"),                           # the edge checked /api/a too
+    ("/b/sales/api/a%3Fb", "/api/a?b"),                         # an escaped ? stays in the path
+    ("/b/sales/api/a%23b", "/api/a#b"),                         # so do # and a backslash, which Starlette 1.9
+    ("/b/sales/api/a%5Cb", "/api/a\\b"),                        # re-escapes the same way
+    ("/b/sales/api/a%3Fb?c=%3F&d", "/api/a?b query:c=%3F&d"),   # and the query passes as sent
 ])
 def test_routes_forward_the_path_they_matched(web_app_edge, path, seen):
     assert _raw(web_app_edge, "GET", path) == (404, "BRIDGE:" + seen)
 
-
-def test_websockets_relay_the_path_they_checked():
-    """Websockets (Open WebUI's socket.io) take the same path encoding."""
-    import websockets
-    from starlette.routing import WebSocketRoute
-
-    async def named(ws):
-        await ws.accept()
-        await ws.send_text("WS:" + ws.scope["path"])
-        await ws.close()
-
-    oport, eport = _free_port(), _free_port()
-    owui = _Server(Starlette(routes=[WebSocketRoute("/ws", named), WebSocketRoute("/{p:path}", named)]), oport)
-    front = _Server(edge.build_edge_app(default_base=f"http://127.0.0.1:{oport}", web_app=False), eport)
-    owui.start()
-    front.start()
-
-    async def ask(path):
-        async with websockets.connect(f"ws://127.0.0.1:{eport}{path}", open_timeout=10) as ws:
-            return await ws.recv()
-
-    try:
-        assert asyncio.run(ask("/ws")) == "WS:/ws"
-        assert asyncio.run(ask("/%2577s")) == "WS:/%77s"
-    finally:
-        front.stop()
-        owui.stop()
-
-
-# ---------------------------------------------------------------------------
-# request bodies with fallback upstreams
-# ---------------------------------------------------------------------------
 class _Upstreams(httpx.AsyncBaseTransport):
     """Upstream bridges. Records, per request, how many body bytes the edge had
     read from the client when it contacted the bridge."""
@@ -165,7 +138,7 @@ def _post(chunks: list[bytes], *, refuse=(), declared: int | None = None, fallba
     in `chunks` (chunked, or with a declared Content-Length)."""
     pulled = {"bytes": 0}
     upstreams = _Upstreams(lambda: pulled["bytes"], refuse)
-    app = edge.build_edge_app(default_base="http://bridge1", default_fallbacks=fallbacks, web_app=True)
+    app = edge.build_edge_app(default_base="http://bridge1", default_fallbacks=fallbacks)
     headers = [(b"host", b"hub.example.org")]
     if declared is not None:
         headers.append((b"content-length", str(declared).encode()))
@@ -230,3 +203,36 @@ def test_without_fallbacks_the_body_streams_as_before():
     (host, at_dispatch, body), = seen
     assert status == 200 and host == "bridge1" and len(body) == 32 * 65536
     assert at_dispatch == 0
+
+
+def _with_auth(base: str, method: str, path: str, auth: str) -> tuple[int, str]:
+    u = urlsplit(base)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request(method, path, body=b"{}", headers={"Authorization": auth})
+        r = conn.getresponse()
+        return r.status, r.read().decode()
+    finally:
+        conn.close()
+
+
+def test_only_a_personal_key_reaches_the_chat_api(web_app_edge):
+    """The OpenAI-compatible chat API is public for a person's own key (the
+    bridge checks it); the bridge's keys and other internal routes stay
+    internal."""
+    assert _with_auth(web_app_edge, "POST", "/v1/chat/completions", "Bearer hzp_abc_def") == \
+        (200, "INTERNAL:/v1/chat/completions")
+    # Without a personal key the chat API says how to sign in (401); the
+    # bridge's own keys are never accepted from outside.
+    assert _with_auth(web_app_edge, "POST", "/v1/chat/completions", "Bearer dev")[0] == 401
+    assert _with_auth(web_app_edge, "POST", "/uploads/c1/x", "Bearer hzp_abc_def")[0] == 404
+    assert _with_auth(web_app_edge, "POST", "/otel/v1/traces", "Bearer hzp_abc_def")[0] == 404
+
+
+def test_each_agent_has_its_own_chat_api_base(web_app_edge):
+    """Behind a gateway, /b/<agent>/v1 reaches that agent's bridge as /v1, for
+    a personal key only: the prefix can't open the bridge's internal API."""
+    assert _with_auth(web_app_edge, "POST", "/b/sales/v1/chat/completions", "Bearer hzp_abc_def") == \
+        (200, "INTERNAL:/v1/chat/completions")
+    assert _with_auth(web_app_edge, "POST", "/b/sales/v1/chat/completions", "Bearer dev")[0] == 401
+    assert _with_auth(web_app_edge, "POST", "/b/sales/v1/embeddings", "Bearer hzp_abc_def")[0] == 404

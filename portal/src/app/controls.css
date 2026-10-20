@@ -1,0 +1,143 @@
+/* Approved Studio application controls. These rules also cover overlays that
+   libraries mount under body, outside the Settings content wrapper. */
+:root[data-app="chat"] :focus-visible {
+  outline: 2px solid var(--hz-focus);
+  outline-offset: 2px;
+}
+:root[data-app="chat"] :is(.hz-composer textarea, .hz-search-input input, .hz-set-find input, .hz-input, .hz-select-item, .hz-menu-item):focus-visible {
+  outline: none;
+}
+.hz-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--hz-line);
+  border-radius: var(--hz-radius-control, 8px);
+  background: var(--hz-raised);
+  color: var(--hz-ink);
+  font: inherit;
+  font-size: .9286rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms;
+}
+.hz-select:hover:not(:disabled) { background: var(--hz-hover); border-color: var(--hz-input); }
+.hz-select:disabled { opacity: .5; cursor: not-allowed; }
+.hz-select > svg { flex: none; color: var(--hz-mute); }
+.hz-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+label.block > .hz-select, .hz-set-main form .hz-select { width: 100%; }
+.hz-select.hz-select-sm, .hz-select.hz-artifact-select { min-height: 32px; height: auto; }
+.hz-select-content {
+  z-index: 80;
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(28rem, calc(100vw - 24px));
+  max-height: var(--radix-select-content-available-height);
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--hz-line);
+  border-radius: var(--hz-radius-control, 8px);
+  background: var(--hz-raised);
+  color: var(--hz-ink);
+  box-shadow: var(--hz-shadow-pop);
+  font-family: var(--hz-font-sans, Inter, sans-serif);
+  font-size: .9286rem;
+}
+.hz-select-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 32px 7px 10px;
+  border-radius: 5px;
+  outline: none;
+  cursor: default;
+  user-select: none;
+  overflow-wrap: anywhere;
+}
+.hz-select-item[data-highlighted] { background: var(--hz-hover); color: var(--hz-ink); box-shadow: inset 0 0 0 1px var(--hz-line); }
+.hz-select-item[data-disabled] { opacity: .5; pointer-events: none; }
+.hz-select-check { position: absolute; right: 9px; display: flex; color: var(--hz-ink); }
+.hz-select-scroll { display: flex; align-items: center; justify-content: center; height: 24px; }
+
+/* Underline tabs use text emphasis on hover. Segmented controls retain their
+   rounded selected surface, so their states remain distinct from page tabs. */
+:is(.hz-tabs, .hz-preference-tabs, .hz-agent-tabs, .hz-artifact-tabs) > :is(button, a, [role="tab"]):hover {
+  background: transparent;
+  color: var(--hz-ink);
+}
+.console-embed .ant-tabs-tab:hover, .console-embed .ant-tabs-tab-active {
+  background: transparent;
+}
+.hz-auth-provider { border-radius: var(--hz-radius-control, 8px); }
+
+/* Embedded management and its portalled dialogs/popups share one hierarchy. */
+:is(.console-embed, .hz-native-overlay) .ant-btn-primary:not(.ant-btn-dangerous):not(:disabled):not(.ant-btn-loading) {
+  background: var(--hz-accent);
+  border-color: var(--hz-accent);
+  color: var(--hz-accent-ink);
+  box-shadow: none;
+}
+:is(.console-embed, .hz-native-overlay) .ant-btn-primary:not(.ant-btn-dangerous):not(:disabled):hover {
+  background: var(--hz-accent-hover);
+  border-color: var(--hz-accent-hover);
+  color: var(--hz-accent-ink);
+}
+:is(.console-embed, .hz-native-overlay) .ant-btn-primary:not(.ant-btn-dangerous):not(:disabled):active {
+  background: var(--hz-accent-active);
+  border-color: var(--hz-accent-active);
+  color: var(--hz-accent-ink);
+}
+:is(.console-embed, .hz-native-overlay) .ant-btn-primary:disabled {
+  background: var(--hz-hover);
+  border-color: var(--hz-line);
+  color: var(--hz-mute);
+}
+:is(.console-embed, .hz-native-overlay) .ant-btn-default:not(:disabled):hover {
+  color: var(--hz-ink);
+  background: var(--hz-hover);
+  border-color: var(--hz-input);
+}
+.hz-native-popup { font-size: .9286rem; }
+.hz-native-popup.ant-select-dropdown {
+  background: var(--hz-raised);
+  border: 1px solid var(--hz-line);
+  border-radius: var(--hz-radius-control, 8px);
+  box-shadow: var(--hz-shadow-pop);
+}
+.hz-native-popup .ant-select-item-option { color: var(--hz-ink); border-radius: 5px; }
+.hz-native-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: var(--hz-active);
+  color: var(--hz-ink);
+  font-weight: 500;
+}
+.hz-native-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+  background: var(--hz-hover);
+  color: var(--hz-ink);
+}
+:is(.console-embed, .hz-native-overlay) :is(.ant-input, .ant-input-affix-wrapper):focus-within {
+  border-color: var(--hz-focus);
+  box-shadow: 0 0 0 1px var(--hz-focus);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .hz-btn, .hz-icon-btn, .hz-select, .hz-select.hz-select-sm, .hz-select.hz-artifact-select,
+  .hz-select-item, .hz-menu-item, .hz-chip, .hz-input,
+  :is(.hz-tabs, .hz-preference-tabs, .hz-agent-tabs, .hz-artifact-tabs) > :is(button, a, [role="tab"]),
+  :is(.console-embed, .hz-native-overlay) .ant-btn,
+  .hz-native-popup .ant-select-item-option { min-height: 44px; }
+  .hz-icon-btn { min-width: 44px; }
+  .hz-select { max-width: 100%; }
+  label:has(> input:is([type="checkbox"], [type="radio"])) { min-height: 44px; }
+}
+
+.console-embed .agent-card:hover { background: var(--hz-canvas) !important; box-shadow: none !important; }
+.console-embed .agent-card:hover :is(.agent-name, .agent-card-chevron) { color: var(--hz-ink); }
+.console-embed .agent-card:has(.agent-card-link:focus-visible) { outline-color: var(--hz-focus); }
+:root[data-app="chat"] .console-embed .agent-card-link:focus-visible { outline: none; }
+
+:root[data-app="chat"] :is(.console-embed, .hz-native-overlay) :is(.ant-input, .ant-select input):focus-visible { outline: none; }
+:is(.console-embed, .hz-native-overlay) .ant-select-focused { border-color: var(--hz-focus); }
+:is(.console-embed, .hz-native-overlay) .ant-select-focused .ant-select-selector { border-color: var(--hz-focus); box-shadow: 0 0 0 1px var(--hz-focus); }
