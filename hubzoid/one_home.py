@@ -40,6 +40,17 @@ def _rows(conn, sql: str, params: dict | None = None) -> list[dict]:
     return [dict(r._mapping) for r in conn.execute(text(sql), params or {})]
 
 
+def _compact(value):
+    """Leave out what says nothing (None, empty strings, lists and mappings),
+    so the written section shows only what was set."""
+    if isinstance(value, dict):
+        out = {k: _compact(v) for k, v in value.items()}
+        return {k: v for k, v in out.items() if v not in (None, "", [], {})}
+    if isinstance(value, list):
+        return [_compact(v) for v in value]
+    return value
+
+
 def _append_env(path: Path, values: dict[str, str]) -> list[str]:
     """Add NAME=value lines a file doesn't have yet. Returns the names added."""
     from dotenv import dotenv_values
@@ -114,6 +125,7 @@ class Upgrade:
         data.pop("version", None)
         if fix:
             data = fix(data, row)
+        data = _compact(data)
         if key == "brand" and isinstance(self.doc.get("brand"), dict):
             data = {**data, "identity": {**self.doc["brand"].get("identity", {}), **data.get("identity", {})}}
         self.doc[key] = data
