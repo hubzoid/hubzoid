@@ -326,7 +326,7 @@ def make(ctx) -> list:
 
         Args:
             name: The workflow or task name exactly as list_workflows shows it.
-            inputs: The workflow's inputs as a JSON object, such as {"program": "Samyama"}. Empty for none.
+            inputs: The workflow's inputs as a JSON object, such as {"program": "Advanced"}. Empty for none.
         """
         actor, surface, why = caller()
         if actor is None:

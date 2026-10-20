@@ -12,9 +12,9 @@ When frontmatter is missing, defaults are derived:
 
 Frontmatter schema when present:
   name:        agent identifier (optional)
-  display_name: the name people see in the web app, kept as written ("IRS Hub").
-               Optional; without it the app shows `name` (a slug like irs-hub
-               becomes "Irs Hub").
+  display_name: the name people see in the web app, kept as written ("Reports Hub").
+               Optional; without it the app shows `name` (a slug like reports-hub
+               becomes "Reports Hub").
   description: one-line summary used as handoff trigger for sub-agents (optional)
   model:       optional LiteLLM model id; overrides .env MODEL
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents

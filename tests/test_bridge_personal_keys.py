@@ -51,7 +51,7 @@ def test_a_key_asking_for_another_agent_is_told_where_it_is(bridge):
     another agent is refused with its API base, never answered by this one."""
     client, key = bridge
     r = client.post("/v1/chat/completions", headers={"authorization": f"Bearer {key}"},
-                    json={"model": "gpms-hub", "messages": [{"role": "user", "content": "hi"}]})
+                    json={"model": "projects-hub", "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 404 and "/b/<agent>/v1" in r.json()["detail"]["message"]
 
 

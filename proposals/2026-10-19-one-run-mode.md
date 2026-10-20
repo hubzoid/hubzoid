@@ -12,11 +12,11 @@ Hubzoid starts in two ways that have drifted apart:
   environment, and hub `.env` files are read again for compatibility.
 
 Each mode has its own rules, so a fix in one leaves the other behind. The
-2.0 review on the Isha hubs found five bugs that only exist because there are
-two modes:
+2.0 review on a reference deployment found five bugs that only exist
+because there are two modes:
 
 - **B2 / F10.** Behind a gateway, `/v1/chat/completions` always answers as
-  the first hub. `model: "gpms-hub"` returned an IRS answer with no error, and
+  the first hub. `model: "projects-hub"` returned a Reports answer with no error, and
   `/b/<hub>/v1` isn't routed. A personal API key limited to any other agent can
   never be used. In single-hub mode `/v1` works. (Milestone B's review fixes
   add a `/b/<agent>/v1` route per hub; this proposal keeps it as the
@@ -37,15 +37,15 @@ two modes:
 Operators also meet two configuration models. Sign-in, the owner and the
 public URL are per hub in one mode and per deployment in the other. The
 gateway reads hub `.env` files for these settings and stops when they
-disagree. Isha has eleven hubs and has been bitten by this (the runbook's
-"last hub's WEBUI_NAME wins").
+disagree. A multi-hub reference deployment has been affected by this
+(the runbook's "last hub's WEBUI_NAME wins").
 
 ## Why now
 
 2.0 already removed one interface (Open WebUI), and the edge, the shared
 store and the manifest are what every 2.0 feature builds on: accounts, API
 keys, approvals, hub changes, workflows. Single-hub mode is the odd one out.
-Isha's move to 2.0 is the next big deployment, and it runs as a gateway; the
+The next reference deployment moving to 2.0 runs as a gateway; the
 first-use path for new builders runs as a single hub. Both should be the same
 code before more features add their own "if gateway" branches.
 
@@ -71,7 +71,7 @@ There is one command and one shape:
 - Warnings that concern the deployment are printed once, by the supervisor,
   naming the hubs they concern.
 
-**Isha and systemd.** Isha restarts hubs independently today. Keep that:
+**Independent systemd units.** Operators restart hubs independently today. Keep that:
 `hubzoid run --no-bridges <hubs>` runs the edge for bridges started as their
 own units, and `hubzoid bridge <hub>` (today `hubzoid run <hub> --no-ui`
 behind a gateway) runs one hub's bridge under its own unit. A broken hub
@@ -125,7 +125,7 @@ template per hub and one for the edge.
 - Set-password, approval and waiting-for-you links open on a deployment whose
   hubs have `/b/<hub>` public paths.
 - Settings → Brand describes what people see, before and after publishing.
-- Isha's runbook has per-hub bridge units and an edge unit; stopping one
+- The deployment runbook has per-hub bridge units and an edge unit; stopping one
   bridge leaves the other agents answering.
 - An existing single hub upgrades with no data move and keeps its chats,
   accounts and URLs; an existing gateway upgrades by changing the command.

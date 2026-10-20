@@ -3,9 +3,9 @@
 
     from hubzoid.workflows.testing import run_local
 
-    out = run_local(program_report, hub_dir=hub, inputs={"program": "Samyama"},
+    out = run_local(program_report, hub_dir=hub, inputs={"program": "Advanced"},
                     as_user="meera@example.org")
-    assert out.artifacts[0]["key"] == "program-samyama"
+    assert out.artifacts[0]["key"] == "program-advanced"
 
 The workflow's own function runs inside a run context like a real run: inputs
 validated against its model (`hub.input`), `hub.user`, `hub.trigger`,

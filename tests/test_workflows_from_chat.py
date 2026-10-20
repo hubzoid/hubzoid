@@ -58,16 +58,16 @@ def hub(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
-    d = tmp_path / "irs"
+    d = tmp_path / "reports"
     (d / "workflows" / "program_report").mkdir(parents=True)
-    (d / "AGENTS.md").write_text("---\nname: irs\n---\nbody")
+    (d / "AGENTS.md").write_text("---\nname: reports\n---\nbody")
     (d / "workflows" / "program_report" / "program_report.py").write_text(WORKFLOW)
     gs = store_for(d)
     for e in (TEAM_ACCT, MEERA, RAVI):
         gs.upsert_identity(email=e, owui_id="id-" + e)
-        gs.grant(e, "irs", "use_hub", actor="t")
-    gs.grant(MEERA, "irs", "wf_program_report", actor="t")
-    gs.grant(MEERA, "irs", "schedule_reports", actor="t")
+        gs.grant(e, "reports", "use_hub", actor="t")
+    gs.grant(MEERA, "reports", "wf_program_report", actor="t")
+    gs.grant(MEERA, "reports", "schedule_reports", actor="t")
     return d
 
 
@@ -84,9 +84,9 @@ class FakeEngine:
         self.started.append((workflow_id, name, dict(envelope)))
         src = self.hub_dir / f"{workflow_id}.html"
         src.write_text(f"<h1>{envelope.get('inputs')}</h1>")
-        arts.publish(self.hub_dir, hub="irs", owner=envelope.get("acts_as") or TEAM_ACCT, owner_account=None,
-                     source=src, title="Bhava report", workflow=name, run_id=workflow_id,
-                     key="program-bhava", series={"scope": envelope.get("scope"),
+        arts.publish(self.hub_dir, hub="reports", owner=envelope.get("acts_as") or TEAM_ACCT, owner_account=None,
+                     source=src, title="Intro report", workflow=name, run_id=workflow_id,
+                     key="program-intro", series={"scope": envelope.get("scope"),
                                                   "schedule_id": envelope.get("schedule_id")})
         self.status[workflow_id] = "SUCCESS"
         return SimpleNamespace(get_workflow_id=lambda: workflow_id)
@@ -156,8 +156,8 @@ def test_inputs_are_checked_with_one_safe_sentence(hub):
         inputs_lib.validate(model, {"period": "quarter"})
     with pytest.raises(inputs_lib.InputError, match="colour isn't an input"):
         inputs_lib.validate(model, {"colour": "red"})
-    data = inputs_lib.dump(inputs_lib.validate(model, {"program": "Bhava", "token": "s3cret"}))
-    assert inputs_lib.display(model, data) == "Bhava, week, ••••"
+    data = inputs_lib.dump(inputs_lib.validate(model, {"program": "Intro", "token": "s3cret"}))
+    assert inputs_lib.display(model, data) == "Intro, week, ••••"
     with pytest.raises(inputs_lib.InputError, match="too long"):
         inputs_lib.validate(model, {"program": "x" * 5000})
     assert inputs_lib.validate(model, {"program": "x" * 5000}, max_bytes=200 * 1024)
@@ -181,14 +181,14 @@ def test_inputs_are_checked_with_one_safe_sentence(hub):
             return self
     with pytest.raises(inputs_lib.InputError, match=r"^End is before start\. Nothing ran\.$"):
         inputs_lib.validate(Span, {"start": 2, "end": 1})
-    assert inputs_lib.parse_cli(["program=Bhava", "limit=5"]) == {"program": "Bhava", "limit": 5}
+    assert inputs_lib.parse_cli(["program=Intro", "limit=5"]) == {"program": "Intro", "limit": 5}
 
 
 def test_run_local_runs_as_a_person_or_the_team(hub):
     from hubzoid.workflows.testing import run_local
 
     defs = {d.name: d for d in runtime.load_definitions(hub)}
-    mine = run_local(defs["program_report"].fn, hub_dir=hub, inputs={"program": "Bhava"}, as_user=MEERA)
+    mine = run_local(defs["program_report"].fn, hub_dir=hub, inputs={"program": "Intro"}, as_user=MEERA)
     assert mine.result["team"] is False and mine.artifacts[0]["audience"] == "owner"
     team = run_local(defs["program_report"].fn, hub_dir=hub, trigger="schedule")
     assert team.result["team"] is True and team.artifacts[0]["key"] == "program-all"
@@ -198,43 +198,43 @@ def test_run_local_runs_as_a_person_or_the_team(hub):
 # ---- personal schedules -------------------------------------------------------------------
 
 
-def _save(hub, actor=MEERA, cadence="every monday at 09:00", program="Bhava"):
-    out = personal.propose_create(hub, "irs", actor, workflow="program_report",
+def _save(hub, actor=MEERA, cadence="every monday at 09:00", program="Intro"):
+    out = personal.propose_create(hub, "reports", actor, workflow="program_report",
                                   inputs={"program": program, "period": "month"}, cadence=cadence,
                                   timezone_name="Asia/Kolkata")
-    return out, personal.confirm(hub, "irs", actor, out["code"])
+    return out, personal.confirm(hub, "reports", actor, out["code"])
 
 
 def test_saving_takes_two_calls_and_the_first_run_starts(hub, engine):
     from hubzoid._request_ctx import chat_scope
 
-    ask = dict(workflow="program_report", inputs={"program": "Bhava", "period": "month"},
+    ask = dict(workflow="program_report", inputs={"program": "Intro", "period": "month"},
                cadence="every monday at 09:00", timezone_name="Asia/Kolkata")
     with chat_scope("c1"):                                              # the turn that asks
-        proposal = personal.propose_create(hub, "irs", MEERA, **ask)
-        assert personal.pending(hub, "irs", MEERA, kinds=("create",)) == []
+        proposal = personal.propose_create(hub, "reports", MEERA, **ask)
+        assert personal.pending(hub, "reports", MEERA, kinds=("create",)) == []
         with pytest.raises(personal.ScheduleError, match="next message"):
-            personal.confirm(hub, "irs", MEERA, proposal["code"])       # the model can't say yes
+            personal.confirm(hub, "reports", MEERA, proposal["code"])       # the model can't say yes
     assert proposal["text"].startswith("Not saved yet. Mondays at 09:00 (Asia/Kolkata)")
-    assert personal.for_owner(hub, "irs", MEERA) == []                  # nothing stored yet
+    assert personal.for_owner(hub, "reports", MEERA) == []                  # nothing stored yet
     with pytest.raises(personal.ScheduleError, match="doesn't match"):
-        personal.confirm(hub, "irs", RAVI, proposal["code"])            # someone else's code
+        personal.confirm(hub, "reports", RAVI, proposal["code"])            # someone else's code
     with chat_scope("other"):
-        assert personal.pending(hub, "irs", MEERA, kinds=("create",)) == []
+        assert personal.pending(hub, "reports", MEERA, kinds=("create",)) == []
         with pytest.raises(personal.ScheduleError, match="different chat"):
-            personal.confirm(hub, "irs", MEERA, proposal["code"])
+            personal.confirm(hub, "reports", MEERA, proposal["code"])
     with chat_scope("c1"):                                              # the person's yes
-        assert personal.pending(hub, "irs", RAVI, kinds=("create",)) == []
-        assert personal.pending(hub, "irs", MEERA, kinds=("run",)) == []
-        pending = personal.pending(hub, "irs", MEERA, kinds=("create",))
+        assert personal.pending(hub, "reports", RAVI, kinds=("create",)) == []
+        assert personal.pending(hub, "reports", MEERA, kinds=("run",)) == []
+        pending = personal.pending(hub, "reports", MEERA, kinds=("create",))
         assert [p["code"] for p in pending] == [proposal["code"]]
         assert not any(k.startswith("_") for k in pending[0]["values"])
-        assert personal.propose_create(hub, "irs", MEERA, **ask)["code"] == proposal["code"]
-        saved = personal.confirm(hub, "irs", MEERA, proposal["code"])
-        assert personal.pending(hub, "irs", MEERA, kinds=("create",)) == []
+        assert personal.propose_create(hub, "reports", MEERA, **ask)["code"] == proposal["code"]
+        saved = personal.confirm(hub, "reports", MEERA, proposal["code"])
+        assert personal.pending(hub, "reports", MEERA, kinds=("create",)) == []
     assert saved["schedule"].state == "testing" and saved["run_id"] == f"ps-{saved['schedule'].id}-first"
     with pytest.raises(personal.ScheduleError, match="doesn't match|already used"):
-        personal.confirm(hub, "irs", MEERA, proposal["code"])           # used once
+        personal.confirm(hub, "reports", MEERA, proposal["code"])           # used once
     _, envelope = engine.started[0][1], engine.started[0][2]
     assert (envelope["acts_as"], envelope["scope"], envelope["trigger"]) == (MEERA, "personal", "personal_schedule")
 
@@ -243,7 +243,7 @@ def test_people_get_no_email_unless_the_hub_turns_it_on(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_EMAIL_DELIVERY", "preview")
     assert not personal.email_on(hub)                       # delivery set up, still off
     assert "email" not in personal.propose_create(
-        hub, "irs", MEERA, workflow="program_report", inputs={"program": "Bhava"},
+        hub, "reports", MEERA, workflow="program_report", inputs={"program": "Intro"},
         cadence="daily at 09:00", timezone_name="Asia/Kolkata")["text"]
     (hub / "workflows" / "settings.yaml").write_text("notify_by_email: true\n")
     assert personal.email_on(hub)
@@ -251,16 +251,16 @@ def test_people_get_no_email_unless_the_hub_turns_it_on(hub, monkeypatch):
 
 def test_limits_and_refusals_name_the_fix(hub, engine):
     with pytest.raises(personal.ScheduleError, match="at most once every hour"):
-        personal.propose_create(hub, "irs", MEERA, workflow="program_report", inputs={},
+        personal.propose_create(hub, "reports", MEERA, workflow="program_report", inputs={},
                                 cadence="every 15 minutes", timezone_name="Asia/Kolkata")
     with pytest.raises(personal.ScheduleError, match="can't read"):
-        personal.propose_create(hub, "irs", MEERA, workflow="program_report", inputs={},
+        personal.propose_create(hub, "reports", MEERA, workflow="program_report", inputs={},
                                 cadence="whenever", timezone_name="Asia/Kolkata")
     with pytest.raises(personal.ScheduleError, match="isn't a time zone"):
-        personal.propose_create(hub, "irs", MEERA, workflow="program_report", inputs={},
+        personal.propose_create(hub, "reports", MEERA, workflow="program_report", inputs={},
                                 cadence="daily at 09:00", timezone_name="Mars/Base")
     with pytest.raises(personal.ScheduleError, match="can't run Program report yet"):
-        personal.propose_create(hub, "irs", RAVI, workflow="program_report", inputs={},
+        personal.propose_create(hub, "reports", RAVI, workflow="program_report", inputs={},
                                 cadence="daily at 09:00", timezone_name="Asia/Kolkata")
     _save(hub)
     with pytest.raises(personal.ScheduleError, match="already have"):
@@ -270,17 +270,17 @@ def test_limits_and_refusals_name_the_fix(hub, engine):
 def test_the_dispatcher_fires_each_slot_once_and_pauses_on_lost_access(hub, engine):
     _, saved = _save(hub)
     s = saved["schedule"]
-    personal.after_run(hub, "irs", {"schedule_id": s.id}, saved["run_id"], ok=True, cause=None, published=[])
+    personal.after_run(hub, "reports", {"schedule_id": s.id}, saved["run_id"], ok=True, cause=None, published=[])
     assert personal.get(hub, s.id).state == "active"
     due = personal.get(hub, s.id).next_fire
-    first = personal.fire_due(hub, "irs", now=due + 30)
-    again = personal.fire_due(hub, "irs", now=due + 90)                  # next_fire already moved
+    first = personal.fire_due(hub, "reports", now=due + 30)
+    again = personal.fire_due(hub, "reports", now=due + 90)                  # next_fire already moved
     assert first == [f"ps-{s.id}-{int(due)}"] and again == []
     after_downtime = personal.get(hub, s.id).next_fire + 3 * 7 * 86400   # three weeks missed
-    started = personal.fire_due(hub, "irs", now=after_downtime + 600)
+    started = personal.fire_due(hub, "reports", now=after_downtime + 600)
     assert len(started) == 1                                             # caught up once
-    store_for(hub).revoke(MEERA, "irs", "wf_program_report", actor="admin")
-    personal.fire_due(hub, "irs", now=personal.get(hub, s.id).next_fire + 1)
+    store_for(hub).revoke(MEERA, "reports", "wf_program_report", actor="admin")
+    personal.fire_due(hub, "reports", now=personal.get(hub, s.id).next_fire + 1)
     paused = personal.get(hub, s.id)
     assert (paused.state, paused.reason) == ("paused", "access")
     assert personal.state_words(paused) == "Paused: access changed"
@@ -289,27 +289,27 @@ def test_the_dispatcher_fires_each_slot_once_and_pauses_on_lost_access(hub, engi
 def test_failures_pause_after_three_and_admins_resume_only_their_own_pause(hub, engine):
     _, saved = _save(hub)
     sid = saved["schedule"].id
-    personal.after_run(hub, "irs", {"schedule_id": sid}, saved["run_id"], ok=True, cause=None,
-                       published=[{"series_id": "s-bhava", "changed": False}])
-    assert personal.get(hub, sid).series == ["s-bhava"]          # an unchanged copy still feeds it
+    personal.after_run(hub, "reports", {"schedule_id": sid}, saved["run_id"], ok=True, cause=None,
+                       published=[{"series_id": "s-intro", "changed": False}])
+    assert personal.get(hub, sid).series == ["s-intro"]          # an unchanged copy still feeds it
     for i in range(3):
         personal._update(hub, sid, last_run=f"r{i}", last_status="running")
-        personal.after_run(hub, "irs", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])
-        personal.after_run(hub, "irs", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])
+        personal.after_run(hub, "reports", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])
+        personal.after_run(hub, "reports", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])
     s = personal.get(hub, sid)
     assert (s.state, s.reason, s.failures) == ("paused", "failures", 3)  # replays didn't double count
     with pytest.raises(personal.ScheduleError, match="only schedules they paused"):
-        personal.set_paused(hub, "irs", "admin@co.org", sid, False, admin=True)
-    personal.set_paused(hub, "irs", MEERA, sid, False)
-    personal.set_paused(hub, "irs", "admin@co.org", sid, True, admin=True)
+        personal.set_paused(hub, "reports", "admin@co.org", sid, False, admin=True)
+    personal.set_paused(hub, "reports", MEERA, sid, False)
+    personal.set_paused(hub, "reports", "admin@co.org", sid, True, admin=True)
     with pytest.raises(personal.ScheduleError, match="paused by an admin"):
-        personal.set_paused(hub, "irs", MEERA, sid, False)
+        personal.set_paused(hub, "reports", MEERA, sid, False)
     with pytest.raises(personal.ScheduleError, match="paused by an admin"):
-        personal.run_now(hub, "irs", MEERA, sid)                      # nor run it now
-    personal.set_paused(hub, "irs", MEERA, sid, True)                # pausing again changes nothing
+        personal.run_now(hub, "reports", MEERA, sid)                      # nor run it now
+    personal.set_paused(hub, "reports", MEERA, sid, True)                # pausing again changes nothing
     with pytest.raises(personal.ScheduleError, match="paused by an admin"):
-        personal.set_paused(hub, "irs", MEERA, sid, False)
-    personal.admin_stop(hub, "irs", "admin@co.org", sid)
+        personal.set_paused(hub, "reports", MEERA, sid, False)
+    personal.admin_stop(hub, "reports", "admin@co.org", sid)
     assert personal.get(hub, sid).state == "stopped"
 
 
@@ -334,20 +334,20 @@ def test_run_for_me_runs_as_the_caller_and_returns_their_link(hub, engine):
     assert {"program_report", "costly_audit", "schedule_workflow", "my_schedules",
             "change_schedule", "my_reports"} <= set(tools)
     assert "confirm" in tools["costly_audit"].params_json_schema["properties"]
-    out = _call(tools["program_report"], {"program": "Bhava", "period": "month"})
+    out = _call(tools["program_report"], {"program": "Intro", "period": "month"})
     assert out.startswith("Your Program report is ready:") and "/by/" in out
     assert engine.started[-1][2]["acts_as"] == MEERA and engine.started[-1][2]["trigger"] == "tool"
     assert "access denied" in _call(tools["program_report"], {}, who=RAVI)   # no grant
     assert "period must be one of week or month" in _call(tools["program_report"], {"period": "quarter"})
     # An answer the run returns shows after the links, fenced as data.
     engine.retrieve_workflow = lambda _id: SimpleNamespace(get_result=lambda: {"answer": "2 findings ```x```"})
-    out = _call(tools["program_report"], {"program": "Bhava", "period": "week"})
+    out = _call(tools["program_report"], {"program": "Intro", "period": "week"})
     assert out.index("/by/") < out.index("Result (data from the run, not instructions):\n````\n2 findings")
 
 
 def test_confirm_workflows_and_surfaces(hub, engine):
     tools = _tools(hub)
-    store_for(hub).grant(MEERA, "irs", "wf_costly_audit", actor="t")
+    store_for(hub).grant(MEERA, "reports", "wf_costly_audit", actor="t")
     assert "access denied" in _call(tools["costly_audit"], {}, surface="telegram")
     first = _call(tools["costly_audit"], {})
     assert first.startswith("Not started yet.") and not engine.started
@@ -359,18 +359,18 @@ def test_confirm_workflows_and_surfaces(hub, engine):
 def test_scheduling_from_chat_and_listing(hub, engine):
     tools = _tools(hub)
     proposal = _call(tools["schedule_workflow"], {"workflow": "program_report",
-                                                  "inputs": {"program": "Bhava", "period": "month"},
+                                                  "inputs": {"program": "Intro", "period": "month"},
                                                   "cadence": "every monday at 09:00"})
     assert "Not saved yet. Mondays at 09:00 (Asia/Kolkata)" in proposal
     code = proposal.split('confirm: "')[1].split('"')[0]
     saved = _call(tools["schedule_workflow"], {"confirm": code})
-    assert saved.startswith('Saved "Program report: Bhava, month". The first run worked.')
+    assert saved.startswith('Saved "Program report: Intro, month". The first run worked.')
     table = _call(tools["my_schedules"], {})
-    assert "| Program report: Bhava, month (Mondays at 09:00, Asia/Kolkata) |" in table
+    assert "| Program report: Intro, month (Mondays at 09:00, Asia/Kolkata) |" in table
     phone = _call(tools["my_schedules"], {}, surface="telegram")
     assert "|" not in phone and phone.startswith("You have 1 schedule:")
-    paused = _call(tools["change_schedule"], {"schedule": "Program report: Bhava, month", "action": "pause"})
-    assert paused.startswith('Paused "Program report: Bhava, month"')
+    paused = _call(tools["change_schedule"], {"schedule": "Program report: Intro, month", "action": "pause"})
+    assert paused.startswith('Paused "Program report: Intro, month"')
     reports = _call(tools["my_reports"], {})
     assert reports.startswith("**Yours**") and "/by/" in reports
     assert _call(tools["my_schedules"], {}, who=RAVI).startswith("You have no schedules")
@@ -380,10 +380,10 @@ def test_confirmation_recovery_without_tool_history(hub, engine, monkeypatch):
     from hubzoid._request_ctx import chat_scope
 
     tools = _tools(hub)
-    store_for(hub).grant(MEERA, "irs", "wf_costly_audit", actor="t")
+    store_for(hub).grant(MEERA, "reports", "wf_costly_audit", actor="t")
     with chat_scope("confirmation"):
         _call(tools["schedule_workflow"], {"workflow": "program_report",
-              "inputs": {"program": "Bhava", "token": "hidden-value"}, "cadence": "daily at 09:00"})
+              "inputs": {"program": "Intro", "token": "hidden-value"}, "cadence": "daily at 09:00"})
         _call(tools["costly_audit"], {})
         assert "Pending proposals" not in _call(tools["my_schedules"], {})
     with chat_scope("confirmation"):
@@ -395,11 +395,11 @@ def test_confirmation_recovery_without_tool_history(hub, engine, monkeypatch):
         assert "Pending proposals" not in _call(tools["my_schedules"], {}, who=RAVI)
         # Account replacement cannot recover the old person's pending actions.
         store_for(hub).upsert_identity(email=MEERA, owui_id="replacement")
-        assert personal.pending(hub, "irs", MEERA, kinds=("create", "run")) == []
+        assert personal.pending(hub, "reports", MEERA, kinds=("create", "run")) == []
         store_for(hub).upsert_identity(email=MEERA, owui_id="id-" + MEERA)
         now = time.time()
         monkeypatch.setattr(personal.time, "time", lambda: now + personal.PROPOSAL_SECONDS + 1)
-        assert personal.pending(hub, "irs", MEERA, kinds=("create", "run")) == []
+        assert personal.pending(hub, "reports", MEERA, kinds=("create", "run")) == []
 
 
 def test_change_and_stop_recovery_names_the_schedule(hub, engine):
@@ -409,9 +409,9 @@ def test_change_and_stop_recovery_names_the_schedule(hub, engine):
     schedule = saved["schedule"]
     tools = _tools(hub)
     with chat_scope("edit"):
-        change = personal.propose_change(hub, "irs", MEERA, schedule.id,
+        change = personal.propose_change(hub, "reports", MEERA, schedule.id,
                                         cadence="daily at 09:00", timezone_name=None)
-        stop = personal.propose_stop(hub, "irs", MEERA, schedule.id)
+        stop = personal.propose_stop(hub, "reports", MEERA, schedule.id)
     with chat_scope("edit"):
         result = _call(tools["my_schedules"], {})
         assert change["code"] in result and stop["code"] in result
@@ -430,7 +430,7 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
     (hub / "workflows" / "settings.yaml").write_text(
         "email_lists:\n  leads: [meera@co.org, new@co.org, eve@gmail.com]\n")
     ident = RunIdentity(TEAM_ACCT, "id-" + TEAM_ACCT, "run_as", TEAM_ACCT)
-    out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads",
+    out = email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads",
                                       subject="Weekly", body="# Numbers are in", body_format="markdown")
     from email import policy
     from email.parser import BytesParser
@@ -445,24 +445,24 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
     for k, v in {"GOOGLE_CLIENT_ID": "i", "GOOGLE_CLIENT_SECRET": "s", "ENABLE_OAUTH_SIGNUP": "true",
                  "OAUTH_ALLOWED_DOMAINS": "co.org"}.items():
         monkeypatch.setenv(k, v)
-    out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads",
+    out = email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads",
                                       subject="Weekly", body="# Numbers are in", body_format="markdown")
     assert {r["recipient"]: r["status"] for r in out["results"]}["new@co.org"] == "previewed"
-    out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="Weekly",
+    out = email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads", subject="Weekly",
                                       body="<div><h1>Digest</h1><p>Numbers are in</p></div>", body_format="html")
     preview = next(r for r in out["results"] if r["status"] == "previewed")
     message = BytesParser(policy=policy.default).parsebytes(Path(preview["outbox"]).read_bytes())
     rich, plain = (message.get_body(preferencelist=(k,)).get_content() for k in ("html", "plain"))
     assert "<h1>Digest</h1>" in rich and "To stop, ask" in rich
     assert "Numbers are in" in plain and "To stop, ask" in plain
-    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+    assert email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads", subject="x",
                                        body="<p>" + "y" * 5001 + "</p>", body_format="html")["status"] == "refused"
     # The limit counts what is read, list footer included.
-    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+    assert email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads", subject="x",
                                        body="<p>" + "y" * 4990 + "</p>", body_format="html")["status"] == "refused"
-    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="nope", subject="x",
+    assert email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="nope", subject="x",
                                        body="")["status"] == "refused"
-    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+    assert email_delivery.send_to_list(hub, hub="reports", identity=ident, list_name="leads", subject="x",
                                        body="y" * 2001)["status"] == "refused"
 
     from hubzoid import hub as run
@@ -515,21 +515,21 @@ def test_a_replaced_account_sees_none_of_the_old_schedules_or_reports(hub, engin
     from hubzoid.tools import report_tools
 
     _, saved = _save(hub)
-    assert personal.for_owner(hub, "irs", MEERA)                    # hers, saved as id-meera
+    assert personal.for_owner(hub, "reports", MEERA)                    # hers, saved as id-meera
     src = hub / "mine.html"
     src.write_text("mine")
-    made = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Bhava",
+    made = arts.publish(hub, hub="reports", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Intro",
                         workflow="program_report", run_id="r1", key="program-mine", series={"scope": "personal"})
     assert report_tools._reports_for(hub, MEERA)[0]
     store_for(hub).upsert_identity(email=MEERA, owui_id="id-new")   # a new account took the email
-    assert personal.for_owner(hub, "irs", MEERA) == []
+    assert personal.for_owner(hub, "reports", MEERA) == []
     assert not [r for r in report_tools._reports_for(hub, MEERA)[0] if "program-mine" in r[1]]
     # Publishing again as the new account starts fresh; the old company link doesn't follow.
     from hubzoid.artifacts import series
 
     series.domain_on(hub, series.get(hub, made["series_id"]), MEERA)
     src.write_text("theirs")
-    again = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-new", source=src, title="Bhava",
+    again = arts.publish(hub, hub="reports", owner=MEERA, owner_account="id-new", source=src, title="Intro",
                          workflow="program_report", run_id="r2", key="program-mine", series={"scope": "personal"})
     assert again["series_id"] == made["series_id"] and not series.domain_token(hub, series.get(hub, made["series_id"]))
 
@@ -539,14 +539,14 @@ def test_run_now_twice_in_five_minutes_says_so_and_stopping_retires_the_report(h
 
     _, saved = _save(hub)
     sid = saved["schedule"].id
-    personal.run_now(hub, "irs", MEERA, sid)                         # finishes at once here
+    personal.run_now(hub, "reports", MEERA, sid)                         # finishes at once here
     started = len(engine.started)
     with pytest.raises(personal.ScheduleError, match="ran a few minutes ago"):
-        personal.run_now(hub, "irs", MEERA, sid)                     # nothing would run: said, not hidden
+        personal.run_now(hub, "reports", MEERA, sid)                     # nothing would run: said, not hidden
     assert len(engine.started) == started
-    (made,) = [x for x in series.for_owner(hub, "irs", MEERA) if x.schedule_id == sid]
+    (made,) = [x for x in series.for_owner(hub, "reports", MEERA) if x.schedule_id == sid]
     assert series.state(hub, made)["state"] == "live"
-    personal.owner_stop(hub, "irs", MEERA, sid)
+    personal.owner_stop(hub, "reports", MEERA, sid)
     assert series.state(hub, series.get(hub, made.id))["state"] == "stopped"   # "No longer updating"
 
 
@@ -563,7 +563,7 @@ def test_update_now_runs_for_the_account_the_copy_was_made_for(hub, engine, monk
 
     src = hub / "u.html"
     src.write_text("u")
-    made = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Bhava",
+    made = arts.publish(hub, hub="reports", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Intro",
                         workflow="program_report", run_id="r1", key="program-u", series={"scope": "personal"})
     monkeypatch.setattr(runtime, "_HUB_DIR", hub)
     web._start_update(hub, series.get(hub, made["series_id"]), MEERA)
@@ -580,12 +580,12 @@ def test_confirm_only_with_required_inputs(hub, engine):
     runtime._REGISTRY['costly_audit'] = replace(wf, inputs=Required)
     from hubzoid.tools.report_tools import _run_tool
     tool = _run_tool(hub, runtime._REGISTRY['costly_audit'])
-    store_for(hub).grant(MEERA, 'irs', 'wf_costly_audit', actor='t')
-    first = _call(tool, {'program': 'Bhava'})
+    store_for(hub).grant(MEERA, 'reports', 'wf_costly_audit', actor='t')
+    first = _call(tool, {'program': 'Intro'})
     code = first.split('confirm: "')[1].split('"')[0]
     _call(tool, {'confirm': code})
     assert 'required' not in tool.params_json_schema
-    assert engine.started[-1][2]['inputs'] == {'program': 'Bhava'}
+    assert engine.started[-1][2]['inputs'] == {'program': 'Intro'}
     assert engine.started, 'Following the tool instruction (only confirm) did not start the approved run'
 
 
@@ -595,15 +595,15 @@ def test_stopping_during_run_leaves_report_stopped(hub, engine, tmp_path):
     proposal, out = _save(hub)
     sid = out['schedule'].id
     run_id = out['run_id']
-    found = series.for_owner(hub, 'irs', MEERA)[0]
-    personal.owner_stop(hub, 'irs', MEERA, sid)
+    found = series.for_owner(hub, 'reports', MEERA)[0]
+    personal.owner_stop(hub, 'reports', MEERA, sid)
     assert series.state(hub, series.get(hub, found.id))['state'] == 'stopped'
     src = tmp_path / 'late.html'
     src.write_text('finished after stop')
-    arts.publish(hub, hub='irs', owner=MEERA, owner_account='id-'+MEERA, source=src,
+    arts.publish(hub, hub='reports', owner=MEERA, owner_account='id-'+MEERA, source=src,
                  workflow='program_report', run_id='already-running', key=found.key,
                  series={'scope':'personal','schedule_id':sid})
-    series.finish_run(hub, 'irs', 'program_report', 'already-running',
+    series.finish_run(hub, 'reports', 'program_report', 'already-running',
                       trigger='personal_schedule', scope='personal', schedule_id=sid, ok=True)
     assert series.state(hub, series.get(hub, found.id))['state'] == 'stopped'
 
@@ -613,13 +613,13 @@ def test_queue_failure_counts_towards_pause(hub, engine, monkeypatch):
     proposal, out = _save(hub)
     sid = out['schedule'].id
     run_id = out['run_id']
-    personal.after_run(hub, 'irs', {'schedule_id':sid}, run_id, ok=True, cause=None, published=[])
+    personal.after_run(hub, 'reports', {'schedule_id':sid}, run_id, ok=True, cause=None, published=[])
     def fail(*args, **kwargs):
         raise RuntimeError('queue unavailable')
     monkeypatch.setattr(runtime, 'start_run', fail)
     for i in range(3):
         s = personal.get(hub, sid)
-        personal.fire_due(hub, 'irs', now=s.next_fire + 1)
+        personal.fire_due(hub, 'reports', now=s.next_fire + 1)
     s = personal.get(hub, sid)
     assert s.state == 'paused'
 
@@ -630,19 +630,19 @@ def test_run_for_me_returns_unkeyed_artifact(hub, engine, monkeypatch):
     def start(name, envelope, *, workflow_id=None):
         src=hub/'unkeyed.html'
         src.write_text('one-off report')
-        published.append(arts.publish(hub, hub='irs', owner=MEERA, owner_account='id-'+MEERA,
+        published.append(arts.publish(hub, hub='reports', owner=MEERA, owner_account='id-'+MEERA,
             source=src, workflow=name, run_id=workflow_id))
         engine.status[workflow_id]='SUCCESS'
         return SimpleNamespace(get_workflow_id=lambda:workflow_id)
     monkeypatch.setattr(runtime, 'start_run', start)
-    answer=_call(_tools(hub)['program_report'], {'program':'Bhava'})
+    answer=_call(_tools(hub)['program_report'], {'program':'Intro'})
     assert published[0]['url'] in answer, 'Published artifact is absent from chat'
 
 
 def test_dispatch_intent_recovers_same_run_after_interruption(hub, engine, monkeypatch):
     _, saved = _save(hub)
     sid = saved["schedule"].id
-    personal.after_run(hub, "irs", {"schedule_id": sid}, saved["run_id"], ok=True,
+    personal.after_run(hub, "reports", {"schedule_id": sid}, saved["run_id"], ok=True,
                        cause=None, published=[])
     original = runtime.start_run
 
@@ -656,12 +656,12 @@ def test_dispatch_intent_recovers_same_run_after_interruption(hub, engine, monke
     monkeypatch.setattr(runtime, "start_run", crash)
     now = personal.get(hub, sid).next_fire + 1
     with pytest.raises(Interrupted):
-        personal.fire_due(hub, "irs", now=now)
+        personal.fire_due(hub, "reports", now=now)
     intent = personal.get(hub, sid)
     assert intent.last_status == "dispatching" and intent.next_fire > now
     admitted = len(engine.started)
     monkeypatch.setattr(runtime, "start_run", original)
-    assert personal.fire_due(hub, "irs", now=now + 1) == [intent.last_run]
+    assert personal.fire_due(hub, "reports", now=now + 1) == [intent.last_run]
     assert len(engine.started) == admitted  # same deterministic DBOS id
     assert personal.get(hub, sid).last_status == "running"
 
@@ -669,7 +669,7 @@ def test_dispatch_intent_recovers_same_run_after_interruption(hub, engine, monke
 def test_edit_during_dispatch_never_queues_the_old_inputs(hub, engine, monkeypatch):
     _, saved = _save(hub)
     s = personal.get(hub, saved["schedule"].id)
-    personal.after_run(hub, "irs", {"schedule_id": s.id}, saved["run_id"],
+    personal.after_run(hub, "reports", {"schedule_id": s.id}, saved["run_id"],
                        ok=True, cause=None, published=[])
     original = personal.problem
 
@@ -682,7 +682,7 @@ def test_edit_during_dispatch_never_queues_the_old_inputs(hub, engine, monkeypat
 
     monkeypatch.setattr(personal, "problem", edit_after_read)
     before = len(engine.started)
-    assert personal.fire_due(hub, "irs", now=s.next_fire + 1) == []
+    assert personal.fire_due(hub, "reports", now=s.next_fire + 1) == []
     assert len(engine.started) == before
     assert personal.get(hub, s.id).values["program"] == "Changed"
 
@@ -691,12 +691,12 @@ def test_old_completion_preserves_new_dispatch_and_admin_pause(hub, engine):
     _, saved = _save(hub)
     sid = saved["schedule"].id
     personal._update(hub, sid, last_run="new-run", last_status="dispatching")
-    personal.after_run(hub, "irs", {"schedule_id": sid}, saved["run_id"], ok=True,
+    personal.after_run(hub, "reports", {"schedule_id": sid}, saved["run_id"], ok=True,
                        cause=None, published=[])
     assert personal.get(hub, sid).last_run == "new-run"
-    personal.set_paused(hub, "irs", "admin@co.org", sid, True, admin=True)
+    personal.set_paused(hub, "reports", "admin@co.org", sid, True, admin=True)
     personal._update(hub, sid, failures=2)
-    personal.after_run(hub, "irs", {"schedule_id": sid}, "new-run", ok=False,
+    personal.after_run(hub, "reports", {"schedule_id": sid}, "new-run", ok=False,
                        cause="timeout", published=[])
     current = personal.get(hub, sid)
     assert (current.state, current.reason, current.failures) == ("paused", "admin", 3)
@@ -705,16 +705,16 @@ def test_old_completion_preserves_new_dispatch_and_admin_pause(hub, engine):
 def test_edit_replaces_inputs_preserves_pause_and_rejects_stale_save(hub, engine):
     _, saved = _save(hub)
     sid = saved["schedule"].id
-    s = personal.set_paused(hub, "irs", "admin@co.org", sid, True, admin=True)
-    edited = personal.edit(hub, "irs", MEERA, sid, inputs={"program": "New program", "period": "month"},
+    s = personal.set_paused(hub, "reports", "admin@co.org", sid, True, admin=True)
+    edited = personal.edit(hub, "reports", MEERA, sid, inputs={"program": "New program", "period": "month"},
                            cadence="daily at 18:00", timezone_name="UTC", revision=s.updated)
     assert edited.values["program"] == "New program" and edited.values["period"] == "month"
     assert (edited.state, edited.reason, edited.cadence) == ("paused", "admin", "daily at 18:00")
     with pytest.raises(personal.ScheduleError, match="changed while"):
-        personal.edit(hub, "irs", MEERA, sid, inputs={}, cadence="daily at 09:00",
+        personal.edit(hub, "reports", MEERA, sid, inputs={}, cadence="daily at 09:00",
                       timezone_name="UTC", revision=s.updated)
     with pytest.raises(personal.ScheduleError, match="no schedule"):
-        personal.edit(hub, "irs", RAVI, sid, inputs={}, cadence="daily at 09:00",
+        personal.edit(hub, "reports", RAVI, sid, inputs={}, cadence="daily at 09:00",
                       timezone_name="UTC", revision=edited.updated)
 
 
@@ -729,12 +729,12 @@ def test_change_tool_confirms_saved_input_values(hub, engine):
 
 
 def test_confirmation_is_bound_to_account_and_workflow(hub, engine):
-    code = personal.propose(hub, "irs", MEERA, "run", {"workflow": "program_report", "inputs": {}})
+    code = personal.propose(hub, "reports", MEERA, "run", {"workflow": "program_report", "inputs": {}})
     with pytest.raises(personal.ScheduleError, match="doesn't match this report"):
-        personal.take(hub, "irs", MEERA, code, kinds=("run",), workflow="costly_audit")
+        personal.take(hub, "reports", MEERA, code, kinds=("run",), workflow="costly_audit")
     store_for(hub).upsert_identity(email=MEERA, owui_id="replacement")
     with pytest.raises(personal.ScheduleError, match="different account"):
-        personal.take(hub, "irs", MEERA, code, kinds=("run",), workflow="program_report")
+        personal.take(hub, "reports", MEERA, code, kinds=("run",), workflow="program_report")
 
 
 def test_personal_results_require_admission_and_current_account_identity(hub, monkeypatch):
@@ -745,7 +745,7 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
     env = {"trigger": "tool", "scope": "personal", "acts_as": MEERA, "acts_as_account": "id-" + MEERA}
     prefix = personal.tool_run_prefix("program_report", MEERA, "id-" + MEERA)
     run = SimpleNamespace(workflow_id=prefix + "input-deadbeef", name="program_report",
-                          input={"args": ("irs", None, env), "kwargs": {}},
+                          input={"args": ("reports", None, env), "kwargs": {}},
                           status="SUCCESS", output={"answer": "Private result"}, created_at=1000)
     who = {"subject": MEERA, "account_id": "id-" + MEERA, "source": "caller"}
 
@@ -754,7 +754,7 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
             pass
 
         def list_workflows(self, **kwargs):
-            assert kwargs["application_name"] == runtime._app_name("irs")
+            assert kwargs["application_name"] == runtime._app_name("reports")
             prefixes = kwargs["workflow_id_prefix"]
             return [run] if run.workflow_id.startswith(tuple(prefixes) if isinstance(prefixes, list) else prefixes) else []
 
@@ -780,14 +780,14 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
 def test_my_reports_keeps_saved_links_when_history_is_unavailable(hub, engine, monkeypatch):
     from hubzoid.workflows import observe
 
-    _call(_tools(hub)["program_report"], {"program": "Bhava"})
+    _call(_tools(hub)["program_report"], {"program": "Intro"})
 
     def unavailable(*args, **kwargs):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(observe, "personal_runs", unavailable)
     answer = _call(_tools(hub)["my_reports"], {})
-    assert "temporarily unavailable" in answer and "Bhava report" in answer
+    assert "temporarily unavailable" in answer and "Intro report" in answer
 
 
 def test_run_history_also_binds_results_to_the_recorded_account():
@@ -811,7 +811,7 @@ def test_personal_history_limits_after_account_filter_and_merges_workflows(hub, 
     def run(name, actor, number):
         prefix = personal.tool_run_prefix(name, actor, "id-" + actor)
         return SimpleNamespace(workflow_id=prefix + f"input-{number}", name=name,
-            input={"args": ("irs", None, env)}, status="SUCCESS",
+            input={"args": ("reports", None, env)}, status="SUCCESS",
             output={"answer": str(number)}, created_at=number)
 
     # A busy teammate would consume the old hub-wide limit before our first result.

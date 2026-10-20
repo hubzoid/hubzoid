@@ -313,7 +313,7 @@ from hubzoid import hub, step, workflow
 
 
 class ProgramReport(BaseModel):
-    program: Literal["Bhava Spandana", "Inner Engineering"] = Field(description="The program.")
+    program: Literal["Intro Spandana", "Inner Engineering"] = Field(description="The program.")
     period: Literal["week", "month"] = Field("week", description="The week or the month so far.")
 
 

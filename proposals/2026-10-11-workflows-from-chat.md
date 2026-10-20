@@ -8,7 +8,7 @@ is the short version for the repository.
 
 People ask an agent for a report, then want it kept fresh and shared. Today:
 
-- A code workflow takes no inputs, so "make the Bhava Spandana report for this
+- A code workflow takes no inputs, so "make the Intro Spandana report for this
   month" can't be a workflow run.
 - Chat can start a workflow only as an operator, as the workflow's account, and
   the asker can't read the result.
@@ -18,13 +18,13 @@ People ask an agent for a report, then want it kept fresh and shared. Today:
   redirects to a fixed copy, so a bookmark goes stale.
 - Nobody outside the agent can read a report, even at the company's own domain.
 
-IRS asked for live pages per program and per event, readable by anyone at the
+A reporting team asked for live pages per program and per event, readable by anyone at the
 company domain with the link. GitZoid needs reports with inputs, email to lists
 and GitHub webhooks.
 
 ## Why now
 
-IRS asked for live, shareable reports. GitZoid is being built against these
+A reporting team asked for live, shareable reports. GitZoid is being built against these
 APIs. Both use the same pieces.
 
 ## What should happen

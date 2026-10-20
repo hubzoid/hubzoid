@@ -24,7 +24,7 @@ _WORKFLOW = textwrap.dedent('''
         period: Literal["week", "month"] = "week"
 
     @workflow(schedule="daily at 06:00", run_as="reports@co.org", inputs=Inputs,
-              schedule_input={"program": "Bhava"}, as_tool=True, schedulable=True)
+              schedule_input={"program": "Intro"}, as_tool=True, schedulable=True)
     def program_report():
         page = hub.run_dir / "page.html"
         page.write_text(f"<h1>{hub.input.program} {hub.input.period}</h1>")
@@ -40,9 +40,9 @@ _SETUP = textwrap.dedent('''
     gs = store_for(sys.argv[1])
     for who in ("reports@co.org", "meera@co.org", "ravi@co.org"):
         gs.upsert_identity(email=who, owui_id="id-" + who)
-        gs.grant(who, "irs", "use_hub", actor="test")
+        gs.grant(who, "reports", "use_hub", actor="test")
     for perm in ("wf_program_report", "schedule_reports"):
-        gs.grant("meera@co.org", "irs", perm, actor="test")
+        gs.grant("meera@co.org", "reports", perm, actor="test")
 ''')
 
 _RUN = textwrap.dedent('''
@@ -50,7 +50,7 @@ _RUN = textwrap.dedent('''
     from dbos import DBOS
     from hubzoid.workflows import runtime, personal, observe
     hub = sys.argv[1]
-    runtime.init(hub, hub_name="irs")
+    runtime.init(hub, hub_name="reports")
     runtime.load_workflows(hub)
     runtime.launch()
     def done(handle):
@@ -63,15 +63,15 @@ _RUN = textwrap.dedent('''
     out["mine"] = done(runtime.start_run("program_report", {
         "trigger": "tool", "scope": "personal", "acts_as": "meera@co.org", "started_by": "meera@co.org",
         "acts_as_account": "id-meera@co.org",
-        "inputs": {"program": "Samyama", "period": "month"}, "inputs_display": "Samyama, month"},
+        "inputs": {"program": "Advanced", "period": "month"}, "inputs_display": "Advanced, month"},
         workflow_id=out["mine_id"]))
     out["refused"] = done(runtime.start_run("program_report", {
         "trigger": "tool", "scope": "personal", "acts_as": "ravi@co.org", "started_by": "ravi@co.org",
         "inputs": {}}, workflow_id="tool-test-2"))
-    proposal = personal.propose_create(hub, "irs", "meera@co.org", workflow="program_report",
-        inputs={"program": "Bhava", "period": "month"}, cadence="every monday at 09:00",
+    proposal = personal.propose_create(hub, "reports", "meera@co.org", workflow="program_report",
+        inputs={"program": "Intro", "period": "month"}, cadence="every monday at 09:00",
         timezone_name="Asia/Kolkata")
-    saved = personal.confirm(hub, "irs", "meera@co.org", proposal["code"])
+    saved = personal.confirm(hub, "reports", "meera@co.org", proposal["code"])
     done(DBOS.retrieve_workflow(saved["run_id"]))
     s = personal.get(hub, saved["schedule"].id)
     out["schedule"] = {"state": s.state, "last": s.last_status}
@@ -92,10 +92,10 @@ _RECOVER = textwrap.dedent('''
     from dbos import DBOS
     from hubzoid.workflows import runtime, personal, observe
     hub, sid, run_id = sys.argv[1:]
-    runtime.init(hub, hub_name="irs")
+    runtime.init(hub, hub_name="reports")
     runtime.load_workflows(hub)
     runtime.launch()
-    started = personal.fire_due(hub, "irs")
+    started = personal.fire_due(hub, "reports")
     result = DBOS.retrieve_workflow(run_id).get_result()
     # The same durable admission id is idempotent in the real engine too.
     schedule = personal.get(hub, sid)
@@ -110,9 +110,9 @@ _RECOVER = textwrap.dedent('''
 
 
 def test_team_and_personal_runs_of_one_workflow(tmp_path):
-    hub = tmp_path / "irs"
+    hub = tmp_path / "reports"
     (hub / "workflows" / "program_report").mkdir(parents=True)
-    (hub / "AGENTS.md").write_text("---\nname: irs\n---\nbody")
+    (hub / "AGENTS.md").write_text("---\nname: reports\n---\nbody")
     (hub / "workflows" / "program_report" / "main.py").write_text(_WORKFLOW)
     env = {k: v for k, v in os.environ.items()
            if k not in ("HUBZOID_WORKFLOW_USER", "HUBZOID_DEPLOYMENT", "DATABASE_URL",
@@ -128,13 +128,13 @@ def test_team_and_personal_runs_of_one_workflow(tmp_path):
     assert line, proc.stderr[-4000:]
     out = json.loads(line[7:])
     assert out["team"]["team"] is True and out["team"]["user"] == "reports@co.org"
-    assert out["team"]["url"].endswith("/portal/latest/irs/program-bhava")       # schedule_input
+    assert out["team"]["url"].endswith("/portal/latest/reports/program-intro")       # schedule_input
     assert out["mine"]["team"] is False and out["mine"]["user"] == "meera@co.org"
-    assert "/portal/latest/irs/program-samyama/by/" in out["mine"]["url"]
+    assert "/portal/latest/reports/program-advanced/by/" in out["mine"]["url"]
     assert out["refused"]["error"] == "IdentityError"                            # no report grant
     assert out["schedule"] == {"state": "active", "last": "updated"}
     assert out["history"][out["mine_id"]] == {"trigger": "tool", "started_by": "meera@co.org",
-                                             "inputs": "Samyama, month", "run_as": "meera@co.org"}
+                                             "inputs": "Advanced, month", "run_as": "meera@co.org"}
     assert [r["id"] for r in out["personal"]] == [out["mine_id"]]
     assert out["personal"][0]["links"][0]["url"] == out["mine"]["url"]
     recovered = subprocess.run([sys.executable, "-c", _RECOVER, str(hub),

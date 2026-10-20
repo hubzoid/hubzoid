@@ -126,7 +126,7 @@ def hidden_fields(model) -> set[str]:
 
 def display(model, data: dict | None, *, limit: int = 120) -> str:
     """A short, safe summary for listings: values only, hidden ones masked,
-    empty ones left out. "Bhava Spandana, month"."""
+    empty ones left out. "Intro Spandana, month"."""
     if not data:
         return ""
     hidden = hidden_fields(model)

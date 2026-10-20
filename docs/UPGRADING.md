@@ -62,7 +62,7 @@ message naming each one, even when its value is blank or `false`:
 - `WEBUI_NAME` is still read as the deployment's name until one is set in
   Settings → Brand. In 1.x it also named each hub's agent: put that name in the
   hub's `AGENTS.md` frontmatter as `display_name:` (for example
-  `display_name: IRS Hub`). Then remove it.
+  `display_name: Reports Hub`). Then remove it.
 - `LICENSE_KEY` (Open WebUI's licence key) is not used. Remove it.
 - `HUBZOID_OWUI_DB` is read only by `hubzoid migrate openwebui`. Remove it once
   the move is done.

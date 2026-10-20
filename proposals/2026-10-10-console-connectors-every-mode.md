@@ -17,7 +17,7 @@ connector, and moving between modes means registering everything again.
 
 Connectors are central to making a Hub useful to a team, and #39 is an access
 bug in the mode a live deployment runs. Nobody uses Open WebUI MCP in
-production yet (Ishangam on IRS is a test setup), so a fresh setup costs
+production yet (a connector on the reporting hub is a test setup), so a fresh setup costs
 little now and more later.
 
 ## What should happen

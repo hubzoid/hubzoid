@@ -443,11 +443,11 @@ def test_an_agents_display_name_is_shown_as_written(tmp_path):
     from hubzoid.loaders import agents as agents_loader
     from hubzoid.webapp_gateway import agent_card
 
-    hub = _hub(tmp_path, "irs", 3613, agent_name="irs-hub")
-    assert agent_card(hub)["name"] == "irs-hub"  # the app turns a slug into "Irs Hub"
-    (hub / "AGENTS.md").write_text("---\nname: irs-hub\ndisplay_name: IRS Hub\ndescription: d\n---\nbody")
+    hub = _hub(tmp_path, "reports", 3613, agent_name="reports-hub")
+    assert agent_card(hub)["name"] == "reports-hub"  # the app turns a slug into "Reports Hub"
+    (hub / "AGENTS.md").write_text("---\nname: reports-hub\ndisplay_name: Reports Hub\ndescription: d\n---\nbody")
     card = agent_card(hub)
-    assert (card["name"], card["id"]) == ("IRS Hub", "irs-hub")  # the id stays the slug
-    assert agents_loader.display_name(hub) == "IRS Hub"
+    assert (card["name"], card["id"]) == ("Reports Hub", "reports-hub")  # the id stays the slug
+    assert agents_loader.display_name(hub) == "Reports Hub"
     (hub / "AGENTS.md").write_text("---\nname: [broken\n---")
-    assert agents_loader.display_name(hub, "IRS") == "IRS"
+    assert agents_loader.display_name(hub, "Reports") == "Reports"

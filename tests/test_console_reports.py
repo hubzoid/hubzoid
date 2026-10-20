@@ -53,9 +53,9 @@ def _schedule(c, state="active", reason=None, account=None):
         conn.execute(text(
             "INSERT INTO hz_personal_schedules (id, hub, workflow, owner, owner_account, name, inputs, "
             "cadence, timezone, state, reason, next_fire, failures, created, updated) VALUES "
-            "('ps1', :h, 'program_report', 'meera@co.org', :a, 'Bhava monthly', :i, "
+            "('ps1', :h, 'program_report', 'meera@co.org', :a, 'Intro monthly', :i, "
             "'every monday at 09:00', 'Asia/Kolkata', :s, :r, :n, 0, :t, :t)"),
-            {"h": c.hub, "i": json.dumps({"program": "Bhava"}), "s": state, "r": reason,
+            {"h": c.hub, "i": json.dumps({"program": "Intro"}), "s": state, "r": reason,
              "n": now + 3600, "t": now, "a": account})
         # What the engine publishes at start, so a Console in any process can show inputs.
         conn.execute(text("INSERT INTO hz_meta (k, v) VALUES (:k, :v)"),
@@ -74,7 +74,7 @@ def test_admins_see_schedules_and_pause_or_stop_but_resume_only_their_own_pause(
     _schedule(client)
     rows = client.get("/portal/api/schedules", params={"hub": client.hub}).json()["schedules"]
     assert rows[0]["owner"] == "meera@co.org" and rows[0]["when"] == "Mondays at 09:00"
-    assert rows[0]["inputs"] == "Bhava" and rows[0]["cost_30d"] == 0
+    assert rows[0]["inputs"] == "Intro" and rows[0]["cost_30d"] == 0
     assert client.post("/portal/api/schedules/ps1/pause", json={"hub": client.hub}).status_code == 200
     row = client.get("/portal/api/schedules", params={"hub": client.hub}).json()["schedules"][0]
     assert row["state_label"] == "Paused by admin"
@@ -100,8 +100,8 @@ def test_admins_turn_off_any_company_link_and_copy_only_team_ones(client, tmp_pa
         src = tmp_path / f"{scope}.html"
         src.write_text(scope)
         made[scope] = arts.publish(client.path, hub=client.hub, owner=who, owner_account="id-" + who,
-                                   source=src, title="Bhava", workflow="program_report", run_id="r",
-                                   key="program-bhava", audience="domain", series={"scope": scope})
+                                   source=src, title="Intro", workflow="program_report", run_id="r",
+                                   key="program-intro", audience="domain", series={"scope": scope})
     team_id, mine_id = made["team"]["series_id"], made["personal"]["series_id"]
     assert "share_url" not in made["personal"]                     # a person's copy starts private
     from hubzoid.artifacts import series
@@ -132,15 +132,15 @@ def test_people_see_and_change_only_their_own_schedules_and_reports(client, tmp_
     src = tmp_path / "mine.html"
     src.write_text("mine")
     arts.publish(client.path, hub=client.hub, owner="meera@co.org", owner_account="id-meera", source=src,
-                 title="Bhava", workflow="program_report", run_id="ps-ps1-first", key="program-bhava",
+                 title="Intro", workflow="program_report", run_id="ps-ps1-first", key="program-intro",
                  series={"scope": "personal", "schedule_id": "ps1"})
     monkeypatch.setattr(observe, "schedule_runs", lambda *_a, **_k: [{"status": "SUCCESS"}])
     who = {"v": ("id-meera", "meera@co.org")}
     monkeypatch.setattr(session, "verified_person", lambda *_a, **_k: who["v"])
     my = client.get("/portal/api/my").json()
     row = my["schedules"][0]
-    assert row["id"] == "ps1" and row["reports"][0]["url"].endswith("/program-bhava/by/" + row["reports"][0]["url"].rsplit("/", 1)[1])
-    assert "owner" not in row and "cost_30d" not in row and my["reports"][0]["title"] == "Bhava"
+    assert row["id"] == "ps1" and row["reports"][0]["url"].endswith("/program-intro/by/" + row["reports"][0]["url"].rsplit("/", 1)[1])
+    assert "owner" not in row and "cost_30d" not in row and my["reports"][0]["title"] == "Intro"
     assert my["agents"][0]["api"] == "/portal/api"
     assert my["agents"][0]["chat"].startswith("/?agent=") and my["connections"] is False
     assert my["blocked"] is False
@@ -151,8 +151,8 @@ def test_people_see_and_change_only_their_own_schedules_and_reports(client, tmp_
     # Run now needs the agent's own engine: in a gateway the page sends it to the agent's bridge.
     assert "can't run" in client.post("/portal/api/my/schedules/ps1/run_now", json=hub).json()["detail"]
     import hubzoid.chat.common as chat_common
-    monkeypatch.setattr(chat_common, "api_bases", lambda _d: {client.hub: "/b/irs"})
-    assert client.get("/portal/api/my").json()["agents"][0]["api"] == "/b/irs/portal/api"
+    monkeypatch.setattr(chat_common, "api_bases", lambda _d: {client.hub: "/b/reports"})
+    assert client.get("/portal/api/my").json()["agents"][0]["api"] == "/b/reports/portal/api"
     client.post("/portal/api/schedules/ps1/pause", json=hub)                       # an admin's pause
     refused = client.post("/portal/api/my/schedules/ps1/resume", json=hub)
     assert refused.status_code == 409 and "paused by an admin" in refused.json()["detail"]

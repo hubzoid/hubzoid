@@ -203,11 +203,11 @@ def test_commits_are_by_the_approver_and_keep_the_reason_out_of_history(hub, mon
     log = _git(hub, "log", "-1", "--format=%an <%ae>%n%B")
     assert log.startswith("owner <owner@example.org>")
     assert "India" not in log and log.count("Hubzoid-Approved-By:") == 1
-    monkeypatch.setenv("HUBZOID_GIT_COMMITTER", "Isha Hubs <hubs@example.org>")
+    monkeypatch.setenv("HUBZOID_GIT_COMMITTER", "Example Hubs <hubs@example.org>")
     ch2 = hc.propose(hub, title="Third", edits=[{"path": "knowledge/pricing.md", "append": "More."}],
                      actor=ANA, via="chat")
     hc.decide(hub, ch2["id"], actor=OWNER, decision="approve")
-    assert _git(hub, "log", "-1", "--format=%cn <%ce>").strip() == "Isha Hubs <hubs@example.org>"
+    assert _git(hub, "log", "-1", "--format=%cn <%ce>").strip() == "Example Hubs <hubs@example.org>"
     assert hc.needs_reload({"paths": ["AGENTS.md"]}) and not hc.needs_reload({"paths": ["knowledge/a.md"]})
 
 
@@ -229,5 +229,5 @@ def test_only_a_person_in_a_chat_changes_their_notes(hub):
 def test_waiting_for_you_links_use_the_site_origin(monkeypatch):
     from hubzoid.hitl.service import requests_url
 
-    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hubs.example.org/b/irs-hub")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hubs.example.org/b/reports-hub")
     assert requests_url() == "https://hubs.example.org/requests"
