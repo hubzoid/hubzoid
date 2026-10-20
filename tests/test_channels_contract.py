@@ -130,17 +130,18 @@ def test_apply_writes_file_and_checks_revision(hub_dir):
     assert "enabled: false" in path.read_text()
 
 
-def test_an_image_built_hub_keeps_channel_changes_in_its_data_folder(hub_dir, tmp_path, monkeypatch):
-    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))      # its files come from Git
+def test_an_image_built_hub_changes_channels_in_git(hub_dir, tmp_path, monkeypatch):
+    # The file is the only configuration: a hub whose files come from its image
+    # changes a channel by committing the file, never through the database.
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))
     data = config.load_text(hub_dir, yaml_for()).data
-    out = config.apply(hub_dir, data, expected_revision="absent", actor="t")
-    assert out["revision"] == 1 and out["file_written"] is False
-    assert not (hub_dir / "channels").exists()                          # nothing written into the image
-    assert config.active(hub_dir, "fake-main").enabled                  # the revision is what runs
-    out = config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="t")
-    assert out["status"] == "disabled" and not config.active(hub_dir, "fake-main").enabled
-    exported = config.export(hub_dir, "fake-main")                      # what to commit to Git
-    assert exported["config"]["enabled"] is False and exported["file_matches"] is None
+    with pytest.raises(ChannelError) as exc:
+        config.apply(hub_dir, data, expected_revision="absent", actor="t")
+    assert exc.value.code == "hub_read_only" and not (hub_dir / "channels").exists()
+    (hub_dir / "channels").mkdir()
+    (hub_dir / "channels" / "fake-main.yaml").write_text(yaml_for())  # as committed in Git
+    assert config.active(hub_dir, "fake-main").enabled
+    assert [c.id for c in config.active_all(hub_dir)] == ["fake-main"]
 
 
 def test_secret_value_never_exported(hub_dir):
