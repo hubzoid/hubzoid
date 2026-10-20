@@ -1,10 +1,11 @@
-// Workspace: edit the hub's own agent instructions, skills and shared prompts
-// as reviewed drafts (validate, diff, approve the exact digest, publish), roll
-// back to an earlier version, and check which OpenAPI operations would become
-// tools. Claude Code and Codex edit the same files; this is the reviewed path.
+// Workspace: propose changes to the hub's own agent instructions, skills and
+// shared prompts as hub changes (checked, approved by someone who manages the
+// agent, committed to Git), see each file's Git history, and check which
+// OpenAPI operations would become tools. Claude Code and Codex edit the same
+// files; this is the reviewed path from the browser.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileCode2, FilePlus2, History, ListChecks, Plus } from "lucide-react";
-import { ApiError, get, patch, post } from "../lib/api";
+import { FileCode2, History, ListChecks, Plus } from "lucide-react";
+import { ApiError, get, post } from "../lib/api";
 import { describeError } from "../lib/errors";
 import { t } from "../i18n/en";
 import { toast } from "../components/toast";
@@ -14,9 +15,8 @@ import { PageFrame } from "./PageFrame";
 
 const A = "/api/chat/authoring";
 type FileItem = { path: string; kind: "agent" | "skill" | "prompt"; sha256: string; bytes: number };
-type Draft = { id: string; path: string; kind: string; state: string; revision: number; digest: string; stale: boolean;
-  content: string; diff: string; problems: { code: string; message: string; field?: string }[]; note: string | null };
-type Version = { version_id: string; sha256: string; published_by: string; published_at: number; current: boolean };
+type Pending = { id: number; title: string; paths: string[] };
+type Version = { commit: string; author: string; at: number; subject: string };
 
 /** `agent`: open that agent's instructions when this hub holds them. */
 export default function WorkspacePage({ agent = null }: { agent?: string | null }) {
@@ -42,7 +42,7 @@ function Files({ agent }: { agent: string | null }) {
   const [hub, setHub] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[] | null>(null);
   const elsewhere = !!agent && !!hub && agent.toLowerCase() !== hub;
-  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [pending, setPending] = useState<Pending[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<null | "skill" | "prompt">(null);
@@ -53,7 +53,7 @@ function Files({ agent }: { agent: string | null }) {
       setFiles(got.items);
       setHub(got.hub ?? null);
       setReadOnly(!!got.read_only);
-      setDrafts((await get<{ items: Draft[] }>(`${A}/drafts`)).items);
+      setPending((await get<{ items: Pending[] }>("/api/hub-changes?status=pending")).items);
       // From an agent's page: its instructions, when this hub is that agent.
       if (agent && got.hub && agent.toLowerCase() === got.hub) {
         setSelected((s) => s ?? (got.items.some((f) => f.path === "AGENTS.md") ? "AGENTS.md" : null));
@@ -88,13 +88,13 @@ function Files({ agent }: { agent: string | null }) {
             </div>
             {groups[kind].length === 0 && <div className="px-2 text-[12px] text-mute">{t.workspace.none}</div>}
             {groups[kind].map((f) => {
-              const open = drafts.find((d) => d.path === f.path && d.state !== "published");
+              const open = pending.find((c) => c.paths.includes(f.path));
               return (
                 <button key={f.path} type="button" onClick={() => setSelected(f.path)}
                   className={cx("hz-file-row", selected === f.path && "hz-file-row-on")}>
                   <FileCode2 size={13} aria-hidden className="flex-none" />
                   <span className="min-w-0 flex-1 truncate text-left">{f.path}</span>
-                  {open && <span className="hz-pill hz-pill-syncing">{t.workspace.states[open.state] ?? open.state}</span>}
+                  {open && <span className="hz-pill hz-pill-syncing">{t.workspace.pending}</span>}
                 </button>
               );
             })}
@@ -103,8 +103,7 @@ function Files({ agent }: { agent: string | null }) {
       </div>
       <div className="min-w-0">
         {selected ? (
-          <Editor key={selected} path={selected} draft={drafts.find((d) => d.path === selected && d.state !== "published") ?? null}
-            readOnly={readOnly} onChanged={load} />
+          <Editor key={selected} path={selected} readOnly={readOnly} onChanged={load} />
         ) : (
           <div className="flex min-h-48 items-center justify-center px-6 py-10 text-center text-[13px] text-mute">{t.workspace.pick}</div>
         )}
@@ -130,7 +129,8 @@ function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"
         e.preventDefault();
         setBusy(true);
         try {
-          await post(`${A}/drafts`, { path, content: template });
+          const ch = await post<{ id: number }>("/api/hub-changes", { title: `New ${path}`, edits: [{ path, content: template }] });
+          toast(t.workspace.proposed(ch.id));
           onCreated(path);
         } catch (err) {
           toast(describeError(err), "error");
@@ -149,137 +149,69 @@ function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"
   );
 }
 
-function Editor({ path, draft: initial, readOnly = false, onChanged }: {
-  path: string; draft: Draft | null; readOnly?: boolean; onChanged: () => Promise<void> | void;
+function Editor({ path, readOnly = false, onChanged }: {
+  path: string; readOnly?: boolean; onChanged: () => Promise<void> | void;
 }) {
-  const [draft, setDraft] = useState<Draft | null>(initial);
-  const [text, setText] = useState(initial?.content ?? "");
-  const [busy, setBusy] = useState(false);
+  const [original, setOriginal] = useState<string | null>(null);
+  const [text, setText] = useState("");
   const [versions, setVersions] = useState<Version[]>([]);
-  const [showDiff, setShowDiff] = useState(false);
-  const loadVersions = useCallback(() => {
+  const [busy, setBusy] = useState(false);
+  const [proposed, setProposed] = useState<number | null>(null);
+  useEffect(() => {
+    get<{ text: string }>(`${A}/files/content?path=${encodeURIComponent(path)}`)
+      .then((o) => { setOriginal(o.text); setText(o.text); }).catch((e) => toast(describeError(e), "error"));
     get<{ items: Version[] }>(`${A}/files/versions?path=${encodeURIComponent(path)}`).then((o) => setVersions(o.items)).catch(() => {});
   }, [path]);
-  useEffect(() => loadVersions(), [loadVersions]);
-  const act = async (fn: () => Promise<Draft | unknown>, done?: string) => {
+  const changed = original !== null && text !== original;
+  const propose = async () => {
     setBusy(true);
     try {
-      const out = await fn();
-      if (out && typeof out === "object" && "id" in (out as Draft) && "content" in (out as Draft)) {
-        setDraft(out as Draft);
-        setText((out as Draft).content);
-      }
-      if (done) toast(done);
+      const ch = await post<{ id: number }>("/api/hub-changes", {
+        title: `Edit ${path}`, edits: [{ path, old_text: original, new_text: text }],
+      });
+      setProposed(ch.id);
       await onChanged();
-      loadVersions();
     } catch (e) {
       toast(describeError(e), "error");
     } finally {
       setBusy(false);
     }
   };
-  if (!draft || readOnly)
-    return (
-      <div className="hz-card p-4">
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{path}</span>
-          {!readOnly && (
-            <Button size="sm" variant="primary" icon={<FilePlus2 size={13} aria-hidden />} loading={busy}
-              onClick={() => act(() => post<Draft>(`${A}/drafts`, { path }))}>{t.workspace.startDraft}</Button>
-          )}
-        </div>
-        <Versions versions={versions} onRollback={readOnly ? undefined
-          : (v) => act(() => post<Draft>(`${A}/rollbacks`, { path, version_id: v }), t.workspace.rollbackDraft)} />
-      </div>
-    );
-  const dirty = text !== draft.content;
-  const editable = draft.state === "draft" || draft.state === "rejected";
   return (
-    <div className="hz-card space-y-3 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{path}</span>
-        <span className="hz-pill">{t.workspace.states[draft.state] ?? draft.state}</span>
-        {draft.stale && <span className="hz-pill hz-pill-failed">{t.workspace.stale}</span>}
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <FileCode2 size={14} aria-hidden />
+        <span className="font-mono text-[12.5px]">{path}</span>
       </div>
-      {draft.note && <div className="text-[12px] text-mute">{draft.note}</div>}
-      <textarea className="hz-artifact-editor min-h-[320px] w-full" value={text} readOnly={!editable}
-        onChange={(e) => setText(e.target.value)} aria-label={t.workspace.editorLabel(path)} spellCheck={false} />
-      {draft.problems.length > 0 && !dirty && (
-        <Notice tone="warning">{draft.problems.map((p) => p.field ? `${p.field}: ${p.message}` : p.message).join(" · ")}</Notice>
+      <textarea className="hz-artifact-editor min-h-[320px] w-full" aria-label={t.workspace.editorLabel(path)} value={text} readOnly={readOnly}
+        onChange={(e) => { setText(e.target.value); setProposed(null); }} spellCheck={false}
+        data-testid="workspace-editor" />
+      {proposed !== null && <Notice tone="info">{t.workspace.proposed(proposed)}</Notice>}
+      {!readOnly && (
+        <div className="flex items-center gap-2">
+          <Button variant="primary" loading={busy} disabled={!changed} onClick={() => void propose()}
+            data-testid="workspace-propose"><ListChecks size={14} aria-hidden /> {t.workspace.propose}</Button>
+          {!changed && <span className="text-[12px] text-mute">{t.workspace.unchanged}</span>}
+        </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {editable && (
-          <Button size="sm" disabled={!dirty || busy} onClick={() =>
-            act(() => patch<Draft>(`${A}/drafts/${draft.id}`, { content: text, expected_revision: draft.revision }), t.workspace.saved)}>
-            {t.workspace.save}
-          </Button>
-        )}
-        <Button size="sm" variant="secondary" icon={<ListChecks size={13} aria-hidden />} onClick={() => setShowDiff(!showDiff)}>
-          {showDiff ? t.workspace.hideDiff : t.workspace.showDiff}
-        </Button>
-        <span className="flex-1" />
-        {editable && dirty && <span className="text-[12px] text-mute">{t.workspace.saveFirst}</span>}
-        {editable && (
-          <Button size="sm" variant="primary" disabled={dirty || busy || draft.problems.length > 0}
-            onClick={() => act(() => post<Draft>(`${A}/drafts/${draft.id}/submit`, { expected_revision: draft.revision }), t.workspace.submitted)}>
-            {t.workspace.submit}
-          </Button>
-        )}
-        {draft.state === "in_review" && (
-          <>
-            <Button size="sm" disabled={busy} onClick={() =>
-              act(() => post<Draft>(`${A}/drafts/${draft.id}/review`, { decision: "reject", digest: draft.digest }), t.workspace.rejected)}>
-              {t.workspace.reject}
-            </Button>
-            <Button size="sm" variant="primary" disabled={busy} onClick={() =>
-              act(() => post<Draft>(`${A}/drafts/${draft.id}/review`, { decision: "approve", digest: draft.digest }), t.workspace.approved)}>
-              {t.workspace.approve}
-            </Button>
-          </>
-        )}
-        {(draft.state === "approved" || draft.state === "publishing") && (
-          <Button size="sm" variant="primary" disabled={busy} onClick={() =>
-            act(async () => {
-              await post(`${A}/drafts/${draft.id}/publish`, { digest: draft.digest });
-              setDraft(null);
-              return null;
-            }, t.workspace.published)}>
-            {t.workspace.publish}
-          </Button>
-        )}
-      </div>
-      {showDiff && <Diff text={draft.diff} />}
-      <Versions versions={versions} onRollback={(v) => act(() => post<Draft>(`${A}/rollbacks`, { path, version_id: v }), t.workspace.rollbackDraft)} />
+      <Versions versions={versions} />
     </div>
   );
 }
 
-function Diff({ text }: { text: string }) {
-  if (!text) return <div className="text-[12px] text-mute">{t.workspace.noChanges}</div>;
-  return (
-    <pre className="hz-diff" aria-label={t.workspace.showDiff}>
-      {text.split("\n").map((line, i) => (
-        <span key={i} className={line.startsWith("+") && !line.startsWith("+++") ? "hz-diff-add"
-          : line.startsWith("-") && !line.startsWith("---") ? "hz-diff-del" : undefined}>{line + "\n"}</span>
-      ))}
-    </pre>
-  );
-}
-
-function Versions({ versions, onRollback }: { versions: Version[]; onRollback?: (id: string) => void }) {
-  if (!versions.length) return null;
+function Versions({ versions }: { versions: Version[] }) {
   return (
     <div className="mt-2">
       <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-mute">
-        <History size={12} aria-hidden /> {t.workspace.versions}
+        <History size={12} aria-hidden /> {t.workspace.history}
       </div>
+      {!versions.length && <div className="text-[12px] text-mute">{t.workspace.noHistory}</div>}
       <ul className="m-0 list-none space-y-1 p-0">
         {versions.map((v) => (
-          <li key={v.version_id} className="hz-source-row">
-            <span className="font-mono text-[11.5px] text-ink">{v.sha256.slice(0, 12)}</span>
-            <span className="flex-1 text-[11.5px] text-mute">{new Date(v.published_at * 1000).toLocaleString()}</span>
-            {v.current ? <span className="hz-pill hz-pill-ready">{t.workspace.current}</span>
-              : onRollback && <button type="button" className="hz-artifact-edit" onClick={() => onRollback(v.version_id)}>{t.workspace.rollback}</button>}
+          <li key={v.commit} className="hz-source-row">
+            <span className="font-mono text-[11.5px] text-ink">{v.commit.slice(0, 10)}</span>
+            <span className="min-w-0 flex-1 truncate text-[11.5px]">{v.subject}</span>
+            <span className="text-[11.5px] text-mute">{v.author} · {new Date(v.at * 1000).toLocaleString()}</span>
           </li>
         ))}
       </ul>

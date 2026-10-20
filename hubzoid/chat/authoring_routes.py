@@ -2,6 +2,7 @@
 files are hub changes (``POST /api/hub-changes``), proposed and approved there.
 
   GET    /api/chat/authoring/files                       authorable hub files and their hashes
+  GET    /api/chat/authoring/files/content?path=         one file's text
   GET    /api/chat/authoring/files/versions?path=        one file's Git history
   POST   /api/chat/authoring/openapi/preview             {spec, selected?} -> operations; tools for the selected
   GET    /api/chat/prompts                               shared and your own prompts
@@ -54,6 +55,18 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         from ..datadir import hub_read_only
 
         return {"items": await call(svc.files), "hub": ctx.hub, "read_only": hub_read_only(ctx.hub_dir)}
+
+    @app.get(f"{A}/files/content")
+    async def content(request: Request):
+        user, _ = await actor_of(request)
+        await need(user, "authoring.draft")
+        path = request.query_params.get("path") or ""
+        text, digest = await call(svc.read, path)
+        if text is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(404, detail={"code": "not_found", "message": f"{path} doesn't exist."})
+        return {"path": path, "text": text, "sha256": digest}
 
     @app.get(f"{A}/files/versions")
     async def versions(request: Request):
