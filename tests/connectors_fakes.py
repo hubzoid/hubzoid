@@ -51,13 +51,141 @@ def make_hub(root: Path, name: str) -> Path:
     return hub
 
 
+def define(hub: Path, body: dict, *, actor: str = "test"):
+    """Write a connector the way they are defined now: connectors/<id>.yaml in
+    the deployment folder (here the hub), secrets in the environment and named
+    by reference. Takes the fields Settings used to take. Returns the
+    connector."""
+    import os
+
+    import yaml
+
+    from hubzoid.connectors import ConnectorError, registry
+
+    body = dict(body)
+    unknown = set(body) - {"id", "name", "url", "auth_type", "client_id", "client_secret", "scopes",
+                           "tool_allowlist", "enabled", "shared_header", "shared_secret"}
+    if unknown:
+        raise ConnectorError("invalid_request", "Unknown field: " + ", ".join(sorted(unknown)), 422)
+    cid = body.get("id") or registry.slugify(body.get("name") or "")
+    base, n = cid, 2
+    folder = registry.folder(hub)
+    if not body.get("id"):
+        while (folder / f"{cid}.yaml").exists():
+            cid, n = f"{base}_{n}", n + 1
+    elif (folder / f"{cid}.yaml").exists():
+        raise ConnectorError("exists", f"A connector with the ID {cid} already exists.", 409)
+    registry.check_id(cid)
+    doc = {"version": 1, "name": body.get("name") or cid, "url": body.get("url"),
+           "sign_in": body.get("auth_type", "oauth"), "hubs": []}
+    for key, out in (("client_id", "client_id"), ("scopes", "scopes"), ("tool_allowlist", "tools"),
+                     ("enabled", "enabled"), ("shared_header", "shared_header")):
+        if body.get(key) is not None:
+            doc[out] = body[key]
+    if body.get("shared_secret") is not None:
+        registry._check_shared_key(body["shared_secret"])
+    for key, out in (("client_secret", "client_secret"), ("shared_secret", "shared_key")):
+        if body.get(key):
+            name = f"HZ_TEST_{cid.upper()}_{out.upper()}"
+            os.environ[name] = body[key]
+            doc[out] = f"env:{name}"
+    old = None
+    path = folder / f"{cid}.yaml"
+    if path.exists():
+        old = path.read_text()
+    folder.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    try:
+        registry.parse_file(path)
+    except ConnectorError:
+        if old is None:
+            path.unlink()
+        else:
+            path.write_text(old)
+        raise
+    return registry.get(hub, cid)
+
+
+def change(hub: Path, connector_id: str, changes: dict, *, actor: str = "test"):
+    """Edit a connector's file the way a builder would. Returns (connector,
+    whether its address or sign-in changed)."""
+    import yaml
+
+    from hubzoid.connectors import ConnectorError, registry
+
+    path = registry.folder(hub) / f"{connector_id}.yaml"
+    if not path.exists():
+        raise ConnectorError("not_found", "This connector doesn't exist.", 404)
+    doc = yaml.safe_load(path.read_text())
+    before = (doc.get("url"), doc.get("sign_in"))
+    body = {"id": connector_id, "name": doc.get("name"), "url": doc.get("url"),
+            "auth_type": doc.get("sign_in", "oauth")}
+    for key, out in (("client_id", "client_id"), ("scopes", "scopes"), ("tool_allowlist", "tools"),
+                     ("enabled", "enabled"), ("shared_header", "shared_header")):
+        if out in doc:
+            body[key] = doc[out]
+    body.update(changes)
+    if body.get("auth_type") == "shared" and "shared_secret" not in changes and doc.get("shared_key"):
+        import os
+
+        body["shared_secret"] = os.environ.get(doc["shared_key"].removeprefix("env:"))
+    if body.get("shared_secret") is not None:
+        registry._check_shared_key(body["shared_secret"])
+    hubs = doc.get("hubs") or []
+    old = path.read_text()
+    path.unlink()
+    try:
+        c = define(hub, body)
+    except Exception:
+        path.write_text(old)
+        raise
+    doc2 = yaml.safe_load(path.read_text())
+    doc2["hubs"] = hubs
+    path.write_text(yaml.safe_dump(doc2, sort_keys=False))
+    return registry.get(hub, connector_id), (doc2.get("url"), doc2.get("sign_in")) != before
+
+
+def remove(hub: Path, connector_id: str) -> bool:
+    from hubzoid.connectors import registry
+
+    path = registry.folder(hub) / f"{connector_id}.yaml"
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def offer(hub: Path, connector_id: str, agent: str | None = None) -> None:
+    """List an agent under the connector file's hubs."""
+    import yaml
+
+    from hubzoid.connectors import registry
+
+    path = registry.folder(hub) / f"{connector_id}.yaml"
+    doc = yaml.safe_load(path.read_text())
+    agent = (agent or Path(hub).name).lower()
+    if agent not in doc.setdefault("hubs", []):
+        doc["hubs"].append(agent)
+        path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
+def withdraw(hub: Path, connector_id: str, agent: str | None = None) -> None:
+    import yaml
+
+    from hubzoid.connectors import registry
+
+    path = registry.folder(hub) / f"{connector_id}.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["hubs"] = [h for h in doc.get("hubs") or [] if h != (agent or Path(hub).name).lower()]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+
 def grant_connector(hub: Path, connector_id: str, *emails: str) -> None:
     """Offer a connector in this agent and give people its capability there
     (Console grants). Default: the local owner."""
     from hubzoid.access import store_for
-    from hubzoid.connectors import registry
 
-    registry.offer(hub, connector_id, Path(hub).name, actor="test")
+    offer(hub, connector_id)
     for email in emails or (OWNER,):
         store_for(hub).grant(email, Path(hub).name, "connector_" + connector_id, actor="test")
 

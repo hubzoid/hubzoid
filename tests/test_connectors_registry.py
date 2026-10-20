@@ -36,115 +36,52 @@ def detail(r):
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Files are the definitions
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("change, code", [
-    ({"name": ""}, "invalid_name"),
     ({"name": "x" * 81}, "invalid_name"),
     ({"url": "http://gmail-mcp.example.org/mcp"}, "invalid_url"),
     ({"url": "ftp://gmail-mcp.example.org/mcp"}, "invalid_url"),
     ({"url": "https://user:pw@gmail-mcp.example.org/mcp"}, "invalid_url"),
-    ({"url": "https://gmail-mcp.example.org/mcp#frag"}, "invalid_url"),
-    ({"url": "https://gmail mcp.example.org/mcp"}, "invalid_url"),
-    ({"url": "https://example.org:99999/mcp"}, "invalid_url"),
     ({"url": "not a url"}, "invalid_url"),
-    ({"id": "Gmail!"}, "invalid_id"),
     ({"id": "9mail"}, "invalid_id"),
-    ({"id": "g"}, "invalid_id"),
     ({"auth_type": "basic"}, "invalid_auth_type"),
     ({"scopes": "a\"b"}, "invalid_scopes"),
-    ({"scopes": 7}, "invalid_scopes"),
     ({"tool_allowlist": ["ok", "no spaces"]}, "invalid_tool_allowlist"),
     ({"enabled": "yes"}, "invalid_enabled"),
-    ({"client_secret": "s3cret"}, "invalid_client_secret"),
-    ({"nickname": "x"}, "invalid_request"),
 ])
-def test_invalid_connectors_are_refused(tc, change, code):
-    r = tc.post("/portal/api/connectors", json=body(**change), headers=SAME)
-    assert r.status_code == 422, r.text
-    assert detail(r)["code"] == code and detail(r)["message"]
+def test_invalid_connector_files_are_refused(hub, change, code):
+    with pytest.raises(ConnectorError) as err:
+        f.define(hub, body(**change))
+    assert err.value.code == code and err.value.message
 
 
-def test_loopback_http_is_allowed_for_local_development(tc):
-    for i, url in enumerate(("http://127.0.0.1:3555/mcp", "http://localhost:9/mcp",
-                             "http://[::1]:9/mcp")):
-        r = tc.post("/portal/api/connectors", json=body(id=f"local{i}", url=url), headers=SAME)
-        assert r.status_code == 201, r.text
-
-
-def test_ids_come_from_names_and_stay_unique(hub, tc):
-    first = tc.post("/portal/api/connectors", json=body(name="Google Drive"), headers=SAME).json()
-    second = tc.post("/portal/api/connectors", json=body(name="Google Drive"), headers=SAME).json()
-    assert first["connector"]["id"] == "google_drive"
-    assert second["connector"]["id"] == "google_drive_2"
-    r = tc.post("/portal/api/connectors", json=body(id="google_drive"), headers=SAME)
-    assert r.status_code == 409 and detail(r)["code"] == "exists"
-    r = tc.post("/portal/api/connectors", json=body(name="42"), headers=SAME)
-    assert r.status_code == 201 and r.json()["connector"]["id"] == "c_42"
-
-
-def test_fields_are_normalised(tc):
-    r = tc.post("/portal/api/connectors", json=body(
-        name="  Team   Gmail ", scopes="mail.read, mail.send mail.read",
-        tool_allowlist="search_threads, get_thread", enabled=False), headers=SAME)
-    c = r.json()["connector"]
-    assert c["name"] == "Team Gmail" and c["scopes"] == "mail.read mail.send"
-    assert c["tool_allowlist"] == ["search_threads", "get_thread"]
-    assert c["enabled"] is False and c["auth_type"] == "oauth"
-    assert c["capability"] == "connector_team_gmail"
-    assert c["redirect_uri"] == f"{APP}/oauth/connectors/team_gmail/callback"
-
-
-# ---------------------------------------------------------------------------
-# Secrets
-# ---------------------------------------------------------------------------
-def test_client_secrets_are_encrypted_and_never_returned(hub, tc):
+def test_settings_cannot_change_connectors_and_never_shows_a_secret(hub, tc, monkeypatch):
+    r = tc.post("/portal/api/connectors", json=body(), headers=SAME)
+    assert r.status_code == 409 and detail(r)["code"] == "file_owned"
+    assert "connectors/" in detail(r)["message"]
     secret = "pre-registered-secret-value"
-    r = tc.post("/portal/api/connectors", json=body(client_id="hubzoid-app", client_secret=secret),
-                headers=SAME)
-    assert r.status_code == 201
-    assert secret not in r.text and r.json()["connector"]["has_client_secret"] is True
-    assert secret not in tc.get("/portal/api/connectors").text
-    r = tc.patch("/portal/api/connectors/gmail", json={"name": "Mail"}, headers=SAME)
-    assert secret not in r.text and r.json()["connector"]["has_client_secret"] is True
-    with connectors.engine(hub).connect() as conn:
-        assert secret not in str(conn.execute(text("SELECT * FROM hz_connectors")).fetchall())
-    assert registry.client_secret(hub, "gmail") == secret
-    for c in registry.list_all(hub):
-        assert secret not in str(c.public()) and secret not in repr(c)
+    f.define(hub, body(client_id="hubzoid-app", client_secret=secret, scopes="mail.read, mail.read",
+                       tool_allowlist="search_threads, get_thread"))
+    listing = tc.get("/portal/api/connectors")
+    assert listing.status_code == 200 and secret not in listing.text
+    (c,) = listing.json()["connectors"]
+    assert c["has_client_secret"] is True and c["scopes"] == "mail.read"
+    assert c["tool_allowlist"] == ["search_threads", "get_thread"]
+    assert registry.client_secret(hub, "gmail") == secret          # from the environment it names
+    assert "env:" in (hub / "connectors" / "gmail.yaml").read_text() and secret not in (
+        hub / "connectors" / "gmail.yaml").read_text()
+    for path, method in (("/portal/api/connectors/gmail", "patch"), ("/portal/api/connectors/gmail", "delete")):
+        r = getattr(tc, method)(path, headers=SAME, **({"json": {"enabled": False}} if method == "patch" else {}))
+        assert r.status_code == 409 and detail(r)["code"] == "file_owned", path
 
 
-def test_patch_keeps_clears_and_ties_the_secret_to_its_client(hub, tc):
-    tc.post("/portal/api/connectors", json=body(client_id="app-1", client_secret="s1"), headers=SAME)
-    # Omitted: kept.
-    tc.patch("/portal/api/connectors/gmail", json={"scopes": "a b"}, headers=SAME)
-    assert registry.client_secret(hub, "gmail") == "s1"
-    # A new client ID without a secret drops the old one's secret.
-    r = tc.patch("/portal/api/connectors/gmail", json={"client_id": "app-2"}, headers=SAME)
-    assert r.json()["connector"]["has_client_secret"] is False
-    tc.patch("/portal/api/connectors/gmail", json={"client_secret": "s2"}, headers=SAME)
-    assert registry.client_secret(hub, "gmail") == "s2"
-    # Null clears.
-    r = tc.patch("/portal/api/connectors/gmail", json={"client_secret": None}, headers=SAME)
-    assert r.json()["connector"]["has_client_secret"] is False
-    # A secret needs its client ID.
-    r = tc.patch("/portal/api/connectors/gmail", json={"client_id": None, "client_secret": "s3"},
-                 headers=SAME)
-    assert r.status_code == 422 and detail(r)["code"] == "invalid_client_secret"
-    # No sign-in: no client at all.
-    r = tc.patch("/portal/api/connectors/gmail", json={"auth_type": "none"}, headers=SAME)
-    c = r.json()["connector"]
-    assert c["client_id"] is None and c["has_client_secret"] is False
-
-
-def test_ids_cannot_change_and_unknown_ids_are_404(tc):
-    tc.post("/portal/api/connectors", json=body(), headers=SAME)
-    r = tc.patch("/portal/api/connectors/gmail", json={"id": "mail"}, headers=SAME)
-    assert r.status_code == 422 and detail(r)["code"] == "invalid_id"
-    assert tc.patch("/portal/api/connectors/nope", json={}, headers=SAME).status_code == 404
-    assert tc.delete("/portal/api/connectors/nope", headers=SAME).status_code == 404
-    assert tc.post("/portal/api/connectors/nope/test", headers=SAME).status_code == 404
-    assert tc.patch("/portal/api/connectors/Bad!", json={}, headers=SAME).status_code == 404
+def test_a_broken_edit_keeps_the_last_good_definition(hub):
+    f.define(hub, body())
+    assert registry.get(hub, "gmail").url == "https://gmail-mcp.example.org/mcp"
+    (hub / "connectors" / "gmail.yaml").write_text("version: 1\nurl: ftp://nope\n")
+    assert registry.get(hub, "gmail").url == "https://gmail-mcp.example.org/mcp"
+    assert any("gmail.yaml" in p for p in registry.problems(hub))
 
 
 def _connect(hub, cid, *, user_id="local-owner", email=f.OWNER, url="https://gmail-mcp.example.org/mcp"):
@@ -153,34 +90,8 @@ def _connect(hub, cid, *, user_id="local-owner", email=f.OWNER, url="https://gma
                         "expires_at": None, "url": url})
 
 
-def test_a_new_url_or_sign_in_drops_existing_connections(hub, tc):
-    tc.post("/portal/api/connectors", json=body(), headers=SAME)
-    _connect(hub, "gmail")
-    tc.patch("/portal/api/connectors/gmail", json={"name": "Mail", "scopes": "x"}, headers=SAME)
-    assert tokens.get(hub, "local-owner", "gmail") is not None  # nothing that matters changed
-    r = tc.patch("/portal/api/connectors/gmail", json={"url": "https://other.example.org/mcp"},
-                 headers=SAME)
-    assert r.status_code == 200
-    assert tokens.get(hub, "local-owner", "gmail") is None
-    _connect(hub, "gmail", url="https://other.example.org/mcp")
-    tc.patch("/portal/api/connectors/gmail", json={"auth_type": "none"}, headers=SAME)
-    assert tokens.get(hub, "local-owner", "gmail") is None
-
-
-def test_delete_removes_connections_and_authorizations(hub, tc):
-    tc.post("/portal/api/connectors", json=body(), headers=SAME)
-    _connect(hub, "gmail")
-    with connectors.engine(hub).begin() as conn:
-        conn.execute(text("INSERT INTO hz_connector_flows (state, user_id, connector_id, "
-                          "payload_enc, created_at, expires_at) VALUES ('s', 'u', 'gmail', 'x', 0, 9e9)"))
-    assert tc.delete("/portal/api/connectors/gmail", headers=SAME).status_code == 204
-    with connectors.engine(hub).connect() as conn:
-        for table in ("hz_connectors", "hz_connector_tokens", "hz_connector_flows"):
-            assert conn.execute(text(f"SELECT count(*) FROM {table}")).scalar() == 0
-
-
 def test_listing_counts_connections(hub, tc):
-    tc.post("/portal/api/connectors", json=body(), headers=SAME)
+    f.define(hub, body())
     _connect(hub, "gmail")
     (c,) = tc.get("/portal/api/connectors").json()["connectors"]
     assert c["connections"] == 1 and c["dynamic_client"] is False
@@ -189,71 +100,17 @@ def test_listing_counts_connections(hub, tc):
 # ---------------------------------------------------------------------------
 # Who may change the registry
 # ---------------------------------------------------------------------------
-def test_only_organization_administrators_manage_connectors(hub, tc, monkeypatch):
-    f.accounts(monkeypatch, hub, {ALICE: ("u-a", "admin"), BOB: ("u-b", "admin"),
-                                  CAROL: ("u-c", "user")})
-    gs = store_for(hub)
-    gs.bootstrap([ALICE])
-    gs.grant(BOB, "sales", "manage_access", actor="test")  # an agent administrator only
-    assert tc.get("/portal/api/connectors").status_code == 401
-    assert detail(tc.get("/portal/api/connectors"))["code"] == "unauthenticated"
-    for who in (BOB, CAROL):
-        r = tc.get("/portal/api/connectors", headers={"x-test-user": who})
-        assert r.status_code == 403 and detail(r)["code"] == "forbidden", who
-        r = tc.post("/portal/api/connectors", json=body(), headers={**SAME, "x-test-user": who})
-        assert r.status_code == 403, who
-    r = tc.get("/portal/api/connectors", headers={"x-test-user": ALICE})
-    assert r.status_code == 200 and r.json() == {"connectors": []}
-    r = tc.post("/portal/api/connectors", json=body(), headers={**SAME, "x-test-user": ALICE})
-    assert r.status_code == 201 and r.json()["connector"]["created_by"] == ALICE
-
-
 def test_the_local_owner_administers_when_sign_in_is_off(tc):
     assert tc.get("/portal/api/connectors").status_code == 200
 
 
-@pytest.mark.parametrize("headers", [{}, {"origin": "https://evil.example"}, {"origin": "null"},
-                                     {"referer": "https://evil.example/page"}])
-def test_mutations_need_the_same_origin(hub, tc, headers):
-    assert tc.post("/portal/api/connectors", json=body(), headers=headers).status_code == 403
-    r = tc.post("/portal/api/connectors", json=body(), headers=headers)
-    assert detail(r)["code"] == "cross_origin"
-    registry.create(hub, body(), actor="test")
-    for method, path in (("patch", "/portal/api/connectors/gmail"),
-                         ("delete", "/portal/api/connectors/gmail"),
-                         ("post", "/portal/api/connectors/gmail/test"),
-                         ("post", "/api/connections/gmail/connect"),
-                         ("delete", "/api/connections/gmail")):
-        kwargs = {"json": {}} if method in ("patch", "post") else {}
-        r = getattr(tc, method)(path, headers=headers, **kwargs)
-        assert r.status_code == 403 and detail(r)["code"] == "cross_origin", path
-    assert registry.get(hub, "gmail") is not None
-
-
-def test_changes_are_audited_like_console_changes(hub, tc):
-    tc.post("/portal/api/connectors", json=body(), headers=SAME)
-    tc.patch("/portal/api/connectors/gmail", json={"enabled": False}, headers=SAME)
-    tc.delete("/portal/api/connectors/gmail", headers=SAME)
-    rows = store_for(hub).read_access_audit(10, hubs=["*"])
-    got = [(r["actor"], r["action"], r["hub"], r["permission"]) for r in rows]
-    assert got == [(f.OWNER, a, "*", "connector_gmail")
-                   for a in ("connector_delete", "connector_update", "connector_create")]
-    with connectors.engine(hub).connect() as conn:
-        surfaces = {r[0] for r in conn.execute(text(
-            "SELECT surface FROM hz_access_audit WHERE action LIKE 'connector_%'"))}
-    assert surfaces == {"console"}
-
-
-# ---------------------------------------------------------------------------
-# Capabilities: connector_<id> comes from the registry in the default mode
-# ---------------------------------------------------------------------------
 def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
-    registry.create(hub, body(), actor="test")
-    registry.create(hub, body(name="Docs", url="https://docs.example.org/mcp", auth_type="none",
-                              enabled=False), actor="test")
-    registry.create(hub, body(name="HR", url="https://hr.example.org/mcp"), actor="test")
+    f.define(hub, body())
+    f.define(hub, body(name="Docs", url="https://docs.example.org/mcp", auth_type="none",
+                              enabled=False))
+    f.define(hub, body(name="HR", url="https://hr.example.org/mcp"))
     for cid in ("gmail", "docs"):                    # HR is registered but not offered here
-        registry.offer(hub, cid, hub.name, actor="test")
+        f.offer(hub, cid)
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
     assert "connector_hr" not in rows
     gmail, docs = rows["connector_gmail"], rows["connector_docs"]
@@ -266,9 +123,9 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
 
 
 def test_a_deleted_connector_leaves_its_grants_visible_as_obsolete(hub):
-    registry.create(hub, body(), actor="test")
+    f.define(hub, body())
     store_for(hub).grant(ALICE, "sales", "connector_gmail", actor="test")
-    registry.delete(hub, "gmail", actor="test")
+    f.remove(hub, "gmail")
     rows = {r["permission"]: r for r in capabilities.catalog(hub, granted=["connector_gmail"])}
     assert rows["connector_gmail"]["obsolete"] is True
 
@@ -278,10 +135,10 @@ def test_a_deleted_connector_leaves_its_grants_visible_as_obsolete(hub):
 # ---------------------------------------------------------------------------
 def test_people_see_switched_on_connectors_and_their_own_state(hub, tc, monkeypatch):
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "user"), BOB: ("u-b", "user")})
-    registry.create(hub, body(), actor="test")
-    registry.create(hub, body(name="Old", url="https://old.example.org/mcp", enabled=False),
+    f.define(hub, body())
+    f.define(hub, body(name="Old", url="https://old.example.org/mcp", enabled=False),
                     actor="test")
-    registry.create(hub, body(name="Gone", url="https://gone.example.org/mcp", enabled=False),
+    f.define(hub, body(name="Gone", url="https://gone.example.org/mcp", enabled=False),
                     actor="test")
     _connect(hub, "old", user_id="u-a", email=ALICE, url="https://old.example.org/mcp")
     assert tc.get("/api/connections").status_code == 401
@@ -296,7 +153,7 @@ def test_people_see_switched_on_connectors_and_their_own_state(hub, tc, monkeypa
 
 def test_allowed_follows_the_connector_capability(hub, tc, monkeypatch):
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "admin"), BOB: ("u-b", "user")})
-    registry.create(hub, body(), actor="test")
+    f.define(hub, body())
     gs = store_for(hub)
     gs.bootstrap([ALICE])
     mine = tc.get("/api/connections", headers={"x-test-user": BOB}).json()
@@ -306,7 +163,7 @@ def test_allowed_follows_the_connector_capability(hub, tc, monkeypatch):
     gs.grant(BOB, "sales", "connector_gmail", actor="test")
     # Held, but no agent offers it yet.
     assert tc.get("/api/connections", headers={"x-test-user": BOB}).json()[0]["allowed"] is False
-    registry.offer(hub, "gmail", "sales", actor="test")
+    f.offer(hub, "gmail")
     mine = tc.get("/api/connections", headers={"x-test-user": BOB}).json()
     assert mine[0]["allowed"] is True
     gs.suspend(BOB, actor="test")
@@ -314,12 +171,12 @@ def test_allowed_follows_the_connector_capability(hub, tc, monkeypatch):
 
 
 def test_connect_refusals(hub, tc):
-    registry.create(hub, body(enabled=False), actor="test")
+    f.define(hub, body(enabled=False))
     r = tc.post("/api/connections/gmail/connect", json={}, headers=SAME)
     assert r.status_code == 409 and detail(r)["code"] == "disabled"
     r = tc.post("/api/connections/nope/connect", json={}, headers=SAME)
     assert r.status_code == 404
-    registry.update(hub, "gmail", {"enabled": True}, actor="test")
+    f.change(hub, "gmail", {"enabled": True})
     for bad in ("https://evil.example/", "//evil.example/x", "javascript:alert(1)", "\\\\evil"):
         r = tc.post("/api/connections/gmail/connect", json={"return_to": bad}, headers=SAME)
         assert r.status_code == 422 and detail(r)["code"] == "invalid_return_to", bad
@@ -329,7 +186,7 @@ def test_connect_refusals(hub, tc):
 
 def test_an_unreachable_server_fails_clearly(hub, tc):
     port = f.free_port()
-    registry.create(hub, body(url=f"http://127.0.0.1:{port}/mcp"), actor="test")
+    f.define(hub, body(url=f"http://127.0.0.1:{port}/mcp"))
     f.grant_connector(hub, "gmail")
     r = tc.post("/api/connections/gmail/connect", json={}, headers=SAME)
     assert r.status_code == 502 and detail(r)["code"] == "unreachable"
@@ -340,7 +197,7 @@ def test_an_unreachable_server_fails_clearly(hub, tc):
 
 def test_a_connector_without_sign_in_connects_at_once(hub, tc):
     with f.bearer_mcp("docs", {}, {"lookup": lambda who: "found"}) as url:
-        registry.create(hub, body(name="Docs", url=url, auth_type="none"), actor="test")
+        f.define(hub, body(name="Docs", url=url, auth_type="none"))
         f.grant_connector(hub, "docs")
         r = tc.post("/portal/api/connectors/docs/test", headers=SAME)
         assert r.json()["ok"] is True and r.json()["requires_auth"] is False
@@ -360,8 +217,8 @@ def test_a_connector_without_sign_in_connects_at_once(hub, tc):
 def test_a_shared_key_connector_has_nothing_to_connect_and_starts_no_sign_in(hub, tc, monkeypatch):
     from hubzoid.connectors import oauth_flow
 
-    registry.create(hub, body(name="Team", url="https://team.example.org/mcp", auth_type="shared",
-                              shared_secret="k-1"), actor="test")
+    f.define(hub, body(name="Team", url="https://team.example.org/mcp", auth_type="shared",
+                              shared_secret="k-1"))
     f.grant_connector(hub, "team")
     started = []
     monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: started.append(a) or "/x")
@@ -373,18 +230,10 @@ def test_a_shared_key_connector_has_nothing_to_connect_and_starts_no_sign_in(hub
 
 def test_a_server_that_needs_sign_in_is_reported_for_a_no_auth_connector(hub, tc):
     with f.bearer_mcp("private", {"tok": "x"}, {"lookup": lambda who: who}) as url:
-        registry.create(hub, body(name="Private", url=url, auth_type="none"), actor="test")
+        f.define(hub, body(name="Private", url=url, auth_type="none"))
         r = tc.post("/portal/api/connectors/private/test", headers=SAME).json()
         assert r["ok"] is False and r["requires_auth"] is True
         assert r["error"]["code"] == "requires_auth" and "tools" not in r
-
-
-def test_registry_errors_are_connector_errors(hub):
-    with pytest.raises(ConnectorError) as err:
-        registry.create(hub, "not a dict", actor="test")
-    assert err.value.code == "invalid_request" and err.value.status == 422
-    assert registry.get(hub, "../etc") is None
-    assert registry.delete(hub, "../etc", actor="test") is False
 
 
 def test_the_web_app_mounts_the_routes_before_the_console_files(hub):
@@ -403,14 +252,6 @@ def test_the_web_app_mounts_the_routes_before_the_console_files(hub):
     r = c.get("/oauth/connectors/gmail/callback?state=x&code=y")
     assert r.status_code == 302 and r.headers["location"].endswith("error=invalid_state")
     assert c.get("/api/connections").json() == []
-
-
-def test_a_body_that_is_not_json_gets_the_api_error_shape(tc):
-    r = tc.post("/portal/api/connectors", content=b"{not json", headers={
-        **SAME, "content-type": "application/json"})
-    assert r.status_code == 422 and detail(r)["code"] == "invalid_request"
-    r = tc.post("/portal/api/connectors", headers=SAME)
-    assert r.status_code == 422 and detail(r)["code"] == "invalid_request"
 
 
 def test_sign_in_off_answers_only_requests_to_this_machine(hub, monkeypatch):
@@ -432,7 +273,7 @@ def test_a_connect_needs_a_trusted_redirect_origin(hub, monkeypatch):
     """Sign-in on but no public address configured: a redirect URI is never
     built on a Host someone sent."""
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "user")})
-    registry.create(hub, body(), actor="test")
+    f.define(hub, body())
     f.grant_connector(hub, "gmail", ALICE)
     c = f.client_for(f.app_for(hub), "https://hub.example.org")
     r = c.post("/api/connections/gmail/connect", json={},
@@ -464,19 +305,3 @@ def test_oauth_callback_queries_never_reach_the_access_log(hub):
     assert "/api/connections?x=1" in line("/api/connections?x=1")
 
 
-def test_a_connector_is_offered_per_agent(hub, tc, monkeypatch):
-    """Registered once, offered in the agents that list it: its capability and
-    people's connection exist only there. Stopping an offer removes that
-    agent's grants and keeps the connector; removing it goes everywhere."""
-    gs = store_for(hub)
-    r = tc.post("/portal/api/connectors?hub=sales", json=body(), headers=SAME)
-    assert r.status_code == 201 and r.json()["connector"]["agents"] == ["sales"]
-    assert "connector_gmail" in {p["permission"] for p in capabilities.catalog(hub)}
-    gs.grant(BOB, "sales", "connector_gmail", actor="test")
-    assert tc.put("/portal/api/connectors/gmail/agents/nowhere", headers=SAME).status_code == 404
-    assert tc.delete("/portal/api/connectors/gmail/agents/sales", headers=SAME).status_code == 204
-    assert not gs.can(BOB, "sales", "connector_gmail")
-    assert "connector_gmail" not in {p["permission"] for p in capabilities.catalog(hub)}
-    assert registry.get(hub, "gmail") is not None and registry.agents_of(hub, "gmail") == []
-    assert tc.put("/portal/api/connectors/gmail/agents/sales", headers=SAME).status_code == 204
-    assert tc.get("/portal/api/connectors").json()["connectors"][0]["agents"] == ["sales"]

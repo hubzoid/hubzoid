@@ -60,23 +60,23 @@ def hub(tmp_path, monkeypatch, pg_url):
 
 
 def test_registry_and_audit_on_postgres(hub):
-    c = registry.create(hub, {"name": "Gmail", "url": "https://gmail-mcp.example.org/mcp",
+    c = _define(hub, {"name": "Gmail", "url": "https://gmail-mcp.example.org/mcp",
                               "client_id": "app", "client_secret": "s3cret"}, actor="ada@example.org")
     assert c.id == "gmail" and c.has_client_secret
-    assert registry.create(hub, {"name": "Gmail", "url": "https://x.example.org/mcp"},
+    assert _define(hub, {"name": "Gmail", "url": "https://x.example.org/mcp"},
                            actor="ada@example.org").id == "gmail_2"
-    updated, reset = registry.update(hub, "gmail", {"url": "https://moved.example.org/mcp"},
+    updated, reset = f.change(hub, "gmail", {"url": "https://moved.example.org/mcp"},
                                      actor="ada@example.org")
     assert reset and updated.url == "https://moved.example.org/mcp"
     assert registry.client_secret(hub, "gmail") == "s3cret"
-    assert registry.delete(hub, "gmail_2", actor="ada@example.org")
+    assert f.remove(hub, "gmail_2")
     rows = store_for(hub).read_access_audit(10, hubs=["*"])
     assert [r["action"] for r in rows] == ["connector_delete", "connector_update",
                                            "connector_create", "connector_create"]
 
 
 def test_one_dynamic_client_wins_a_registration_race(hub):
-    registry.create(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
+    _define(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
     redirect = "https://hub.example.org/oauth/connectors/mail/callback"
     results = []
 
@@ -109,7 +109,7 @@ def test_token_upsert_refresh_lease_and_accounts_on_postgres(hub, monkeypatch):
 
     monkeypatch.setattr(net, "_transport", httpx.MockTransport(token_endpoint))
     f.accounts(monkeypatch, hub, {"x@example.org": ("u-x", "user")})
-    registry.create(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
+    _define(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
     f.grant_connector(hub, "mail", "x@example.org")
     record = {"v": 1, "kind": "oauth", "access_token": "at-1", "refresh_token": "rt-1",
               "expires_at": time.time() - 1, "token_endpoint": "https://as.example.org/token",
@@ -134,7 +134,7 @@ def test_token_upsert_refresh_lease_and_accounts_on_postgres(hub, monkeypatch):
 
 
 def test_an_authorization_is_consumed_once_on_postgres(hub):
-    registry.create(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
+    _define(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
     state = "state-value-for-a-single-use-test"
     with connectors.engine(hub).begin() as conn:
         conn.execute(text("INSERT INTO hz_connector_flows (state, user_id, connector_id, "
@@ -149,3 +149,10 @@ def test_an_authorization_is_consumed_once_on_postgres(hub):
     for t in threads:
         t.join()
     assert sum(1 for w in won if w is not None) == 1
+
+
+def _define(hub, body, *, actor="test"):
+    """A connector as a file (tests.connectors_fakes.define)."""
+    from tests.connectors_fakes import define
+
+    return define(hub, body, actor=actor)

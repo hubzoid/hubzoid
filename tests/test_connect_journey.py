@@ -229,7 +229,9 @@ def test_state_changes_have_exactly_one_winner(hub):
 def test_a_switched_off_connector_is_not_offered(hub):
     from hubzoid.connectors import registry
 
-    registry.update(hub, "gmail", {"enabled": False}, actor="test")
+    from tests import connectors_fakes as cf
+
+    cf.change(hub, "gmail", {"enabled": False})
     with _as(ALICE):
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")

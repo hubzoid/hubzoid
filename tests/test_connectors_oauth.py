@@ -130,7 +130,7 @@ def provider(monkeypatch):
 
 
 def add(hub, **extra):
-    return registry.create(hub, {"name": "Mail", "url": MCP, **extra}, actor="test")
+    return _define(hub, {"name": "Mail", "url": MCP, **extra}, actor="test")
 
 
 def start(hub, **kw):
@@ -530,7 +530,7 @@ def test_a_connector_changed_during_the_exchange_revokes_the_new_tokens(hub, pro
     def moved_meanwhile(request):
         response = real(request)
         if str(request.url) == f"{AS}/token":
-            registry.update(hub, "mail", {"enabled": False}, actor="test")
+            f.change(hub, "mail", {"enabled": False}, actor="test")
         return response
 
     import time
@@ -554,3 +554,10 @@ def test_discovery_without_resource_metadata_needs_the_origin_as_issuer(provider
     with pytest.raises(ConnectorError) as err:
         discovery.discover(MCP)
     assert err.value.code == "issuer_mismatch"
+
+
+def _define(hub, body, *, actor="test"):
+    """A connector as a file (tests.connectors_fakes.define)."""
+    from tests.connectors_fakes import define
+
+    return define(hub, body, actor=actor)

@@ -193,7 +193,9 @@ def test_start_refuses_a_connector_the_admin_removed(client, hub):
     from hubzoid.connectors import registry
 
     jid = _link(hub)
-    registry.delete(hub, "gmail", actor="test")
+    from tests import connectors_fakes as cf
+
+    cf.remove(hub, "gmail")
     r = _start(client, jid)
     assert r.status_code == 410 and "no longer available" in r.text
 
