@@ -14,7 +14,8 @@ export type Notice = {
   title: string | null;
   link: string;
   created_at: number;
-  agent?: string | null;
+  /** The hub the reply came from. */
+  hub?: string | null;
 };
 
 const POLL_MS = 20000;

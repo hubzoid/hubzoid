@@ -2,7 +2,7 @@
 // limits themselves as a few fields (budgets.yaml stays one click away). The
 // totals for a period sit above. Same API as `hubzoid budgets`.
 import { useContext, useState } from "react";
-import { App, Segmented } from "antd";
+import { App, Input, Modal, Segmented } from "antd";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ApiError, request, type Hub, type Summary } from "../api";
 import { useData } from "../hooks/useData";
@@ -17,8 +17,10 @@ type Status = {
   present: boolean; revision: string; yaml: string; limits: Limits;
   month: { key: string; input_tokens: number; output_tokens: number; cost_usd: string; unpriced_calls: number };
   reserved: { input_tokens: number; output_tokens: number; cost_usd: string };
-  open_reservations: unknown[];
+  open_reservations: Reservation[];
 };
+type Reservation = { id: string; run_id: string; item_id: string | null; model: string | null; cost_usd: number;
+  output_tokens: number; created: number; unknown: boolean };
 
 const PERIODS = [
   { value: "24h", label: "24 hours" },
@@ -75,10 +77,10 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 /** Month limits worth a bar: output tokens, input tokens and dollars. */
-const BARS: { key: string; label: string; used: (s: Status) => number; format: (n: number) => string }[] = [
-  { key: "max_output_tokens", label: "output tokens", used: (s) => s.month.output_tokens, format: (n) => short(n) },
-  { key: "max_input_tokens", label: "input tokens", used: (s) => s.month.input_tokens, format: (n) => short(n) },
-  { key: "max_cost_usd", label: "", used: (s) => Number(s.month.cost_usd), format: (n) => `$${n.toFixed(2)}` },
+const BARS: { key: string; label: string; used: (s: Status) => number; held: (s: Status) => number; format: (n: number) => string }[] = [
+  { key: "max_output_tokens", label: "output tokens", used: (s) => s.month.output_tokens, held: (s) => s.reserved.output_tokens, format: (n) => short(n) },
+  { key: "max_input_tokens", label: "input tokens", used: (s) => s.month.input_tokens, held: (s) => s.reserved.input_tokens, format: (n) => short(n) },
+  { key: "max_cost_usd", label: "", used: (s) => Number(s.month.cost_usd), held: (s) => Number(s.reserved.cost_usd), format: (n) => `$${n.toFixed(2)}` },
 ];
 
 function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: () => void }) {
@@ -106,13 +108,15 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
           ) : (
             bars.map((b) => {
               const cap = Number(month[b.key]);
-              const used = b.used(s);
+              // What running calls hold counts against the limit too.
+              const held = b.held(s);
+              const used = b.used(s) + held;
               const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
               const tone = pct >= 100 ? "is-bad" : pct >= 80 ? "is-warn" : "";
               return (
                 <span key={b.key} className="hz-bar-wrap">
                   <span className="hz-bar-text">
-                    <span>{b.format(used)} of {b.format(cap)} {b.label}</span>
+                    <span>{b.format(used)} of {b.format(cap)} {b.label}{held > 0 ? `, ${b.format(held)} held by running calls` : ""}</span>
                     <span className={tone ? `hz-bar-pct ${tone}` : "hz-bar-pct"}>{pct >= 100 ? "Limit reached" : `${Math.round(pct)}%`}</span>
                   </span>
                   <span className={`hz-bar ${tone}`} role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={used}
@@ -127,7 +131,12 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
         <span className="hz-usage-edit">{s && Object.keys(s.limits ?? {}).length ? "Edit limits" : "Set limits"}</span>
         {open ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
       </button>
-      {open && s && <LimitsEditor key={s.revision} base={base} status={s} saved={data.reload} />}
+      {open && s && (
+        <>
+          <LimitsEditor key={s.revision} base={base} status={s} saved={data.reload} />
+          {s.open_reservations.length > 0 && <Reservations base={base} items={s.open_reservations} released={data.reload} />}
+        </>
+      )}
     </li>
   );
 }
@@ -165,21 +174,50 @@ function LimitsEditor({ base, status, saved }: { base: string; status: Status; s
   const [yaml, setYaml] = useState(status.yaml);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const initial = Object.fromEntries(FIELDS.map((f) => [`${f.scope}.${f.key}`, String(status.limits?.[f.scope]?.[f.key] ?? "")]));
+  const fieldsChanged = FIELDS.some((f) => (values[`${f.scope}.${f.key}`] ?? "").trim() !== initial[`${f.scope}.${f.key}`]);
+  const fileChanged = yaml !== status.yaml;
+  const commented = /^\s*#/m.test(status.yaml);
+
+  /** The file the fields describe: every other limit in the file kept. */
+  const fromFields = (): string | null => {
+    const next: Limits = JSON.parse(JSON.stringify(status.limits ?? {}));
+    for (const f of FIELDS) {
+      const raw = (values[`${f.scope}.${f.key}`] ?? "").trim();
+      next[f.scope] = next[f.scope] ?? {};
+      if (raw === "") delete next[f.scope][f.key];
+      else if (!/^\d+(\.\d+)?$/.test(raw)) {
+        setProblem(`${f.label} must be a number.`);
+        return null;
+      } else next[f.scope][f.key] = Number(raw);
+    }
+    return toYaml(next);
+  };
+
+  // Switching keeps what was typed: fields become the file; file edits are
+  // only dropped after a confirm, since the fields can't show every limit.
+  const switchMode = () => {
+    setProblem(null);
+    if (!asFile) {
+      if (fieldsChanged) {
+        const next = fromFields();
+        if (next === null) return;
+        setYaml(next);
+      }
+      setAsFile(true);
+      return;
+    }
+    if (fileChanged && !window.confirm("Switch to fields? Your edits to the file aren't saved and will be lost.")) return;
+    setYaml(status.yaml);
+    setAsFile(false);
+  };
 
   const save = async () => {
     let body = yaml;
     if (!asFile) {
-      const next: Limits = JSON.parse(JSON.stringify(status.limits ?? {}));
-      for (const f of FIELDS) {
-        const raw = (values[`${f.scope}.${f.key}`] ?? "").trim();
-        next[f.scope] = next[f.scope] ?? {};
-        if (raw === "") delete next[f.scope][f.key];
-        else if (!/^\d+(\.\d+)?$/.test(raw)) {
-          setProblem(`${f.label} must be a number.`);
-          return;
-        } else next[f.scope][f.key] = Number(raw);
-      }
-      body = toYaml(next);
+      const next = fromFields();
+      if (next === null) return;
+      body = next;
     }
     setBusy(true);
     try {
@@ -216,11 +254,66 @@ function LimitsEditor({ base, status, saved }: { base: string; status: Status; s
         <button type="button" className="hz-btn hz-btn-primary hz-btn-sm" disabled={busy} onClick={() => void save()}>
           {busy ? "Saving…" : "Save limits"}
         </button>
-        <button type="button" className="hz-link-btn" onClick={() => { setAsFile(!asFile); setProblem(null); }}>
+        <button type="button" className="hz-link-btn" onClick={switchMode}>
           {asFile ? "Edit as fields" : "Edit as file"}
         </button>
         <span className="hz-usage-muted">Empty means no limit. Stored in the agent's budgets.yaml.</span>
       </div>
+      {!asFile && commented && (
+        <p className="hz-limits-help" style={{ marginTop: 10 }}>Saving these fields rewrites budgets.yaml without its comments. Edit as file to keep them.</p>
+      )}
+    </div>
+  );
+}
+
+/** Calls that hold part of the limit while they run. One whose call never
+ *  reported keeps holding it until someone releases it, with a reason. */
+function Reservations({ base, items, released }: { base: string; items: Reservation[]; released: () => void }) {
+  const { message } = App.useApp();
+  const [releasing, setReleasing] = useState<Reservation | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const release = async () => {
+    if (!releasing) return;
+    setBusy(true);
+    try {
+      await request(`${base}/reservations/${encodeURIComponent(releasing.id)}/release`, { reason }, undefined, "POST");
+      message.success("Released.");
+      setReleasing(null);
+      setReason("");
+      released();
+    } catch (e) {
+      message.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="hz-limits hz-held">
+      <h4>Held by running calls</h4>
+      <ul>
+        {items.map((r) => (
+          <li key={r.id}>
+            <span className="mono">{r.run_id.slice(0, 24)}</span>
+            <span className="hz-usage-muted">since {new Date(r.created * 1000).toLocaleString()}</span>
+            {r.unknown ? (
+              <>
+                <span className="hz-status is-warn"><i aria-hidden />Never reported</span>
+                <button type="button" className="hz-btn hz-btn-secondary hz-btn-sm" onClick={() => setReleasing(r)}>Release</button>
+              </>
+            ) : (
+              <span className="hz-status is-info"><i aria-hidden />Running</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <Modal open={releasing !== null} title="Release this reservation?" okText="Release"
+        okButtonProps={{ disabled: !reason.trim(), loading: busy }} onOk={() => void release()} onCancel={() => setReleasing(null)}>
+        <p>Its call never reported its usage, so the amount it held still counts against your limits. Release it only
+          after checking what the model provider charged.</p>
+        <Input.TextArea rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+          placeholder="What you checked. This is recorded." aria-label="Reason" />
+      </Modal>
     </div>
   );
 }

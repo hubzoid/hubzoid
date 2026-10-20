@@ -638,6 +638,7 @@ class FeedbackService:
             if r.conversation_id not in titles or (readable is not None and not readable(r.conversation_id)):
                 continue  # gone or no longer readable: no preview, no link
             items.append({"id": r[0], "state": r.state, "kind": r.event_kind, "conversation_id": r.conversation_id,
+                          "hub": r.hub_id,
                           "message_id": r.message_id, "branch_id": r.branch_id, "created_at": r.created_at,
                           "title": titles[r.conversation_id],
                           "link": f"/c/{r.conversation_id}"})

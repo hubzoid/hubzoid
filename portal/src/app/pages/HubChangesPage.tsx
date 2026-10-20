@@ -26,7 +26,9 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
   const agents = app.agents.list;
   const fixed = hub ? agents.find((a) => a.hub === hub || a.id === hub) : undefined;
   const [agentId, setAgentId] = useState<string | null>(fixed?.id ?? agents[0]?.id ?? null);
-  const agent = agents.find((a) => a.id === agentId) ?? agents[0];
+  // An agent page never falls back to another agent's changes.
+  const unreachable = !!hub && !fixed;
+  const agent = hub ? fixed : agents.find((a) => a.id === agentId) ?? agents[0];
   const base = agent?.api_base ?? "";
   const [tab, setTab] = useState<(typeof TABS)[number]>("pending");
   const [items, setItems] = useState<HubChange[] | null>(null);
@@ -40,6 +42,7 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
   }, []);
 
   const load = useCallback(async () => {
+    if (unreachable) return;
     setError(null);
     try {
       const q = tab === "all" ? "" : `?status=${tab}`;
@@ -47,16 +50,24 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
     } catch (e) {
       setError(e instanceof ApiError && e.hasServerMessage ? e.message : H.loadFailed);
     }
-  }, [base, tab]);
+  }, [base, tab, unreachable]);
   useEffect(() => {
     void load();
   }, [load]);
 
+  // Inside an agent's page the address stays on that agent.
+  const here = hub ? `/settings#/agents/${encodeURIComponent(hub)}/changes` : "/settings#/hub-changes";
   const show = (id: number | null) => {
-    history.replaceState(null, "", `/settings#/hub-changes${id ? `?id=${id}` : ""}`);
+    history.replaceState(null, "", `${here}${id ? `?id=${id}` : ""}`);
     setOpen(id);
   };
 
+  if (unreachable)
+    return (
+      <PageFrame title={H.title} description={H.lede}>
+        <Notice tone="info">Changes to this agent are reviewed from chat access to it. Give yourself access to the agent to review its changes here.</Notice>
+      </PageFrame>
+    );
   return (
     <PageFrame title={H.title} description={H.lede}>
       <div className="flex flex-col gap-4" data-testid="hub-changes">
@@ -67,7 +78,7 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
           </label>
         )}
         {open ? (
-          <ChangeDetail base={base} id={open} onBack={() => (show(null), void load())} />
+          <ChangeDetail base={base} id={open} here={here} onBack={() => (show(null), void load())} />
         ) : (
           <>
             <div className="flex flex-wrap gap-1.5" role="group" aria-label={H.title}>
@@ -103,7 +114,7 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
   );
 }
 
-function ChangeDetail({ base, id, onBack }: { base: string; id: number; onBack: () => void }) {
+function ChangeDetail({ base, id, here, onBack }: { base: string; id: number; here: string; onBack: () => void }) {
   const { change, setChange, error, url } = useHubChange(base, id);
   const [busy, setBusy] = useState(false);
   const undo = async () => {
@@ -111,7 +122,7 @@ function ChangeDetail({ base, id, onBack }: { base: string; id: number; onBack: 
     try {
       const out = await post<HubChange>(`${url}/undo`, {});
       toast(H.undone);
-      history.replaceState(null, "", `/settings#/hub-changes?id=${out.id}`);
+      history.replaceState(null, "", `${here}?id=${out.id}`);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     } catch (e) {
       toast(e instanceof ApiError && e.hasServerMessage ? e.message : H.unknownOutcome);

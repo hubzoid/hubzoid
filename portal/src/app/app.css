@@ -2925,6 +2925,10 @@
   .hz-limits-file { width: 100%; max-width: 640px !important; font-family: var(--font-mono, ui-monospace, monospace); font-size: .8929rem; }
   .hz-limits-problem { margin: 12px 0 0; color: var(--hz-danger); font-size: .9286rem; }
   .hz-limits-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 18px; }
+  .hz-held { padding-top: 0; }
+  .hz-held h4 { margin: 0 0 8px; font-size: .9286rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-held ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .hz-held li { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: .9286rem; }
   @media (max-width: 767px) {
     .hz-usage-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .hz-usage-stats > li { border-left: 0; border-top: 1px solid var(--hz-line); }

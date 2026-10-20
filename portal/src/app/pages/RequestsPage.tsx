@@ -107,7 +107,7 @@ export default function RequestsPage() {
 
   const needs = (pending ?? []).filter((r) => r.allowed_actions.length > 0 && keep(r.apiBase));
   const waiting = (pending ?? []).filter((r) => r.allowed_actions.length === 0 && keep(r.apiBase));
-  const updates = notices.filter((n) => keep(undefined, n.agent));
+  const updates = notices.filter((n) => keep(undefined, n.hub));
   const done = (decided ?? []).filter((r) => keep(r.apiBase)).slice(0, 50);
   const unread = updates.filter((n) => n.state === "unread").length;
 
@@ -181,7 +181,7 @@ export default function RequestsPage() {
             <>
               <ul className="hz-inbox-list">
                 {updates.map((n) => (
-                  <NoticeRow key={n.id} notice={n} agentName={agentOf(undefined, n.agent)?.name} />
+                  <NoticeRow key={n.id} notice={n} agentName={agentOf(undefined, n.hub)?.name} />
                 ))}
               </ul>
               {waiting.length > 0 && (
@@ -291,7 +291,10 @@ function NoticeRow({ notice, agentName }: { notice: Notice; agentName?: string }
   return (
     <li className={cx("hz-inbox-item", unread && "is-unread")}>
       <div className="hz-inbox-row" role="link" tabIndex={0} onClick={open}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open())}>
+        onKeyDown={(e) => {
+          // Only the row itself: Enter on Done or Mark as read is that button's.
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(); }
+        }}>
         <span className="hz-inbox-dot" aria-hidden />
         <span className={cx("hz-inbox-icon", failed && "is-bad")}>
           {failed ? <AlertTriangle size={16} aria-hidden /> : stopped ? <CirclePause size={16} aria-hidden /> : <MessageSquare size={16} aria-hidden />}

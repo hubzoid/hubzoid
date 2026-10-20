@@ -44,3 +44,20 @@ def test_a_broken_connectors_file_counts_no_connectors(tmp_path):
     hub = tmp_path / "hub"
     _write(hub / "connectors" / ".mcp.json", "{not json")
     assert contents.counts(hub)["connectors"] == 0
+
+
+def test_a_bucket_or_file_linked_from_outside_the_hub_is_not_counted(tmp_path):
+    outside = tmp_path / "elsewhere"
+    _write(outside / "secret-notes.md")
+    _write(outside / "more" / "plans.md")
+    hub = tmp_path / "hub"
+    (hub / "skills").mkdir(parents=True)
+    (hub / "knowledge").symlink_to(outside, target_is_directory=True)
+    (hub / "skills" / "linked.md").symlink_to(outside / "secret-notes.md")
+    _write(hub / "agents" / "inside.md")
+    (hub / "agents" / "nested").symlink_to(outside / "more", target_is_directory=True)
+
+    got = contents.counts(hub)
+    assert got["knowledge"] == 0
+    assert got["skills"] == 0
+    assert got["subagents"] == 1

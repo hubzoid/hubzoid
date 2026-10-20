@@ -154,7 +154,7 @@ function MineReports() {
             columns={[
               {
                 title: "Report", key: "title",
-                render: (_, r) => <><Text strong>{r.title} ↗</Text>
+                render: (_, r) => <><a className="row-name" href={r.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.title} ↗</a>
                   {agents.length > 1 && <div><Text type="secondary">{name(r.hub)}</Text></div>}</>,
               },
               {
@@ -201,7 +201,8 @@ function AgentWorkflows({ hubs }: { hubs: Hub[] }) {
         onRow={(w) => ({ onClick: () => { location.hash = `/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`; } })}
         locale={{ emptyText: <Empty description="No agent has a scheduled workflow. A workflow gets a schedule in its folder's workflow file." /> }}
         columns={[
-          { title: "Workflow", key: "name", render: (_, w) => <><Text strong>{w.name}</Text><div style={{ marginTop: 2 }}>{state(w)}</div></> },
+          { title: "Workflow", key: "name", render: (_, w) => <><a className="row-name" href={`#/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`}
+            onClick={(e) => e.stopPropagation()}>{w.name}</a><div style={{ marginTop: 2 }}>{state(w)}</div></> },
           { title: "Agent", key: "hub", render: (_, w) => hubName(w.hub) },
           { title: "When", key: "when", render: (_, w) => <><div>{w.schedule}</div><Text type="secondary">{w.timezone}</Text></> },
           { title: "Next run", key: "next", render: (_, w) => w.next_run ? <When value={w.next_run} /> : <Text type="secondary">—</Text> },

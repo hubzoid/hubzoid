@@ -122,7 +122,9 @@ const ITEMS: Item[] = [
 ];
 
 type Tab = { key: Key; label: string; also?: Key[]; sub?: { key: Key; label: string }[] };
-type Group = { id: string; label: string; lede: string; icon: ReactNode; members: Key[]; tabs?: Tab[]; team?: boolean; big?: boolean };
+type Group = { id: string; label: string; lede: string; icon: ReactNode; members: Key[]; tabs?: Tab[]; team?: boolean; big?: boolean;
+  /** Only for people who don't manage the team (who reach it under Agents). */
+  notTeam?: boolean };
 
 /** The Settings nav: four big destinations for running the team's agents, then
  *  a quieter personal group. Old section links still open inside their group. */
@@ -158,6 +160,7 @@ const GROUPS: Group[] = [
     tabs: [{ key: "connections", label: "Accounts" }, { key: "sources", label: S.sources }] },
   { id: "memory", label: t.memory.title, lede: "", icon: <Brain size={16} aria-hidden />, members: ["memory"] },
   { id: "my-work", label: S.myWork, lede: "", icon: <ListChecks size={16} aria-hidden />, members: ["my-work"] },
+  { id: "hub-changes", label: t.hubChanges.title, lede: "", icon: <FilePen size={16} aria-hidden />, members: ["hub-changes"], notTeam: true },
 ];
 
 type ManagedHub = { key: string; name: string; avatar?: string | null };
@@ -259,7 +262,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
 
   // The nav is a few big destinations; each holds its sections as tabs (a
   // nested view) instead of one page per section.
-  const groups = GROUPS.filter((g) => !g.team || team)
+  const groups = GROUPS.filter((g) => (!g.team || team) && (!g.notTeam || !team))
     .map((g) => ({ ...g, members: g.members.filter((k) => items.some((i) => i.key === k)) }))
     .filter((g) => g.members.length > 0);
   const groupOf = (key: Key | null) => (key ? groups.find((g) => g.members.includes(key)) : undefined);
