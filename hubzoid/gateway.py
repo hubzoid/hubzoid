@@ -238,6 +238,11 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         # HUBZOID_INBOUND_PORT in its own .env.
         inbound_on = _inbound_enabled(hub_dir)
         inbound_port = _inbound_port_for(hub_dir)
+        if inbound_on and not _own_env_value(hub_dir, "HUBZOID_INBOUND_PORT"):
+            # No port chosen in the hub's .env: the next free one from the
+            # default, so several inbound hubs never collide.
+            while inbound_port in seen_inbound_ports:
+                inbound_port += 1
         if inbound_on:
             if inbound_port in seen_inbound_ports:
                 raise ValueError(
@@ -340,23 +345,13 @@ def inherited_deployment_env(hub_dirs: list[Path], env) -> tuple[dict[str, str],
 
 
 def _inbound_enabled(hub_dir: Path) -> bool:
-    """Whether this hub's own `.env` configures any inbound surface (WhatsApp,
-    Telegram, or a generic webhook), so the gateway edge should forward
-    /webhooks/<slug>/* to its inbound server.
+    """Whether this hub runs the 1.x inbound server (WhatsApp, Telegram or a
+    generic webhook), so the edge forwards /webhooks/<slug>/* to it: its
+    channels/ files say so (hubzoid.channels.legacy), from its own `.env`
+    values, never the environment another hub's .env left behind."""
+    from .channels import legacy
 
-    Uses the same token checks the inbound server itself uses, so the edge route
-    and the served routes can never disagree about whether a surface is on.
-    """
-    from .inbound.env import (
-        missing_telegram_vars,
-        missing_webhook_vars,
-        missing_whatsapp_vars,
-    )
-
-    own = _own_env(hub_dir)
-    return (not missing_whatsapp_vars(own)
-            or not missing_telegram_vars(own)
-            or not missing_webhook_vars(own))
+    return bool(legacy.plan(hub_dir, _own_env(hub_dir)).inbound)
 
 
 def _inbound_port_for(hub_dir: Path) -> int:

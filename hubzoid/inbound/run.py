@@ -37,6 +37,14 @@ def build_app_for_hub(hub_dir, env=None):
     wa = whatsapp_config_from_env(env)
     tg = telegram_config_from_env(env, bindings=bindings)
     wh = webhook_config_from_env(env, hub_dir=hub_dir)
+    # Under a supervisor, only the surfaces the hub's channel files turn on
+    # (hubzoid.channels.legacy); run by hand, every configured one.
+    chosen = (env.get("HUBZOID_INBOUND_SURFACES") or "").strip()
+    if chosen:
+        on = {s.strip() for s in chosen.split(",")}
+        wa = wa if "whatsapp" in on else None
+        tg = tg if "telegram" in on else None
+        wh = wh if "webhook" in on else None
     if wa is None and tg is None and wh is None:
         return None
     # Streaming (edit-in-place) is ON by default; set TELEGRAM_STREAM=false to disable.

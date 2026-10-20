@@ -120,14 +120,42 @@ def test_default_mode_runs_bridge_and_edge_only(tmp_path, launched):
 
 
 def test_webhooks_go_to_the_inbound_process(tmp_path, launched):
+    # A channel file turns the 1.x webhook on; its secret stays in .env.
     hub = _hub(tmp_path, "WEBHOOK_INBOUND_SECRET=s3cr3t-value-long\nWEBHOOK_INBOUND_NAME=alerts\n")
-    result = _run(hub, "--webhook")
+    (hub / "channels").mkdir()
+    (hub / "channels" / "webhook.yaml").write_text("version: 1\nid: webhook\nprovider: webhook\nenabled: true\n")
+    result = _run(hub)
     assert result.exit_code == 0, result.output
     routes = [r for r in json.loads(_edge(launched)["env"]["HUBZOID_EDGE_ROUTES"])
               if r["prefix"].startswith("/webhooks/")]
     assert len(routes) == 1 and routes[0]["prefix"] == "/webhooks/ops"
     assert routes[0]["upstream"].startswith("http://127.0.0.1:")
-    assert _kind(launched, "inbound")  # the inbound process was started
+    (inbound,) = _kind(launched, "inbound")  # the inbound process was started, for that surface
+    assert inbound["env"]["HUBZOID_INBOUND_SURFACES"] == "webhook"
+
+
+def test_a_channel_flag_names_the_file_instead(tmp_path, launched):
+    result = _run(_hub(tmp_path), "--slack")
+    out = " ".join(result.output.split())
+    assert result.exit_code == 2 and "channels/slack-assistant.yaml" in out and "provider: slack_assistant" in out
+    assert not launched
+
+
+def test_a_channel_file_with_missing_secrets_stays_off_and_says_so(tmp_path, launched):
+    hub = _hub(tmp_path)
+    (hub / "channels").mkdir()
+    (hub / "channels" / "slack-assistant.yaml").write_text(
+        "version: 1\nid: slack-assistant\nprovider: slack_assistant\nenabled: true\n")
+    result = _run(hub)
+    assert result.exit_code == 0 and not _kind(launched, "slack")
+    assert "SLACK_" in result.output
+
+
+def test_one_release_of_dotenv_only_channels_with_a_notice(tmp_path, launched):
+    hub = _hub(tmp_path, "WEBHOOK_INBOUND_SECRET=s3cr3t-value-long\nWEBHOOK_INBOUND_NAME=alerts\n")
+    result = _run(hub)
+    assert result.exit_code == 0 and _kind(launched, "inbound")
+    assert "channels/webhook.yaml" in " ".join(result.output.split())
 
 
 def test_no_ui_is_the_bridge_alone(tmp_path, launched):

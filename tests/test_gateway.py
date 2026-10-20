@@ -143,14 +143,24 @@ def test_plan_rejects_inbound_port_collision(tmp_path):
     port; the plan refuses it (mirrors the bridge-port guard)."""
     a, b = tmp_path / "alpha", tmp_path / "beta"
     a.mkdir(); b.mkdir()
-    (a / ".env").write_text("TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\n")  # default 8100
-    (b / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\n")  # default 8100 too
+    (a / ".env").write_text("TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\nHUBZOID_INBOUND_PORT=8100\n")
+    (b / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\nHUBZOID_INBOUND_PORT=8100\n")
     load = _loader({
         str(a): _settings(a, 8000, label="alpha-agent"),
         str(b): _settings(b, 8001, label="beta-agent"),
     })
     with pytest.raises(ValueError, match="HUBZOID_INBOUND_PORT"):
         gateway.plan([a, b], load=load)
+
+
+def test_plan_gives_inbound_hubs_without_a_port_their_own(tmp_path):
+    a, b = tmp_path / "alpha", tmp_path / "beta"
+    a.mkdir(); b.mkdir()
+    (a / ".env").write_text("TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\n")
+    (b / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\n")
+    load = _loader({str(a): _settings(a, 8000, label="alpha-agent"), str(b): _settings(b, 8001, label="beta-agent")})
+    gp = gateway.plan([a, b], load=load)
+    assert [x.inbound_port for x in gp.backends] == [8100, 8101]
 
 
 def test_plan_public_url_per_hub(tmp_path):

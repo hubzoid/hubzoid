@@ -61,7 +61,12 @@ def files(hub_dir) -> list[Path]:
     folder = channels_dir(hub_dir)
     if not folder.is_dir():
         return []
-    return sorted(p for p in folder.iterdir() if p.suffix in (".yaml", ".yml") and p.is_file())
+    from .legacy import is_legacy
+
+    # 1.x channel files (hubzoid.channels.legacy) start processes; they are not
+    # 2.0 connections.
+    return sorted(p for p in folder.iterdir()
+                  if p.suffix in (".yaml", ".yml") and p.is_file() and not is_legacy(p))
 
 
 # -- validation -------------------------------------------------------------------

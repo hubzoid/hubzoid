@@ -433,25 +433,25 @@ def run(
     slack: bool = typer.Option(
         False,
         "--slack", "-s",
-        help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
+        hidden=True, help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
         "SLACK_APP_TOKEN from .env. Soft-fails with a warning if either is missing.",
     ),
     whatsapp: bool = typer.Option(
         False,
         "--whatsapp",
-        help="Also start the WhatsApp webhook surface. Reads WHATSAPP_* from .env and "
+        hidden=True, help="Also start the WhatsApp webhook surface. Reads WHATSAPP_* from .env and "
         "exposes /webhooks/whatsapp via the edge. Soft-skips if unconfigured.",
     ),
     telegram: bool = typer.Option(
         False,
         "--telegram",
-        help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
+        hidden=True, help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
         "exposes /webhooks/<hub>/telegram via the edge. Soft-skips if unconfigured.",
     ),
     webhook: bool = typer.Option(
         False,
         "--webhook",
-        help="Also start the generic webhook surface (alerting, CI, automations). "
+        hidden=True, help="Also start the generic webhook surface (alerting, CI, automations). "
         "Reads WEBHOOK_INBOUND_SECRET/_NAME/_HMAC from .env and exposes "
         "/webhooks/<hub>/<name> via the edge. Soft-skips if unconfigured.",
     ),
@@ -503,6 +503,8 @@ def run(
             raise typer.Exit(2)
         os.environ.update(values)
     hub = targets[0].resolve()
+    if not no_ui:
+        _refuse_channel_flags(slack, whatsapp, telegram, webhook)
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
         # If the user is currently inside a hub folder, point that out.
@@ -582,8 +584,7 @@ def run(
         "--log-level", settings.log_level,
     ]
     if no_ui:
-        _run_hub_process(hub, bridge_cmd, bridge_env, br_port=br_port, slack=slack,
-                         whatsapp=whatsapp, telegram=telegram, webhook=webhook)
+        _run_hub_process(hub, bridge_cmd, bridge_env, br_port=br_port)
         return
 
     # One hub is a deployment of one: the supervisor runs its bridge (and its
@@ -597,8 +598,7 @@ def run(
     if key and not (os.environ.get("BRIDGE_API_KEYS") or "").strip():
         bridge_env["BRIDGE_API_KEYS"] = unit_key = key
     channel_env = dict(bridge_env)
-    specs = [sup_lib.Spec(bridge_cmd, bridge_env)] + _channel_specs(hub, channel_env) + \
-        _flag_channel_specs(hub, channel_env, slack=slack, whatsapp=whatsapp, telegram=telegram, webhook=webhook)
+    specs = [sup_lib.Spec(bridge_cmd, bridge_env)] + _channel_specs(hub, channel_env)
     from .inbound.routing import hub_slug
 
     slug = hub_slug(hub, os.environ)
@@ -649,14 +649,23 @@ def run(
 
 
 def _refuse_channel_flags(slack: bool, whatsapp: bool, telegram: bool, webhook: bool) -> None:
-    """--slack and friends ran a 1.x channel next to one hub; channels now turn
-    on by a file in the hub's channels/ folder (filled in by the channels
-    change)."""
-    return None
+    """--slack and friends ran a 1.x channel next to one hub. Channels turn on
+    by a file in the hub's channels/ folder now; say which file to add."""
+    from .channels import legacy
+
+    asked = [p for p, on in (("slack_assistant", slack), ("whatsapp_inbound", whatsapp), ("telegram", telegram),
+                             ("webhook", webhook)) if on is True]
+    if not asked:
+        return
+    console.print("[red]Channels turn on by a file now, not a flag.[/red] Add to the hub's channels/ folder:")
+    for provider in asked:
+        console.print(f"\n  channels/{legacy.SUGGESTED[provider]}.yaml\n"
+                      + "".join(f"    {line}\n" for line in legacy.file_text(provider).splitlines()), highlight=False)
+    console.print("Its secrets stay in the hub's .env. See docs/channels.md.")
+    raise typer.Exit(2)
 
 
-def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int, slack: bool, whatsapp: bool,
-                     telegram: bool, webhook: bool) -> None:
+def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int) -> None:
     """One hub's own process under a multi-hub supervisor (`run --no-ui`): its
     bridge, ending when the bridge ends so the supervisor restarts the hub."""
     from . import supervisor as sup_lib
@@ -672,53 +681,12 @@ def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int, slack: 
             console.print("[red]bridge failed to come up[/red]")
             raise typer.Exit(1)
         console.print("[green]→ bridge[/green]  ready")
-        for spec in _flag_channel_specs(hub, bridge_env, slack=slack, whatsapp=whatsapp,
-                                        telegram=telegram, webhook=webhook):
-            children.append(subprocess.Popen(spec.cmd, env=spec.env, start_new_session=False))
         _wait_any(children)
     finally:
         try:
             _stop_processes(children[::-1])
         finally:
             _restore_shutdown_handlers(previous)
-
-
-def _flag_channel_specs(hub: Path, env: dict, *, slack: bool, whatsapp: bool, telegram: bool,
-                        webhook: bool) -> list:
-    """The 1.x Slack app and inbound server asked for with flags."""
-    from . import supervisor as sup_lib
-
-    specs = []
-    if slack:
-        from .slack.env import should_start_slack
-        ok, warn = should_start_slack(want_slack=True, env=os.environ)
-        if not ok:
-            console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
-        else:
-            specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "slack", "run", str(hub)], env,
-                                      role="channel"))
-            console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
-    if whatsapp or telegram or webhook:
-        from .inbound.env import (
-            missing_telegram_vars,
-            missing_webhook_vars,
-            missing_whatsapp_vars,
-        )
-        if whatsapp and missing_whatsapp_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
-        if telegram and missing_telegram_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
-        if webhook and missing_webhook_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  webhook skipped: missing {', '.join(missing_webhook_vars(os.environ))}")
-        start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
-        start_tg = telegram and not missing_telegram_vars(os.environ)
-        start_wh = webhook and not missing_webhook_vars(os.environ)
-        if start_wa or start_tg or start_wh:
-            specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)], env,
-                                      role="channel"))
-            surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
-            console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
-    return specs
 
 
 # ---------------------------------------------------------------------------
@@ -1520,7 +1488,8 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
             bridge_env["BRIDGE_API_KEYS"] = unit_key = key
         cmd = [sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
                "--no-ui", "--bridge-port", str(b.bridge_port)]
-        specs = [sup_lib.Spec(cmd, bridge_env)] + _channel_specs(b.hub_dir, bridge_env)
+        specs = [sup_lib.Spec(cmd, bridge_env)] + _channel_specs(
+            b.hub_dir, bridge_env, inbound_port=b.inbound_port if b.inbound else None)
         units.append(sup_lib.Unit(
             name=b.hub_dir.name.lower(), slug=b.slug, hub_dir=b.hub_dir, specs=specs,
             health_url=f"http://127.0.0.1:{b.bridge_port}/healthz",
@@ -1618,10 +1587,34 @@ def _deployment_bridge_key(state_dir: Path) -> str:
     return value
 
 
-def _channel_specs(hub_dir: Path, env: dict) -> list:
-    """The hub's 1.x channel processes, started with it (filled in by the
-    channels-by-file change)."""
-    return []
+def _channel_specs(hub_dir: Path, env: dict, *, inbound_port: int | None = None) -> list:
+    """The hub's 1.x channel processes, from its channels/ files
+    (hubzoid.channels.legacy): the Slack app and the inbound server. They run
+    and restart with their hub. Problems (a missing secret) are printed and
+    leave that channel off."""
+    from . import gateway as gateway_lib
+    from . import supervisor as sup_lib
+    from .channels import legacy
+
+    plan = legacy.plan(hub_dir, {**os.environ, **gateway_lib._own_env(hub_dir)})
+    for note in plan.notes:
+        console.print(f"[yellow]→ channels[/yellow] {escape(note)}")
+    for problem in plan.problems:
+        console.print(f"[yellow]→ channels[/yellow] {escape(problem)}")
+    specs = []
+    if plan.slack:
+        specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "slack", "run", str(hub_dir)], dict(env),
+                                  role="channel"))
+        console.print(f"[cyan]→ slack [/cyan]  {hub_dir.name}: Slack app (Socket Mode)")
+    if plan.inbound:
+        inbound_env = dict(env)
+        inbound_env["HUBZOID_INBOUND_SURFACES"] = ",".join(plan.inbound)
+        if inbound_port:
+            inbound_env["HUBZOID_INBOUND_PORT"] = str(inbound_port)
+        specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "inbound", "run", str(hub_dir)], inbound_env,
+                                  role="channel"))
+        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>")
+    return specs
 
 
 def _validate_hub_unit(unit) -> list[str]:
