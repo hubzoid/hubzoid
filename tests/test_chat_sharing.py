@@ -85,7 +85,7 @@ def test_public_needs_policy_and_widening_needs_new_link(client, hub):
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["sharing"]["public_enabled"] = True
-    svc.apply(doc, expected_revision=None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
     pv = client.post("/api/shares/previews", headers=ORIGIN,
                      json={"conversation_id": cid, "audience": {"type": "deployment"}}).json()
     share = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]}).json()

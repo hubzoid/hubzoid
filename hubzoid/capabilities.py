@@ -351,6 +351,42 @@ def _workflow_tools(hub_dir: Path, taken: set[str]) -> list[dict]:
     return out
 
 
+def channel_permission(cid: str) -> str:
+    """The grant that lets a person start work from a channel connection."""
+    return "channel_" + _norm(cid)
+
+
+def _channels(hub_dir: Path, taken: set[str]) -> list[dict]:
+    """One row per 2.0 channel connection that answers with the agent: who may
+    start work from it (a Slack thread, a GitHub issue). Read from the
+    channels/ files; a broken file hides its own row only."""
+    try:
+        from .channels import config as channel_config
+
+        paths = channel_config.files(hub_dir)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for path in paths:
+        try:
+            v = channel_config.load_file(hub_dir, path)
+        except Exception:  # noqa: BLE001
+            continue
+        if not v.valid or not v.config.agent:
+            continue
+        pid = channel_permission(v.config.id)
+        if pid in taken or not _ID.match(pid):
+            continue
+        taken.add(pid)
+        out.append(dict(
+            permission=pid, label=f"Start work from {v.config.id} ({v.config.provider})",
+            description="Ask this agent from that channel. They also need to use the agent.",
+            sensitive=False, group="connectors", section="", surfaces=["chat"], status="", available=True,
+            default="grant", delegate_grantable=True, obsolete=False,
+        ))
+    return out
+
+
 def _obsolete(permission: str) -> dict:
     return dict(
         permission=permission, label=_title(permission),
@@ -400,6 +436,8 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
             status="", available=True, default="grant", delegate_grantable=True, obsolete=False,
         )
     for row in _workflow_tools(hub_dir, set(entries)):
+        entries[row["permission"]] = row
+    for row in _channels(hub_dir, set(entries)):
         entries[row["permission"]] = row
     for name in sorted({_norm(g) for g in granted} - set(entries) - {""}):
         entries[name] = _obsolete(name)

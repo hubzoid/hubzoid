@@ -30,9 +30,6 @@ def fake():
 def hub(tmp_path, monkeypatch, fake):
     hub = make_hub(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_CHANNEL_SECRET", SECRET)
-    (hub / "identity").mkdir(exist_ok=True)
-    (hub / "identity" / "access.csv").write_text("phone,email,groups\n,ana@example.org,support\n"
-                                                 ",ben@example.org,support\n")
     from hubzoid.auth import users
 
     from tests.chat_helpers import PEOPLE
@@ -42,8 +39,13 @@ def hub(tmp_path, monkeypatch, fake):
             users.create(hub, email=person.email, name=person.name, id=person.id)
     data = config.load_text(hub, config.render({
         "version": 1, "id": "team", "provider": "fake", "enabled": True, "agent": "main",
-        "allowed_groups": ["support"], "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}})).data
+        "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}})).data
     config.apply(hub, data, expected_revision="absent", actor="test")
+    from hubzoid.access import store_for
+    from hubzoid.capabilities import channel_permission
+
+    for email in ("ana@example.org", "ben@example.org"):   # who may start work here: a Settings grant
+        store_for(hub).grant(email, hub.name, channel_permission("team"), actor="test")
     conn = config.active(hub, "team")
     links.link(conn, external_id="U1", account="ana@example.org", actor="test")
     links.link(conn, external_id="U2", account="ben@example.org", actor="test")

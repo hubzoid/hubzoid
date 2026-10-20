@@ -20,79 +20,18 @@ def client(hub):
         yield c
 
 
-def test_agent_instructions_draft_review_publish_and_rollback(client, hub):
-    before = (hub / "AGENTS.md").read_text()
-    d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "AGENTS.md"}).json()
-    assert d["content"] == before and d["diff"] == "" and not d["stale"]
-    new = before + "\n\nAlways answer stock questions with the SKU first.\n"
-    d = client.patch(f"{A}/drafts/{d['id']}", headers=ORIGIN, json={"content": new, "expected_revision": 1}).json()
-    assert "+Always answer stock questions" in d["diff"]
-    d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": 2}).json()
-    assert d["state"] == "in_review"
-    assert client.patch(f"{A}/drafts/{d['id']}", headers=ORIGIN,
-                        json={"content": "x", "expected_revision": 2}).status_code == 409  # reviewed content is frozen
-    wrong = client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN, json={"decision": "approve", "digest": "sha256:0"})
-    assert wrong.status_code == 409 and wrong.json()["detail"]["code"] == "review_superseded"
-    client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN, json={"decision": "approve", "digest": d["digest"]})
-    pub = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
-    assert pub.status_code == 200 and (hub / "AGENTS.md").read_text() == new
-    vers = client.get(f"{A}/files/versions", params={"path": "AGENTS.md"}).json()["items"]
-    assert [v["current"] for v in vers] == [True, False]  # the new one, and the file it replaced
-    assert client.get(f"{A}/files").json()["hub"] == hub.name.lower()  # an agent's page opens its own file
-    back = client.post(f"{A}/rollbacks", headers=ORIGIN, json={"path": "AGENTS.md", "version_id": vers[1]["version_id"]})
-    assert back.status_code == 201 and back.json()["content"] == before and back.json()["note"].startswith("Roll back")
+def test_validation_paths_and_permissions(client, hub, monkeypatch):
+    from hubzoid.hub_changes import service as hc
 
-
-def test_stale_base_is_refused_not_rebased(client, hub):
-    d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "AGENTS.md"}).json()
-    d = client.patch(f"{A}/drafts/{d['id']}", headers=ORIGIN,
-                     json={"content": d["content"] + "\nNew rule.\n", "expected_revision": 1}).json()
-    d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": 2}).json()
-    client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN, json={"decision": "approve", "digest": d["digest"]})
-    (hub / "AGENTS.md").write_text((hub / "AGENTS.md").read_text() + "\nEdited in Claude Code meanwhile.\n")
-    stale = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
-    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "stale_base"
-    assert "Edited in Claude Code meanwhile." in (hub / "AGENTS.md").read_text()
-
-
-def test_publish_is_one_at_a_time_and_recovers_after_a_crash(client, hub):
-    from hubzoid.chat.authoring import drafts
-
-    svc = client.app.state.chat.authoring
-    base = (hub / "AGENTS.md").read_text()
-
-    def approved(text):
-        d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "AGENTS.md", "content": text}).json()
-        d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": 1}).json()
-        return client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN,
-                           json={"decision": "approve", "digest": d["digest"]}).json()
-
-    a, b = approved(base + "\nA\n"), approved(base + "\nB\n")
-    # A crash after the file was written but before the version was recorded:
-    with svc.engine.begin() as conn:
-        conn.execute(drafts.update().where(drafts.c.id == a["id"]).values(state="publishing"))
-    (hub / "AGENTS.md").write_text(base + "\nA\n")
-    busy = client.post(f"{A}/drafts/{b['id']}/publish", headers=ORIGIN, json={"digest": b["digest"]})
-    assert busy.status_code == 409 and busy.json()["detail"]["code"] == "publish_in_progress"
-    done = client.post(f"{A}/drafts/{a['id']}/publish", headers=ORIGIN, json={"digest": a["digest"]})
-    assert done.status_code == 200 and (hub / "AGENTS.md").read_text().endswith("\nA\n")
-    late = client.post(f"{A}/drafts/{b['id']}/publish", headers=ORIGIN, json={"digest": b["digest"]})
-    assert late.status_code == 409 and late.json()["detail"]["code"] == "stale_base"  # B began from the old file
-
-
-def test_validation_paths_and_permissions(client, monkeypatch):
-    bad_skill = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "skills/stock/SKILL.md",
-                                                                  "content": "---\ndescription: no name\n---\nBody\n"}).json()
-    assert bad_skill["problems"]
-    sub = client.post(f"{A}/drafts/{bad_skill['id']}/submit", headers=ORIGIN, json={"expected_revision": 1})
-    assert sub.status_code == 422
-    code = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "skills/stock/run.py", "content": "print(1)"}).json()
-    assert code["problems"][0]["code"] == "not_text"  # code is never authored here
-    for path in ("../outside.md", "tools_local/x.py", ".env", "knowledge/x.md"):
-        assert client.post(f"{A}/drafts", headers=ORIGIN, json={"path": path, "content": "x"}).status_code == 422, path
+    # A skill change is checked with the runtime's loaders before anyone approves it.
+    with pytest.raises(hc.ChangeError) as exc:
+        hc.build(hub, [{"path": "skills/stock/SKILL.md", "content": "---\ndescription: no name\n---\nBody\n"}])
+    assert exc.value.code == "invalid_file"
+    for path in ("../outside.md", "tools_local/x.py", ".env", "skills/stock/run.py"):
+        with pytest.raises(hc.ChangeError):
+            hc.check_path(path)
     as_people(monkeypatch)
     assert client.get(f"{A}/files", headers=who("ana")).status_code == 403
-    assert client.post(f"{A}/drafts", headers={**who("ana"), **ORIGIN}, json={"path": "AGENTS.md"}).status_code == 403
 
 
 def test_prompts_render_with_checked_variables(client, hub):
@@ -150,24 +89,6 @@ def _approve(client, path, content=None, new=None):
     return d
 
 
-def test_a_publication_is_one_commit_like_a_hub_change(client, hub):
-    import subprocess
-
-    git = lambda *a: subprocess.run(["git", "-C", str(hub), *a], capture_output=True, text=True, check=True).stdout
-    git("init", "-q")
-    git("-c", "user.name=t", "-c", "user.email=t@example.com", "add", "-A")
-    git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "start")
-    before = (hub / "AGENTS.md").read_text()
-    d = _approve(client, "AGENTS.md", new=before + "\nA reviewed rule.\n")
-    pub = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]}).json()
-    assert pub["commit_sha"] and git("rev-parse", "HEAD").strip() == pub["commit_sha"]
-    body = git("log", "-1", "--format=%B")
-    assert f"Hubzoid-Workspace-Draft: {hub.name.lower()}#{d['id']}" in body
-    assert git("status", "--porcelain", "--", "AGENTS.md") == ""  # nothing left uncommitted
-    author = git("log", "-1", "--format=%ae").strip()        # W28: by the person who published it
-    assert "@" in author and author != "hub-changes@hubzoid.invalid"
-
-
 def test_flat_and_differently_spelt_skill_folders_are_listed(client, hub):
     import shutil
 
@@ -177,14 +98,6 @@ def test_flat_and_differently_spelt_skill_folders_are_listed(client, hub):
     (hub / "Skill" / "triage.md").write_text("---\nname: triage\ndescription: Sort tickets\n---\nSort them.\n")
     files = {f["path"]: f["kind"] for f in client.get(f"{A}/files").json()["items"]}
     assert files.get("Skill/triage.md") == "skill"
-    bad = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "Skill/triage.md"}).json()
-    bad = client.patch(f"{A}/drafts/{bad['id']}", headers=ORIGIN,
-                       json={"content": "---\nname: x\n---\nno description\n", "expected_revision": 1}).json()
-    assert any(p["code"] == "invalid_frontmatter" for p in bad["problems"])  # checked like SKILL.md
-    # A new skill goes into the folder the hub already has.
-    d = _approve(client, "skills/notes/SKILL.md", content="---\nname: notes\ndescription: Notes\n---\nTake notes.\n")
-    client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
-    assert (hub / "Skill" / "notes" / "SKILL.md").is_file() and not (hub / "skills").exists()
 
 
 def test_broken_frontmatter_is_explained_in_plain_words():
@@ -246,15 +159,18 @@ def test_a_rebuilt_runtime_opens_and_closes_in_the_lifespan_task(monkeypatch, tm
     assert ar._reload_runtime.__doc__ and asyncio.run(ar._reload_runtime(SimpleNamespace())) is False
 
 
-def test_a_failed_commit_is_finished_by_publishing_again(client, hub, monkeypatch):
-    from hubzoid.hub_changes import service as hub_files
+def test_workspace_edits_are_hub_changes_and_history_is_git(client, hub):
+    import subprocess
 
-    real = hub_files.commit_files
-    monkeypatch.setattr(hub_files, "commit_files", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index.lock")))
-    d = _approve(client, "AGENTS.md", new=(hub / "AGENTS.md").read_text() + "\nOne more rule.\n")
-    first = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
-    assert first.status_code == 503 and first.json()["detail"]["code"] == "commit_failed"
-    monkeypatch.setattr(hub_files, "commit_files", real)
-    again = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
-    assert again.status_code == 200, again.text
-    assert client.get(f"{A}/drafts/{d['id']}").json()["state"] == "published"
+    from hubzoid.hub_changes import service as changes
+
+    assert client.post("/api/chat/authoring/drafts", headers=ORIGIN, json={"path": "AGENTS.md"}).status_code in (404, 405)
+    subprocess.run(["git", "init", "-q"], cwd=hub, check=True)
+    subprocess.run(["git", "-c", "user.email=t@example.org", "-c", "user.name=t", "add", "-A"], cwd=hub, check=True)
+    subprocess.run(["git", "-c", "user.email=t@example.org", "-c", "user.name=t", "commit", "-qm", "start"],
+                   cwd=hub, check=True)
+    # A delegate's instructions and shared prompts are proposable like AGENTS.md.
+    assert changes.check_path("agents/helper/AGENTS.md") == "agents/helper/AGENTS.md"
+    assert changes.check_path("prompts/weekly.md") == "prompts/weekly.md"
+    history = client.get("/api/chat/authoring/files/versions?path=AGENTS.md", headers=ORIGIN).json()["items"]
+    assert history and history[0]["subject"] == "start"

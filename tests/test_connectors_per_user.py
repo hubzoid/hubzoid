@@ -37,9 +37,9 @@ def hub(tmp_path, monkeypatch, servers):
     f.clean_env(monkeypatch)
     hub = f.make_hub(tmp_path, "sales")
     f.accounts(monkeypatch, hub, {X: ("u-x", "user"), Y: ("u-y", "user")})
-    registry.create(hub, {"name": "Mail", "url": servers["mail"]}, actor="test")
-    registry.create(hub, {"name": "Cal", "url": servers["cal"]}, actor="test")
-    registry.create(hub, {"name": "Docs", "url": servers["docs"], "auth_type": "none"},
+    _define(hub, {"name": "Mail", "url": servers["mail"]}, actor="test")
+    _define(hub, {"name": "Cal", "url": servers["cal"]}, actor="test")
+    _define(hub, {"name": "Docs", "url": servers["docs"], "auth_type": "none"},
                     actor="test")
     for cid in ("mail", "cal", "docs"):
         f.grant_connector(hub, cid, X, Y)
@@ -90,7 +90,7 @@ def test_personal_mcp_dispatches_here_in_the_default_mode(hub, servers):
     assert allowed == ["mcp__my_mail__*"]
 
 def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, servers):
-    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
+    _define(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
                           "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
     f.grant_connector(hub, "team", X)
     team = {s.key: s for s in per_user.per_user_servers(hub, who(X))}["my_team"]
@@ -101,36 +101,13 @@ def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, serve
     assert "tok-x" not in json.dumps(registry.get(hub, "team").public())
 
 
-def test_a_new_url_never_receives_the_stored_shared_key(hub, servers):
-    """The key is write-only: an administrator who does not know it cannot point
-    the connector elsewhere and have the stored key sent there."""
-    from hubzoid.connectors import ConnectorError
-
-    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
-                          "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
-    for change in ({"url": "https://attacker.example.org/mcp"},
-                   {"url": "https://attacker.example.org/mcp", "shared_secret": ""}):
-        with pytest.raises(ConnectorError) as e:
-            registry.update(hub, "team", change, actor="test")
-        assert e.value.code in ("shared_key_required", "invalid_shared_secret")
-        assert e.value.status == 422
-        assert registry.get(hub, "team").url == servers["mail"]
-        assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
-    # Other changes keep the key; a new URL with its own key is fine.
-    registry.update(hub, "team", {"name": "Team"}, actor="test")
-    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
-    registry.update(hub, "team", {"url": servers["cal"], "shared_secret": "tok-y"}, actor="test")
-    assert registry.get(hub, "team").url == servers["cal"]
-    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-y"}
-
-
 @pytest.mark.parametrize("header", ["Host", "cookie", "Content-Length", "Proxy-Authorization",
                                     "X-Forwarded-For", "bad header", "MCP-Session-Id"])
 def test_a_shared_key_refuses_headers_that_change_the_request(hub, header):
     from hubzoid.connectors import ConnectorError
 
     with pytest.raises(ConnectorError) as e:
-        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+        _define(hub, {"name": "Key", "url": "https://key.example.org/mcp",
                               "auth_type": "shared", "shared_secret": "s",
                               "shared_header": header}, actor="test")
     assert e.value.code == "invalid_shared_header"
@@ -141,7 +118,7 @@ def test_a_shared_key_must_be_a_printable_ascii_header_value(hub, key):
     from hubzoid.connectors import ConnectorError
 
     with pytest.raises(ConnectorError) as e:
-        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+        _define(hub, {"name": "Key", "url": "https://key.example.org/mcp",
                               "auth_type": "shared", "shared_secret": key}, actor="test")
     assert e.value.code == "invalid_shared_secret"
 
@@ -188,7 +165,7 @@ def test_nobody_unknown_or_blocked_gets_nothing(hub):
 
 
 def test_switched_off_expired_and_moved_connections_are_skipped(hub, servers):
-    registry.update(hub, "cal", {"enabled": False}, actor="test")
+    f.change(hub, "cal", {"enabled": False}, actor="test")
     assert keys(per_user.per_user_servers(hub, who(Y))) == ["my_mail"]
     tokens._finish(hub, "u-y", "mail", tokens.get(hub, "u-y", "mail").version,  # noqa: SLF001
                    status="expired", error="test")
@@ -198,9 +175,7 @@ def test_switched_off_expired_and_moved_connections_are_skipped(hub, servers):
 
     from hubzoid import connectors
 
-    with connectors.engine(hub).begin() as conn:
-        conn.execute(text("UPDATE hz_connectors SET url = :u WHERE id = 'mail'"),
-                     {"u": servers["cal"]})
+    f.change(hub, "mail", {"url": servers["cal"]})   # the file now names another server
     assert per_user.per_user_servers(hub, who(X)) == []
 
 
@@ -222,14 +197,14 @@ def test_a_personal_server_never_replaces_a_hub_server(hub):
     specs, _ = personal_mcp.per_user_specs(hub, who(Y), reserved={"hubzoid", "my_cal"})
     assert set(specs) == {"my_mail"}
     # The hub's own MCP servers are reserved by default.
-    (hub / "connectors").mkdir()
+    (hub / "connectors").mkdir(exist_ok=True)
     (hub / "connectors" / ".mcp.json").write_text(json.dumps(
         {"mcpServers": {"my_mail": {"type": "http", "url": "https://hub-owned.example/mcp"}}}))
     assert keys(per_user.per_user_servers(hub, who(Y))) == ["my_cal"]
 
 
 def test_the_allow_list_limits_the_tools(hub):
-    registry.update(hub, "mail", {"tool_allowlist": ["whoami"]}, actor="test")
+    f.change(hub, "mail", {"tool_allowlist": ["whoami"]}, actor="test")
     (mail,) = per_user.per_user_servers(hub, who(X))
     assert mail.allowed_tools == ("whoami",)
     _, allowed = personal_mcp.per_user_specs(hub, who(X))
@@ -309,7 +284,7 @@ async def test_openai_turns_run_on_a_clone_with_the_callers_servers(hub, monkeyp
         return Result()
 
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
-    registry.update(hub, "mail", {"tool_allowlist": ["whoami"]}, actor="test")
+    f.change(hub, "mail", {"tool_allowlist": ["whoami"]}, actor="test")
     agent = Agent(name="t", instructions="", tools=[hub_note], mcp_servers=[])
     rt = OpenAIAgentsRuntime(agent, hub_dir=hub, vision=(False, 0, 0))
     with identity_scope(who(X)):
@@ -367,8 +342,14 @@ def test_a_connection_is_used_only_where_the_agent_offers_it(hub):
     from hubzoid import connectors
 
     assert keys(per_user.per_user_servers(hub, who(X))) == ["my_mail"]
-    with connectors.engine(hub).begin() as conn:
-        conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = 'mail'"))
+    f.withdraw(hub, "mail")                           # its file no longer lists this agent
     assert store_for(hub).can(X, "sales", "connector_mail")
     assert per_user.per_user_servers(hub, who(X)) == []
     assert per_user.allowed_ids(hub, X, ["mail"]) == set()
+
+
+def _define(hub, body, *, actor="test"):
+    """A connector as a file (tests.connectors_fakes.define)."""
+    from tests.connectors_fakes import define
+
+    return define(hub, body, actor=actor)

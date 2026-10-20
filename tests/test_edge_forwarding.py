@@ -187,7 +187,7 @@ def test_a_large_body_is_not_buffered_before_a_bridge_is_contacted(declared):
 def test_a_large_body_goes_to_the_first_bridge_only():
     chunks = [b"x" * 65536] * 4
     status, seen = _post(chunks, refuse={"bridge1"})
-    assert status == 502 and seen == []
+    assert status == 503 and seen == []
 
 
 @pytest.mark.parametrize("declared", [None, 25])

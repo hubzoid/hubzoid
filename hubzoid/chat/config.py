@@ -1,11 +1,12 @@
-"""Chat configuration: one versioned deployment document, ``chat/config.yaml``.
+"""Chat configuration: the deployment's chat defaults, from one file.
 
-The file is optional. Without it every setting has its product default and a
-fresh hub works. With it, ``apply`` validates the whole document and records
-its bytes as one immutable revision (``hz_chat_config_revisions``) and moves
-the deployment's head (``hz_chat_config_heads``) by compare-and-set, so two
-concurrent applies give one winner and one ``revision_conflict``. No watcher
-publishes file edits: the file is the desired state, apply makes it active.
+Their one home is the ``chat:`` section of ``hubzoid.yaml`` (for this release,
+``chat/config.yaml`` in the deployment folder when there is no section).
+Without either, every setting has its product default and a fresh hub works.
+Every bridge reads the file again when it changes
+(``hubzoid.control.filesettings``); Settings shows the values read-only and
+there is no apply step or copy in the database. An edit that breaks the file
+keeps the last good values and says so; a start with a broken file stops.
 
 Namespaces. ``presentation`` (appearance, text size, density, timezone) is
 owned here. Each later chat feature registers its own namespace
@@ -383,27 +384,6 @@ _MISSING = object()
 # -- storage ------------------------------------------------------------------------
 metadata = sa.MetaData()
 
-revisions = sa.Table(
-    "hz_chat_config_revisions", metadata,
-    sa.Column("id", sa.String(64), primary_key=True),
-    sa.Column("deployment_id", sa.String(64), nullable=False),
-    sa.Column("revision", sa.Integer, nullable=False),
-    sa.Column("version", sa.Integer, nullable=False),
-    sa.Column("namespace_versions", sa.Text, nullable=False),
-    sa.Column("document_json", sa.Text, nullable=False),
-    sa.Column("digest", sa.String(80), nullable=False),
-    sa.Column("created_by", sa.String(320), nullable=False),
-    sa.Column("created_at", sa.Float, nullable=False),
-    sa.UniqueConstraint("deployment_id", "revision", name="hz_chat_config_revisions_rev"),
-)
-
-heads = sa.Table(
-    "hz_chat_config_heads", metadata,
-    sa.Column("scope_key", sa.String(64), primary_key=True),
-    sa.Column("revision_id", sa.String(64), nullable=False),
-    sa.Column("revision", sa.Integer, nullable=False),
-)
-
 preferences = sa.Table(
     "hz_chat_preferences", metadata,
     sa.Column("deployment_id", sa.String(64), primary_key=True),
@@ -416,11 +396,13 @@ preferences = sa.Table(
 
 @dataclass
 class Active:
-    revision: int  # 0 when nothing was ever applied
+    revision: int  # 1 when a file sets the chat defaults, 0 for product defaults
     document: dict
     digest: str
     applied_by: str | None = None
     applied_at: float | None = None
+    source: str = "default"   # where the values come from (hubzoid.yaml (chat), chat/config.yaml)
+    error: str | None = None  # the file is invalid now; these are its last good values
 
 
 class ChatConfigService:
@@ -437,105 +419,46 @@ class ChatConfigService:
             migrations.upgrade(engine, "operational")
         self.engine = engine
         self._pref_writes: dict[str, list[float]] = {}
+        from ..control.filesettings import FileSection
+
+        def parse(data, loaded):
+            data = {"version": VERSION, **(data or {})} if isinstance(data, dict) or data is None else data
+            return validate_document(data, lines=loaded)
+
+        # The one home: `chat:` in hubzoid.yaml (chat/config.yaml for this
+        # release when there is none). No copy in the database.
+        self._file = FileSection(self.hub_dir, "chat", FILE, parse=parse, default=defaults,
+                                 error=lambda m: ConfigError(503, "chat_config_invalid", m))
 
     # -- read ---------------------------------------------------------------------
     def active(self) -> Active:
-        with self.engine.connect() as conn:
-            head = conn.execute(sa.select(heads).where(heads.c.scope_key == self.deployment_id)).first()
-            if head is None:
-                doc = defaults()
-                return Active(0, doc, canonical.digest(doc))
-            row = conn.execute(sa.select(revisions).where(revisions.c.id == head.revision_id)).first()
-        stored = json.loads(row.document_json)
-        # Fill defaults for namespaces installed after this revision was applied.
-        doc = validate_document(stored)
-        return Active(row.revision, doc, row.digest, row.created_by, row.created_at)
+        cur = self._file.current()
+        return Active(1 if cur.path is not None else 0, cur.document, cur.digest, None, cur.loaded_at,
+                      source=cur.source, error=cur.error)
 
     def history(self, limit: int = 50) -> list[dict]:
-        with self.engine.connect() as conn:
-            rows = conn.execute(sa.select(revisions.c.revision, revisions.c.digest,
-                                          revisions.c.created_by, revisions.c.created_at)
-                                .where(revisions.c.deployment_id == self.deployment_id)
-                                .order_by(revisions.c.revision.desc()).limit(limit)).all()
-        return [dict(r._mapping) for r in rows]
+        """Changes are the file's history in Git."""
+        return []
 
     def file_path(self) -> Path:
-        return self.root / FILE
+        cur = self._file.current()
+        return cur.path or (self.root / FILE)
 
     def file_state(self) -> dict:
-        """Whether the desired file differs from the active revision."""
-        path = self.file_path()
-        if not path.is_file():
-            return {"path": FILE, "exists": False}
-        try:
-            doc, _ = parse_file(path)
-        except ConfigError as exc:
-            return {"path": FILE, "exists": True, "valid": False, "error": exc.detail()}
-        active = self.active()
-        return {"path": FILE, "exists": True, "valid": True,
-                "digest": canonical.digest(doc), "matches_active": canonical.digest(doc) == active.digest,
-                "pending_changes": len(diff(active.document, doc))}
+        """Where the defaults come from, and whether that file is valid now."""
+        cur = self._file.current()
+        out = {"path": cur.source, "exists": cur.path is not None, "valid": cur.error is None,
+               "digest": cur.digest, "matches_active": True, "pending_changes": 0, "read_only": True}
+        if cur.error:
+            out["error"] = {"code": "invalid_file", "message": cur.error}
+        return out
 
     # -- write --------------------------------------------------------------------
     def apply(self, document: Any, *, expected_revision: int | None, actor: str,
               idempotency_key: str | None = None, now: float | None = None) -> dict:
-        """Make ``document`` the active revision. ``expected_revision`` None
-        means create only (fails when a revision exists). Raises ConfigError."""
-        doc = validate_document(document)
-        now = time.time() if now is None else now
-        body = {"expected_revision": expected_revision if expected_revision is not None else "absent",
-                "config": doc}
-
-        def change(conn):
-            head = conn.execute(sa.select(heads).where(heads.c.scope_key == self.deployment_id)).first()
-            current = head.revision if head is not None else 0
-            if expected_revision is None:
-                if head is not None:
-                    raise ConfigError(409, "revision_conflict",
-                                      "A chat configuration already exists. Use its revision.",
-                                      current_revision=current)
-            elif expected_revision != current:
-                raise ConfigError(409, "revision_conflict",
-                                  "Someone changed the chat configuration since you loaded it. "
-                                  "Reload, review the diff and apply again.",
-                                  current_revision=current)
-            old_doc = defaults()
-            if head is not None:
-                old_row = conn.execute(sa.select(revisions.c.document_json)
-                                       .where(revisions.c.id == head.revision_id)).scalar()
-                old_doc = validate_document(json.loads(old_row))
-            new_rev = current + 1
-            rev_id = str(uuid.uuid4())
-            dig = canonical.digest(doc)
-            conn.execute(revisions.insert().values(
-                id=rev_id, deployment_id=self.deployment_id, revision=new_rev, version=VERSION,
-                namespace_versions=json.dumps({n: 1 for n in doc if n != "version"}),
-                document_json=json.dumps(doc), digest=dig, created_by=actor, created_at=now))
-            if head is None:
-                conn.execute(heads.insert().values(scope_key=self.deployment_id, revision_id=rev_id,
-                                                   revision=new_rev))
-            else:
-                updated = conn.execute(heads.update().where(
-                    heads.c.scope_key == self.deployment_id, heads.c.revision == current)
-                    .values(revision_id=rev_id, revision=new_rev)).rowcount
-                if updated != 1:
-                    raise ConfigError(409, "revision_conflict",
-                                      "Someone changed the chat configuration at the same moment. "
-                                      "Reload and apply again.", current_revision=current + 1)
-            changed = diff(old_doc, doc)
-            _audit(conn, self.hub_dir, actor, "chat_config.applied",
-                   subject=f"revision:{new_rev}", detail={"digest": dig, "changed": [c["pointer"] for c in changed]})
-            return 200, {"revision": new_rev, "digest": dig, "changed": changed, "warnings": []}
-
-        try:
-            outcome = idempotency.run(self.engine, deployment_id=self.deployment_id, actor_id=actor,
-                                      route="PUT /api/chat/config", key=idempotency_key,
-                                      body=body, change=change, kind="chat_config.apply", now=now)
-        except ConfigError:
-            raise
-        result = dict(outcome.body)
-        result["replayed"] = outcome.replayed
-        return result
+        """Refused: chat defaults live in a file (``hubzoid.yaml``)."""
+        refused = self._file.refused()
+        raise ConfigError(409, "file_owned", str(refused.message if hasattr(refused, "message") else refused))
 
     # -- preferences ----------------------------------------------------------------
     def get_preferences(self, user_id: str) -> dict:

@@ -10,35 +10,31 @@ runs::
       bundle_ttl_minutes: 60       # 5 to 1440
       allow_network_probes: false  # active probes still need a consent per run
 
-Changes go through a **plan**: validate the values, record them with the
-revision they were based on and the exact digest, then **apply** that plan by
-id and digest (never replacement values). Plans expire after 30 minutes.
+Its one home is the ``diagnostics:`` section of ``hubzoid.yaml`` (``admin.yaml``
+in the deployment folder for this release, when there is none). Settings shows
+it read-only; there is no plan, apply or copy in the database.
 
 The **domain registry** describes every settings area the Console shows, with
 its file, owner, read and write permissions and operations. Each domain keeps
-its own store and apply rules: chat (``chat/config.yaml``), branding
-(``branding.yaml``, through reviewed publication) and admin (this file).
+one home, a file: chat (``chat:`` in hubzoid.yaml), branding (``brand:`` and
+``branding/``) and admin (``diagnostics:``), all read-only in Settings.
 Process settings that come from the environment are listed read-only with
 their source.
 """
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import sqlalchemy as sa
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from ..control import canonical, deploy, idempotency, yamlfile
+from ..control import canonical, deploy, yamlfile
 
 FILE = "admin.yaml"
-PLAN_TTL = 30 * 60
 
 
 class _Strict(BaseModel):
@@ -104,44 +100,6 @@ def defaults() -> dict:
     return validate({"version": 1})
 
 
-metadata = sa.MetaData()
-
-revisions = sa.Table(
-    "hz_admin_config_revisions", metadata,
-    sa.Column("id", sa.String(64), primary_key=True),
-    sa.Column("deployment_id", sa.String(64), nullable=False),
-    sa.Column("revision", sa.Integer, nullable=False),
-    sa.Column("document_json", sa.Text, nullable=False),
-    sa.Column("digest", sa.String(80), nullable=False),
-    sa.Column("created_by", sa.String(320), nullable=False),
-    sa.Column("created_at", sa.Float, nullable=False),
-    sa.UniqueConstraint("deployment_id", "revision", name="hz_admin_config_revisions_rev"),
-)
-
-heads = sa.Table(
-    "hz_admin_config_heads", metadata,
-    sa.Column("deployment_id", sa.String(64), primary_key=True),
-    sa.Column("revision_id", sa.String(64), nullable=False),
-    sa.Column("revision", sa.Integer, nullable=False),
-)
-
-plans = sa.Table(
-    "hz_admin_config_plans", metadata,
-    sa.Column("id", sa.String(64), primary_key=True),
-    sa.Column("deployment_id", sa.String(64), nullable=False),
-    sa.Column("hub_id", sa.String(255)),
-    sa.Column("domain", sa.String(64), nullable=False),
-    sa.Column("expected_revision", sa.Integer, nullable=False),
-    sa.Column("candidate_json", sa.Text, nullable=False),
-    sa.Column("digest", sa.String(80), nullable=False),
-    sa.Column("state", sa.String(16), nullable=False),
-    sa.Column("created_by_user_id", sa.String(320), nullable=False),
-    sa.Column("created_at", sa.Float, nullable=False),
-    sa.Column("expires_at", sa.Float, nullable=False),
-    sa.Column("owner_plan_id", sa.String(64)),
-    sa.Column("owner_operation_id", sa.String(64)),
-)
-
 
 @dataclass
 class Active:
@@ -178,38 +136,39 @@ class AdminConfigService:
             engine = db.operational_engine(self.hub_dir)
             migrations.upgrade(engine, "operational")
         self.engine = engine
+        from ..control.filesettings import FileSection
+
+        def parse(data, loaded):
+            if loaded is None:  # the `diagnostics:` section of hubzoid.yaml
+                return validate({"version": 1, "diagnostics": data or {}})
+            return validate(data, loaded=loaded)
+
+        # The one home: `diagnostics:` in hubzoid.yaml (admin.yaml for this
+        # release when there is none). No plan, apply or copy in the database.
+        self._file = FileSection(self.hub_dir, "diagnostics", FILE, parse=parse, default=defaults,
+                                 error=lambda m: AdminError(503, "admin_config_invalid", m))
 
     def active(self) -> Active:
-        with self.engine.connect() as conn:
-            head = conn.execute(sa.select(heads).where(heads.c.deployment_id == self.deployment_id)).first()
-            if head is None:
-                d = defaults()
-                return Active(0, d, canonical.digest(d))
-            row = conn.execute(sa.select(revisions).where(revisions.c.id == head.revision_id)).first()
-        doc = validate(json.loads(row.document_json))
-        return Active(row.revision, doc, row.digest, row.created_by, row.created_at)
+        cur = self._file.current()
+        return Active(1 if cur.path is not None else 0, cur.document, cur.digest, None, cur.loaded_at)
 
     def show(self) -> dict:
         a = self.active()
         d = _flatten(defaults())
         provenance = {p: {"value": v, "source": "deployment" if a.revision and d.get(p) != v else "default"}
                       for p, v in _flatten(a.document).items() if p != "/version"}
-        return {"domain": "admin", "file": FILE, "revision": a.revision, "digest": a.digest,
+        return {"domain": "admin", "file": self._file.current().source, "revision": a.revision, "digest": a.digest,
                 "values": a.document, "defaults": defaults(), "provenance": provenance,
                 "applied_by": a.applied_by, "applied_at": a.applied_at, "schema": AdminDoc.model_json_schema(),
-                "restart_required": False, "file_state": self.file_state()}
+                "restart_required": False, "file_state": self.file_state(), "read_only": True}
 
     def file_state(self) -> dict:
-        path = self.root / FILE
-        if not path.is_file():
-            return {"path": FILE, "exists": False}
-        try:
-            doc = self.parse_file(path)
-        except AdminError as exc:
-            return {"path": FILE, "exists": True, "valid": False,
-                    "error": {"code": exc.code, "message": exc.message, **exc.extra}}
-        return {"path": FILE, "exists": True, "valid": True,
-                "matches_active": canonical.digest(doc) == self.active().digest}
+        cur = self._file.current()
+        out = {"path": cur.source, "exists": cur.path is not None, "valid": cur.error is None,
+               "matches_active": True, "read_only": True}
+        if cur.error:
+            out["error"] = {"code": "invalid_file", "message": cur.error}
+        return out
 
     def parse_file(self, path: Path) -> dict:
         try:
@@ -218,91 +177,21 @@ class AdminConfigService:
             raise AdminError(422, "invalid_yaml", exc.message, file=exc.path, line=exc.line)
         return validate(loaded.data, loaded=loaded)
 
+    def _refused(self) -> AdminError:
+        err = self._file.refused()
+        return AdminError(409, "file_owned", getattr(err, "message", str(err)))
+
     def plan(self, values: Any, *, expected_revision: int, actor: str, idempotency_key: str | None = None,
              now: float | None = None) -> dict:
-        doc = validate(values)
-        now = time.time() if now is None else now
-        active = self.active()
-        if expected_revision != active.revision:
-            raise AdminError(409, "revision_conflict",
-                             "The admin settings changed since you loaded them. Reload and plan again.",
-                             current_revision=active.revision)
-        dig = canonical.digest({"domain": "admin", "scope": self.deployment_id, "version": 1,
-                                "base_revision": active.revision, "values": doc})
-
-        def change(conn):
-            plan_id = str(uuid.uuid4())
-            conn.execute(plans.insert().values(
-                id=plan_id, deployment_id=self.deployment_id, hub_id=None, domain="admin",
-                expected_revision=active.revision, candidate_json=json.dumps(doc), digest=dig, state="draft",
-                created_by_user_id=actor, created_at=now, expires_at=now + PLAN_TTL))
-            return 201, {"plan_id": plan_id, "digest": dig, "base_revision": active.revision,
-                         "diff": diff(active.document, doc), "expires_at": now + PLAN_TTL,
-                         "restart_required": False}
-
-        return idempotency.run(self.engine, deployment_id=self.deployment_id, actor_id=actor,
-                               route="POST /api/admin/config/plans", key=idempotency_key,
-                               body={"values": doc, "expected_revision": expected_revision},
-                               change=change, kind="admin_config.plan", now=now).body
+        """Refused: diagnostic limits live in a file (``hubzoid.yaml``)."""
+        raise self._refused()
 
     def apply(self, plan_id: str, *, digest: str, expected_revision: int, actor: str,
               idempotency_key: str | None = None, now: float | None = None) -> dict:
-        now = time.time() if now is None else now
-
-        def change(conn):
-            plan = conn.execute(sa.select(plans).where(plans.c.id == plan_id,
-                                                       plans.c.deployment_id == self.deployment_id)).first()
-            if plan is None:
-                raise AdminError(404, "not_found", "That plan was not found.")
-            if plan.expires_at < now and plan.state == "draft":
-                conn.execute(plans.update().where(plans.c.id == plan_id).values(state="expired"))
-                raise AdminError(410, "plan_expired", "That plan expired. Make a fresh plan.")
-            if plan.state != "draft":
-                raise AdminError(409, "revision_conflict", f"That plan is already {plan.state}. Make a fresh plan.")
-            if plan.digest != digest:
-                raise AdminError(409, "revision_conflict", "The digest doesn't match the plan. Apply the exact plan you reviewed.")
-            head = conn.execute(sa.select(heads).where(heads.c.deployment_id == self.deployment_id)).first()
-            current = head.revision if head else 0
-            if expected_revision != current or plan.expected_revision != current:
-                conn.execute(plans.update().where(plans.c.id == plan_id).values(state="conflicted"))
-                raise AdminError(409, "revision_conflict",
-                                 "The admin settings changed after this plan was made. Make a fresh plan.",
-                                 current_revision=current)
-            doc = json.loads(plan.candidate_json)
-            rev_id = str(uuid.uuid4())
-            new_rev = current + 1
-            dig = canonical.digest(doc)
-            conn.execute(revisions.insert().values(id=rev_id, deployment_id=self.deployment_id, revision=new_rev,
-                                                   document_json=json.dumps(doc), digest=dig, created_by=actor,
-                                                   created_at=now))
-            if head is None:
-                conn.execute(heads.insert().values(deployment_id=self.deployment_id, revision_id=rev_id,
-                                                   revision=new_rev))
-            else:
-                conn.execute(heads.update().where(heads.c.deployment_id == self.deployment_id,
-                                                  heads.c.revision == current)
-                             .values(revision_id=rev_id, revision=new_rev))
-            conn.execute(plans.update().where(plans.c.id == plan_id).values(state="applied"))
-            from ..control import audit
-
-            audit.write(conn, actor, "admin_config.applied", subject=f"revision:{new_rev}",
-                        detail={"plan": plan_id, "digest": dig}, surface="admin")
-            return 200, {"revision": new_rev, "digest": dig, "plan_id": plan_id}
-
-        return idempotency.run(self.engine, deployment_id=self.deployment_id, actor_id=actor,
-                               route=f"POST /api/admin/config/plans/{plan_id}/apply", key=idempotency_key,
-                               body={"digest": digest, "expected_revision": expected_revision},
-                               change=change, kind="admin_config.apply", now=now).body
+        raise self._refused()
 
     def list_plans(self) -> list[dict]:
-        with self.engine.connect() as conn:
-            rows = conn.execute(sa.select(plans).where(plans.c.deployment_id == self.deployment_id)
-                                .order_by(plans.c.created_at.desc()).limit(50)).all()
-        now = time.time()
-        return [{"plan_id": r.id, "domain": r.domain, "state": "expired" if r.state == "draft" and r.expires_at < now
-                 else r.state, "digest": r.digest, "base_revision": r.expected_revision,
-                 "created_by": r.created_by_user_id, "created_at": r.created_at, "expires_at": r.expires_at}
-                for r in rows]
+        return []
 
     def export_yaml(self) -> str:
         a = self.active()
@@ -333,24 +222,22 @@ def domains(hub_dir: Path, principal=None) -> list[dict]:
     except Exception:  # noqa: BLE001
         brand = {"revision": None, "generation": 0}
     model = os.environ.get("MODEL") or "claude-local"
+    edit = "Edit hubzoid.yaml (or ask Claude Code or Codex to); every agent picks it up within a few seconds."
     out = [
-        {"domain": "chat", "owner": "HUB-71", "file": "chat/config.yaml", "revision": chat_active.revision,
-         "digest": chat_active.digest, "read_capability": "chat_config.read",
-         "write_capability": "chat_config.manage", "restart_required": False,
-         "cli": ["hubzoid chat config get --sources", "hubzoid chat config apply --file chat/config.yaml"],
-         "api": ["GET /api/chat/config", "PUT /api/chat/config"], "console": "#/settings/chat"},
-        {"domain": "branding", "owner": "HUB-82", "file": "branding.yaml", "revision": brand.get("revision"),
-         "generation": brand.get("generation"), "read_capability": "branding.read",
-         "write_capability": "branding.activate", "restart_required": False,
-         "cli": ["hubzoid branding inspect", "hubzoid branding draft create", "hubzoid branding activate"],
-         "api": ["GET /api/branding/history", "POST /api/branding/drafts"], "console": "#/settings/appearance",
-         "note": "Changes go through a reviewed draft and activation."},
-        {"domain": "admin", "owner": "HUB-84", "file": FILE, "revision": admin.revision, "digest": admin.digest,
-         "read_capability": "admin.config.read", "write_capability": "admin.config.write",
-         "restart_required": False,
-         "cli": ["hubzoid admin config show", "hubzoid admin config plan --file admin.yaml",
-                 "hubzoid admin config apply --plan ID --digest D --expected-revision N"],
-         "api": ["GET /api/admin/config", "POST /api/admin/config/plans"], "console": "#/settings/admin"},
+        {"domain": "chat", "owner": "HUB-71", "file": chat_active.source, "revision": chat_active.revision,
+         "digest": chat_active.digest, "read_capability": "chat_config.read", "read_only": True,
+         "restart_required": False, "cli": ["hubzoid chat config get --sources"],
+         "api": ["GET /api/chat/config"], "console": "#/settings/chat", "note": edit},
+        {"domain": "branding", "owner": "HUB-82", "file": brand.get("source") or "hubzoid.yaml (brand)",
+         "revision": brand.get("revision"), "generation": brand.get("generation"),
+         "read_capability": "branding.read", "read_only": True, "restart_required": False,
+         "cli": ["hubzoid branding inspect", "hubzoid branding validate"],
+         "api": ["GET /api/branding/source"], "console": "#/settings/appearance",
+         "note": "The brand and its files in branding/. " + edit},
+        {"domain": "admin", "owner": "HUB-84", "file": service_for(hub_dir).file_state()["path"],
+         "revision": admin.revision, "digest": admin.digest, "read_capability": "admin.config.read",
+         "read_only": True, "restart_required": False, "cli": ["hubzoid admin config show"],
+         "api": ["GET /api/admin/config"], "console": "#/settings/admin", "note": edit},
         {"domain": "model", "owner": "HUB-101", "file": ".env", "read_only": True,
          "values": [{"key": "MODEL", "value": model, "source": "environment" if os.environ.get("MODEL") else "default"}],
          "restart_required": True, "note": "Set in the hub's .env. Changing it needs a restart."},

@@ -1,10 +1,11 @@
-"""`channels/<id>.yaml`: load, validate, apply and export a connection.
+"""`channels/<id>.yaml`: load, validate, change and export a connection.
 
-The file is the desired configuration and lives in the hub folder, versioned
-with the hub. The operational store holds the active, validated revision. A
-file edit takes effect only through an explicit apply, and the Console and API
-apply the same schema and rewrite the same file, so there is never a hidden
-database-only setting.
+The file is the connection's only configuration and lives in the hub folder,
+versioned with the hub. The runtime reads it (``active``/``active_all``,
+cached until the file changes); the operational store keeps only the
+connection's status, provider state and a revision that counts changes to the
+file. The Console and API validate with the same schema and rewrite the same
+file.
 
 Errors name the file, the key and its line (``hubzoid.control.yamlfile``).
 """
@@ -61,7 +62,12 @@ def files(hub_dir) -> list[Path]:
     folder = channels_dir(hub_dir)
     if not folder.is_dir():
         return []
-    return sorted(p for p in folder.iterdir() if p.suffix in (".yaml", ".yml") and p.is_file())
+    from .legacy import is_legacy
+
+    # 1.x channel files (hubzoid.channels.legacy) start processes; they are not
+    # 2.0 connections.
+    return sorted(p for p in folder.iterdir()
+                  if p.suffix in (".yaml", ".yml") and p.is_file() and not is_legacy(p))
 
 
 # -- validation -------------------------------------------------------------------
@@ -363,21 +369,77 @@ def _connection(hub_dir: Path, row: dict) -> Connection:
                       state=row.get("state_json") or {})
 
 
+_loaded: dict[str, tuple] = {}
+
+
+def _from_file(hub_dir: Path, path: Path):
+    """A channel file's validation, cached until the file changes."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _loaded.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    v = load_file(hub_dir, path, expected_id=path.stem)
+    if not v.valid and hit is not None and hit[1].valid:
+        # An edit that breaks the file changes nothing while the hub runs: the
+        # last good configuration stays until the file is fixed.
+        import logging
+
+        logging.getLogger("hubzoid.channels").warning(
+            "channels: %s is not valid now; keeping its last good configuration", path)
+        _loaded[str(path)] = (stamp, hit[1])
+        return hit[1]
+    _loaded[str(path)] = (stamp, v)
+    return v
+
+
+def _synced(hub_dir: Path, v) -> dict:
+    """The connection's row (status, provider state, a revision that counts
+    changes to its file), brought up to date with the file: the file is the
+    only configuration, the row only records what was loaded."""
+    hub = hub_of(hub_dir)
+    norm = normalized(v.config, v.settings)
+    digest = canonical.digest(norm)
+    row = store.get_connection(hub_dir, hub, v.config.id)
+    status = "enabled" if v.config.enabled else "disabled"
+    if row is not None and row["digest"] == digest and row["status"] == status:
+        return row
+    path = file_for(hub_dir, v.config.id)
+    with store.locked(hub_dir, f"channel:{hub}:{v.config.id}") as conn:
+        current = store.get_connection(hub_dir, hub, v.config.id, conn=conn)
+        if current is None or current["digest"] != digest or current["status"] != status:
+            store.put_connection(conn, hub=hub, cid=v.config.id, provider=v.config.provider, config=norm,
+                                 digest=digest, expected_revision=current["revision"] if current else "absent",
+                                 status=status, file_path=str(path.relative_to(hub_dir))
+                                 if path.is_relative_to(hub_dir) else str(path), actor="file")
+    return store.get_connection(hub_dir, hub, v.config.id)
+
+
 def active(hub_dir, cid: str) -> Connection:
+    """The connection as its file says now (``channels/<id>.yaml``)."""
     hub_dir = Path(hub_dir)
-    row = store.get_connection(hub_dir, hub_of(hub_dir), cid)
-    if row is None:
+    path = file_for(hub_dir, cid)
+    v = _from_file(hub_dir, path) if path.is_file() else None
+    if v is None or not v.valid:
         raise not_found("channel")
-    return _connection(hub_dir, row)
+    return _connection(hub_dir, _synced(hub_dir, v))
 
 
 def active_all(hub_dir) -> list[Connection]:
+    """Every valid connection file of the hub. An invalid file leaves only its
+    own connection off (doctor and `hubzoid channels list` say why)."""
     hub_dir = Path(hub_dir)
     out = []
-    for row in store.list_connections(hub_dir, hub_of(hub_dir)):
+    for path in files(hub_dir):
         try:
-            out.append(_connection(hub_dir, row))
-        except Exception:  # noqa: BLE001 - one broken row never hides the others
+            v = _from_file(hub_dir, path)
+            if v is None or not v.valid:
+                continue
+            out.append(_connection(hub_dir, _synced(hub_dir, v)))
+        except Exception:  # noqa: BLE001 - one broken file never hides the others
             continue
     return out
 
@@ -438,11 +500,11 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
     body = text if text is not None else render(data)
     from .. import datadir
 
-    # The active configuration is the revision in the database. An image-built
-    # hub keeps it there (the data folder) and writes no file into its image,
-    # where a redeploy would undo it: `hubzoid channels export` gives the file
-    # to commit.
-    image_built = datadir.hub_read_only(hub_dir)
+    # The file is the connection's only configuration. A hub whose files come
+    # from its image (HUBZOID_DATA_DIR) changes it in Git, never here.
+    if datadir.hub_read_only(hub_dir):
+        raise ChannelError("hub_read_only", f"This agent's files come from its Git repository: change "
+                           f"channels/{cfg.id}.yaml there and redeploy.", status=409)
     status = "enabled" if cfg.enabled else "disabled"
     with store.locked(hub_dir, f"channel:{hub}:{cfg.id}") as conn:
         out = store.put_connection(conn, hub=hub, cid=cfg.id, provider=cfg.provider, config=norm,
@@ -450,14 +512,14 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
                                    file_path=str(path.relative_to(hub_dir)) if path.is_relative_to(hub_dir)
                                    else str(path), actor=actor)
         try:
-            if not image_built:
-                _write_atomic(path, body)
+            _write_atomic(path, body)
         except OSError as exc:
             raise ChannelError("hub_read_only", f"Cannot write {path}: {exc.strerror}. The hub folder must "
-                               "be writable to apply channel changes.", status=503) from exc
+                               "be writable to change a channel.", status=503) from exc
+    _from_file(hub_dir, path)  # what was written is what runs, until the file changes
     audit(hub_dir, actor, "channel_apply", f"{cfg.id}@{out['revision']}")
     return {"id": cfg.id, "revision": out["revision"], "status": status, "created": out["created"],
-            "file": str(path), "digest": digest, "file_written": not image_built}
+            "file": str(path), "digest": digest, "file_written": True}
 
 
 def export(hub_dir, cid: str) -> dict:

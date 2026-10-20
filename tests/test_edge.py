@@ -505,3 +505,62 @@ def test_a_get_behind_a_gateway_with_fallbacks_is_served_and_retried(monkeypatch
         assert (r.status_code, r.content) == (200, b"page")
         assert calls == [("bridge1", "GET"), ("bridge1", "GET")]
         assert client.post("/api/x", content=b"{}").status_code == 200  # a small body still goes through
+
+
+def test_first_hub_addresses_never_fail_over_and_answer_restarting(monkeypatch):
+    # With the first bridge down, a personal key on bare /v1 must not reach
+    # another agent; deployment-wide pages still fail over.
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    seen = []
+
+    def upstream(request):
+        seen.append(request.url.host)
+        if request.url.host == "bridge1":
+            raise httpx.ConnectError("refused")
+        return httpx.Response(200, stream=httpx.ByteStream(b"ok"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1", default_fallbacks=["http://bridge2"])
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.get("/v1/models", headers={"Authorization": "Bearer hzp_x"})
+        assert got.status_code == 503 and got.headers["retry-after"] == "5"
+        assert "restarting" in got.json()["error"]["message"] and "bridge2" not in seen
+        assert client.get("/portal/x.js").status_code == 200 and seen[-1] == "bridge2"
+
+
+def test_the_supervisor_table_is_read_again_and_drains_webhooks(tmp_path, monkeypatch):
+    import json as _json
+    import os as _os
+
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    async def upstream(r):
+        await r.aread()
+        return httpx.Response(200, stream=httpx.ByteStream(r.url.host.encode()))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    table = tmp_path / "routes.json"
+
+    def write(states, upstream="http://b2"):
+        table.write_text(_json.dumps({"default": "http://b1", "routes": [
+            {"prefix": "/webhooks/two", "upstream": upstream, "hub": "two"},
+            {"prefix": "/b/two/api", "upstream": upstream, "strip_prefix": "/b/two", "hub": "two"}],
+            "states": states}))
+
+    write({"two": "ready"})
+    app = edge.build_edge_app(default_base="http://unused", table_file=str(table))
+    with TestClient(app) as client:
+        assert client.post("/webhooks/two/whatsapp", content=b"{}").content == b"b2"
+        write({"two": "draining"}, upstream="http://b3")
+        _os.utime(table, (1, 1))
+        monkeypatch.setattr(edge._TableFile, "current", lambda self: edge.table_from_json(
+            _json.loads(table.read_text())))
+        assert client.post("/webhooks/two/whatsapp", content=b"{}").status_code == 503
+        assert client.get("/b/two/api/x").content == b"b3"   # a running turn's API still works
+        write({"two": "failed"})
+        assert client.get("/b/two/api/x").status_code == 503

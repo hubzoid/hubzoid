@@ -75,7 +75,7 @@ def _gateway(tmp_path: Path, started, *, sales_env: str = ""):
     gw = tmp_path / "gw"
     with clean_process_env(HUBZOID_AUTH="true"):
         result = CliRunner().invoke(cli.app, ["gateway", str(sales), str(support), "--port", "4160",
-                                              "--data-dir", str(gw), "--no-bridges"],
+                                              "--data-dir", str(gw)],
                                     catch_exceptions=False)
     assert result.exit_code == 0, result.output
     manifest = json.loads((gw / "deployment.json").read_text())
@@ -170,7 +170,7 @@ def test_a_separately_started_bridge_trusts_every_address_of_its_deployment(tmp_
     gw = tmp_path / "gw"
     with clean_process_env(HUBZOID_AUTH="true"):
         result = CliRunner().invoke(cli.app, ["gateway", str(sales), str(support), "--port", "4160",
-                                              "--data-dir", str(gw), "--no-bridges",
+                                              "--data-dir", str(gw),
                                               "--public-url", "https://one.example.org"],
                                     catch_exceptions=False)
     assert result.exit_code == 0, result.output

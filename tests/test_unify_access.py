@@ -1,6 +1,6 @@
 """Unify restricted-tool group resolution across surfaces (0.8.1).
 
-The bug: a coordinator granted a group in the hub roster (identity/access.csv)
+The bug: a coordinator granted a group in the hub roster (then identity/access.csv; now identity/access.py)
 could use restricted tools on WhatsApp but was denied on Open WebUI, because the
 OWUI path never consulted the roster. The fix unions three group sources on the
 web/MCP path — OWUI groups, roster groups (keyed by the same email), and header
@@ -10,7 +10,7 @@ groups — additively, so:
   * an OWUI-only user with no roster row is never locked out.
 
 Also proves the roster reaches restricted-tool permissions but NOT the MCP front
-door, and that a roster edit takes effect with no restart.
+door.
 """
 from __future__ import annotations
 
@@ -43,9 +43,12 @@ def setup_function(_):
 # ---------------------------------------------------------------------------
 def test_roster_group_reaches_owui_identity(tmp_path):
     """The bug, fixed: a roster-only coordinator resolves the group on OWUI."""
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
+    _write(tmp_path, "identity/access.py", """\
+        def resolve(surface, handle):
+            return None
+
+        def groups_for_email(email):
+            return ["coordinator"] if email == "ravi@example.org" else []
     """)
     groups = effective_groups(tmp_path, email="ravi@example.org", surface="owui")
     assert "coordinator" in groups
@@ -68,9 +71,12 @@ def _signed(hub, email):
 
 
 def test_derive_identity_unifies_roster_on_a_web_sign_in(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
+    _write(tmp_path, "identity/access.py", """\
+        def resolve(surface, handle):
+            return None
+
+        def groups_for_email(email):
+            return ["coordinator"] if email == "ravi@example.org" else []
     """)
     req = _FakeRequest(_signed(tmp_path, "ravi@example.org"))
     ident = server._derive_identity({}, req, tmp_path)
@@ -79,26 +85,13 @@ def test_derive_identity_unifies_roster_on_a_web_sign_in(tmp_path):
     assert ident.surface == "web"
 
 
-def test_derive_identity_roster_reloads_without_restart(tmp_path):
-    p = _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    req = _FakeRequest(_signed(tmp_path, "ravi@example.org"))
-    ident1 = server._derive_identity({}, req, tmp_path)
-    assert "auditor" not in ident1.groups
-    p.write_text(textwrap.dedent("""\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator;auditor
-    """))
-    ident2 = server._derive_identity({}, req, tmp_path)
-    assert "auditor" in ident2.groups  # no restart, same process
-
-
 def test_derive_identity_anonymous_when_no_email(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
+    _write(tmp_path, "identity/access.py", """\
+        def resolve(surface, handle):
+            return None
+
+        def groups_for_email(email):
+            return ["coordinator"] if email == "ravi@example.org" else []
     """)
     ident = server._derive_identity({}, _FakeRequest({}), tmp_path)
     assert ident.is_anonymous

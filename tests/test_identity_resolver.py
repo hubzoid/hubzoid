@@ -1,8 +1,8 @@
 """The identity resolver: turn a surface handle (phone) into {email, groups}.
 
 Presence-activated like `restricted/`: a hub with no `identity/` folder has no
-resolver (everyone fail-closed on webhook surfaces). A `.py` function backing
-wins over a `.csv` table. Email is the key; unknown handle -> None.
+resolver (everyone fail-closed on webhook surfaces). `identity/access.csv` is
+no longer read. Email is the key; unknown handle -> None.
 """
 import textwrap
 
@@ -41,89 +41,13 @@ def test_console_phone_numbers_resolve_first(tmp_path, monkeypatch):
         919800000002,ravi@example.org,coordinator
     """)
     resolve = load_resolver(tmp_path)
-    got = resolve("whatsapp", "919800000001")                   # the Console wins
+    got = resolve("whatsapp", "919800000001")                   # the Console is the one home
     assert got == {"email": "ana@example.org", "groups": []}
-    assert resolve("whatsapp", "919800000002")["email"] == "ravi@example.org"
+    assert resolve("whatsapp", "919800000002") is None          # access.csv is no longer read
     gs.suspend("ana@example.org", actor="t")
-    assert resolve("whatsapp", "919800000001")["email"] == "someone@example.org"
+    assert resolve("whatsapp", "919800000001") is None
     gs.set_phone("ana@example.org", "", actor="t")
     assert gs.subject_for_phone("919800000001") is None
-
-
-def test_table_resolves_phone_to_email_and_groups(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve is not None
-    got = resolve("whatsapp", "919800000001")
-    assert got["email"] == "ravi@example.org"
-    assert got["groups"] == ["coordinator"]
-
-
-def test_table_normalizes_phone_on_both_sides(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email
-        +91 98000-00001,ravi@example.org
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["email"] == "ravi@example.org"
-
-
-def test_table_headers_are_case_insensitive_and_trimmed(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        Phone , Email , Groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["email"] == "ravi@example.org"
-
-
-def test_email_is_lowercased(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email
-        919800000001,Ravi@Example.org
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["email"] == "ravi@example.org"
-
-
-def test_groups_split_on_semicolon(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator;curator
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["groups"] == ["coordinator", "curator"]
-
-
-def test_unknown_phone_is_fail_closed(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email
-        919800000001,ravi@example.org
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "910000000000") is None
-
-
-def test_blank_rows_are_skipped(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email
-
-        919800000001,ravi@example.org
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["email"] == "ravi@example.org"
-
-
-def test_extra_columns_preserved_as_context(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,center
-        919800000001,ravi@example.org,adyar
-    """)
-    resolve = load_resolver(tmp_path)
-    assert resolve("whatsapp", "919800000001")["center"] == "adyar"
 
 
 def test_function_backing_wins_over_table(tmp_path):
@@ -160,74 +84,6 @@ def test_function_receives_surface_and_handle(tmp_path):
 # ---------------------------------------------------------------------------
 # Email-keyed lookup, reload-on-edit, and the .py opt-in (unify-access, 0.8.1)
 # ---------------------------------------------------------------------------
-def test_table_resolves_same_identity_by_phone_and_email(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator;staff
-    """)
-    r = load_resolver(tmp_path)
-    assert r("whatsapp", "919800000001")["email"] == "ravi@example.org"
-    # Same person, reached by the OWUI email, resolves the same groups.
-    assert sorted(r.groups_for_email("ravi@example.org")) == ["coordinator", "staff"]
-
-
-def test_groups_for_email_is_case_insensitive(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,Ravi@Example.org,coordinator
-    """)
-    r = load_resolver(tmp_path)
-    assert r.groups_for_email("  RAVI@example.ORG ") == ["coordinator"]
-
-
-def test_unknown_email_returns_empty_not_none(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    r = load_resolver(tmp_path)
-    assert r.groups_for_email("stranger@example.org") == []
-
-
-def test_duplicate_email_across_rows_unions_groups(tmp_path):
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-        919800000002,ravi@example.org,staff
-    """)
-    r = load_resolver(tmp_path)
-    assert sorted(r.groups_for_email("ravi@example.org")) == ["coordinator", "staff"]
-
-
-def test_csv_reloads_on_edit_without_restart(tmp_path):
-    p = _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    r = load_resolver(tmp_path)
-    assert r.groups_for_email("ravi@example.org") == ["coordinator"]
-    # Operator edits the roster in place; next lookup must reflect it.
-    p.write_text(textwrap.dedent("""\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator;auditor
-    """))
-    assert sorted(r.groups_for_email("ravi@example.org")) == ["auditor", "coordinator"]
-
-
-def test_corrupt_csv_denies_not_last_good(tmp_path):
-    p = _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    r = load_resolver(tmp_path)
-    assert r.groups_for_email("ravi@example.org") == ["coordinator"]
-    # A half-saved / unreadable file must fail closed (deny), never keep the
-    # old grant alive.
-    p.unlink()
-    p.mkdir()  # replace the file with a directory -> open() raises OSError
-    assert r.groups_for_email("ravi@example.org") == []
-
-
 def test_py_backing_ignoring_args_is_never_handed_an_email(tmp_path):
     # Legacy access.py that defines only resolve() and ignores its arguments:
     # it must NOT leak its fixed group to every OWUI email.

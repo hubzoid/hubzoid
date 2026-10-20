@@ -220,9 +220,88 @@ class EdgeRoute:
     upstream: str
     strip_prefix: str = ""
     fallbacks: tuple[str, ...] = ()
+    hub: str = ""  # the hub slug this route belongs to (for its state), if any
 
     def upstreams(self) -> tuple[str, ...]:
         return (self.upstream, *self.fallbacks)
+
+
+# The first hub's own addresses at the root. They never fail over to another
+# bridge: with the first hub down, a personal API key or an MCP client would
+# otherwise get a different agent's answer.
+_PINNED_TO_DEFAULT = ("/v1", "/mcp", "/artifacts", "/.well-known/oauth-protected-resource",
+                      "/.well-known/oauth-authorization-server")
+_WEBHOOK_PREFIXES = ("/webhooks/",)
+
+
+def _pinned(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in _PINNED_TO_DEFAULT)
+
+
+def _unavailable(state: str = "") -> Response:
+    """No bridge answered (or the hub is draining). The text is neutral: why is
+    in `hubzoid status` and the logs, never on the public port."""
+    message = ("This agent is not available right now." if state == "failed"
+               else "This agent is restarting. Try again in a moment.")
+    return JSONResponse({"error": {"message": message, "type": "unavailable"}},
+                        status_code=503, headers={"Retry-After": "5"})
+
+
+@dataclass
+class _Table:
+    """The routing table. Read from the environment, or from the file the
+    supervisor writes (``HUBZOID_EDGE_TABLE``), which is read again when it
+    changes so hubs can be added, removed or drained without restarting the
+    edge."""
+    default_base: str
+    routes: tuple[EdgeRoute, ...]
+    default_bases: tuple[str, ...]
+    states: dict
+
+
+def _routes_from(spec) -> tuple[EdgeRoute, ...]:
+    return tuple(
+        EdgeRoute(prefix=r["prefix"], upstream=str(r["upstream"]).rstrip("/"),
+                  strip_prefix=r.get("strip_prefix", ""),
+                  fallbacks=tuple(str(f).rstrip("/") for f in r.get("fallbacks", ())),
+                  hub=str(r.get("hub") or ""))
+        for r in spec)
+
+
+class _TableFile:
+    """The supervisor's routing table file, re-read at most once a second when
+    its modification time changes. A file that can't be read keeps the last
+    good table."""
+
+    def __init__(self, path: str, table: _Table):
+        self.path = path
+        self.table = table
+        self._stamp = None
+        self._checked = 0.0
+
+    def current(self) -> _Table:
+        import time as _time
+        now = _time.monotonic()
+        if now - self._checked < 1.0:
+            return self.table
+        self._checked = now
+        try:
+            st = os.stat(self.path)
+            stamp = (st.st_mtime_ns, st.st_size)
+            if stamp != self._stamp:
+                with open(self.path, encoding="utf-8") as fh:
+                    self.table = table_from_json(json.load(fh))
+                self._stamp = stamp
+        except (OSError, ValueError, KeyError, TypeError):
+            log.warning("edge: routing table %s unreadable; keeping the last one", self.path)
+        return self.table
+
+
+def table_from_json(data: dict) -> _Table:
+    default = str(data["default"]).rstrip("/")
+    fallbacks = tuple(str(f).rstrip("/") for f in data.get("default_fallbacks", ()))
+    return _Table(default_base=default, routes=_routes_from(data.get("routes", [])),
+                  default_bases=(default, *fallbacks), states=dict(data.get("states") or {}))
 
 
 def _match(path: str, routes: tuple[EdgeRoute, ...]) -> EdgeRoute | None:
@@ -321,6 +400,7 @@ def build_edge_app(
     public_scheme: str = "",
     default_fallbacks: tuple[str, ...] | list[str] = (),
     workflow_hubs: tuple[str, ...] | list[str] = (),
+    table_file: str = "",
 ) -> Starlette:
     """A Starlette reverse proxy: `routes` go to their bridge, the rest to the
     default upstream (a bridge).
@@ -334,13 +414,19 @@ def build_edge_app(
             (the default) leaves the scheme untouched - correct for localhost.
         default_fallbacks: upstreams tried in order when the default one can't
             be reached (a gateway's other bridges, which share its database).
+            Only deployment-wide paths use them: the first hub's own root
+            addresses (`_PINNED_TO_DEFAULT`) stay on the default bridge.
+        table_file: the supervisor's routing table file. When set, it replaces
+            the arguments above and is read again when it changes.
     """
     default_base = default_base.rstrip("/")
     norm_routes = tuple(
         EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix,
-                  tuple(f.rstrip("/") for f in r.fallbacks)) for r in routes
+                  tuple(f.rstrip("/") for f in r.fallbacks), r.hub) for r in routes
     )
     default_bases = (default_base, *(f.rstrip("/") for f in default_fallbacks))
+    static = _Table(default_base, norm_routes, default_bases, {})
+    source = _TableFile(table_file, static) if table_file else None
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -372,6 +458,8 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        table = source.current() if source is not None else static
+        norm_routes, default_base, default_bases = table.routes, table.default_base, table.default_bases
         path, query = _path_and_query(request)
         if request.method in ('GET', 'HEAD') and (
                 path == '/healthz' or (path.startswith('/b/') and path.endswith('/healthz'))):
@@ -406,7 +494,13 @@ def build_edge_app(
                                         status_code=401)
                 return Response("Not found", status_code=404)
         matched = _match(path, norm_routes)
-        bases = matched.upstreams() if matched is not None else default_bases
+        bases = matched.upstreams() if matched is not None else (
+            default_bases[:1] if _pinned(path) else default_bases)
+        state = table.states.get(matched.hub, "") if matched is not None and matched.hub else ""
+        if state in ("failed", "stopped") or (state == "draining" and path.startswith(_WEBHOOK_PREFIXES)):
+            # A draining hub takes no new webhooks (the sender retries); a
+            # stopped or failed one takes nothing.
+            return _unavailable(state)
         # Tell a bridge which /b/<slug> prefix was stripped (and never pass a
         # client's own claim on).
         prefix = matched.strip_prefix if matched is not None and matched.strip_prefix else ""
@@ -453,7 +547,7 @@ def build_edge_app(
             if resp is not None:
                 break
         if resp is None:
-            return Response("upstream unavailable", status_code=502)
+            return _unavailable(state)
 
         sr = StreamingResponse(
             resp.aiter_raw(),
@@ -515,7 +609,13 @@ def _factory() -> Starlette:
       HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix","fallbacks"}, ...].
       HUBZOID_EDGE_PUBLIC_SCHEME  Public scheme ("https") asserted upstream as
                                   X-Forwarded-Proto when the request has none.
+      HUBZOID_EDGE_TABLE          The supervisor's routing table file
+                                  ({"default", "default_fallbacks", "routes",
+                                  "states"}), read again when it changes.
     """
+    from . import supervisor as _supervisor
+
+    _supervisor.watch_parent()
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
         raise RuntimeError("edge factory needs HUBZOID_EDGE_DEFAULT in the environment.")
@@ -525,17 +625,10 @@ def _factory() -> Starlette:
         spec = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"HUBZOID_EDGE_ROUTES is not valid JSON: {exc}") from exc
-    routes = [
-        EdgeRoute(
-            prefix=r["prefix"],
-            upstream=r["upstream"],
-            strip_prefix=r.get("strip_prefix", ""),
-            fallbacks=tuple(r.get("fallbacks", ())),
-        )
-        for r in spec
-    ]
+    routes = list(_routes_from(spec))
     public_scheme = os.environ.get("HUBZOID_EDGE_PUBLIC_SCHEME", "").strip().lower()
-    kwargs = {"workflow_hubs": json.loads(os.environ.get("HUBZOID_EDGE_WORKFLOW_HUBS", "[]"))}
+    kwargs = {"workflow_hubs": json.loads(os.environ.get("HUBZOID_EDGE_WORKFLOW_HUBS", "[]")),
+              "table_file": os.environ.get("HUBZOID_EDGE_TABLE", "").strip()}
     raw_fallbacks = os.environ.get("HUBZOID_EDGE_DEFAULT_FALLBACKS", "").strip()
     if raw_fallbacks:
         try:

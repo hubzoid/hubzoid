@@ -188,6 +188,10 @@ async def _run() -> None:
 async def route_pending(hub_dir, app=None) -> int:
     """Route what is accepted or waiting, oldest first, in thread order. Returns
     how many deliveries moved on."""
+    from .. import drain
+
+    if drain.active():  # restarting: deliveries stay saved and are routed after the start
+        return 0
     hub_dir = Path(hub_dir)
     hub = config_lib.hub_of(hub_dir)
     rows = await asyncio.to_thread(store.open_deliveries, hub_dir, hub)
@@ -286,15 +290,18 @@ def person_for(conn: config_lib.Connection, event: InboundEvent):
 
 
 def _groups_ok(conn: config_lib.Connection, email: str) -> bool:
-    if not conn.config.allowed_groups:
-        return False
-    from ..access.groups import effective_groups
+    """Whether this person may start work from this connection: a grant in
+    Settings (``channel_<id>``), checked with access to the agent. Access
+    lives in the database, never in a file; a connection with nobody granted
+    lets nobody start work, as an empty ``allowed_groups`` did."""
+    from ..access import store_for
+    from ..capabilities import channel_permission
 
     try:
-        groups = effective_groups(conn.hub_dir, email=email, surface="channel")
+        return bool(email) and store_for(conn.hub_dir).can(email, conn.hub_dir.name,
+                                                           channel_permission(conn.id))
     except Exception:  # noqa: BLE001 - fail closed
         return False
-    return bool(set(conn.config.allowed_groups) & set(groups))
 
 
 def _hub_access(hub_dir: Path, email: str) -> str | None:

@@ -420,45 +420,92 @@ def init(
 # ---------------------------------------------------------------------------
 @app.command()
 def run(
-    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    hubs: list[Path] = typer.Argument(None, help="Hub folders. Default: the deployment in hubzoid.yaml here, "
+                                                 "else the hub in this folder."),
     port: int = typer.Option(None, "--port", help="Public port: the web app, downloads and MCP. Default: 3080 (or PORT env)."),
-    bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
+    bridge_port: int = typer.Option(None, "--bridge-port", hidden=True, help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
+    data_dir: Path = typer.Option(None, "--data-dir", help="Where a deployment of several hubs keeps its state "
+                                                           "(manifest, shared database, keys, logs). Default: "
+                                                           ".hubzoid next to hubzoid.yaml."),
     host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public port binds to (or HUBZOID_HOST env). 0.0.0.0 exposes it on the network, which needs sign-in (HUBZOID_AUTH=true). The bridge always stays on 127.0.0.1."),
-    no_ui: bool = typer.Option(False, "--no-ui", help="Bridge only, on 127.0.0.1: no public port."),
+    no_ui: bool = typer.Option(False, "--no-ui", hidden=True, help="One hub's own process under a supervisor."),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open the web app in a browser. It opens only from a terminal, on a loopback host."),
     slack: bool = typer.Option(
         False,
         "--slack", "-s",
-        help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
+        hidden=True, help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
         "SLACK_APP_TOKEN from .env. Soft-fails with a warning if either is missing.",
     ),
     whatsapp: bool = typer.Option(
         False,
         "--whatsapp",
-        help="Also start the WhatsApp webhook surface. Reads WHATSAPP_* from .env and "
+        hidden=True, help="Also start the WhatsApp webhook surface. Reads WHATSAPP_* from .env and "
         "exposes /webhooks/whatsapp via the edge. Soft-skips if unconfigured.",
     ),
     telegram: bool = typer.Option(
         False,
         "--telegram",
-        help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
+        hidden=True, help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
         "exposes /webhooks/<hub>/telegram via the edge. Soft-skips if unconfigured.",
     ),
     webhook: bool = typer.Option(
         False,
         "--webhook",
-        help="Also start the generic webhook surface (alerting, CI, automations). "
+        hidden=True, help="Also start the generic webhook surface (alerting, CI, automations). "
         "Reads WEBHOOK_INBOUND_SECRET/_NAME/_HMAC from .env and exposes "
         "/webhooks/<hub>/<name> via the edge. Soft-skips if unconfigured.",
     ),
 ) -> None:
-    """Start a hub: the bridge, and the Hubzoid web app on one public port.
+    """Start a deployment: the web app on one public port and every hub in its
+    own supervised process, restarted on its own if it stops.
+
+    `hubzoid run` runs hubzoid.yaml in this folder (or the hub in this
+    folder); `hubzoid run ./a ./b` runs those hubs. Control a running
+    deployment with `hubzoid status`, `restart`, `stop`, `start`, `reload` and
+    `logs`.
 
     Sign-in is off by default (local mode: you are the hub's owner), so the
-    public port stays on this machine. Turn sign-in on with HUBZOID_AUTH=true
-    before binding another interface.
+    public port stays on this machine. Turn sign-in on (`sign_in: true`, or
+    HUBZOID_AUTH=true) before binding another interface.
     """
-    hub = hub.resolve()
+    from . import deployfile
+
+    targets = [Path(h) for h in (hubs or [])]
+    df = None
+    if not targets or (len(targets) == 1 and deployfile.find(targets[0])
+                       and not (targets[0] / "AGENTS.md").is_file()):
+        found = deployfile.find(targets[0] if targets else Path.cwd())
+        if found is not None:
+            try:
+                df = deployfile.load(found)
+            except deployfile.DeployFileError as exc:
+                console.print(f"[red]{escape(str(exc))}[/red]")
+                raise typer.Exit(2)
+            if not df.hubs:
+                console.print(f"[red]{df.path} lists no hubs.[/red] Add their folders under `hubs:`.")
+                raise typer.Exit(2)
+            _check_deployment_sections(df)
+            targets = df.hub_dirs()
+        elif not targets:
+            targets = [Path(".")]
+    if len(targets) > 1 or (df is not None and targets[0].resolve() != df.root):
+        if no_ui:
+            console.print("[red]--no-ui runs one hub.[/red]")
+            raise typer.Exit(2)
+        _refuse_channel_flags(slack, whatsapp, telegram, webhook)
+        _run_deployment(targets, port=port, host=host, public_url=None, name="Hubzoid",
+                        data_dir=data_dir, df=df)
+        return
+    if df is not None:
+        values, problems = deployfile.environment(df)
+        if problems:
+            for problem in problems:
+                console.print(f"[red]{escape(problem)}[/red]")
+            raise typer.Exit(2)
+        os.environ.update(values)
+    hub = targets[0].resolve()
+    if not no_ui:
+        _refuse_channel_flags(slack, whatsapp, telegram, webhook)
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
         # If the user is currently inside a hub folder, point that out.
@@ -537,85 +584,143 @@ def run(
         "--host", "127.0.0.1", "--port", str(br_port),
         "--log-level", settings.log_level,
     ]
-    # Headless bridges inherit the gateway-owned group. A standalone UI owns
-    # separate groups so cleanup reaches every child process.
+    if no_ui:
+        _run_hub_process(hub, bridge_cmd, bridge_env, br_port=br_port)
+        return
+
+    # One hub is a deployment of one: the supervisor runs its bridge (and its
+    # 1.x channels) as one unit and the edge as another, restarts either on its
+    # own, and answers `hubzoid status|restart|...` (hubzoid.supervisor).
+    from . import supervisor as sup_lib
+
+    state = datadir.state(hub)
+    from . import db as dblib
+
+    _migrate_first(dblib.operational_url(hub))
+    key = _deployment_bridge_key(state) if settings.first_api_key == "dev" else ""
+    unit_key = settings.first_api_key
+    if key and not (os.environ.get("BRIDGE_API_KEYS") or "").strip():
+        bridge_env["BRIDGE_API_KEYS"] = unit_key = key
+    channel_env = dict(bridge_env)
+    specs = [sup_lib.Spec(bridge_cmd, bridge_env)] + _channel_specs(hub, channel_env)
+    from .inbound.routing import hub_slug
+
+    slug = hub_slug(hub, os.environ)
+    unit = sup_lib.Unit(name=hub.name.lower(), slug=slug, hub_dir=hub, specs=specs,
+                        health_url=f"http://127.0.0.1:{br_port}/healthz",
+                        bridge_url=f"http://127.0.0.1:{br_port}", key=unit_key)
+    edge_spec, routes = _web_app_edge_spec(hub, settings, host=host, ui_port=ui_port, br_port=br_port,
+                                           inbound=any(s.role == "channel" and "inbound" in s.cmd for s in specs),
+                                           slug=slug, state=state)
+    probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host.strip("[]")
+    probe = f"[{probe}]" if ":" in probe else probe
+    edge = sup_lib.Unit(name="edge", kind="edge", specs=[edge_spec],
+                        health_url=f"http://{probe}:{ui_port}/healthz")
+    sup = _supervisor([unit, edge], state, table={
+        "default": f"http://127.0.0.1:{br_port}", "default_fallbacks": [], "routes": routes})
+    previous = _install_shutdown_handlers()
+    try:
+        console.print(f"[cyan]→ bridge[/cyan]  http://127.0.0.1:{br_port}  (hub: {hub.name})")
+        if not sup.start_all([unit]).get(unit.name):
+            console.print(f"[red]bridge failed to come up[/red]  ({escape(unit.error or unit.last_exit)}). "
+                          f"It is tried again; `hubzoid logs {unit.name}` shows why.")
+        else:
+            console.print("[green]→ bridge[/green]  ready")
+        if not sup.start(edge).get("ok"):
+            console.print(f"[red]The web app could not open port {ui_port} on {escape(host)}. Is another "
+                          "program using it? Choose another with --port.[/red]")
+            raise typer.Exit(1)
+        url = appmode.public_url() or _local_url(host, ui_port)
+        mode = "sign-in on" if auth_on else "local mode, sign-in off"
+        # One line each, never wrapped, so the URL and the command copy cleanly
+        # from any terminal or log viewer.
+        console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(url)}  [dim]({mode})[/dim]",
+                      soft_wrap=True)
+        if mcp_url:
+            console.print(f"  [dim]Connect Claude Code:[/dim] claude mcp add --transport http "
+                          f"{escape(_mcp_client_name(hub))} {escape(mcp_url)}", soft_wrap=True)
+        if not appmode.public_url() and not appmode.is_loopback_host(host):
+            console.print("  [dim]Set HUBZOID_PUBLIC_URL to the address people open, so download "
+                          "links and sign-in redirects use it.[/dim]")
+        if _should_open_browser(host, no_open):
+            _open_browser(url)
+        _wait_any(unit.procs + edge.procs, supervisor=sup)
+    finally:
+        try:
+            _stop_groups([p for p in (edge.procs + unit.procs)[::-1]])
+        finally:
+            _restore_shutdown_handlers(previous)
+
+
+def _check_deployment_sections(df) -> None:
+    """A deployment file whose brand, chat or diagnostics section is invalid
+    stops the start: those hold policy (terms, sharing, exports, storage)
+    that must never fall back to an open default."""
+    problems = []
+    if df.chat is not None:
+        from .chat import config as chat_cfg
+
+        try:
+            chat_cfg.validate_document({"version": 1, **df.chat})
+        except chat_cfg.ConfigError as exc:
+            problems.append(f"chat: {exc.message}")
+    if df.brand is not None:
+        from .ui import branding_models
+
+        try:
+            branding_models.validate({"version": 1, **df.brand})
+        except branding_models.BrandError as exc:
+            problems.append(f"brand: {exc.message}")
+    if df.diagnostics is not None:
+        from .admin import config as admin_cfg
+
+        try:
+            admin_cfg.validate({"version": 1, "diagnostics": df.diagnostics})
+        except admin_cfg.AdminError as exc:
+            problems.append(f"diagnostics: {exc.message}")
+    for problem in problems:
+        console.print(f"[red]{escape(str(df.path))}, {escape(problem)}[/red]")
+    if problems:
+        raise typer.Exit(2)
+
+
+def _refuse_channel_flags(slack: bool, whatsapp: bool, telegram: bool, webhook: bool) -> None:
+    """--slack and friends ran a 1.x channel next to one hub. Channels turn on
+    by a file in the hub's channels/ folder now; say which file to add."""
+    from .channels import legacy
+
+    asked = [p for p, on in (("slack_assistant", slack), ("whatsapp_inbound", whatsapp), ("telegram", telegram),
+                             ("webhook", webhook)) if on is True]
+    if not asked:
+        return
+    console.print("[red]Channels turn on by a file now, not a flag.[/red] Add to the hub's channels/ folder:")
+    for provider in asked:
+        console.print(f"\n  channels/{legacy.SUGGESTED[provider]}.yaml\n"
+                      + "".join(f"    {line}\n" for line in legacy.file_text(provider).splitlines()), highlight=False)
+    console.print("Its secrets stay in the hub's .env. See docs/channels.md.")
+    raise typer.Exit(2)
+
+
+def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int) -> None:
+    """One hub's own process under a multi-hub supervisor (`run --no-ui`): its
+    bridge, ending when the bridge ends so the supervisor restarts the hub."""
+    from . import supervisor as sup_lib
+
+    sup_lib.watch_parent()
     children: list = []
     previous = _install_shutdown_handlers()
     try:
         console.print(f"[cyan]→ bridge[/cyan]  http://127.0.0.1:{br_port}  (hub: {hub.name})")
-        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env, start_new_session=not no_ui)
+        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env, start_new_session=False)
         children.append(bridge_proc)
-
-        # 2. Wait for the bridge to come up before starting the public port.
         if not _wait_for_bridge(bridge_proc, f"http://127.0.0.1:{br_port}/healthz"):
             console.print("[red]bridge failed to come up[/red]")
             raise typer.Exit(1)
         console.print("[green]→ bridge[/green]  ready")
-
-        if not no_ui:
-            edge_proc = _start_web_app_edge(
-                hub, settings, host=host, ui_port=ui_port, br_port=br_port,
-                inbound=bool(whatsapp or telegram or webhook), started=children)
-            if edge_proc is None:
-                raise typer.Exit(1)
-            url = appmode.public_url() or _local_url(host, ui_port)
-            mode = "sign-in on" if auth_on else "local mode, sign-in off"
-            # One line each, never wrapped, so the URL and the command copy cleanly
-            # from any terminal or log viewer.
-            console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(url)}  [dim]({mode})[/dim]",
-                          soft_wrap=True)
-            if mcp_url:
-                console.print(f"  [dim]Connect Claude Code:[/dim] claude mcp add --transport http "
-                              f"{escape(_mcp_client_name(hub))} {escape(mcp_url)}", soft_wrap=True)
-            if not appmode.public_url() and not appmode.is_loopback_host(host):
-                console.print("  [dim]Set HUBZOID_PUBLIC_URL to the address people open, so download "
-                              "links and sign-in redirects use it.[/dim]")
-            if _should_open_browser(host, no_open):
-                _open_browser(url)
-
-        # Optional: spawn the Slack adapter as a third child. Soft-warn if the
-        # operator asked for --slack but the .env is missing the tokens — the
-        # bridge + UI keep running either way.
-        if slack:
-            from .slack.env import should_start_slack
-            ok, warn = should_start_slack(want_slack=True, env=os.environ)
-            if not ok:
-                console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
-            else:
-                slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
-                children.append(subprocess.Popen(slack_cmd, env=bridge_env, start_new_session=not no_ui))
-                console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
-
-        # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
-        # shared child. It reads WHATSAPP_*/TELEGRAM_*/WEBHOOK_INBOUND_* from .env and
-        # serves whichever are configured; the edge already routes /webhooks/<hub> to
-        # it. Soft-warn per surface.
-        if whatsapp or telegram or webhook:
-            from .inbound.env import (
-                missing_telegram_vars,
-                missing_webhook_vars,
-                missing_whatsapp_vars,
-            )
-            if whatsapp and missing_whatsapp_vars(os.environ):
-                console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
-            if telegram and missing_telegram_vars(os.environ):
-                console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
-            if webhook and missing_webhook_vars(os.environ):
-                console.print(f"[yellow]→ inbound[/yellow]  webhook skipped: missing {', '.join(missing_webhook_vars(os.environ))}")
-            start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
-            start_tg = telegram and not missing_telegram_vars(os.environ)
-            start_wh = webhook and not missing_webhook_vars(os.environ)
-            if start_wa or start_tg or start_wh:
-                inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
-                children.append(subprocess.Popen(inbound_cmd, env=bridge_env, start_new_session=not no_ui))
-                surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
-                console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
-
         _wait_any(children)
     finally:
-        # The public side first, the bridge last (it holds the databases).
         try:
-            (_stop_processes if no_ui else _stop_groups)(children[::-1])
+            _stop_processes(children[::-1])
         finally:
             _restore_shutdown_handlers(previous)
 
@@ -830,12 +935,14 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
     raise typer.Exit(1)
 
 
-def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port: int,
-                        inbound: bool, started: list):
-    """The public port for the Hubzoid web app: every path goes to the bridge,
-    `/webhooks/<hub>` to the inbound process. Returns the edge process (also
-    added to `started`), or None when it could not start (the reason is printed)."""
+def _web_app_edge_spec(hub: Path, settings, *, host: str, ui_port: int, br_port: int,
+                       inbound: bool, slug: str, state: Path):
+    """The public port for the Hubzoid web app of one hub: every path goes to
+    the bridge, `/b/<slug>/...` too (the same addresses as in a deployment of
+    many), and `/webhooks/<hub>` to the inbound process. Returns the edge's
+    Spec and its routes."""
     from . import config_secrets
+    from . import supervisor as sup_lib
 
     edge_env = config_secrets.deployment_view(os.environ)
     edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{br_port}"
@@ -844,38 +951,28 @@ def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port
     if inbound:
         # Inbound surfaces receive on a loopback port; only /webhooks/<hub> is
         # exposed (each POST is signature-, secret- or HMAC-verified first).
-        from .inbound.routing import hub_slug, inbound_port
+        from .inbound.routing import inbound_port
 
-        edge_routes.append({"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
-                            "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"})
+        edge_routes.append({"prefix": f"/webhooks/{slug}",
+                            "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}", "hub": slug})
     from .workflows.events import route_declarations
-    from .inbound.routing import hub_slug
     for name in route_declarations(hub):
-        edge_routes.insert(0, {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}/{name}",
-                               "upstream": f"http://127.0.0.1:{br_port}"})
+        edge_routes.insert(0, {"prefix": f"/webhooks/{slug}/{name}",
+                               "upstream": f"http://127.0.0.1:{br_port}", "hub": slug})
+    base = f"/b/{slug}"
+    for part in ("/artifacts", "/portal/api", "/api", "/branding", "/v1"):
+        edge_routes.append({"prefix": base + part, "upstream": f"http://127.0.0.1:{br_port}",
+                            "strip_prefix": base, "hub": slug})
     edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(hub)])
     edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
+    edge_env["HUBZOID_EDGE_TABLE"] = str(Path(state) / "routes.json")
     edge_cmd = [
         sys.executable, "-m", "uvicorn",
         "hubzoid.edge:_factory", "--factory",
         "--host", host, "--port", str(ui_port),
         "--log-level", settings.log_level,
     ]
-    edge_proc = subprocess.Popen(edge_cmd, env=edge_env, start_new_session=True)
-    started.append(edge_proc)
-    probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host.strip("[]")
-    probe = f"[{probe}]" if ":" in probe else probe
-    ready = _wait_for_bridge(edge_proc, f"http://{probe}:{ui_port}/healthz", timeout=30,
-                             label="web app")
-    if edge_proc.poll() is not None:
-        console.print(f"[red]The web app could not open port {ui_port} on {escape(host)}. Is another "
-                      "program using it? Choose another with --port.[/red]")
-        return None
-    if not ready:
-        console.print(f"[red]→ web app[/red]  failed to become ready on port {ui_port}; "
-                      "check the log above")
-        return None
-    return edge_proc
+    return sup_lib.Spec(edge_cmd, edge_env, role="edge"), edge_routes
 
 
 def _should_open_browser(host: str, no_open: bool) -> bool:
@@ -926,6 +1023,28 @@ def gateway(
     environment (HUBZOID_AUTH); a hub .env that disagrees stops the gateway.
     Grant people agent and tool access in Settings. See docs/DEPLOYING.md.
     """
+    if not launch_bridges:
+        console.print("[red]--no-bridges is gone: `hubzoid run` supervises every hub and restarts one "
+                      "with `hubzoid restart <hub>`. See docs/DEPLOYING.md (one service).[/red]")
+        raise typer.Exit(2)
+    from . import deployfile
+
+    console.print("[yellow]`hubzoid gateway` is now `hubzoid run`[/yellow] (this alias goes in the next "
+                  "release). The same deployment as a file, to save as hubzoid.yaml next to the hubs "
+                  "and start with `hubzoid run`:")
+    cwd = Path.cwd().resolve()
+    rel = [os.path.relpath(h.resolve(), cwd) for h in hubs]
+    console.print(escape(deployfile.example(
+        hubs=rel, public_url=(public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/") or None,
+        name=None if name == "Hubzoid" else name, sign_in=None, owner=None)), highlight=False)
+    _run_deployment(hubs, port=port, host=host, public_url=public_url, name=name, data_dir=data_dir)
+
+
+def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url: str | None,
+                    name: str, data_dir: Path | None, df=None) -> None:
+    """A deployment of one or more hubs, each its own supervised unit behind
+    one edge, sharing one operational store (what `hubzoid gateway` ran)."""
+    from . import deployfile  # noqa: F401 - used when df is given
     from . import gateway as gateway_lib
 
     hub_dirs = [h.resolve() for h in hubs]
@@ -944,6 +1063,24 @@ def gateway(
     from functools import partial
 
     from . import config_secrets
+
+    if df is not None:
+        # The deployment's own .env (secrets, sign-in clients, switches) wins
+        # over the process environment, as a hub's .env does for the hub.
+        root_env = df.root / ".env"
+        if root_env.is_file():
+            from dotenv import load_dotenv
+
+            load_dotenv(root_env, override=True)
+        values, problems = deployfile.environment(df)
+        if problems:
+            for problem in problems:
+                console.print(f"[red]{escape(problem)}[/red]")
+            raise typer.Exit(2)
+        os.environ.update(values)
+        os.environ["HUBZOID_DEPLOYMENT_FILE"] = str(df.path)  # where every bridge reads brand and chat
+        public_url = public_url or df.public_url
+        name = df.name or name
 
     process_env = os.environ.copy()
     dep_secret: dict | None = None
@@ -1006,13 +1143,12 @@ def gateway(
 
     ui_port = port or int(os.environ.get("PORT", "3080"))
     pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
-    gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
+    gw_data = (data_dir or _deployment_state_dir(df)).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")
     # Only inspect ports the gateway owns. Independently managed bridges are
     # verified by their health identity below, never stopped or taken over.
     owned_ports = [(host, ui_port, "Public", "--port")]
-    if launch_bridges:
-        owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends]
+    owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends]
     if len({p for _, p, _, _ in owned_ports}) != len(owned_ports):
         console.print("[red]Gateway and bridge ports must be distinct.[/red]")
         raise typer.Exit(2)
@@ -1028,11 +1164,38 @@ def gateway(
         gw_data.mkdir(parents=True, exist_ok=True)
     shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
 
+    _migrate_first(shared_op_url)
     _gateway_web_app(
         gp=gp, hub_dirs=hub_dirs, deployment_env=deployment_env, process_env=process_env,
         dep_secret=dep_secret, dep_values=dep_values, conflicts=conflicts, host=host,
         ui_port=ui_port, pub=pub, gw_data=gw_data, log_level=log_level,
-        shared_op_url=shared_op_url, name=name, launch_bridges=launch_bridges)
+        shared_op_url=shared_op_url, name=name, launch_bridges=True)
+
+
+def _migrate_first(url: str) -> None:
+    """Bring the shared store to the current schema once, here, before any hub
+    starts: a hub process never upgrades a store others are still using."""
+    from . import db as dblib
+    from . import migrations
+
+    try:
+        migrations.upgrade(dblib._engine_for_url(url), "operational")
+    except Exception as exc:  # noqa: BLE001 - said plainly, then stop
+        console.print(f"[red]The database could not be brought up to date:[/red] {escape(str(exc))}")
+        raise typer.Exit(2)
+
+
+def _deployment_state_dir(df) -> Path:
+    """Where a deployment keeps its state by default: `.hubzoid/` next to its
+    hubzoid.yaml, or `./.hubzoid-gateway` for hubs named on the command line.
+    A deployment that ran as a gateway keeps that folder: nothing moves."""
+    if df is None:
+        return Path.cwd() / ".hubzoid-gateway"
+    old = df.root / ".hubzoid-gateway"
+    new = df.root / ".hubzoid"
+    if (old / "deployment.json").is_file() and not (new / "deployment.json").is_file():
+        return old
+    return new
 
 
 def _gateway_mode_conflicts(hub_dirs: list[Path], *, auth_on: bool, env, conflicts: dict) -> list[str]:
@@ -1136,12 +1299,18 @@ def _gateway_upgrade_guard(gw_data: Path, prior: dict, operational_url: str, *, 
                   "imported into the Hubzoid web app with `hubzoid migrate openwebui`.")
 
 
-def _wait_any(procs: list, *, interval: float = 0.5) -> None:
-    """A supervised service exiting unexpectedly is a deployment failure.
+def _wait_any(procs: list, *, interval: float = 0.5, supervisor=None) -> None:
+    """With a supervisor (`hubzoid run`), watch and restart its units until
+    told to stop. Without one (a hub's own process under a supervisor), a
+    child exiting ends this process, so the supervisor restarts the hub as a
+    whole.
 
     SIGINT/SIGTERM use the shutdown handler and return success separately.
     Even a child exiting zero must wake restart-on-failure supervisors.
     """
+    if supervisor is not None:
+        supervisor.serve(interval=interval)
+        return
     while procs:
         for p in procs:
             code = p.poll()
@@ -1329,68 +1498,54 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
 def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_values, auth_on,
                            host, ui_port, pub, gw_data, log_level, shared_op_url,
                            launch_bridges) -> None:
-    """Start the bridges and the edge (recorded in `procs`, which the caller
-    stops), then block until one of them exits."""
+    """Start the bridges and the edge under the supervisor (their processes are
+    recorded in `procs`, which the caller stops), then supervise them: a hub
+    that exits is started again on its own, and nothing ends the deployment
+    but a stop."""
     from . import appmode, config_secrets
+    from . import supervisor as sup_lib
 
-    if launch_bridges:
-        for b in gp.backends:
-            bridge_env = os.environ.copy()
-            if dep_secret:
-                # A bridge takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret and never
-                # fetches it again.
-                for key in dep_values:
-                    if config_secrets.bridge_deployment_key(key):
-                        continue
-                    if key in process_env:
-                        bridge_env[key] = process_env[key]
-                    else:
-                        bridge_env.pop(key, None)
-                bridge_env[config_secrets.INHERITED_MARKER] = "1"
-            if pub:
-                bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
-            bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
-            bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
-            bridge_env["HUBZOID_GATEWAY"] = "1"
-            bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
-            # One mode and one sign-in setting for the whole deployment
-            # (_gateway_mode_conflicts refused hubs that would differ).
-            bridge_env["HUBZOID_UI"] = appmode.UI_HUBZOID
-            bridge_env["HUBZOID_AUTH"] = "true" if auth_on else "false"
-            # Bridges bind loopback only; the edge is the public door.
-            bridge_env["HUBZOID_HOST"] = "127.0.0.1"
-            cmd = [
-                sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
-                "--no-ui", "--bridge-port", str(b.bridge_port),
-            ]
-            procs.append(subprocess.Popen(cmd, env=bridge_env, start_new_session=True))
-            console.print(f"[cyan]→ bridge[/cyan]  {b.slug}  http://127.0.0.1:{b.bridge_port}")
-
-    wait = _gateway_bridge_timeout()
-    for i, b in enumerate(gp.backends):
-        url = f"http://127.0.0.1:{b.bridge_port}/healthz"
-        identity = dict(expected_hub=b.hub_dir.name, expected_model=b.model_label)
-        ready = (_wait_for_bridge(procs[i], url, timeout=wait, **identity)
-                 if launch_bridges else _wait_for(url, timeout=wait, **identity))
-        if not ready:
-            code = procs[i].poll() if launch_bridges else None
-            seen = _health_of(url)
-            if code is not None:
-                # The bridge stopped on its own; its own message (printed above) says why.
-                console.print(f"[red]bridge {b.slug} stopped before it was ready (exit {code}). "
-                              "Its message above says why; fix that hub, then start the gateway again.[/red]")
-            elif seen is None:
-                # Still starting: many bridges at once on a busy machine can take longer.
-                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) did not answer within {wait:.0f} s. "
-                              "It may still be starting on a busy machine: allow more time with "
-                              "HUBZOID_GATEWAY_BRIDGE_TIMEOUT=<seconds>, or start fewer hubs.[/red]")
-            else:
-                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) answers as hub "
-                              f"{escape(str(seen.get('hub')))!r} and model {escape(str(seen.get('model')))!r}, not "
-                              f"{escape(b.hub_dir.name)!r} and {escape(b.model_label)!r}. Another process may hold "
-                              "this port, or the hub's MODEL_LABEL changed: restart its bridge, then the gateway.[/red]")
-            raise typer.Exit(1)
-    console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
+    key = _deployment_bridge_key(gw_data)
+    units = []
+    for b in gp.backends:
+        bridge_env = os.environ.copy()
+        if dep_secret:
+            # A bridge takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret and never
+            # fetches it again.
+            for k in dep_values:
+                if config_secrets.bridge_deployment_key(k):
+                    continue
+                if k in process_env:
+                    bridge_env[k] = process_env[k]
+                else:
+                    bridge_env.pop(k, None)
+            bridge_env[config_secrets.INHERITED_MARKER] = "1"
+        if pub:
+            bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
+        bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
+        bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
+        bridge_env["HUBZOID_GATEWAY"] = "1"
+        bridge_env["HUBZOID_SUPERVISED"] = "1"
+        bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
+        # One mode and one sign-in setting for the whole deployment
+        # (_gateway_mode_conflicts refused hubs that would differ).
+        bridge_env["HUBZOID_UI"] = appmode.UI_HUBZOID
+        bridge_env["HUBZOID_AUTH"] = "true" if auth_on else "false"
+        # Bridges bind loopback only; the edge is the public door.
+        bridge_env["HUBZOID_HOST"] = "127.0.0.1"
+        unit_key = b.api_key
+        if b.api_key == "dev" and key:
+            # No bridge key in the hub's .env: the deployment's own (U9).
+            bridge_env["BRIDGE_API_KEYS"] = unit_key = key
+        cmd = [sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
+               "--no-ui", "--bridge-port", str(b.bridge_port)]
+        specs = [sup_lib.Spec(cmd, bridge_env)] + _channel_specs(
+            b.hub_dir, bridge_env, inbound_port=b.inbound_port if b.inbound else None)
+        units.append(sup_lib.Unit(
+            name=b.hub_dir.name.lower(), slug=b.slug, hub_dir=b.hub_dir, specs=specs,
+            health_url=f"http://127.0.0.1:{b.bridge_port}/healthz",
+            identity=dict(expected_hub=b.hub_dir.name, expected_model=b.model_label),
+            bridge_url=f"http://127.0.0.1:{b.bridge_port}", key=unit_key))
 
     edge_env = os.environ.copy()
     edge_env["HUBZOID_UI"] = appmode.UI_HUBZOID
@@ -1399,6 +1554,7 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env, pub)
     edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(b.hub_dir) for b in gp.backends])
     edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gp.edge_routes())
+    edge_env["HUBZOID_EDGE_TABLE"] = str(gw_data / "routes.json")
     edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")
     edge_cmd = [
         sys.executable, "-m", "uvicorn",
@@ -1406,19 +1562,447 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         "--host", host, "--port", str(ui_port),
         "--log-level", log_level,
     ]
-    edge_proc = subprocess.Popen(edge_cmd, env=edge_env, start_new_session=True)
-    procs.append(edge_proc)
     probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    edge = sup_lib.Unit(name="edge", kind="edge", specs=[sup_lib.Spec(edge_cmd, edge_env, role="edge")],
+                        health_url=f"http://{probe_host}:{ui_port}/healthz")
+    sup = _supervisor(units + [edge], gw_data, table={
+        "default": bridges[0], "default_fallbacks": bridges[1:], "routes": gp.edge_routes()})
+    from . import deployfile
+
+    owner = deployfile.owning(gp.backends[0].hub_dir) if gp.backends else None
+    if owner is not None and owner.parent / ".hubzoid" != gw_data:
+        sup.pointers.append(owner.parent / ".hubzoid")  # `hubzoid status` from the deployment folder
+
+    started = sup.start_all(units)
+    procs.extend(p for u in units for p in u.procs)
+    ready = [u.slug for u in units if started.get(u.name)]
+    console.print(f"[green]→ bridges[/green]  {len(ready)} of {len(units)} ready: {', '.join(ready) or 'none'}")
+    for u in units:
+        if not started.get(u.name):
+            console.print(f"[red]→ {u.slug}[/red]  {escape(u.error or u.last_exit)}. The other agents "
+                          f"run; see `hubzoid logs {u.name}`.")
     display_url = f"http://{host}:{ui_port}"
-    if _wait_for_bridge(edge_proc, f"http://{probe_host}:{ui_port}/healthz", timeout=30, label="gateway"):
-        console.print(f"[green]→ gateway[/green]  ready    {display_url}")
-    else:
+    if not sup.start(edge).get("ok"):
         console.print(f"[red]→ gateway[/red]  failed to start. Check logs. URL: {display_url}")
         raise typer.Exit(1)
+    procs.extend(edge.procs)
+    console.print(f"[green]→ gateway[/green]  ready    {display_url}")
+    _wait_any(procs, supervisor=sup)
 
-    # Any child exiting ends the gateway: a deployment with a dead bridge or
-    # edge must be restarted by its supervisor, not limp on.
-    _wait_any(procs)
+
+def _supervisor(units, state_dir: Path, *, table: dict):
+    """The supervisor for these units, holding the deployment's lock."""
+    from . import supervisor as sup_lib
+
+    def probe(unit) -> bool | str:
+        if _wait_for(unit.health_url, timeout=2.0, **unit.identity):
+            return True
+        return sup_lib._probe(unit)   # still starting (False), or why it answers as another hub
+
+    def say(text: str) -> None:
+        console.print(escape(text))
+
+    try:
+        concurrency = int(os.environ.get("HUBZOID_START_CONCURRENCY") or 3)
+    except ValueError:
+        concurrency = 3
+    sup = sup_lib.Supervisor(units, state_dir=state_dir, table=table, probe=probe, say=say,
+                             validate=_validate_hub_unit, start_concurrency=concurrency,
+                             ready_wait=_gateway_bridge_timeout())
+    try:
+        sup.lock()
+    except RuntimeError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2)
+    return sup
+
+
+def _deployment_bridge_key(state_dir: Path) -> str:
+    """The deployment's own bridge key, made once and kept with its state
+    (mode 0600), for hubs whose .env sets none."""
+    import secrets as _secrets
+
+    path = Path(state_dir) / "bridge.key"
+    try:
+        value = path.read_text().strip()
+        if value:
+            return value
+    except OSError:
+        pass
+    value = "hzb_" + _secrets.token_urlsafe(32)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(value + "\n")
+    except OSError:
+        return ""
+    return value
+
+
+def _channel_specs(hub_dir: Path, env: dict, *, inbound_port: int | None = None) -> list:
+    """The hub's 1.x channel processes, from its channels/ files
+    (hubzoid.channels.legacy): the Slack app and the inbound server. They run
+    and restart with their hub. Problems (a missing secret) are printed and
+    leave that channel off."""
+    from . import gateway as gateway_lib
+    from . import supervisor as sup_lib
+    from .channels import legacy
+
+    plan = legacy.plan(hub_dir, {**os.environ, **gateway_lib._own_env(hub_dir)})
+    for note in plan.notes:
+        console.print(f"[yellow]→ channels[/yellow] {escape(note)}")
+    for problem in plan.problems:
+        console.print(f"[yellow]→ channels[/yellow] {escape(problem)}")
+    specs = []
+    if plan.slack:
+        specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "slack", "run", str(hub_dir)], dict(env),
+                                  role="channel"))
+        console.print(f"[cyan]→ slack [/cyan]  {hub_dir.name}: Slack app (Socket Mode)")
+    if plan.inbound:
+        inbound_env = dict(env)
+        inbound_env["HUBZOID_INBOUND_SURFACES"] = ",".join(plan.inbound)
+        if inbound_port:
+            inbound_env["HUBZOID_INBOUND_PORT"] = str(inbound_port)
+        specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "inbound", "run", str(hub_dir)], inbound_env,
+                                  role="channel"))
+        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>")
+    return specs
+
+
+def _validate_hub_unit(unit) -> list[str]:
+    """`hubzoid reload`'s check before restarting a hub: load its folder the
+    way its bridge will, in a separate process (tools are code). Problems are
+    returned as lines; none means go ahead."""
+    if unit.hub_dir is None:
+        return []
+    try:
+        out = subprocess.run([sys.executable, "-m", "hubzoid", "check-hub", str(unit.hub_dir)],
+                             capture_output=True, text=True, timeout=120,
+                             env={**os.environ, **(unit.specs[0].env if unit.specs else {})})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [f"could not check the hub: {exc}"]
+    if out.returncode == 0:
+        return []
+    return [line for line in (out.stdout + out.stderr).splitlines() if line.strip()][-20:] or \
+        [f"check failed (status {out.returncode})"]
+
+
+# ---------------------------------------------------------------------------
+# control: status, restart, stop, start, reload, logs (hubzoid.supervisor)
+# ---------------------------------------------------------------------------
+_DATA_DIR_HELP = "The deployment's state folder, when it isn't found from this folder."
+
+
+def _find_state_dir(data_dir: Path | None) -> Path:
+    """The running deployment's state folder: --data-dir, else the one for
+    hubzoid.yaml or the hub in this folder (or a parent)."""
+    from . import deployfile
+    from . import supervisor as sup_lib
+
+    if data_dir is not None:
+        return data_dir.resolve()
+    here = Path.cwd().resolve()
+    for folder in (here, *here.parents):
+        candidates = []
+        if deployfile.find(folder):
+            candidates += [folder / ".hubzoid", folder / ".hubzoid-gateway"]
+        candidates += [folder / ".hubzoid-gateway"]
+        if (folder / "AGENTS.md").is_file():
+            candidates.append(datadir.state(folder))
+        for c in candidates:
+            if sup_lib.control_file(c).is_file():
+                return c
+    raise_dir = here / ".hubzoid"
+    return raise_dir
+
+
+def _control(op: str, data_dir: Path | None, **payload) -> dict:
+    from . import supervisor as sup_lib
+
+    state = _find_state_dir(data_dir)
+    try:
+        return sup_lib.request(state, {"op": op, **payload})
+    except ConnectionError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1)
+
+
+def _report(out: dict, as_json: bool) -> None:
+    if as_json:
+        typer.echo(json.dumps(out, indent=2, default=str))
+    elif not out.get("ok") and out.get("error"):
+        console.print(f"[red]{escape(out['error'])}[/red]")
+    else:
+        for r in out.get("results", []):
+            if r.get("problems"):
+                console.print(f"[red]{escape(r['hub'])}: not restarted, the folder has problems:[/red]")
+                for line in r["problems"]:
+                    console.print(f"  {escape(line)}")
+            else:
+                colour = "green" if r.get("ok") else "red"
+                extra = f" ({r['error']})" if r.get("error") else ""
+                console.print(f"[{colour}]{escape(r['hub'])}: {escape(str(r.get('state')))}{escape(extra)}[/{colour}]")
+    if not out.get("ok"):
+        raise typer.Exit(1)
+
+
+@app.command("status", rich_help_panel="Run")
+def status_cmd(
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Each hub of the running deployment: its state, restarts, last exit,
+    and whether it needs a reload."""
+    out = _control("status", data_dir)
+    if as_json:
+        typer.echo(json.dumps(out, indent=2, default=str))
+        return
+    for u in out.get("units", []):
+        since = time.strftime("%H:%M:%S", time.localtime(u["since"])) if u.get("since") else "-"
+        line = f"{u['hub']:<24} {u['state']:<11} since {since}  restarts {u['restarts']}"
+        if u.get("retry_in") is not None:
+            line += f"  (again in {u['retry_in']:.0f} s)"
+        if u.get("error"):
+            line += f"  {u['error']}"
+        colour = {"ready": "green", "failed": "red", "restarting": "yellow", "draining": "yellow"}.get(u["state"], "")
+        console.print(f"[{colour}]{escape(line)}[/{colour}]" if colour else escape(line))
+        for why in u.get("reload_needed") or []:
+            console.print(f"  [yellow]reload needed:[/yellow] {escape(why)}  (`hubzoid reload {u['hub']}`)")
+
+
+@app.command("restart", rich_help_panel="Run")
+def restart_cmd(
+    hubs: list[str] = typer.Argument(..., help="Hubs to restart, by folder name or slug."),
+    grace: float = typer.Option(None, "--grace", help="Seconds running work may take to finish. Default 120."),
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Restart hubs one after the other, each drained first. The others keep
+    running."""
+    _report(_control("restart", data_dir, hubs=hubs, grace=grace), as_json)
+
+
+@app.command("reload", rich_help_panel="Run")
+def reload_cmd(
+    hubs: list[str] = typer.Argument(..., help="Hubs to reload, by folder name or slug."),
+    grace: float = typer.Option(None, "--grace", help="Seconds running work may take to finish. Default 120."),
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Check a hub's folder, then restart it (drained) so every change takes
+    effect. A folder with problems changes nothing."""
+    _report(_control("reload", data_dir, hubs=hubs, grace=grace), as_json)
+
+
+@app.command("stop", rich_help_panel="Run")
+def stop_cmd(
+    hubs: list[str] = typer.Argument(..., help="Hubs to stop."),
+    grace: float = typer.Option(None, "--grace", help="Seconds running work may take to finish. Default 120."),
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Stop hubs (drained) until `hubzoid start`. The others keep running."""
+    _report(_control("stop", data_dir, hubs=hubs, grace=grace), as_json)
+
+
+@app.command("start", rich_help_panel="Run")
+def start_cmd(
+    hubs: list[str] = typer.Argument(..., help="Hubs to start."),
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Start stopped or failed hubs again."""
+    _report(_control("start", data_dir, hubs=hubs), as_json)
+
+
+@app.command("logs", rich_help_panel="Run")
+def logs_cmd(
+    hub: str = typer.Argument(..., help="The hub, or `edge`."),
+    lines: int = typer.Option(200, "--lines", "-n"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Keep printing new lines."),
+    data_dir: Path = typer.Option(None, "--data-dir", help=_DATA_DIR_HELP),
+) -> None:
+    """A hub's recent output, from its log file in the data folder."""
+    out = _control("logs", data_dir, hub=hub, lines=lines)
+    if not out.get("ok"):
+        _report(out, False)
+    for line in out.get("lines", []):
+        typer.echo(line)
+    if follow:
+        path = Path(out["path"])
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            fh.seek(0, os.SEEK_END)
+            try:
+                while True:
+                    line = fh.readline()
+                    if line:
+                        typer.echo(line.rstrip("\n"))
+                    else:
+                        time.sleep(0.5)
+            except KeyboardInterrupt:
+                return
+
+
+@app.command("check-hub", hidden=True)
+def check_hub(hub: Path = typer.Argument(..., help="Hub folder.")) -> None:
+    """Load a hub's folder the way its bridge will (instructions, skills,
+    local tools, channel files). Used by `hubzoid reload`. Exit 1 on problems."""
+    hub = hub.resolve()
+    problems: list[str] = []
+    try:
+        settingslib.load(hub, secrets=False)
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        problems.append(f".env: {exc}")
+    try:
+        from .loaders.agents import load_main
+
+        load_main(hub)
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"AGENTS.md: {exc}")
+    try:
+        from .loaders import tools_local
+
+        tools_local.load_all(hub)
+        # A broken file only loses its own tools at run time (the loader logs
+        # it and keeps going), so the check reads what failed to load.
+        problems += [f"tools_local/{Path(f).name}: {why}" for f, why in sorted(tools_local.LOAD_ERRORS.items())]
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"tools_local: {type(exc).__name__}: {exc}")
+    try:
+        from .channels import config as channel_config
+
+        for path in channel_config.files(hub):
+            v = channel_config.load_file(hub, path)
+            if not v.valid:
+                problems += [f"{path.relative_to(hub)}: {e.get('message') or e}" for e in v.errors]
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"channels: {exc}")
+    for p in problems:
+        typer.echo(p)
+    if problems:
+        raise typer.Exit(1)
+
+
+@app.command("upgrade", rich_help_panel="Run")
+def upgrade_cmd(
+    folder: Path = typer.Argument(Path("."), help="The deployment folder: hubzoid.yaml, a hub, or where "
+                                                  "`hubzoid gateway` ran."),
+    data_dir: Path = typer.Option(None, "--data-dir", help="The state folder (a gateway's --data-dir)."),
+    hubs: list[Path] = typer.Option(None, "--hub", help="Hub folders, when there is no hubzoid.yaml or manifest."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be written; change nothing."),
+) -> None:
+    """Move a deployment to one run mode, once, offline, after `hubzoid backup`:
+    write every setting kept only in the database into its file (hubzoid.yaml,
+    branding/, connectors/, .env, channel files), export Workspace drafts, then
+    bring the database to the current schema. Never overwrites a file and never
+    prints a secret."""
+    from . import db as dblib
+    from . import deployfile
+    from . import one_home
+
+    root = folder.resolve()
+    found = deployfile.find(root)
+    df = deployfile.load(found) if found else None
+    # Which hubs: the deployment file, then --hub, then a gateway's manifest,
+    # and only then the folder itself as a hub (a repository of hubs often has
+    # an AGENTS.md of its own for coding agents).
+    if data_dir is not None:
+        state = data_dir.resolve()
+    elif df is not None:
+        state = _deployment_state_dir(df)
+    elif (root / ".hubzoid-gateway" / "deployment.json").is_file():
+        state = root / ".hubzoid-gateway"
+    else:
+        state = root / ".hubzoid"
+    manifest_hubs: list[Path] = []
+    try:
+        manifest = json.loads((state / "deployment.json").read_text())
+        manifest_hubs = [Path(h["path"]) for h in manifest.get("hubs", [])]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    if df is not None:
+        hub_dirs = df.hub_dirs()
+    elif hubs:
+        hub_dirs = [h.resolve() for h in hubs]
+    elif manifest_hubs:
+        hub_dirs = manifest_hubs
+    elif (root / "AGENTS.md").is_file():
+        hub_dirs = [root]
+        state = data_dir.resolve() if data_dir is not None else datadir.state(root)
+    else:
+        hub_dirs = []
+    if not hub_dirs:
+        console.print("[red]No hubs found.[/red] Run it in the deployment folder, or pass --data-dir or --hub.")
+        raise typer.Exit(2)
+    from . import supervisor as sup_lib
+
+    probe = sup_lib.Supervisor([], state_dir=state)
+    try:
+        probe.lock()
+    except RuntimeError:
+        console.print("[red]This deployment is running.[/red] Stop it first (systemctl stop hubzoid), take "
+                      "a backup (hubzoid backup), then run hubzoid upgrade.")
+        raise typer.Exit(2)
+    try:
+        url = dblib.operational_url(hub_dirs[0])
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2)
+    console.print(f"[cyan]→ upgrade[/cyan]  {root}  (state {state}, {len(hub_dirs)} hub(s))")
+    up = one_home.Upgrade(root, state, hub_dirs, dblib._engine_for_url(url), dry_run=dry_run,
+                          say=lambda t: console.print(f"  {escape(t)}"))
+    try:
+        done = up.run()
+    except Exception as exc:  # noqa: BLE001 - said plainly
+        console.print(f"[red]The upgrade stopped:[/red] {escape(str(exc))}")
+        raise typer.Exit(1)
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] {len(done)} change(s) listed, none made.")
+    else:
+        console.print(f"[green]Done.[/green] Review the files (git diff), then start with `hubzoid run`"
+                      f"{' --data-dir ' + str(state) if data_dir else ''}.")
+
+
+service_app = typer.Typer(no_args_is_help=True, help="Run the deployment as a system service.")
+app.add_typer(service_app, name="service", rich_help_panel="Run")
+
+
+@service_app.command("install")
+def service_install(
+    folder: Path = typer.Argument(Path("."), help="The deployment folder (hubzoid.yaml, or a hub)."),
+    port: int = typer.Option(3080, "--port"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    data_dir: Path = typer.Option(None, "--data-dir", help="State folder, if not the default."),
+    user: str = typer.Option("", "--user", help="The user the service runs as (default: root)."),
+    write: bool = typer.Option(False, "--write", help="Write /etc/systemd/system/hubzoid.service."),
+) -> None:
+    """One systemd unit for the whole deployment: `hubzoid run`, restarted if
+    it stops. Restart single hubs with `hubzoid restart <hub>`."""
+    folder = folder.resolve()
+    args = ["run", "--port", str(port), "--host", host, "--no-open"]
+    if data_dir is not None:
+        args += ["--data-dir", str(data_dir.resolve())]
+    exe = Path(sys.executable).with_name("hubzoid")
+    lines = ["[Unit]", "Description=Hubzoid", "After=network-online.target", "Wants=network-online.target", "",
+             "[Service]", f"WorkingDirectory={folder}", f"ExecStart={exe} {' '.join(shlex.quote(a) for a in args)}",
+             "Restart=always", "RestartSec=5", "KillMode=mixed", "TimeoutStopSec=180"]
+    if user:
+        lines.append(f"User={user}")
+    lines += ["", "[Install]", "WantedBy=multi-user.target", ""]
+    unit = "\n".join(lines)
+    if not write:
+        typer.echo(unit)
+        console.print("[dim]Save it as /etc/systemd/system/hubzoid.service (or pass --write), then:[/dim]")
+        console.print("  systemctl daemon-reload && systemctl enable --now hubzoid", highlight=False)
+        return
+    target = Path("/etc/systemd/system/hubzoid.service")
+    try:
+        target.write_text(unit)
+    except OSError as exc:
+        console.print(f"[red]Could not write {target}: {exc}. Run as root, or save the unit by hand.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Wrote {target}.[/green] Now: systemctl daemon-reload && systemctl enable --now hubzoid")
 
 
 # ---------------------------------------------------------------------------
@@ -1898,7 +2482,9 @@ def slack_run(
     # Trigger .env load so SLACK_* vars are visible to the adapter and
     # settings.load() sees the same picture as `hubzoid run`.
     _load_settings(hub)
+    from . import supervisor as sup_lib
 
+    sup_lib.watch_parent()
     try:
         rc = run_adapter(hub)
         raise typer.Exit(rc)
@@ -1980,6 +2566,9 @@ def inbound_run(
         console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
         raise typer.Exit(2)
     _load_settings(hub)
+    from . import supervisor as sup_lib
+
+    sup_lib.watch_parent()
     raise typer.Exit(run_inbound(hub))
 
 

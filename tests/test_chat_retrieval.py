@@ -110,7 +110,7 @@ def _web_on(hub):
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["retrieval"]["web"]["enabled"] = True
-    svc.apply(doc, expected_revision=svc.active().revision or None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
 
 
 def test_changed_and_directory_sources_and_file_use(client, hub):
@@ -228,7 +228,7 @@ def test_web_search_turn_needs_policy_and_grant(client, hub, monkeypatch):
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["retrieval"]["web"]["enabled"] = True
-    svc.apply(doc, expected_revision=svc.active().revision or None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
     b2 = client.get(f"/api/conversations/{cid}/branches", headers=ORIGIN).json()["items"][0]
     ask(b2, first["assistant_message_id"])
     assert seen[-1] is True  # the local owner holds every grant

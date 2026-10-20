@@ -8,6 +8,8 @@ import json
 import time
 
 import pytest
+
+from tests.chat_helpers import write_chat_config
 from fastapi.testclient import TestClient
 
 from hubzoid.chat import feedback as fb
@@ -81,7 +83,7 @@ def test_helper_followups_native_structured_and_stale_check(client, hub, monkeyp
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["helpers"]["enabled"]["followups"] = True
-    svc.apply(doc, expected_revision=None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
     cid, out = answered(client)
     b = next(x for x in snap(client, cid)["branches"] if x["id"] == out["branch_id"])
     calls = []
@@ -230,7 +232,7 @@ def set_feedback(hub, **values):
     active = svc.active()
     doc = active.document
     doc["feedback"].update(values)
-    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    write_chat_config(hub, doc)
 
 
 def fb_url(cid, mid):

@@ -160,11 +160,13 @@ def test_personal_memory_is_per_person_and_feeds_the_chat(hub):
     assert pm.prompt_block(hub, "acct-ana") == ""
 
 
-def test_folder_names_are_canonical_and_prompts_are_out_of_scope(hub):
+def test_folder_names_are_canonical_and_prompts_are_in_scope(hub):
+    # Workspace edits are hub changes, so shared prompts are proposable too.
     assert hc.check_path("Knowledge/pricing.md") == "knowledge/pricing.md"
     assert "Orders over" in hc.read_text(hub, "Knowledge/pricing.md")
+    assert hc.check_path("prompts/tone.md") == "prompts/tone.md"
     with pytest.raises(hc.ChangeError):
-        hc.check_path("prompts/tone.md")
+        hc.check_path("tools_local/x.md")
 
 
 def test_deleted_notes_keep_their_revision_so_a_stale_editor_fails(hub):

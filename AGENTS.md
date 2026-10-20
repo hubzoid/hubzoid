@@ -132,7 +132,11 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Public reverse proxy in front of the bridge: the web app, its Settings and the API, with client identity headers refused. |
-| `gateway.py` | Plans one deployment over many hub bridges (`hubzoid gateway`), for either chat UI. |
+| `gateway.py` | Plans one deployment of hubs: ports, slugs, the edge's per-hub routes. |
+| `supervisor.py` | `hubzoid run`'s supervisor: each hub its own process group, restarted alone with backoff, drained before a restart; the control socket behind `hubzoid status/restart/reload/stop/start/logs`. |
+| `deployfile.py` | `hubzoid.yaml`, the deployment file: hub list, public URL, sign-in, owner, brand, chat, diagnostics. |
+| `control/filesettings.py` | A deployment setting read from its one file (`hubzoid.yaml` section, or the older file), re-read on change, last good kept. |
+| `one_home.py` | `hubzoid upgrade`: write settings kept only in the database into their files, then migrate. |
 | `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
 | `schedule_runner.py` | Executes one task: fresh-context rounds via the hub Runtime until `STATUS: DONE`, then scoped commit/push. |

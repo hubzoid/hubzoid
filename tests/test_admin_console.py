@@ -46,32 +46,14 @@ def test_unknown_key_reports_yaml_path(hub):
     assert exc.value.extra["line"] == 3
 
 
-def test_plan_digest_stale_revision_and_apply(client):
+def test_limits_come_from_the_file_and_plans_are_refused(hub, client):
     values = {"version": 1, "diagnostics": {"allow_network_probes": True}}
-    plan = client.post("/api/admin/config/plans", headers=ORIGIN,
-                       json={"values": values, "expected_revision": 0}).json()
-    assert plan["diff"] == [{"pointer": "/diagnostics/allow_network_probes", "old": False, "new": True}]
-    wrong = client.post(f"/api/admin/config/plans/{plan['plan_id']}/apply", headers=ORIGIN,
-                        json={"digest": "sha256:00", "expected_revision": 0})
-    assert wrong.status_code == 409
-    ok = client.post(f"/api/admin/config/plans/{plan['plan_id']}/apply", headers=ORIGIN,
-                     json={"digest": plan["digest"], "expected_revision": 0})
-    assert ok.status_code == 200 and ok.json()["revision"] == 1
-    again = client.post("/api/admin/config/plans", headers=ORIGIN,
-                        json={"values": values, "expected_revision": 0})
-    assert again.status_code == 409 and again.json()["detail"]["current_revision"] == 1
+    plan = client.post("/api/admin/config/plans", headers=ORIGIN, json={"values": values, "expected_revision": 0})
+    assert plan.status_code == 409 and plan.json()["detail"]["code"] == "file_owned"
+    (hub / "hubzoid.yaml").write_text("version: 1\nhubs: [.]\ndiagnostics:\n  allow_network_probes: true\n")
     shown = client.get("/api/admin/config").json()
     assert shown["provenance"]["/diagnostics/allow_network_probes"] == {"value": True, "source": "deployment"}
-
-
-def test_idempotency_payload_mismatch(client):
-    h = dict(ORIGIN, **{"Idempotency-Key": "plan-1"})
-    a = client.post("/api/admin/config/plans", headers=h, json={"values": {"version": 1}, "expected_revision": 0})
-    b = client.post("/api/admin/config/plans", headers=h, json={"values": {"version": 1}, "expected_revision": 0})
-    assert a.json()["plan_id"] == b.json()["plan_id"]
-    c = client.post("/api/admin/config/plans", headers=h,
-                    json={"values": {"version": 1, "diagnostics": {"max_parallel_checks": 2}}, "expected_revision": 0})
-    assert c.status_code == 409 and c.json()["detail"]["code"] == "idempotency_key_reused"
+    assert shown["read_only"] is True and shown["file"] == "hubzoid.yaml (diagnostics)"
 
 
 def test_domain_registry_has_no_duplicate_keys(client):
@@ -97,9 +79,7 @@ def test_network_probe_requires_double_opt_in(hub):
     with pytest.raises(AdminError) as exc:
         svc.start(actor="t", profile="active", consent_network=True)
     assert exc.value.status == 403  # admin.yaml has not allowed probes
-    cfg = admin_cfg.service_for(hub)
-    plan = cfg.plan({"version": 1, "diagnostics": {"allow_network_probes": True}}, expected_revision=0, actor="t")
-    cfg.apply(plan["plan_id"], digest=plan["digest"], expected_revision=0, actor="t")
+    (hub / "admin.yaml").write_text("version: 1\ndiagnostics:\n  allow_network_probes: true\n")
     with pytest.raises(AdminError) as exc:
         svc.start(actor="t", profile="active")
     assert exc.value.status == 422  # no consent for this run
@@ -146,9 +126,7 @@ def test_slow_check_times_out(hub, monkeypatch):
 
     monkeypatch.setattr(diag, "BY_ID", {**diag.BY_ID, "storage.disk": diag.CheckDef(
         "storage.disk", "passive", "x", "HUB-109", slow)})
-    cfg = admin_cfg.service_for(hub)
-    plan = cfg.plan({"version": 1, "diagnostics": {"check_timeout_seconds": 1}}, expected_revision=0, actor="t")
-    cfg.apply(plan["plan_id"], digest=plan["digest"], expected_revision=0, actor="t")
+    (hub / "admin.yaml").write_text("version: 1\ndiagnostics:\n  check_timeout_seconds: 1\n")
     svc = diag.service_for(hub)
     rid = svc.start(actor="t", check_ids=["storage.disk"], run_inline=True)["report_id"]
     check = svc.get(rid)["checks"][0]

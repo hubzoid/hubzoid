@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from hubzoid.chat import feedback as fb
 from hubzoid.tools import feedback_tool
-from tests.chat_helpers import ORIGIN, build_app, make_hub
+from tests.chat_helpers import ORIGIN, build_app, make_hub, write_chat_config
 from tests.test_chat_operations import new_conv, op, send, snap, wait_run
 
 ASK = "Save negative feedback on your previous answer. The price was outdated."
@@ -41,7 +41,7 @@ def turn_on(hub, **values):
     active = svc.active()
     doc = active.document
     doc["feedback"].update({"tool": True, **values})
-    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    write_chat_config(hub, doc)
 
 
 def turn(client, cid, text, parent=None, branch_id=None):
@@ -207,17 +207,25 @@ def test_turning_it_off_stops_the_next_call(client, hub):
     assert "can't save feedback" in said and ratings(client) == []
 
 
-def test_config_change_rebuilds_the_runtime_for_the_next_turn(client, hub):
+def test_feedback_tool_uses_file_and_restart_instead_of_config_apply(hub):
     from hubzoid.chat import config as cfg
 
-    before = client.app.state.chat.runtime
-    active = cfg.service_for(hub).active()
-    doc = active.document
-    doc["feedback"]["tool"] = True
-    r = client.put("/api/chat/config", headers=ORIGIN, json={"config": doc,
-                                                             "expected_revision": active.revision or "absent"})
-    assert r.status_code == 200, r.text
-    assert r.json()["runtime_reloaded"] is True and client.app.state.chat.runtime is not before
+    with TestClient(build_app()) as client:
+        before = client.app.state.chat.runtime
+        active = cfg.service_for(hub).active()
+        doc = active.document
+        doc["feedback"]["tool"] = True
+        r = client.put("/api/chat/config", headers=ORIGIN, json={"config": doc,
+                                                               "expected_revision": active.revision or "absent"})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "file_owned"
+        assert client.app.state.chat.runtime is before
+    turn_on(hub)
+    with TestClient(build_app()) as client:
+        assert client.app.state.chat.runtime is not before
+        cid, _ = new_conv(client)
+        turn(client, cid, "What does the starter plan cost?")
+        turn(client, cid, ASK)
+        assert len(ratings(client)) == 1
 
 
 def test_confirmations_are_never_the_previous_answer(hub):

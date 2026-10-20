@@ -7,6 +7,36 @@ same place. Each provider has its own page:
 [Linear](channels/linear.md), [email](channels/email.md) and
 [WhatsApp](channels/whatsapp.md). This page covers what they share.
 
+Every channel turns on by a file in the hub's `channels/` folder, never a flag,
+and runs with its hub: restarting the hub restarts its channels.
+
+## The 1.x Slack app, WhatsApp, Telegram and webhooks
+
+The earlier Slack assistant app (Socket Mode, people found by their Slack
+profile email) and the inbound server for WhatsApp, Telegram and generic
+webhooks turn on with a short file each; their settings stay in the hub's
+`.env`:
+
+```yaml
+# channels/slack-assistant.yaml
+version: 1
+id: slack-assistant
+provider: slack_assistant   # or whatsapp_inbound, telegram, webhook
+enabled: true
+```
+
+| `provider` | Its settings in `.env` | Arrives at |
+|---|---|---|
+| `slack_assistant` | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | Socket Mode (no public URL) |
+| `whatsapp_inbound` | `WHATSAPP_*` | `/webhooks/<hub>/whatsapp` |
+| `telegram` | `TELEGRAM_*` | `/webhooks/<hub>/telegram` |
+| `webhook` | `WEBHOOK_INBOUND_*` | `/webhooks/<hub>/<name>` |
+
+A file whose settings are missing stays off and the start says which are
+missing. For this release a hub whose `.env` alone has those settings still
+starts the channel, with a notice naming the file to add. The rest of this
+page is about the connections below.
+
 ## One file per connection
 
 A connection is a file in the hub folder, `channels/<id>.yaml`:
@@ -17,7 +47,6 @@ id: support-slack
 provider: slack
 enabled: false
 agent: main
-allowed_groups: [support]
 queue_limit: 100
 subscriptions: on_accept
 progress: true
@@ -35,7 +64,7 @@ provider_config:
 | `agent` | Answer with the hub's agent (`main`). Each person gets their own conversation, so every reply uses their own access. |
 | `workflow` | Instead of `agent`: start this workflow as a work item for each request. The workflow needs `work_items=True`. |
 | `run_as` | `linked_requester` (the person who asked, through their account link) for agents. `workflow` for workflows started by an unattended trigger. |
-| `allowed_groups` | Hub groups (from `identity/access.csv`) whose members may ask. Empty means nobody can start work from a person's message. |
+| `allowed_groups` | No longer read. Who may start work from the connection is the **Start work from &lt;id&gt;** grant (`channel_<id>`) in Settings → Access, checked with access to the agent. Nobody granted means nobody can start work. |
 | `queue_limit` | Requests waiting in one thread before new ones are refused (1 to 1000, default 100). Nothing already accepted is dropped. |
 | `subscriptions` | `on_accept`: once someone asks in a thread, their follow-ups continue the work without a new mention. `explicit`: every message needs a mention. |
 | `progress` | Post progress updates from workflows. Requests, errors and results are always posted. |
@@ -56,9 +85,11 @@ hubzoid channels doctor ./my-hub support-slack
 hubzoid channels link ./my-hub support-slack --external-id U0123ABCD --account ana@example.com
 ```
 
-`validate` makes no network call. `apply` saves the file and makes it the
-active revision. The next apply must name that revision
-(`--expected-revision 1`), so two people never overwrite each other. `doctor`
+`validate` makes no network call. The file is the connection's only
+configuration: the hub reads it at start and when it changes (`hubzoid reload
+<hub>` to be sure), and an edit that breaks it keeps the last good one while the
+hub runs. `apply` checks a file and writes it for you; it names the revision it
+replaces (`--expected-revision 1`), so two people never overwrite each other. `doctor`
 only reads: it never posts a message, and until the provider has delivered
 something it says `webhook_delivery: unverified`.
 
@@ -78,7 +109,8 @@ bytes. That proves where it came from, not who may act. Then:
    administrator (`hubzoid channels link`, or **Account links** in the
    Console). Names and email addresses in a message never count.
 2. That account must be active and have access to the hub.
-3. For an agent connection, it must be in one of `allowed_groups`.
+3. For an agent connection, it must hold the connection's grant
+   (`channel_<id>`, **Start work from &lt;id&gt;** in Settings → Access).
 
 Anyone else gets one short notice in the thread and no model is called.
 

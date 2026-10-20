@@ -96,6 +96,9 @@ def _apply(seed, root: Path, monkeypatch) -> None:
     from hubzoid.auth import users
 
     seed["applied"] = root
+    # One deployment folder for every hub under root: connector files live there.
+    (root / "hubzoid.yaml").write_text("version: 1\n")
+    monkeypatch.setenv("HUBZOID_DEPLOYMENT_FILE", str(root / "hubzoid.yaml"))
     gs = access.store_for(root)
     accounts = users.store(root)
     for uid, email in seed["users"]:
@@ -111,7 +114,7 @@ def _apply(seed, root: Path, monkeypatch) -> None:
         if srv.get("allow"):
             body["tool_allowlist"] = srv["allow"]
         try:
-            registry.create(root, body, actor="test")
+            _define(root, body, actor="test")
         except ConnectorError as err:
             if err.code != "exists":
                 raise
@@ -198,3 +201,10 @@ def mcp_server(name: str, bearers: dict[str, str], tools: dict):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def _define(hub, body, *, actor="test"):
+    """A connector as a file (tests.connectors_fakes.define)."""
+    from tests.connectors_fakes import define
+
+    return define(hub, body, actor=actor)

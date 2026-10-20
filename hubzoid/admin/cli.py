@@ -84,38 +84,6 @@ def config_validate(hub: Path = HUB, file: Path = typer.Option(Path("admin.yaml"
     cc.emit({"valid": True, "values": values, "defaulted_keys": defaulted}, as_json)
 
 
-@config_app.command("plan")
-def config_plan(hub: Path = HUB, file: Path = typer.Option(Path("admin.yaml"), "--file"),
-                idempotency_key: str = typer.Option(None, "--idempotency-key"), as_json: bool = JSON) -> None:
-    """Record the file's values as a plan: digest, diff and expiry."""
-    svc = admin_cfg.service_for(hub)
-    path = file if file.is_absolute() else svc.root / file
-    with _guard(as_json):
-        values = svc.parse_file(path)
-        out = svc.plan(values, expected_revision=svc.active().revision, actor=cc.actor(),
-                       idempotency_key=idempotency_key)
-
-    def human(o):
-        cc.console.print(f"plan [bold]{o['plan_id']}[/bold] digest {o['digest']} (base revision {o['base_revision']})")
-        for c in o["diff"]:
-            cc.console.print(f"  {c['pointer']}: {c['old']} -> {c['new']}")
-        if not o["diff"]:
-            cc.console.print("  [dim]no changes[/dim]")
-
-    cc.emit(out, as_json, human)
-
-
-@config_app.command("apply")
-def config_apply(hub: Path = HUB, plan: str = typer.Option(..., "--plan"), digest: str = typer.Option(..., "--digest"),
-                 expected_revision: int = typer.Option(..., "--expected-revision"),
-                 idempotency_key: str = typer.Option(None, "--idempotency-key"), as_json: bool = JSON) -> None:
-    """Apply a plan by id and digest."""
-    with _guard(as_json):
-        out = admin_cfg.service_for(hub).apply(plan, digest=digest, expected_revision=expected_revision,
-                                               actor=cc.actor(), idempotency_key=idempotency_key)
-    cc.emit(out, as_json)
-
-
 @config_app.command("export")
 def config_export(hub: Path = HUB, domain: str = typer.Option("admin", "--domain"),
                   fmt: str = typer.Option("yaml", "--format"), out: Path = typer.Option(None, "--out"),

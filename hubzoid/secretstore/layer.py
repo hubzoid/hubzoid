@@ -28,6 +28,10 @@ from . import names, store
 log = logging.getLogger("hubzoid.secretstore")
 
 IN_USE, OVERRIDDEN, UNREADABLE, REBIND = "in_use", "overridden", "unreadable", "rebind"
+#: A key a person typed into the store before 2.0's one-home rule. It is not
+#: used: such keys live in .env (or the host's environment); `hubzoid upgrade`
+#: moves it there.
+MOVE_TO_ENV = "move_to_env"
 
 
 @dataclass
@@ -64,6 +68,14 @@ def _read(hub_dir: Path, env: Mapping[str, str], operator: frozenset) -> Snapsho
         if not names.env_name(meta.name):
             continue  # referenced by name only (secret:...), never an environment variable
         snap.revisions[status_key] = meta.revision
+        if meta.scope in ("hub", "deployment"):
+            # One home: a key a person types lives in .env or the host's
+            # environment, never also in the store (it would come back when
+            # the .env line is removed). Not used; `hubzoid upgrade` moves it.
+            snap.status[status_key] = MOVE_TO_ENV
+            log.warning("hub %s: the stored secret %s is not used: keys a person types live in .env. "
+                        "Run `hubzoid upgrade` to move it there.", hub_dir.name, meta.name)
+            continue
         if meta.name in operator:
             snap.status[status_key] = OVERRIDDEN
             continue

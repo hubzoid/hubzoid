@@ -31,14 +31,20 @@ def hub_dir(tmp_path, monkeypatch, fake):
     root = tmp_path / "desk"
     root.mkdir()
     (root / "AGENTS.md").write_text("---\nname: Desk\n---\nA desk.\n")
-    (root / "identity").mkdir()
-    (root / "identity" / "access.csv").write_text("phone,email,groups\n,ana@example.org,support\n")
     return root
+
+
+def _grant(hub_dir, cid="fake-main", email="ana@example.org"):
+    """Who may start work from a channel is a grant in Settings."""
+    from hubzoid.access import store_for
+    from hubzoid.capabilities import channel_permission
+
+    store_for(hub_dir).grant(email, hub_dir.name, channel_permission(cid), actor="test")
 
 
 def yaml_for(**over) -> str:
     data = {"version": 1, "id": "fake-main", "provider": "fake", "enabled": True, "agent": "main",
-            "allowed_groups": ["support"], "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}}
+            "provider_config": {"secret_ref": "env:FAKE_CHANNEL_SECRET"}}
     data.update(over)
     return config.render(data)
 
@@ -47,6 +53,7 @@ def applied(hub_dir, **over):
     v = config.load_text(hub_dir, yaml_for(**over))
     assert v.valid, v.errors
     config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    _grant(hub_dir, v.config.id)
     return config.active(hub_dir, v.config.id)
 
 
@@ -130,17 +137,18 @@ def test_apply_writes_file_and_checks_revision(hub_dir):
     assert "enabled: false" in path.read_text()
 
 
-def test_an_image_built_hub_keeps_channel_changes_in_its_data_folder(hub_dir, tmp_path, monkeypatch):
-    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))      # its files come from Git
+def test_an_image_built_hub_changes_channels_in_git(hub_dir, tmp_path, monkeypatch):
+    # The file is the only configuration: a hub whose files come from its image
+    # changes a channel by committing the file, never through the database.
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))
     data = config.load_text(hub_dir, yaml_for()).data
-    out = config.apply(hub_dir, data, expected_revision="absent", actor="t")
-    assert out["revision"] == 1 and out["file_written"] is False
-    assert not (hub_dir / "channels").exists()                          # nothing written into the image
-    assert config.active(hub_dir, "fake-main").enabled                  # the revision is what runs
-    out = config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="t")
-    assert out["status"] == "disabled" and not config.active(hub_dir, "fake-main").enabled
-    exported = config.export(hub_dir, "fake-main")                      # what to commit to Git
-    assert exported["config"]["enabled"] is False and exported["file_matches"] is None
+    with pytest.raises(ChannelError) as exc:
+        config.apply(hub_dir, data, expected_revision="absent", actor="t")
+    assert exc.value.code == "hub_read_only" and not (hub_dir / "channels").exists()
+    (hub_dir / "channels").mkdir()
+    (hub_dir / "channels" / "fake-main.yaml").write_text(yaml_for())  # as committed in Git
+    assert config.active(hub_dir, "fake-main").enabled
+    assert [c.id for c in config.active_all(hub_dir)] == ["fake-main"]
 
 
 def test_secret_value_never_exported(hub_dir):
@@ -318,7 +326,7 @@ def test_unlinked_notice_is_sent_once_per_person(hub_dir, fake):
     assert len(fake.sent) == 1
 
 
-def test_linked_person_outside_groups_is_refused(hub_dir, fake):
+def test_linked_person_without_the_channel_grant_is_refused(hub_dir, fake):
     from hubzoid.channels import links
 
     conn = applied(hub_dir)
@@ -406,7 +414,7 @@ def test_workflow_route_starts_one_work_item(hub_dir, fake, monkeypatch):
 
     started = []
     monkeypatch.setattr(wi, "start", lambda hub_dir, item: (started.append(item["id"]), item)[1])
-    conn = applied(hub_dir, agent=None, workflow="intake", allowed_groups=[])
+    conn = applied(hub_dir, agent=None, workflow="intake")
     send(conn, ev(data={"unattended": True}))
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     row = store.list_deliveries(hub_dir, "desk", conn.id)["items"][0]
@@ -485,7 +493,7 @@ def test_stop_signal_cancels_the_persons_work_item(hub_dir, fake, monkeypatch):
     from hubzoid.work_items import store as wstore
 
     monkeypatch.setattr(wi, "start", lambda hub_dir, item: item)
-    conn = applied(hub_dir, agent=None, workflow="intake", run_as="workflow", allowed_groups=["support"])
+    conn = applied(hub_dir, agent=None, workflow="intake", run_as="workflow")
     _user(hub_dir, "ana@example.org")
     from hubzoid.access import store_for
 

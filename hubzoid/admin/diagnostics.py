@@ -267,14 +267,17 @@ def check_scheduler(hub: Path) -> Result:
 
 
 def check_connectors(hub: Path) -> Result:
-    from .. import db
+    from ..connectors import registry
 
     try:
-        with db.operational_engine(hub).connect() as conn:
-            count = conn.execute(sa.text("SELECT COUNT(*) FROM hz_connectors")).scalar() or 0
+        count = len(registry.definitions(hub))
+        problems = registry.problems(hub)
     except Exception:  # noqa: BLE001
-        return Result("info", "No connector registry yet.")
-    return Result("ok" if count else "info", f"{count} connector(s) registered.", {"connectors": int(count)})
+        return Result("info", "No connector files yet.")
+    if problems:
+        return Result("warn", "; ".join(problems[:3]), {"connectors": count})
+    return Result("ok" if count else "info", f"{count} connector(s) defined in connectors/.",
+                  {"connectors": count})
 
 
 def check_telemetry(hub: Path) -> Result:
@@ -430,8 +433,9 @@ def check_connector_reachability(hub: Path) -> Result:
     from .. import db
 
     try:
-        with db.operational_engine(hub).connect() as conn:
-            urls = [r[0] for r in conn.execute(sa.text("SELECT url FROM hz_connectors"))]
+        from ..connectors import registry
+
+        urls = [d.connector.url for d in registry.definitions(hub).values()]
     except Exception:  # noqa: BLE001
         urls = []
     if not urls:

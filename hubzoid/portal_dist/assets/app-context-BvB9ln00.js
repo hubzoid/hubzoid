@@ -1,1 +1,0 @@
-import{i as e}from"./rolldown-runtime-qXqUbbKo.js";import{i as t}from"./react-DL5k5R7h.js";var n=e(t(),1),r=(0,n.createContext)(null);function i(){let e=(0,n.useContext)(r);if(!e)throw Error(`useApp outside the chat app`);return e}function a(e,t){if(t)return e.find(e=>e.id===t)??e.find(e=>e.hub===t)}export{a as n,i as r,r as t};

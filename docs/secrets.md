@@ -1,17 +1,21 @@
 # Secrets
 
-API keys, tokens and passwords reach a hub in one of two ways:
+Each secret has one home, by kind:
 
-- **Operator sources**, as before: the process environment, `<hub>/.env`,
-  `<hub>/restricted/.env`, and the optional AWS Secrets Manager secret each of
-  those can name. See [Deploying](DEPLOYING.md) for the layers.
-- **The secret store**: values saved in the Console (Agents, then the agent,
-  then **Secrets**), with `hubzoid secrets set`, or through the API. They are
-  encrypted with the deployment key and kept in the operational database.
+- **Keys a person types** (model keys, tool tokens, sign-in client secrets)
+  live in operator sources only: the process environment, `<hub>/.env`,
+  `<hub>/restricted/.env`, the deployment's `.env`, and the optional AWS Secrets
+  Manager secret each of those can name. See [Deploying](DEPLOYING.md) for the
+  layers. Settings, the API and `hubzoid secrets set` refuse to store them
+  (`operator_source`) and say which `.env` to use.
+- **Keys Hubzoid obtains itself** through a setup or sign-in flow (a GitHub App
+  key from the manifest flow, Linear and mailbox OAuth tokens) and secrets a
+  channel file names as `secret:channel/<hub>/<id>/<name>` live in the secret
+  store, encrypted with the deployment key in the operational database.
 
-An operator source always wins. A name it sets shows as **locked** in the
-Console, with where it comes from, and the store refuses to change it. To move
-a key into the store, delete its line from the operator source.
+A key typed into the store before this rule is not used (status
+`move_to_env`), so removing a `.env` line never brings an old value back;
+`hubzoid upgrade` moves it to the right `.env`.
 
 A line with an empty value (`OPENAI_API_KEY=`, often copied from
 `.env.example`) sets nothing, so a stored value fills it, and doctor warns about
@@ -27,8 +31,8 @@ change, never the value.
 ## When a value applies
 
 A bridge reads stored secrets once, when it starts, and never changes them
-while it serves. After saving or removing a secret, restart the hub
-(`hubzoid run` again, or redeploy). Until then the Console marks the row
+while it serves. After changing a secret, restart the hub
+(`hubzoid restart <hub>`, or redeploy). Until then the Console marks the row
 **Restart to apply**.
 
 ## Levels

@@ -321,6 +321,10 @@ class Orchestrator:
         if request.get("origin") != "chat" or not request.get("conversation_id") \
                 or request.get("status") not in ("approved", "rejected", "answered"):
             return False
+        from .. import drain
+
+        if drain.active():  # continued by the recovery loop after the restart
+            return False
         # The reply resumes for the person who asked, on the session or key
         # that reply ran with: if that one was revoked (or they were signed
         # out everywhere) since, it doesn't resume.
