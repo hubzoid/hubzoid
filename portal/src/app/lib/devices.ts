@@ -50,7 +50,7 @@ export function clearDeviceCache() {
   navigator.serviceWorker?.controller?.postMessage("hz:logout");
   // Unsent chat text kept for a sign-in that ended (Thread's draft) goes too.
   try {
-    for (const k of Object.keys(sessionStorage)) if (k.startsWith("hz.draft:")) sessionStorage.removeItem(k);
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith("hz.draft")) sessionStorage.removeItem(k);
   } catch {
     /* no storage */
   }

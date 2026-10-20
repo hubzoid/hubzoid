@@ -72,6 +72,8 @@ One chat interface, the Hubzoid web app, with Settings in the same app. See
   access, so a second hub's scheduled runs are no longer refused.
 - The Usage meters no longer restyle the chat's message action bar (they shared
   a class name).
+- A message sent from the new-chat page no longer comes back as the draft of
+  the next new chat in that tab.
 - An unknown or not-permitted Settings address opened an empty pane; it now
   opens the first section (a person's own Schedules for the team's schedules).
 - Shared snapshots and their copies no longer carry signed download links; the

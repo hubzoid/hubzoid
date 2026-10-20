@@ -2,7 +2,7 @@
 //   node --experimental-strip-types --no-warnings tests/app-runtime.test.mts
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { ADAPTER_FIELDS, UNBOUND_FIELDS, deleteGate, laneFor } from "../src/app/chat/runtime-rules.ts";
+import { ADAPTER_FIELDS, UNBOUND_FIELDS, deleteGate, forgetSentDrafts, laneFor } from "../src/app/chat/runtime-rules.ts";
 
 const here = new URL(".", import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, here), "utf8");
@@ -20,6 +20,30 @@ assert.equal(pinned, "0.15.22", "assistant-ui pin changed: re-check the adapter 
 assert.equal(laneFor({}), "queue");
 assert.equal(laneFor({ steer: false }), "queue");
 assert.equal(laneFor({ steer: true }), "steer");
+
+// sent_text_leaves_its_origin_draft_but_no_other_page
+{
+  const fake = (store: Record<string, unknown>) => Object.assign(store, {
+    getItem: (k: string) => (typeof store[k] === "string" ? (store[k] as string) : null),
+    removeItem: (k: string) => { delete store[k]; },
+  });
+  const left = (store: Record<string, unknown>) => Object.keys(store).filter((k) => typeof store[k] === "string").sort();
+  const store = fake({
+    "hz.draft-origin:c_new": "hz.draft:u1:/new/sales", "hz.draft:u1:/new/sales": " Review this ",
+    "hz.draft:u1:/?agent=ops": "Review this", "hz.draft:u2:/new/sales": "Review this",
+    "hz.draft:u1:/c/c_new": "Review this", "hz.draft:u2:/c/c_new": "Review this",
+    "hz.draft:u1:/c/c_other": "Review this", "unrelated": "Review this",
+  });
+  forgetSentDrafts(store, "Review this", "c_new");
+  // Only the page it was started from and its own conversation, for that person.
+  assert.deepEqual(left(store), ["hz.draft:u1:/?agent=ops", "hz.draft:u1:/c/c_other",
+                                 "hz.draft:u2:/c/c_new", "hz.draft:u2:/new/sales", "unrelated"]);
+  // A file-only first message consumes the record, so later sends touch nothing.
+  const files = fake({ "hz.draft-origin:c_f": "hz.draft:u1:/", "hz.draft:u1:/": "later draft" });
+  forgetSentDrafts(files, "", "c_f");
+  forgetSentDrafts(files, "later draft", "c_f");
+  assert.deepEqual(left(files), ["hz.draft:u1:/"]);
+}
 
 // on_delete_requires_confirmed_preview
 const confirmed = new Map<string, { preview_hash: string }>();

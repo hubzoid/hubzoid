@@ -237,6 +237,11 @@ function ChatView({
   // pressed while its conversation was being created, or the person moved on)
   // never moves the page on screen.
   const onScreen = useRef(true);
+  // The draft this page's composer keeps (Thread.tsx): once its conversation
+  // exists, the sent text stops being this page's draft (forgetSentDrafts).
+  // A shared-text link's query is dropped before the composer keys its draft.
+  const shared = ["share_title", "share_text", "share_url"].some((k) => new URLSearchParams(location.search).get(k));
+  const draftKey = useRef(`hz.draft:${app.user?.id ?? "local"}:${location.pathname}${shared ? "" : location.search}`);
   useEffect(() => {
     onScreen.current = true;
     return () => {
@@ -251,6 +256,13 @@ function ChatView({
       repository: null,
       events: {
         onConversationCreated: (c) => {
+          if (!detail) {
+            try {
+              sessionStorage.setItem(`hz.draft-origin:${c.id}`, draftKey.current);
+            } catch {
+              /* no storage: no draft was kept either */
+            }
+          }
           setConversation(c);
           rememberAgent(c.agent);
           // It exists now, so it joins the list either way.

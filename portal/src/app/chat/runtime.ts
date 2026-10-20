@@ -19,7 +19,7 @@ import { ApiError, enc, get, hubUrl, patch, post, put } from "../lib/api";
 import { randomId } from "../lib/ids";
 import type { ServerMessage, ServerPart } from "../lib/types";
 import { fileRefOf, toRepository, type ConvertContext } from "./convert";
-import { deleteGate, laneFor } from "./runtime-rules";
+import { deleteGate, forgetSentDrafts, laneFor } from "./runtime-rules";
 
 /** The ExternalStoreAdapter fields Hubzoid binds (checked against the pin). */
 export { ADAPTER_FIELDS, UNBOUND_FIELDS } from "./runtime-rules";
@@ -328,6 +328,7 @@ export class ConversationFeed {
       this.emit();
       throw error;
     }
+    forgetSentDraft(text, this.conversationId!);
     await this.load();
   }
 
@@ -535,4 +536,12 @@ export function useHubzoidRuntime({
     adapters: { attachments, speech, dictation },
   };
   return useExternalStoreRuntime(adapter);
+}
+
+function forgetSentDraft(text: string, conversationId: string) {
+  try {
+    forgetSentDrafts(sessionStorage, text, conversationId);
+  } catch {
+    /* no storage: nothing was kept */
+  }
 }
