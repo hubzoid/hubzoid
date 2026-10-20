@@ -330,6 +330,10 @@ def _now() -> float:
 def _settings(hub_dir: Path) -> dict:
     from .config import service_for
 
+    # Every chat feature's settings, so the stored document reads the same in
+    # any process (the CLI, a channel's routing) as in the server.
+    from . import devices, engine, file_service, models, organization, retrieval, sharing  # noqa: F401
+
     return service_for(hub_dir).active().document
 
 

@@ -80,9 +80,9 @@ def _said(words: str, message: str) -> bool:
 
 
 def _settings(hub_dir: Path) -> dict:
-    from ..chat.config import service_for
+    from ..chat.feedback import _settings as chat_settings
 
-    return service_for(hub_dir).active().document["feedback"]
+    return chat_settings(hub_dir)["feedback"]
 
 
 def offered(hub_dir: Path) -> bool:
