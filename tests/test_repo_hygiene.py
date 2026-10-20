@@ -15,8 +15,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Customer names that are not approved for public use, as SHA-256 of the
-# lowercase word, so this file does not publish them either. Compared against
+# Customer names and client-specific project or program labels that are not
+# approved for public use, as SHA-256 of the lowercase word, so this file
+# does not publish them either. Compared against
 # every word of every tracked text file (camel case is split, so a name inside
 # an identifier is caught; a longer word that merely contains one is not).
 _PRIVATE_WORDS = {
