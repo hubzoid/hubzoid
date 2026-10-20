@@ -161,10 +161,10 @@ def build_router(hub_dir: Path) -> APIRouter:
         """Register a connector, and with ``?hub=`` offer it in that agent."""
         user = admin(request)
         same_origin(request)
+        if hub:
+            _known_agent(hub)
         try:
-            c = registry.create(hub_dir, body, actor=user.email)
-            if hub:
-                registry.offer(hub_dir, c.id, hub, actor=user.email)
+            c = registry.create(hub_dir, body, actor=user.email, hub=hub)
         except ConnectorError as err:
             _raise(err)
         return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request, strict=False),
@@ -182,11 +182,11 @@ def build_router(hub_dir: Path) -> APIRouter:
                                                 tokens.counts(hub_dir))}, headers=_NO_STORE)
 
     @router.delete("/portal/api/connectors/{connector_id}", status_code=204)
-    def delete_connector(connector_id: str, request: Request):
+    def delete_connector(connector_id: str, request: Request, expected_revision: str | None = None):
         user = admin(request)
         same_origin(request)
         try:
-            registry.delete(hub_dir, connector_id, actor=user.email)
+            registry.delete(hub_dir, connector_id, actor=user.email, expected_revision=expected_revision)
         except ConnectorError as err:
             _raise(err)
         return Response(status_code=204)

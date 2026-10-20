@@ -43,6 +43,7 @@ function fixture() {
       },
     ],
   };
+  for (const c of state.connectors) c.revision = `revision-${c.id}`;
   const fail = (status, code, message) => Object.assign(new Error(message), { status, code, message });
   function handle(method, endpoint, body, search = "") {
     if (endpoint === "/me")
@@ -94,7 +95,8 @@ function fixture() {
                     { name: "get_thread", description: "Read one thread" },
                     { name: "send_message", description: "Send an email" }] };
     if (method === "PATCH") {
-      const { client_secret, ...rest } = body;
+      if (body.expected_revision !== found.revision) throw fail(409, "conflict", "This connector changed since you opened it. Refresh the page and reopen it before saving.");
+      const { client_secret, expected_revision: _revision, ...rest } = body;
       Object.assign(found, rest);
       if (client_secret !== undefined) found.has_client_secret = !!client_secret;
       return { connector: found };
@@ -294,6 +296,30 @@ const step = (name) => {
     assert.equal(edit.body.scopes, "read");
     assert.equal("client_secret" in edit.body, false, "an untouched secret is not sent");
     assert.equal("id" in edit.body, false);
+    assert.equal(edit.body.expected_revision, "revision-linear");
+
+    step("A stored client secret is not sent to a moved server");
+    await page.getByRole("link", { name: "Linear" }).click();
+    await drawer().getByLabel("Server URL").fill("https://elsewhere.example.org/mcp");
+    const before = fx.state.calls.filter((c) => c.method !== "GET").length;
+    await drawer().getByRole("button", { name: "Save" }).click();
+    await drawer().getByText("A new server needs its client secret again. Enter it, or remove the stored secret.").waitFor();
+    assert.equal(fx.state.calls.filter((c) => c.method !== "GET").length, before, "nothing was sent");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await drawer().waitFor({ state: "hidden" });
+
+    step("A manual file change cannot be overwritten by an open editor");
+    await page.getByRole("link", { name: "Linear" }).click();
+    await drawer().getByLabel("Name").fill("Stale change");
+    fx.state.connectors.find((c) => c.id === "linear").revision = "manual-change";
+    await drawer().getByRole("button", { name: "Save" }).click();
+    await drawer().getByText("This connector changed since you opened it.", { exact: false }).waitFor();
+    assert.equal(fx.state.connectors.find((c) => c.id === "linear").name, "Linear");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    fx.state.connectors.find((c) => c.id === "linear").revision = "revision-linear";
 
     step("Allowed tools are chosen from what the server lists");
     await page.getByRole("link", { name: "Gmail" }).click();
@@ -329,7 +355,7 @@ const step = (name) => {
     step("The switch turns a connector off");
     await linear.getByRole("switch").click();
     await page.getByText("Linear is switched off.").waitFor();
-    assert.deepEqual(last().body, { enabled: false });
+    assert.deepEqual(last().body, { enabled: false, expected_revision: "revision-linear" });
 
     step("Another agent's connector can be offered here, and stopped here only");
     await page.getByRole("combobox", { name: "Offer a connector another agent offers" }).click();
@@ -383,6 +409,14 @@ const step = (name) => {
     await crm.getByText("Missing settings").waitFor();
     await page.getByRole("row").filter({ hasText: "filesystem" }).getByText("Local command").waitFor();
 
+    if (process.env.PORTAL_SHOTS) {
+      fs.mkdirSync(process.env.PORTAL_SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.PORTAL_SHOTS, "connectors-restored.png"), fullPage: true });
+      await page.getByRole("button", { name: "Add connector" }).first().click();
+      await drawer().getByRole("button", { name: /Custom server/ }).click();
+      await drawer().getByText("Saved to", { exact: false }).waitFor();
+      await page.screenshot({ path: path.join(process.env.PORTAL_SHOTS, "connector-yaml-editor.png"), fullPage: true });
+    }
     assert.deepEqual(errors, [], "no page errors");
     console.log(`\nPASS: ${steps.length} connector checks`);
   } catch (e) {

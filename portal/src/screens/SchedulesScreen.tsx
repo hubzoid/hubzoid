@@ -488,7 +488,7 @@ function LiveReports({ hub }: { hub: Hub }) {
   return (
     <Section title="Live reports"
       help="Each report's live link, which always shows the newest copy. A company link lets people at your company domain open it without using the agent. Personal reports stay with their owner; admins can only turn their link off."
-      extra={company.on ? <Tag color="blue">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}>
+      extra={company.on ? <Tag className="hz-tag-accent">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}>
       {!company.on && <Alert className="notice" type="info" showIcon message={company.reason} />}
       <Table<Report>
         rowKey="id"

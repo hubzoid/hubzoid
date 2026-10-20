@@ -27,7 +27,7 @@ home:
 | Brand | `brand:` in `hubzoid.yaml`, images in `branding/` | drafts, reviews and activations in the database |
 | Chat defaults | `chat:` in `hubzoid.yaml` | `chat/config.yaml` applied into the database |
 | Diagnostics limits | `diagnostics:` in `hubzoid.yaml` | `admin.yaml` planned and applied |
-| Connectors | `connectors/<id>.yaml` in the deployment folder, secrets in `.env` | added in Settings |
+| Connectors | `connectors/<id>.yaml` in the deployment folder, secrets in `.env`; editable in Settings or by hand | added in Settings, stored in the database |
 | Channels (Slack app, WhatsApp, Telegram, webhook) | a file in the hub's `channels/` | `--slack`, `--whatsapp`, `--telegram`, `--webhook` |
 | Keys a person types | `.env` (or the host's environment) | also storable in Settings |
 | Instructions and their history | the files, changed through hub changes; Git history | Workspace drafts and versions in the database |

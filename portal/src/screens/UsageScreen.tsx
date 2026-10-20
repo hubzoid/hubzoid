@@ -119,7 +119,7 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
                     <span>{b.format(used)} of {b.format(cap)} {b.label}{held > 0 ? `, ${b.format(held)} held by running calls` : ""}</span>
                     <span className={tone ? `hz-bar-pct ${tone}` : "hz-bar-pct"}>{pct >= 100 ? "Limit reached" : `${Math.round(pct)}%`}</span>
                   </span>
-                  <span className={`hz-bar ${tone}`} role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={used}
+                  <span className={`hz-meter ${tone}`} role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={used}
                     aria-label={`${name}: ${b.format(used)} of ${b.format(cap)} ${b.label} this month`}>
                     <span style={{ width: `${pct}%` }} />
                   </span>
