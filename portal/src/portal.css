@@ -94,7 +94,8 @@ body {
 :root[data-theme="light"] .ant-tag.ant-tag-green:not(.ant-tag-disabled) { color: #276444; background: #eaf4ed; border-color: #eaf4ed; }
 :root[data-theme="light"] .ant-tag.ant-tag-gold:not(.ant-tag-disabled) { color: #805500; background: #fff5da; border-color: #fff5da; }
 :root[data-theme="light"] .ant-tag.ant-tag-red:not(.ant-tag-disabled) { color: #a3322a; background: #fbedea; border-color: #fbedea; }
-:root[data-theme="light"] .ant-tag.ant-tag-blue:not(.ant-tag-disabled) { color: #345e91; background: #eef3fa; border-color: #eef3fa; }
+:root[data-theme="light"] .ant-tag.ant-tag-blue:not(.ant-tag-disabled),
+:root[data-theme="light"] .ant-tag.ant-tag-processing:not(.ant-tag-disabled) { color: #b5471f; background: #fbede7; border-color: #fbede7; }
 
 .eyebrow {
   font-size: 11px;
@@ -836,9 +837,10 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 :root[data-theme="dark"] .ant-tag-error {
   color: #ffb4b4; background: #3c2023; border-color: #754049;
 }
+/* Running and in-progress tags use the accent, as information does: no blue. */
 :root[data-theme="dark"] .ant-tag-blue,
 :root[data-theme="dark"] .ant-tag-processing {
-  color: #adccf0; background: #1c2d43; border-color: #395477;
+  color: #f28b66; background: #2b1f1a; border-color: #5a3324;
 }
 
 /* Compact capability selection; explanations stay available to pointer and keyboard users. */

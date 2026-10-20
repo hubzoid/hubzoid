@@ -3388,16 +3388,19 @@
 .hz-agent-tabs > [aria-current="page"],
 .console-embed .hz-agent-tabs > a[aria-current="page"] { border-color: var(--hz-accent); }
 .hz-inbox-tabs button[aria-current="page"] { border-color: var(--hz-accent); }
+/* Selected sub-tabs and filters: the checked information pair, so a custom
+   palette can't make the label unreadable. */
 .hz-subtabs a[aria-current="page"],
-.console-embed .hz-subtabs a[aria-current="page"] { background: var(--hz-accent-soft); border-color: var(--hz-accent-soft); color: var(--hz-accent-text); }
-.hz-agents-filters button[aria-pressed="true"] { background: var(--hz-accent-soft); color: var(--hz-accent-text); }
-.hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-accent-text); }
+.console-embed .hz-subtabs a[aria-current="page"] { background: var(--hz-info-soft); border-color: var(--hz-info-soft); color: var(--hz-info); }
+.hz-agents-filters button[aria-pressed="true"] { background: var(--hz-info-soft); color: var(--hz-info); }
+.hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-info); }
 .hz-usage-edit, .hz-inbox-detail-foot a { color: var(--hz-accent-text); }
 .hz-bar > span { background: var(--hz-accent); }
 .hz-set-grouphead h1, .hz-agent-head h1, .hz-usage-head h2 { color: var(--hz-ink); }
-/* An informational message: the accent's soft tint, never a blue card. */
-.hz-notice-info { background: var(--hz-accent-soft); color: var(--hz-ink); }
-.hz-notice-info > span:first-child { color: var(--hz-accent-text); }
-.console-embed .ant-tag.hz-tag-accent { background: var(--hz-accent-soft); border-color: transparent; color: var(--hz-accent-text); }
+/* Accent tags use the information pair, whose contrast every palette checks
+   (orange in the built-in palettes). Unscoped, so drawers and popups match. */
+.ant-tag.hz-tag-accent, .console-embed .ant-tag.hz-tag-accent {
+  background: var(--hz-info-soft) !important; border-color: transparent !important; color: var(--hz-info) !important;
+}
 .hz-bar.is-warn > span { background: var(--hz-warning); }
 .hz-bar.is-bad > span { background: var(--hz-danger-solid); }
