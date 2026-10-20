@@ -61,8 +61,11 @@ const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
     // The old Console address opens the person's schedules in Settings.
     await page.goto("http://hubzoid.test/portal/#/schedules");
     await page.waitForURL(/\/settings#\/me\/schedules$/);
+    // Reports sit in their own tab next to the schedules.
+    await page.getByRole("navigation", { name: "Schedules" }).getByRole("link", { name: "Reports", exact: true }).click();
     await page.getByRole("heading", { name: "Reports you can run" }).waitFor();
     await page.getByRole("link", { name: "My completed report" }).waitFor();
+    await page.getByRole("navigation", { name: "Schedules" }).getByRole("link", { name: "Schedules", exact: true }).click();
     const scheduleButton = page.getByRole("button", { name: "Weekly service snapshot", exact: true });
     await scheduleButton.focus();
     await page.keyboard.press("Enter");

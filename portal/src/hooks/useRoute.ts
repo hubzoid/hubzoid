@@ -47,7 +47,7 @@ export function setQuery(
   else location.hash = url.slice(1);
 }
 
-export const agentHref = (key: string, tab = "access") =>
+export const agentHref = (key: string, tab = "overview") =>
   href(`/agents/${encodeURIComponent(key)}/${tab}`);
 
 export const personHref = (subject: string) =>

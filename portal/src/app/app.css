@@ -2705,6 +2705,241 @@
   }
 }
 
+/* Settings nav, 2.0 shell: four big destinations (Agents, Schedules, Usage,
+   Team), the agents nested under Agents, then a quieter personal group.
+   Inside a destination, its sections are tabs; a group's own title leads. */
+@layer components {
+  .hz-set { grid-template-columns: 248px minmax(0, 1fr); }
+  .hz-set-bigs { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; }
+  .hz-set-nav .hz-nav.hz-set-big {
+    min-height: 40px;
+    gap: 12px;
+    padding: 0 10px;
+    font-size: 1.0714rem;
+    font-weight: 500;
+    color: var(--hz-secondary);
+  }
+  .hz-set-nav .hz-nav.hz-set-big:hover { color: var(--hz-ink); }
+  .hz-set-nav .hz-nav.hz-set-big[aria-current="page"] { color: var(--hz-ink); font-weight: 600; background: var(--hz-active); }
+  .hz-set-count { margin-left: auto; font-size: .8571rem; font-weight: 500; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
+  .hz-set-nav .hz-set-group { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hz-line-soft); font-weight: 600; font-size: .8214rem; }
+  .hz-set-grouphead { margin: 0 0 14px; }
+  .hz-set-grouphead h1 { margin: 0; font-size: 1.5714rem; font-weight: 650; letter-spacing: -0.02em; color: var(--hz-ink); }
+  .hz-set-grouphead p { margin: 4px 0 0; max-width: 64ch; font-size: 1rem; color: var(--hz-mute); }
+  .hz-subtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: -12px 0 24px; }
+  .hz-subtabs a {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--hz-line);
+    border-radius: 8px;
+    font-size: .8929rem;
+    color: var(--hz-secondary);
+    text-decoration: none;
+  }
+  .hz-subtabs a:hover { color: var(--hz-ink); background: var(--hz-hover); }
+  .hz-subtabs a[aria-current="page"] { color: var(--hz-ink); background: var(--hz-active); border-color: var(--hz-active); font-weight: 600; }
+  /* Inside a group the section title is a sub-heading under the group's. */
+  .hz-set-main.is-grouped .hz-set-head h2,
+  .hz-set-main.is-grouped .page-header h1 { font-size: 1.1429rem !important; font-weight: 600 !important; }
+  .hz-set-main.is-grouped .hz-set-head p,
+  .hz-set-main.is-grouped .page-header .ant-typography-secondary { font-size: .9286rem; }
+  .hz-preference-tabs a[aria-current="page"] { font-weight: 600; }
+  @media (max-width: 767px) {
+    .hz-set-nav .hz-nav.hz-set-big { min-height: 48px; }
+    .hz-subtabs a { height: 44px; }
+  }
+}
+
+/* Inbox: tabs, then flat rows. The whole row opens the item; quiet actions
+   appear on hover; status is a dot and a word, never colour alone. */
+@layer components {
+  .hz-inbox-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 8px; border-bottom: 1px solid var(--hz-line); }
+  .hz-inbox-tabs { display: flex; gap: 22px; flex: 1; }
+  .hz-inbox-tabs button {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-size: 1rem; font-weight: 500; color: var(--hz-mute);
+  }
+  .hz-inbox-tabs button:hover { color: var(--hz-ink); }
+  .hz-inbox-tabs button[aria-current="page"] { color: var(--hz-ink); font-weight: 600; border-color: var(--hz-ink); }
+  .hz-inbox-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center;
+    font-size: .8214rem; font-weight: 700; background: var(--hz-accent); color: var(--hz-accent-ink); }
+  .hz-inbox-filter { width: 200px; margin-bottom: 6px; }
+  .hz-inbox-list { list-style: none; margin: 0; padding: 0; }
+  .hz-inbox-item { border-bottom: 1px solid var(--hz-line-soft); }
+  .hz-inbox-row {
+    display: grid; grid-template-columns: 8px 32px minmax(0, 1fr) auto auto auto; align-items: center; gap: 12px;
+    width: 100%; min-height: 60px; padding: 10px 12px; border-radius: 10px;
+    color: var(--hz-ink); text-align: left; text-decoration: none; cursor: pointer;
+    transition: background-color 120ms var(--hz-ease);
+  }
+  .hz-inbox-row:hover, .hz-inbox-item.is-open > .hz-inbox-row { background: var(--hz-hover); }
+  .hz-inbox-row:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: -2px; }
+  .hz-inbox-dot { width: 8px; height: 8px; border-radius: 999px; }
+  .hz-inbox-item.is-unread .hz-inbox-dot { background: var(--hz-accent); }
+  .hz-inbox-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--hz-sunken); color: var(--hz-mute); }
+  .hz-inbox-icon.is-accent { color: var(--hz-accent-text); }
+  .hz-inbox-icon.is-bad { color: var(--hz-danger); }
+  .hz-inbox-text { display: flex; flex-direction: column; min-width: 0; }
+  .hz-inbox-title { font-size: 1rem; line-height: 1.35; color: var(--hz-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hz-inbox-item.is-unread .hz-inbox-title { color: var(--hz-ink); font-weight: 600; }
+  .hz-inbox-ctx { margin-top: 2px; font-size: .8929rem; color: var(--hz-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hz-inbox-meta { min-width: 64px; text-align: right; font-size: .8929rem; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
+  .hz-inbox-acts { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms var(--hz-ease); }
+  .hz-inbox-row:hover .hz-inbox-acts, .hz-inbox-row:focus-within .hz-inbox-acts { opacity: 1; }
+  @media (hover: none) { .hz-inbox-acts { opacity: 1; } }
+  .hz-inbox-detail { padding: 4px 12px 18px 64px; }
+  .hz-inbox-detail-foot { display: flex; gap: 16px; align-items: center; margin-top: 8px; font-size: .8929rem; }
+  .hz-inbox-detail-foot a { display: inline-flex; align-items: center; gap: 4px; color: var(--hz-secondary); }
+  .hz-inbox-sub { margin: 28px 0 6px; font-size: .9286rem; font-weight: 600; color: var(--hz-secondary); }
+  .hz-inbox-empty { color: var(--hz-mute); padding: 24px 0; }
+  .hz-inbox-none { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 64px 16px; text-align: center; }
+  .hz-inbox-none strong { font-size: 1.0714rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-inbox-none p { margin: 0; color: var(--hz-mute); font-size: .9286rem; }
+  /* Status: a small dot and a word. */
+  .hz-status { display: inline-flex; align-items: center; gap: 6px; font-size: .8929rem; font-weight: 500; white-space: nowrap; color: var(--hz-mute); }
+  .hz-status > i { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+  .hz-status.is-muted { color: var(--hz-mute); }
+  .hz-status.is-accent { color: var(--hz-accent-text); }
+  .hz-status.is-info { color: var(--hz-info); }
+  .hz-status.is-ok { color: var(--hz-success); }
+  .hz-status.is-warn { color: var(--hz-warning); }
+  .hz-status.is-bad { color: var(--hz-danger); }
+  @media (max-width: 767px) {
+    .hz-inbox-row { grid-template-columns: 8px 32px minmax(0, 1fr) auto; }
+    .hz-inbox-row > .hz-status, .hz-inbox-row > .hz-inbox-acts { display: none; }
+    .hz-inbox-detail { padding-left: 12px; }
+    .hz-inbox-filter { width: 100%; }
+  }
+}
+
+/* Agents: one row per agent. The row is one link (stretched); Chat sits
+   above it. The folder's counts are the orange numbers. An agent page leads
+   with what it is. */
+@layer components {
+  .hz-agents-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 0 0 12px; }
+  .hz-agents-find { width: 280px; margin: 0; }
+  .hz-agents-filters { display: flex; gap: 4px; }
+  .hz-agents-filters button { height: 30px; padding: 0 10px; border-radius: 8px; font-size: .9286rem; font-weight: 500; color: var(--hz-mute); }
+  .hz-agents-filters button:hover { color: var(--hz-ink); background: var(--hz-hover); }
+  .hz-agents-filters button[aria-pressed="true"] { color: var(--hz-ink); background: var(--hz-active); font-weight: 600; }
+  .hz-agents-filters button span { margin-left: 4px; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
+  .hz-agent-list { border-top: 1px solid var(--hz-line); }
+  /* Lists and tables use the whole width of the page; forms keep a reading width. */
+  .hz-set-main:has(.hz-agent-list), .hz-set-main:has(.hz-usage), .hz-set-main:has(.ant-table) { max-width: none; }
+  .hz-agent-row {
+    position: relative; display: grid; align-items: center; gap: 20px;
+    grid-template-columns: minmax(220px, 1.3fr) minmax(300px, 2fr) 80px 110px 110px 100px 160px 72px;
+    min-height: 80px; padding: 14px 16px; border-bottom: 1px solid var(--hz-line-soft); border-radius: 12px;
+    transition: background-color 120ms var(--hz-ease);
+  }
+  .hz-agent-row:not(.is-head):hover { background: var(--hz-hover); }
+  .hz-agent-row.is-head { min-height: 40px; padding-block: 8px; border-radius: 0; font-size: .8214rem; font-weight: 500; color: var(--hz-mute); }
+  .hz-agent-row-link { position: absolute; inset: 0; border-radius: 12px; }
+  .hz-agent-row-link:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: -2px; }
+  .hz-agent-who { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .hz-agent-name { display: block; font-size: 1.0714rem; font-weight: 600; color: var(--hz-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hz-agent-key { display: block; margin-top: 2px; font: .8214rem/1.3 var(--font-mono, ui-monospace, monospace); color: var(--hz-mute); }
+  .hz-agent-folder { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .9643rem; color: var(--hz-mute); }
+  .hz-agent-folder b { font-weight: 650; color: var(--hz-accent-text); font-variant-numeric: tabular-nums; }
+  .hz-agent-folder.is-empty, .hz-agent-when.is-empty { color: var(--hz-mute); }
+  .hz-agent-num { font-size: 1.0714rem; font-weight: 600; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
+  .hz-agent-when { font-size: .9643rem; color: var(--hz-secondary); }
+  .hz-agent-acts { position: relative; z-index: 1; display: flex; justify-content: flex-end; opacity: 0; transition: opacity 120ms var(--hz-ease); }
+  .hz-agent-row:hover .hz-agent-acts, .hz-agent-row:focus-within .hz-agent-acts { opacity: 1; }
+  @media (hover: none) { .hz-agent-acts { opacity: 1; } }
+  @media (max-width: 1100px) {
+    .hz-agent-row { grid-template-columns: minmax(200px, 1.3fr) minmax(240px, 2fr) 70px 90px 140px 64px; }
+    .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7) { display: none; }
+  }
+  @media (max-width: 900px) {
+    .hz-agent-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 14px 12px; }
+    .hz-agent-row.is-head { display: none; }
+    .hz-agent-row > :nth-child(3) { grid-column: 1 / -1; padding-left: 54px; }
+    .hz-agent-row > :nth-child(4), .hz-agent-row > :nth-child(5), .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7) { display: none; }
+    .hz-agent-row > :nth-child(8) { grid-column: 1 / -1; padding-left: 54px; }
+    .hz-agent-acts { opacity: 1; justify-content: flex-start; grid-column: 2; grid-row: 1; }
+  }
+  a.hz-status { text-decoration: none; }
+
+  .hz-agent-head { display: flex; align-items: center; gap: 14px; margin: 12px 0 4px; }
+  .hz-agent-head h1 { margin: 0; font-size: 1.5714rem; font-weight: 650; letter-spacing: -0.02em; color: var(--hz-ink); }
+  .hz-agent-head p { margin: 2px 0 0; font-size: .9643rem; color: var(--hz-secondary); max-width: 72ch; }
+  .hz-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .hz-fact {
+    display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--hz-line);
+    border-radius: 12px; color: var(--hz-ink); text-decoration: none; transition: background-color 120ms var(--hz-ease);
+  }
+  .hz-fact:hover { background: var(--hz-hover); }
+  .hz-fact-icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--hz-sunken); color: var(--hz-mute); flex: none; }
+  .hz-fact-label { display: block; font-size: .8214rem; color: var(--hz-mute); }
+  .hz-fact-value { display: block; margin-top: 2px; font-size: 1.0714rem; font-weight: 600; overflow-wrap: anywhere; }
+  .hz-fact-value code { font-size: .8571rem; font-weight: 500; }
+  .hz-fact-note { display: block; margin-top: 2px; font-size: .8571rem; color: var(--hz-mute); }
+  .hz-fact-note.is-bad { color: var(--hz-danger); }
+  .hz-fact-go { color: var(--hz-mute); opacity: 0; flex: none; }
+  .hz-fact:hover .hz-fact-go { opacity: 1; }
+}
+
+/* Usage: totals, then one row per agent with its month as bars against its
+   limits. The row opens the limits as fields. */
+@layer components {
+  .hz-usage-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  .hz-usage-head h2 { margin: 0; font-size: 1.5714rem; font-weight: 650; letter-spacing: -0.02em; color: var(--hz-ink); }
+  .hz-usage-head p { margin: 4px 0 0; font-size: 1rem; color: var(--hz-mute); }
+  .hz-usage-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0 0 28px; padding: 0; list-style: none; border: 1px solid var(--hz-line); border-radius: 12px; }
+  .hz-usage-stats > li { display: flex; flex-direction: column; padding: 14px 16px; border-left: 1px solid var(--hz-line); }
+  .hz-usage-stats > li:first-child { border-left: 0; }
+  .hz-usage-stat-label { font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-stat-value { margin-top: 4px; font-size: 1.4286rem; font-weight: 650; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
+  .hz-usage-stat-sub { margin-top: 2px; font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-sub { margin: 0; font-size: 1.1429rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-usage-note { margin: 4px 0 12px; font-size: .9286rem; color: var(--hz-mute); }
+  .hz-usage-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hz-line-soft); }
+  .hz-usage-item { border-bottom: 1px solid var(--hz-line-soft); }
+  .hz-usage-row {
+    display: grid; grid-template-columns: 28px minmax(140px, 220px) minmax(0, 1fr) auto 16px; align-items: center; gap: 16px;
+    width: 100%; min-height: 64px; padding: 10px 12px; border-radius: 10px; text-align: left; color: var(--hz-ink); cursor: pointer;
+  }
+  .hz-usage-row:hover, .hz-usage-item.is-open > .hz-usage-row { background: var(--hz-hover); }
+  .hz-usage-name { font-size: 1rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hz-usage-bars { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .hz-usage-free { display: flex; justify-content: space-between; gap: 12px; font-size: .9286rem; color: var(--hz-secondary); }
+  .hz-usage-muted { font-size: .8929rem; color: var(--hz-mute); }
+  .hz-usage-edit { font-size: .8929rem; color: var(--hz-secondary); white-space: nowrap; }
+  .hz-bar-wrap { display: flex; flex-direction: column; gap: 6px; }
+  .hz-bar-text { display: flex; justify-content: space-between; gap: 12px; font-size: .9286rem; color: var(--hz-secondary); }
+  .hz-bar-pct { font-weight: 600; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
+  .hz-bar-pct.is-warn { color: var(--hz-warning); }
+  .hz-bar-pct.is-bad { color: var(--hz-danger); }
+  .hz-bar { display: block; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hz-ink) 13%, transparent); overflow: hidden; }
+  .hz-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--hz-ink); transition: width 240ms var(--hz-ease); }
+  .hz-bar.is-warn > span { background: var(--hz-warning); }
+  .hz-bar.is-bad > span { background: var(--hz-danger-solid); }
+  .hz-limits { padding: 8px 12px 22px 56px; }
+  .hz-limits-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: 16px 24px; }
+  .hz-limits-field { display: flex; flex-direction: column; gap: 6px; }
+  .hz-limits-help { font-size: .8214rem; color: var(--hz-mute); }
+  .hz-limits-file { width: 100%; max-width: 640px !important; font-family: var(--font-mono, ui-monospace, monospace); font-size: .8929rem; }
+  .hz-limits-problem { margin: 12px 0 0; color: var(--hz-danger); font-size: .9286rem; }
+  .hz-limits-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 18px; }
+  .hz-held { padding-top: 0; }
+  .hz-held h4 { margin: 0 0 8px; font-size: .9286rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-held ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .hz-held li { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: .9286rem; }
+  @media (max-width: 767px) {
+    .hz-usage-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hz-usage-stats > li { border-left: 0; border-top: 1px solid var(--hz-line); }
+    .hz-usage-row { grid-template-columns: 28px minmax(0, 1fr) 16px; }
+    .hz-usage-bars { grid-column: 1 / -1; }
+    .hz-usage-edit { display: none; }
+    .hz-limits { padding-left: 12px; }
+    .hz-limits-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+}
+
 /* The management screens inside Settings: same tokens, quieter type and chrome. */
 .console-embed {
   font-size: 0.9286rem;
@@ -3109,6 +3344,39 @@
   .hz-native-overlay .ant-drawer-close, .hz-native-overlay .ant-modal-close { min-width: 44px; min-height: 44px; }
   .hz-native-overlay .ant-drawer-footer .ant-space { flex-wrap: wrap; }
 }
+
+/* The management screens' library styles links globally and outside any
+   layer, so links styled as buttons, facts and statuses restate their colour. */
+.console-embed a.hz-btn-secondary, .console-embed a.hz-btn-secondary:hover { color: var(--hz-ink); }
+.console-embed a.hz-btn-neutral, .console-embed a.hz-btn-neutral:hover { color: var(--hz-bg); }
+.console-embed a.hz-fact, .console-embed a.hz-fact:hover { color: var(--hz-ink); }
+.console-embed a.hz-status, .console-embed a.hz-status.is-muted { color: var(--hz-mute); }
+.console-embed a.hz-status.is-ok { color: var(--hz-success); }
+.console-embed a.hz-status.is-bad { color: var(--hz-danger); }
+.console-embed .hz-subtabs a, .console-embed .hz-agent-tabs > a { color: var(--hz-secondary); }
+.console-embed .hz-subtabs a[aria-current="page"], .console-embed .hz-agent-tabs > a[aria-current="page"],
+.console-embed .hz-subtabs a:hover, .console-embed .hz-agent-tabs > a:hover { color: var(--hz-ink); }
+.console-embed .hz-agent-tabs > a[aria-current="page"] { font-weight: 600; }
+.console-embed .hz-bar { height: 8px; min-height: 0; }
+.console-embed .hz-bar > span { height: 8px; }
+.console-embed .row-chevron { color: var(--hz-mute); vertical-align: middle; }
+.console-embed tr.clickable:hover .row-chevron { color: var(--hz-ink); }
+.console-embed .row-name { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--hz-ink); text-align: left; cursor: pointer; }
+.console-embed .row-name:hover { text-decoration: underline; }
+.console-embed .row-name:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: 2px; border-radius: 4px; }
+.console-embed tr.clickable:focus-visible > td { background: var(--hz-hover); }
+.console-embed tr.clickable:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: -2px; }
+
+/* Team > People: a person, their account, their agents, two-step and last sign-in. */
+.console-embed .people-account { display: flex; flex-direction: column; gap: 2px; }
+.console-embed .people-agents { color: var(--hz-ink); }
+/* Pages with tabs keep a reading width, except lists and tables, which use
+   the whole page (outside any layer, to follow the tabbed-page width above). */
+.hz-set-main:has(.ant-table), .hz-set-main:has(.hz-usage), .hz-set-main:has(.hz-agent-list),
+.hz-set-main:has(.hz-agent-head) { max-width: none; }
+/* A person's name reads the same in every list: the name, not a coloured link. */
+.console-embed .person-cell a { font-weight: 600; color: var(--hz-ink); }
+.console-embed .person-cell a:hover { text-decoration: underline; }
 
 /* Rating an answer (chat/feedback.tsx): the form fits a phone beside the answer. */
 .hz-feedback-form {

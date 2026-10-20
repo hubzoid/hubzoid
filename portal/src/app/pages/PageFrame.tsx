@@ -6,6 +6,7 @@ import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { IconButton } from "../components/ui";
 import { InSettings } from "./SettingsFrame";
+import { BarePage } from "./barePage";
 
 export function PageFrame({ title, description, actions, wide, children }: {
   title: string;
@@ -16,9 +17,17 @@ export function PageFrame({ title, description, actions, wide, children }: {
 }) {
   const app = useApp();
   const embedded = useContext(InSettings);
+  const bare = useContext(BarePage);
   useEffect(() => {
     if (!embedded) document.title = `${title} · ${app.brandName}`;
   }, [title, app.brandName, embedded]);
+  if (bare)
+    return (
+      <>
+        {actions && <div className="mb-4 flex flex-wrap items-center justify-end gap-2">{actions}</div>}
+        {children}
+      </>
+    );
   if (embedded)
     return (
       <>

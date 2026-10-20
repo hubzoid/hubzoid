@@ -19,10 +19,10 @@ export const ConnectionsScreen = lazyChunk(() => import("./screens/ConnectionsSc
 const SettingsScreen = lazyChunk(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
 export const WorkItemsScreen = lazyChunk(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
 const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
-const BudgetsScreen = lazyChunk(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
+const UsageScreen = lazyChunk(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
-const TABS: AgentTab[] = ["access", "connectors", "setup", "secrets", "channels", "intake", "feedback", "runs", "evals", "activity"];
+const TABS: AgentTab[] = ["overview", "access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "feedback", "setup", "secrets", "channels", "intake", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
@@ -38,7 +38,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} embedded={embedded} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);
-      const tab = (rest[1] || "access") as AgentTab;
+      const tab = (rest[1] || "overview") as AgentTab;
       if (!hub)
         screen = (
           <RecoveryScreen
@@ -50,8 +50,8 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Connectors, Setup, Secrets, Channels, Intake, Feedback, Runs & schedules, Evals and Activity, but no “${tab}”.`}
-            to={`/agents/${encodeURIComponent(hub.key)}/access`}
+            subtitle={`${hub.name} has Overview, Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity, but no “${tab}”.`}
+            to={`/agents/${encodeURIComponent(hub.key)}/overview`}
             label={`Open ${hub.name}`}
           />
         );
@@ -66,9 +66,9 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
   } else if (area === "sandboxes") {
     active = "sandboxes";
     screen = <SandboxesScreen hubs={list} />;
-  } else if (area === "budgets") {
+  } else if (area === "budgets" || area === "usage") {
     active = "budgets";
-    screen = <BudgetsScreen hubs={list} />;
+    screen = <UsageScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
     screen = <PeopleScreen me={me} hubs={list} selected={rest[0]} embedded={embedded} />;

@@ -255,7 +255,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
       />}
       <Webhooks hub={hub} />
       <Text type="secondary">
-        People's schedules and live reports are on <a href={hrefWith("/schedules", { scope: "everyone", hub: hub.key })}>Schedules &amp; reports</a>.
+        People's own schedules of this agent's reports are under <a href={hrefWith("/schedules", { view: "everyone", hub: hub.key })}>Schedules, Everyone's</a>.
       </Text>
     </div>
   );

@@ -117,7 +117,7 @@ function step(name) {
       for (const view of [{ width: 1440, height: 950 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(view);
         await go("/agents");
-        const last = page.getByRole("link", { name: "Agent 30", exact: true });
+        const last = page.getByRole("link", { name: "Open Agent 30", exact: true });
         await last.waitFor();
         await last.scrollIntoViewIfNeeded();
         const box = await last.boundingBox();
@@ -131,70 +131,42 @@ function step(name) {
     }
 
     // ---- landing -----------------------------------------------------------
-    step("The landing page combines five totals and agent cards, with compact navigation");
-    await go("/agents");
-    await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "1440px landing has no clipped content");
+    step("Usage holds the five totals, with a period switch");
+    await go("/usage");
+    await page.getByRole("heading", { name: "Usage" }).waitFor();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "1440px usage page has no clipped content");
     const totals = page.getByRole("list", { name: "Totals" });
-    // In Settings the totals sit under a folded Usage overview.
-    await page.getByText("Usage overview", { exact: true }).click();
-    await totals.getByText("Across 252 conversations").waitFor();
+    await totals.getByText("Across 924 conversations").waitFor();
     assert.equal(await totals.getByRole("listitem").count(), 5);
     await totals.getByText("Workflow runs").waitFor();
     const usersCard = totals.getByRole("listitem").filter({ hasText: "Users" });
     await usersCard.getByText("42", { exact: true }).waitFor();
     await usersCard.getByText("Across 3 hubs", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "About Users" }).focus();
-    await page.getByRole("tooltip").filter({ hasText: "The period does not change this total" }).waitFor();
-    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
-    assert.equal(await page.getByRole("link", { name: "Overview", exact: true }).count(), 0);
-    assert.equal(await page.getByRole("link", { name: "Runs", exact: true }).count(), 0);
-    assert.equal(await page.getByRole("link", { name: /Manage accounts/ }).count(), 0);
-    assert.equal(await page.getByText(/Counting since|Snapshot|How people are using/).count(), 0);
     const boxes = await totals.getByRole("listitem").evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().top));
     assert.ok(boxes.every(y => y === boxes[0]), "Five totals fit on one desktop row");
-    const costHelp = page.getByRole("button", { name: "About Approx. cost" });
-    await costHelp.focus();
-    await page.getByRole("tooltip").filter({ hasText: "Subscription-backed" }).waitFor();
-    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
-    await costHelp.click();
-    await page.getByRole("tooltip").filter({ hasText: "Subscription-backed" }).waitFor();
-    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
-    const financeUsage = page.getByLabel("Finance Assistant usage", { exact: true });
-    await financeUsage.getByText("$11.04", { exact: true }).waitFor();
-    await financeUsage.getByText("1.2M", { exact: true }).waitFor();
-    await page.getByLabel("Support Assistant usage", { exact: true }).getByText("$23.40*", { exact: true }).waitFor();
-    await page.getByLabel("IT Ops Assistant usage", { exact: true }).getByText("—", { exact: true }).waitFor();
-    await page.getByText("30 days", { exact: true }).click();
-    await totals.getByText("Across 924 conversations").waitFor();
+    await page.getByText("7 days", { exact: true }).click();
+    await totals.getByText("Across 252 conversations").waitFor();
     await usersCard.getByText("42", { exact: true }).waitFor();   // accounts do not depend on the period
-    assert.ok((await hash()).includes("period=30d"), await hash());
-    await financeUsage.getByText("$40.48", { exact: true }).waitFor();
-    await financeUsage.getByText("4.5M", { exact: true }).waitFor();
-    state.failNextGet = { endpoint: "/summary", status: 503, detail: "Temporary outage" };
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByText("Couldn’t refresh totals", { exact: true }).waitFor();
-    await totals.getByText("Across 924 conversations").waitFor();
-    await page.getByRole("link", { name: "Finance Assistant", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByText("Couldn’t refresh totals", { exact: true }).waitFor({ state: "hidden" });
-    await page.locator(".updated-at").waitFor();
+    assert.ok((await hash()).includes("period=7d"), await hash());
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview.png"), fullPage: true });
-    await page.getByRole("link", { name: "Support Assistant", exact: true }).click();
-    assert.equal(await hash(), "#/agents/support/access");
 
-    step("Agents lists every agent with its access state and attention items");
+    step("Agents lists every agent with what its folder holds and whether it needs attention");
     await go("/agents");
     await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
     for (const name of ["Finance Assistant", "Support Assistant", "IT Ops Assistant"])
-      await page.getByRole("link", { name, exact: true }).waitFor();
-    // Simplified landing: attention shows only as per-card tags, no alerts/counts.
-    await page.getByText("Scheduler stopped").waitFor();
-    await page.getByRole("textbox", { name: "Search agents" }).fill("supp");
-    assert.equal(await page.getByRole("link", { name: "Finance Assistant", exact: true }).count(), 0);
-    await page.getByRole("link", { name: "Support Assistant", exact: true }).waitFor();
-    await page.getByRole("textbox", { name: "Search agents" }).fill("");
+      await page.getByRole("link", { name: `Open ${name}`, exact: true }).waitFor();
+    // A stopped scheduler shows on its row, and in the Needs attention filter.
+    await page.getByText("Workflow failing").first().waitFor();
+    await page.getByRole("button", { name: /^Needs attention/ }).click();
+    assert.ok(await page.locator(".hz-agent-row:not(.is-head)").count() < 3, "the filter keeps only agents that need attention");
+    await page.getByRole("button", { name: /^All/ }).click();
+    await page.getByRole("textbox", { name: "Find an agent" }).fill("supp");
+    assert.equal(await page.getByRole("link", { name: "Open Finance Assistant", exact: true }).count(), 0);
+    await page.getByRole("link", { name: "Open Support Assistant", exact: true }).waitFor();
+    await page.getByRole("textbox", { name: "Find an agent" }).fill("");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agents.png"), fullPage: true });
+    await page.getByRole("link", { name: "Open Support Assistant", exact: true }).click();
+    assert.equal(await hash(), "#/agents/support/overview");
 
     // ---- access: readable rows -----------------------------------------------
     step("Access tab shows readable capabilities, inherited rights and account states");
@@ -218,7 +190,7 @@ function step(name) {
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-access.png"), fullPage: true });
 
-    step("Warning helper text is readable in both themes; agent cards open the agent");
+    step("Warning helper text is readable in both themes; agent rows open the agent");
     for (const mode of ["light", "dark"]) {
       await page.evaluate(mode => localStorage.setItem("hz-theme", mode), mode);
       await page.reload();
@@ -246,41 +218,38 @@ function step(name) {
     }
     await page.setViewportSize({ width: 873, height: 750 });
     await go("/agents");
-    await page.locator(".agent-card .agent-card-link").first().waitFor();
+    await page.locator("a.hz-agent-row-link").first().waitFor();
 
-    // The whole card opens the agent: no buttons, the name is the one link
-    // stretched over it, and the status tags open their own tab.
-    const card = page.locator(".agent-card").first();
-    assert.equal(await page.locator(".agent-card .ant-btn").count(), 0, "Agent cards carry no buttons");
-    // The card shows names only; its link carries the agent's key.
-    const key = decodeURIComponent((await card.locator(".agent-card-link").getAttribute("href")).split("#/agents/")[1].split("/")[0]);
-    await card.locator(".agent-card-link").click();
-    await page.waitForURL(url => url.hash === `#/agents/${key}/access`);
+    // The whole row opens the agent: one link stretched over it, with Chat
+    // above it. The link carries the agent's key.
+    const firstRow = page.locator(".hz-agent-row:not(.is-head)").first();
+    const key = decodeURIComponent((await firstRow.locator(".hz-agent-row-link").getAttribute("href")).split("#/agents/")[1].split("/")[0]);
+    await firstRow.locator(".hz-agent-row-link").click();
+    await page.waitForURL(url => url.hash === `#/agents/${key}/overview`);
     await go("/agents");
-    const status = page.locator(".agent-card").first().locator(".agent-card-status").first();
-    await status.click();
-    await page.waitForURL(url => url.hash === `#/agents/${key}/runs`);
-    await go("/agents");
-    await page.locator(".agent-card .agent-card-link").first().focus();
+    await page.locator("a.hz-agent-row-link").first().focus();
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Tab");
-    assert.equal(await page.locator(".agent-card").first().evaluate(el => getComputedStyle(el).outlineStyle), "solid",
-      "Keyboard focus rings the whole card");
-    await page.getByLabel("Search agents").fill("no agent has this name");
-    await page.getByRole("button", { name: "Clear search" }).click();
-    await page.locator(".agent-card").first().waitFor();
+    assert.equal(await page.locator("a.hz-agent-row-link").first().evaluate(el => getComputedStyle(el).outlineStyle), "solid",
+      "Keyboard focus rings the whole row");
+    await page.getByLabel("Find an agent").fill("no agent has this name");
+    await page.getByText("Try another name.").waitFor();
+    await page.getByLabel("Find an agent").fill("");
+    await page.locator("a.hz-agent-row-link").first().waitFor();
 
-    const darkContrast = await page.locator(".ant-btn-primary, .ant-tag-green, .ant-tag-success, .agent-card .ant-tag-red").evaluateAll(nodes => {
+    const darkContrast = await page.locator(".ant-btn-primary, .hz-agent-row .hz-status").evaluateAll(nodes => {
       const lum = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => v / 255)
         .map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
         .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      const bg = lum(getComputedStyle(document.body).backgroundColor);
       return nodes.filter(n => n.getBoundingClientRect().width).map(n => {
-        const s = getComputedStyle(n), a = lum(s.color), b = lum(s.backgroundColor);
-        return (Math.max(a,b) + .05) / (Math.min(a,b) + .05);
+        const s = getComputedStyle(n), a = lum(s.color);
+        const b = s.backgroundColor === "rgba(0, 0, 0, 0)" ? bg : lum(s.backgroundColor);
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
       });
     });
-    // The cards have no buttons now; their status tags carry the colour.
-    assert.ok(darkContrast.length >= 1 && darkContrast.every(r => r >= 4.5), `Dark action/tag contrast: ${darkContrast}`);
+    // Statuses carry the colour, against the page.
+    assert.ok(darkContrast.length >= 1 && darkContrast.every(r => r >= 4.5), `Dark action/status contrast: ${darkContrast}`);
     await page.screenshot({ path: path.join(shots, "hubzoid-console-dark-logo.png"), fullPage: true });
     await page.evaluate(() => localStorage.setItem("hz-theme", "light"));
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -1206,8 +1175,9 @@ function step(name) {
       () => !location.hash.includes("tool=") && !location.hash.includes("channel="),
     );
 
-    // Event details: a keyboard-reachable row action opens the full record.
-    await rows().filter({ hasText: "payroll_run" }).getByRole("button", { name: "Details" }).first().click();
+    // Event details: the whole row opens the full record, from the keyboard too.
+    await rows().filter({ hasText: "payroll_run" }).first().focus();
+    await page.keyboard.press("Enter");
     await drawer().getByText("Event details").waitFor();
     await drawer().getByText("payroll_run").first().waitFor();
     await drawer().getByText("They do not have the permission this tool requires.").waitFor();
@@ -1237,7 +1207,8 @@ function step(name) {
     state.mutations.length = 0;
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-people.png"), fullPage: true });
 
-    await page.getByRole("link", { name: "Details for Tomás Herrera" }).click();
+    // The whole row opens the person; their name is the link.
+    await rows().filter({ hasText: "Tomás Herrera" }).getByRole("link", { name: "Tomás Herrera", exact: true }).click();
     assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
     for (const gone of ["Block access", "Deactivate", "Make organization administrator"])
@@ -1431,7 +1402,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Connectors, Setup, Secrets, Channels, Intake, Runs & schedules, Evals and Activity").waitFor();
+    await page.getByText("has Overview, Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity section, not the Settings Activity link.
     await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();
@@ -1448,8 +1419,8 @@ function step(name) {
     state.role = "hub";
     await page.reload(); // a role change is a fresh session; refetch /me and /hubs
     await go("/agents");
-    await page.getByRole("link", { name: "Finance Assistant", exact: true }).waitFor();
-    assert.equal(await page.getByRole("link", { name: "Support Assistant", exact: true }).count(), 0);
+    await page.getByRole("link", { name: "Open Finance Assistant", exact: true }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "Open Support Assistant", exact: true }).count(), 0);
     await go("/agents/finance/access");
     await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
     // An agent administrator sees an existing Everyone grant read-only.
@@ -1667,8 +1638,7 @@ function step(name) {
     state.role = "org";
     await page.reload(); // back to a full org-admin session
     await page.setViewportSize({ width: 390, height: 844 });
-    await go("/agents");
-    await page.getByText("Usage overview", { exact: true }).click();
+    await go("/usage");
     await page.getByRole("list", { name: "Totals" }).getByText("Messages", { exact: true }).waitFor();
     assert.equal(await page.getByRole("list", { name: "Totals" }).getByRole("listitem").count(), 5);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Mobile dashboard has no horizontal overflow");

@@ -23,7 +23,9 @@ export type SignInOptions = {
   google_domains?: string[];
 };
 export type SignIn = "password" | "google" | "directory";
-export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean };
+/** What the hub folder holds, counted without loading it (GET /hubs). */
+export type HubContents = { knowledge: number; skills: number; subagents: number; tool_files: number; connectors: number };
+export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean; contents?: HubContents };
 export type Permission = {
   permission: string;
   label: string;
@@ -245,6 +247,10 @@ export type Person = {
   /** The number their WhatsApp and Telegram messages come from (digits).
    *  Shown to organization administrators only. */
   phone?: string | null;
+  /** Organization administrators only: when they last signed in (seconds)
+   *  and whether two-step sign-in is on; null without an account. */
+  last_sign_in?: number | null;
+  two_step?: boolean | null;
 };
 
 // The /people/block response carries the resulting state and a plain-language

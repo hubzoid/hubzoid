@@ -1230,8 +1230,8 @@ journey("console", "Settings: team sections for administrators only; the old Con
   await sam.page.waitForURL(/\/settings/);
   const samNav = sam.page.getByRole("navigation", { name: "Settings sections" });
   await samNav.getByText("Personal").waitFor();
-  assert.equal(await samNav.getByText("Team & deployment").count(), 0);
-  assert.equal(await samNav.getByRole("link", { name: "People & access" }).count(), 0);
+  for (const name of ["Agents", "Usage", "Team"])
+    assert.equal(await samNav.getByRole("link", { name, exact: true }).count(), 0, `a member has no ${name} in Settings`);
   await sam.page.goto(`${ctx.BASE}/portal/#/people`);
   await sam.page.waitForURL(/\/settings/);
   await ctx.shot(sam.page, "29-settings-member");
@@ -1246,8 +1246,7 @@ journey("console", "Settings: team sections for administrators only; the old Con
   await page.getByRole("button", { name: /^Account menu: / }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   const nav = page.getByRole("navigation", { name: "Settings sections" });
-  await nav.getByText("Team & deployment").waitFor();
-  await nav.getByRole("link", { name: "People & access" }).click();
+  await nav.getByRole("link", { name: "Team", exact: true }).click();
   await page.locator(".person-cell").first().waitFor();
   await ctx.shot(page, "30-settings-people");
 

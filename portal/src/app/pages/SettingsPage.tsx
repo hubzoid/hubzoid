@@ -41,6 +41,8 @@ import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
 import { Button, Notice, PageSpinner, cx } from "../components/ui";
+import { get } from "../lib/api";
+import { displayName } from "../lib/format";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
@@ -107,7 +109,7 @@ const ITEMS: Item[] = [
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
   { key: "work", label: S.workItems, icon: <ListChecks size={16} aria-hidden />, hash: "/work", team: true, keywords: "approvals operations stations" },
   { key: "sandboxes", label: S.sandboxes, icon: <Box size={16} aria-hidden />, hash: "/sandboxes", team: true, keywords: "docker workspace cleanup" },
-  { key: "budgets", label: S.usageLimits, icon: <Gauge size={16} aria-hidden />, hash: "/budgets", team: true, keywords: "budget tokens cost limits" },
+  { key: "budgets", label: "Usage", icon: <Gauge size={16} aria-hidden />, hash: "/usage", team: true, keywords: "budget tokens cost limits usage spending" },
   { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
   { key: "hub-changes", label: t.hubChanges.title, icon: <FilePen size={16} aria-hidden />, hash: "/hub-changes", team: true, keywords: "proposals review knowledge instructions agents.md remember diff commit undo" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
@@ -118,6 +120,70 @@ const ITEMS: Item[] = [
   { key: "advanced", label: S.advanced, icon: <SlidersHorizontal size={16} aria-hidden />, hash: "/settings/admin", team: true, admin: true, keywords: "admin.yaml advanced deployment settings plan apply" },
   { key: "parity", label: S.parity, icon: <ListChecks size={16} aria-hidden />, hash: "/settings/parity", team: true, admin: true, keywords: "parity compatibility open webui librechat checklist ledger" },
 ];
+
+type Tab = { key: Key; label: string; also?: Key[]; sub?: { key: Key; label: string }[] };
+type Group = { id: string; label: string; lede: string; icon: ReactNode; members: Key[]; tabs?: Tab[]; team?: boolean; big?: boolean;
+  /** Only for people who don't manage the team (who reach it under Agents). */
+  notTeam?: boolean };
+
+/** The Settings nav: four big destinations for running the team's agents, then
+ *  a quieter personal group. Old section links still open inside their group. */
+const GROUPS: Group[] = [
+  { id: "agents", label: S.agents, lede: "", icon: <Bot size={18} aria-hidden />, big: true, team: true,
+    members: ["agents", "work", "sandboxes", "hub-changes", "instructions"] },
+  { id: "schedules", label: S.schedules, lede: "", icon: <CalendarClock size={18} aria-hidden />, big: true,
+    members: ["schedules", "my-schedules"] },
+  { id: "usage", label: "Usage", lede: "", icon: <Gauge size={18} aria-hidden />, big: true, team: true, members: ["budgets"] },
+  { id: "team", label: "Team", lede: "People, what they can do, how they sign in, and the workspace they share.",
+    icon: <UsersRound size={18} aria-hidden />, big: true, team: true,
+    members: ["people", "activity", "workflow-access", "signin", "chat", "brand", "health", "advanced", "parity"],
+    tabs: [
+      { key: "people", label: "People" },
+      { key: "activity", label: "Activity" },
+      { key: "workflow-access", label: "Permissions" },
+      { key: "signin", label: "Sign-in" },
+      { key: "chat", label: "Workspace", also: ["brand", "advanced", "parity"],
+        sub: [{ key: "chat", label: "Chat defaults" }, { key: "brand", label: "Brand" }, { key: "advanced", label: "Advanced" }, { key: "parity", label: "Compatibility" }] },
+      { key: "health", label: "Health" },
+    ] },
+  { id: "preferences", label: S.preferences, lede: "How Hubzoid looks and behaves for you, and how you sign in.",
+    icon: <UserRound size={16} aria-hidden />, members: ["profile", "security", "appearance", "notifications", "data"],
+    tabs: [
+      { key: "profile", label: S.profile },
+      { key: "security", label: S.security },
+      { key: "appearance", label: S.appearance },
+      { key: "notifications", label: S.notifications },
+      { key: "data", label: S.data },
+    ] },
+  { id: "connections", label: "Connections", lede: "Accounts your agents use for you, and the sources they can cite.",
+    icon: <Plug size={16} aria-hidden />, members: ["connections", "sources"],
+    tabs: [{ key: "connections", label: "Accounts" }, { key: "sources", label: S.sources }] },
+  { id: "memory", label: t.memory.title, lede: "", icon: <Brain size={16} aria-hidden />, members: ["memory"] },
+  { id: "my-work", label: S.myWork, lede: "", icon: <ListChecks size={16} aria-hidden />, members: ["my-work"] },
+  { id: "hub-changes", label: t.hubChanges.title, lede: "", icon: <FilePen size={16} aria-hidden />, members: ["hub-changes"], notTeam: true },
+];
+
+type ManagedHub = { key: string; name: string; avatar?: string | null };
+
+/** The agents this person manages, with the chat app's names and avatars. */
+function useManagedHubs(team: boolean): ManagedHub[] {
+  const app = useApp();
+  const [hubs, setHubs] = useState<ManagedHub[]>([]);
+  useEffect(() => {
+    if (!team) return;
+    let alive = true;
+    get<{ hubs: { key: string; name: string }[] }>("/portal/api/hubs", { quiet401: true })
+      .then((r) => alive && setHubs(r.hubs.map((h) => {
+        const agent = app.agents.list.find((a) => a.hub === h.key);
+        return { key: h.key, name: agent?.name && agent.name !== h.key ? agent.name : displayName(h.name) || h.key, avatar: agent?.avatar_url };
+      })))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [team, app.agents.list]);
+  return hubs;
+}
 
 /** Which section a hash shows. */
 function keyFor(hash: string): Key | null {
@@ -130,7 +196,7 @@ function keyFor(hash: string): Key | null {
   if (a === "schedules") return "schedules";
   if (a === "work") return "work";
   if (a === "sandboxes") return "sandboxes";
-  if (a === "budgets") return "budgets";
+  if (a === "budgets" || a === "usage") return "budgets";
   if (a === "workflow-access") return "workflow-access";
   if (a === "hub-changes") return "hub-changes";
   if (a === "diagnostics") return "health";
@@ -194,37 +260,46 @@ export default function SettingsPage({ section }: { section: string | null }) {
     document.title = `${current ? current.label : t.account.settings} · ${app.brandName}`;
   }, [current, app.brandName]);
 
-  const personalTabs = items.filter((i) => ["profile", "security", "appearance", "notifications", "data"].includes(i.key));
-  const workspaceTabs = items.filter((i) => ["chat", "signin", "brand", "health", "advanced", "parity"].includes(i.key));
-  const tabs = personalTabs.some((i) => i.key === active) ? personalTabs : workspaceTabs.some((i) => i.key === active) ? workspaceTabs : [];
-  const groupKey = (key: Key) => personalTabs.some((i) => i.key === key) ? "profile" : workspaceTabs.some((i) => i.key === key) ? "chat" : key;
-  const groupLabel = (item: Item) => item.key === "profile" ? S.preferences : item.key === "chat" ? S.workspaceSettings : item.label;
+  // The nav is a few big destinations; each holds its sections as tabs (a
+  // nested view) instead of one page per section.
+  const groups = GROUPS.filter((g) => (!g.team || team) && (!g.notTeam || !team))
+    .map((g) => ({ ...g, members: g.members.filter((k) => items.some((i) => i.key === k)) }))
+    .filter((g) => g.members.length > 0);
+  const groupOf = (key: Key | null) => (key ? groups.find((g) => g.members.includes(key)) : undefined);
+  const activeGroup = groupOf(active);
+  const tabs = (activeGroup?.tabs ?? [])
+    .filter((tab) => items.some((i) => i.key === tab.key))
+    .map((tab) => ({ ...tab, item: items.find((i) => i.key === tab.key)! }));
+  const activeTab = tabs.find((tab) => tab.key === active || tab.also?.includes(active as Key));
+  const subTabs = (activeTab?.sub ?? [])
+    .filter((sub) => items.some((i) => i.key === sub.key))
+    .map((sub) => ({ ...sub, item: items.find((i) => i.key === sub.key)! }));
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? items.filter((i) => `${i.label} ${i.keywords ?? ""} ${groupLabel(i)}`.toLowerCase().includes(q))
-    : items.filter((i) => groupKey(i.key) === i.key);
-  const nav = (group: "personal" | "team") => {
-    const list = shown.filter((i) => (group === "team" ? i.team : !i.team));
-    if (!list.length) return null;
+  const matches = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
+  const hubs = useManagedHubs(team);
+  const link = (target: string, label: ReactNode, current: boolean, className = "hz-nav", icon?: ReactNode, extra?: ReactNode) => (
+    <a
+      href={`/settings#${target}`}
+      onClick={(e) => {
+        e.preventDefault();
+        go(target);
+      }}
+      className={className}
+      aria-current={current ? "page" : undefined}
+    >
+      {icon}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {extra}
+    </a>
+  );
+  const groupLink = (g: (typeof groups)[number]) => {
+    const first = items.find((i) => i.key === g.members[0])!;
+    const current = activeGroup?.id === g.id;
     return (
-      <>
-        <div className="hz-set-group">{group === "team" ? S.teamGroup : S.personalGroup}</div>
-        {list.map((i) => (
-          <a
-            key={i.key}
-            href={`/settings#${i.hash}`}
-            onClick={(e) => {
-              e.preventDefault();
-              go(i.hash);
-            }}
-            className="hz-nav"
-            aria-current={active && (q ? active === i.key : groupKey(active) === i.key) ? "page" : undefined}
-          >
-            {i.icon}
-            <span className="truncate">{q ? i.label : groupLabel(i)}</span>
-          </a>
-        ))}
-      </>
+      <div key={g.id} className="hz-set-big-wrap">
+        {link(first.hash, g.label, current, cx("hz-nav", g.big && "hz-set-big"), g.icon,
+          g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count" aria-hidden>{hubs.length}</span> : undefined)}
+      </div>
     );
   };
 
@@ -243,12 +318,21 @@ export default function SettingsPage({ section }: { section: string | null }) {
                 <Search size={14} aria-hidden className="text-mute" />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={S.search} aria-label={S.search} />
               </label>
-              {nav("personal")}
-              {nav("team")}
-              {shown.length === 0 && <p className="text-mute px-2">{S.noMatches(query)}</p>}
+              {q ? (
+                <>
+                  {matches.map((i) => link(i.hash, i.label, active === i.key, "hz-nav", i.icon))}
+                  {matches.length === 0 && <p className="text-mute px-2">{S.noMatches(query)}</p>}
+                </>
+              ) : (
+                <>
+                  <div className="hz-set-bigs">{groups.filter((g) => g.big).map(groupLink)}</div>
+                  <div className="hz-set-group">{S.personalGroup}</div>
+                  {groups.filter((g) => !g.big).map(groupLink)}
+                </>
+              )}
               <About />
             </nav>
-            <main className={cx("hz-set-main", active === "chat" && "hz-set-chat")} aria-label={current?.label}>
+            <main className={cx("hz-set-main", active === "chat" && "hz-set-chat", tabs.length > 1 && "is-grouped")} aria-label={current?.label}>
               <button type="button" className="hz-set-back" onClick={() => {
                   history.replaceState(null, "", "/settings");
                   window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -256,11 +340,25 @@ export default function SettingsPage({ section }: { section: string | null }) {
                 <ArrowLeft size={14} aria-hidden />
                 {t.account.settings}
               </button>
-              {tabs.length > 0 && (
-                <nav className="hz-preference-tabs" aria-label={current && personalTabs.includes(current) ? S.personalPreferences : S.workspaceSettings}>
-                  {tabs.map((item) => (
-                    <a key={item.key} href={`/settings#${item.hash}`} aria-current={active === item.key ? "page" : undefined}
-                      onClick={(e) => { e.preventDefault(); go(item.hash); }}>{item.label}</a>
+              {activeGroup && tabs.length > 1 && (
+                <div className="hz-set-grouphead">
+                  <h1>{activeGroup.label}</h1>
+                  <p>{activeGroup.lede}</p>
+                </div>
+              )}
+              {tabs.length > 1 && (
+                <nav className="hz-preference-tabs" aria-label={activeGroup?.label}>
+                  {tabs.map((tab) => (
+                    <a key={tab.key} href={`/settings#${tab.item.hash}`} aria-current={activeTab?.key === tab.key ? "page" : undefined}
+                      onClick={(e) => { e.preventDefault(); go(tab.item.hash); }}>{tab.label}</a>
+                  ))}
+                </nav>
+              )}
+              {subTabs.length > 1 && (
+                <nav className="hz-subtabs" aria-label={activeTab?.label}>
+                  {subTabs.map((sub) => (
+                    <a key={sub.key} href={`/settings#${sub.item.hash}`} aria-current={active === sub.key ? "page" : undefined}
+                      onClick={(e) => { e.preventDefault(); go(sub.item.hash); }}>{sub.label}</a>
                   ))}
                 </nav>
               )}

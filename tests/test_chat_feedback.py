@@ -127,6 +127,7 @@ def test_run_end_notifies_once_and_not_while_looking(client):
     cid, out = answered(client)
     items = client.get("/api/chat/notifications").json()["items"]
     assert [i["kind"] for i in items] == ["run.completed"] and items[0]["conversation_id"] == cid
+    assert items[0]["hub"], "a notice names its hub, so the Inbox can filter by agent"
     # Looking at the conversation (delivery: away): no notice for the next reply.
     client.post("/api/chat/notification-presence", headers=ORIGIN,
                 json={"device_id": "d1", "conversation_id": cid, "focused": True})

@@ -37,7 +37,12 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "w
       Menu: { ...(base.components?.Menu ?? {}), itemSelectedBg: v("--hz-active", "#DDDCDA"), itemSelectedColor: ink, itemHoverColor: ink, itemHoverBg: v("--hz-hover", "#E7E6E2") },
       Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
-      Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale },
+      // One table look across Settings: roomy rows, a quiet header with no
+      // column dividers, and the app's own hover colour.
+      Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale,
+        cellPaddingBlockMD: 16, cellPaddingInlineMD: 14, headerBg: "transparent", headerColor: mute,
+        headerSplitColor: "transparent", headerBorderRadius: 0, rowHoverBg: v("--hz-hover", "#E7E6E2"),
+        borderColor: v("--hz-line-soft", "#EFEFEC") },
     },
   };
   // Leaving Settings for another page asks first when a screen has unsaved changes.

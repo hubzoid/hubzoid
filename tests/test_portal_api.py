@@ -372,3 +372,25 @@ def test_webhook_view_shows_counts_and_failures_never_payloads(client, tmp_path,
     assert row["webhook"] == "ticket-created" and row["state"] == "event"
     client.admin["who"] = None
     assert client.get("/portal/api/webhooks", params={"hub": client.hub}).status_code == 403
+
+
+def test_people_shows_sign_in_facts_to_organization_admins_only(client, tmp_path):
+    from hubzoid.auth import mfa, users
+
+    st = users.store(tmp_path)
+    ada = st.create(email="ada@example.org", name="Ada", password="a long test password")
+    st.touch_login(ada["id"], now=1700000000.0)
+    mfa.activate(tmp_path, ada["id"], mfa.new_secret(), 1)
+    for who in ("ada@example.org", "bob@example.org"):
+        client.gs.grant(who, client.hub, "use_hub")
+
+    people = {p["subject"]: p for p in client.get("/portal/api/people").json()["people"]}
+    assert people["ada@example.org"]["last_sign_in"] == 1700000000.0
+    assert people["ada@example.org"]["two_step"] is True
+    # No account yet: nothing to report, rather than "never" or "off".
+    assert people["bob@example.org"]["last_sign_in"] is None
+    assert people["bob@example.org"]["two_step"] is None
+
+    client.admin["who"] = PortalAdmin(subject="ha", is_org_admin=False, manageable=[client.hub])
+    people = client.get("/portal/api/people").json()["people"]
+    assert people and all("two_step" not in p and "last_sign_in" not in p for p in people)

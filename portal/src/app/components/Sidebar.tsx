@@ -2,11 +2,10 @@
 // Workspace; folders; chats grouped by agent (or listed by date) with pin and
 // options on hover and an unread dot; the account menu and the bell at the
 // foot. On wide screens it can be hidden; on narrow screens it is a drawer.
-import { usePendingCount } from "../pages/RequestsPage";
+import { useInboxCount } from "../pages/RequestsPage";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Dialog as RDialog, DropdownMenu as Menu } from "radix-ui";
 import {
-  Hand,
   Archive,
   ArchiveRestore,
   ArrowLeft,
@@ -28,6 +27,7 @@ import {
   PinOff,
   Plus,
   Search,
+  Inbox as InboxIcon,
   Settings,
   Share2,
   SquarePen,
@@ -39,7 +39,6 @@ import { t } from "../i18n/en";
 import { clearDeviceCache } from "../lib/devices";
 import { post } from "../lib/api";
 import { createFolder, loadOrganization, organize, useOrganization } from "../lib/organization";
-import { NotificationsButton } from "./Notifications";
 import { agentById, useApp } from "../lib/app-context";
 import {
   deleteConversation,
@@ -128,8 +127,8 @@ function Rail({ route }: { route: Route["name"] }) {
       <IconButton label={t.sidebar.search} onClick={sidebarState.openSearch}>
         <Search size={17} aria-hidden />
       </IconButton>
+      <InboxRailButton current={route === "requests"} />
       <span className="flex-1" />
-      <NotificationsButton />
       <IconButton label={t.account.settings} onClick={go("/settings")} aria-current={route === "settings" ? "page" : undefined}>
         <Settings size={17} aria-hidden />
       </IconButton>
@@ -434,7 +433,7 @@ function SidebarBody({
           testId="new-chat"
         />
         <NavRow icon={<Search size={16} aria-hidden />} label={t.sidebar.searchPlaceholder} onClick={sidebarState.openSearch} hint={mac ? "⌘K" : "Ctrl K"} testId="open-search" />
-        <WaitingRow current={route === "requests"} />
+        <InboxRow current={route === "requests"} />
       </div>
 
       <div className="hz-side-scroll" aria-busy={list.loading || undefined}>
@@ -562,7 +561,6 @@ function SidebarBody({
 
       <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1.5">
         <AccountMenu onArchived={() => showArchived(true)} />
-        <NotificationsButton />
       </div>
 
       <ShareDialog conversation={shareTarget} onClose={() => setShareTarget(null)} />
@@ -989,18 +987,27 @@ function AccountMenu({ onArchived }: { onArchived: () => void }) {
   );
 }
 
-/** "Waiting for you": shown only while something waits for this person's answer. */
-function WaitingRow({ current }: { current: boolean }) {
-  const count = usePendingCount();
-  if (!count && !current) return null;
+/** Inbox: approvals, questions and updates, always at the top of the chats. */
+function InboxRow({ current }: { current: boolean }) {
+  const count = useInboxCount();
   return (
     <NavRow
-      icon={<Hand size={16} aria-hidden />}
-      label={t.requests.inboxTitle}
-      href="/requests"
+      icon={<InboxIcon size={16} aria-hidden />}
+      label="Inbox"
+      href="/inbox"
       current={current}
       count={count}
       testId="nav-requests"
     />
+  );
+}
+
+function InboxRailButton({ current }: { current: boolean }) {
+  const count = useInboxCount();
+  return (
+    <IconButton label={count ? `Inbox, ${count} new` : "Inbox"} onClick={() => navigate("/inbox")} aria-current={current ? "page" : undefined} className="hz-bell">
+      <InboxIcon size={17} aria-hidden />
+      {count > 0 && <span className="hz-bell-dot" aria-hidden />}
+    </IconButton>
   );
 }

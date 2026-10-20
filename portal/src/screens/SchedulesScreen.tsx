@@ -11,7 +11,6 @@ import {
   Input,
   List,
   Modal,
-  Segmented,
   Select,
   Space,
   Table,
@@ -33,12 +32,13 @@ import {
   type ScheduleRun,
   type ScheduleEdit,
   type PersonalRun,
+  type Workflow,
 } from "../api";
 import { inputField } from "../components/WorkflowInputs";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
-import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, When } from "../components/common";
+import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When } from "../components/common";
 import { formatDuration } from "../lib/format";
 import { displayName } from "../app/lib/format";
 
@@ -64,27 +64,31 @@ const adminPaused = (s: Row) => s.state === "paused" && s.reason === "admin";
 const at = (seconds: number | null | undefined) => (seconds ? new Date(seconds * 1000).toISOString() : null);
 
 /**
- * Schedules & reports: one page for everyone. "Yours" is the signed-in
+ * Schedules: one page for everyone. "Yours" is the signed-in
  * person's own schedules and report links on every agent; admins also get
  * "Everyone", one agent at a time. The server decides what each view returns.
  */
 export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: boolean; hubs?: Hub[]; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
-  const everyone = admin && q.scope === "everyone";
+  const view = q.view === "reports" ? "reports" : admin && q.view === "workflows" ? "workflows"
+    : admin && (q.view === "everyone" || q.scope === "everyone") ? "everyone" : "mine";
+  const tabs: [string, string][] = [["mine", admin ? "Yours" : "Schedules"],
+    ...(admin ? [["everyone", "Everyone's"], ["workflows", "Agent workflows"]] as [string, string][] : []), ["reports", "Reports"]];
   return (
     <>
       <PageHeader
-        title="Schedules & reports"
-        description={embedded ? "Recurring work from chat. For workflows, open an agent’s Runs & schedules." : undefined}
-        extra={admin && (
-          <Segmented
-            value={everyone ? "everyone" : "mine"}
-            onChange={(v) => setQ({ scope: v === "everyone" ? "everyone" : undefined })}
-            options={[{ value: "mine", label: "Yours" }, { value: "everyone", label: "Everyone" }]}
-          />
-        )}
+        title="Schedules"
+        description={embedded ? "Work your agents run on a timetable, as the person who set it up. Make one in chat, for example “every Monday at 9”." : undefined}
       />
-      {everyone ? <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} /> : <Mine />}
+      <nav className="hz-agent-tabs" aria-label="Schedules">
+        {tabs.map(([key, label]) => (
+          <a key={key} href={`#/schedules${key === "mine" ? "" : `?view=${key}`}`} aria-current={view === key ? "page" : undefined}
+            onClick={(e) => { e.preventDefault(); setQ({ view: key === "mine" ? undefined : key, scope: undefined }); }}>{label}</a>
+        ))}
+      </nav>
+      {view === "everyone" ? <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} />
+        : view === "workflows" ? <AgentWorkflows hubs={hubs ?? []} />
+        : view === "reports" ? <MineReports /> : <Mine />}
     </>
   );
 }
@@ -96,7 +100,7 @@ function Mine() {
   const [editing, setEditing] = useState<Row | null>(null);
   useVisibleRefresh(data.reload, data.refreshing || data.loading);
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
-  const { agents, schedules, reports } = data.data;
+  const { agents, schedules } = data.data;
   const api = (hub: string) => agents.find((a) => a.key === hub)?.api;
   const name = (hub: string) => displayName(agents.find((a) => a.key === hub)?.name ?? hub);
   const act: Act = async (s, action) => {
@@ -111,52 +115,107 @@ function Mine() {
   };
   return (
     <div className="panel">
-      <Space wrap><Button onClick={data.reload} loading={data.refreshing}>Refresh</Button>
-        <Text type="secondary">Results appear here and in chat. Email is sent only when enabled by the hub.</Text></Space>
-      <ReportCatalog catalog={data.data.catalog ?? []} agents={agents} />
-      <RecentRuns agents={agents} />
-      <Section title="Schedules" help="Reports and repeated requests the agent runs for you, as you. Make new ones in chat, for example: repeat this every Monday at 9.">
-        <SchedulesTable
-          rows={schedules}
-          mine
-          edit={setEditing}
-          agentName={agents.length > 1 ? name : undefined}
-          act={act}
-          runsPath={(s) => `/my/schedules/${encodeURIComponent(s.id)}/runs${query({ hub: s.hub })}`}
-          empty="Nothing scheduled yet. Ask in chat, for example “run this report for me every Monday at 9”."
-        />
-      </Section>
+      <SchedulesTable
+        rows={schedules}
+        mine
+        edit={setEditing}
+        agentName={agents.length > 1 ? name : undefined}
+        act={act}
+        runsPath={(s) => `/my/schedules/${encodeURIComponent(s.id)}/runs${query({ hub: s.hub })}`}
+        empty="Nothing scheduled yet. In chat, ask an agent to repeat something, for example “send me the low stock list every Monday at 9”."
+      />
       {editing && <ScheduleEditor key={editing.id} row={editing} api={api(editing.hub)}
         close={() => setEditing(null)} saved={() => { setEditing(null); data.reload(); }} />}
+    </div>
+  );
+}
+
+/** Reports: what can be run, your own copies, and your recent one-off requests. */
+function MineReports() {
+  const data = useData<MyData>("/my");
+  useVisibleRefresh(data.reload, data.refreshing || data.loading);
+  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
+  const { agents, reports } = data.data;
+  const name = (hub: string) => displayName(agents.find((a) => a.key === hub)?.name ?? hub);
+  const catalog = data.data.catalog ?? [];
+  return (
+    <div className="panel">
+      <ReportCatalog catalog={catalog} agents={agents} />
       {reports.length > 0 && (
-        <Section title="Reports" help="Your own copies. Each link always shows the newest one.">
+        <Section title="Your reports" help="Your own copies. Each link always shows the newest one.">
           <Table
             rowKey="id"
             size="middle"
             dataSource={reports}
             pagination={false}
             scroll={{ x: 640 }}
+            rowClassName="clickable"
+            onRow={(r) => ({ onClick: () => window.open(r.url, "_blank", "noopener") })}
             columns={[
               {
                 title: "Report", key: "title",
-                render: (_, r) => <><a href={r.url} target="_blank" rel="noreferrer">{r.title} ↗</a>
+                render: (_, r) => <><a className="row-name" href={r.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.title} ↗</a>
                   {agents.length > 1 && <div><Text type="secondary">{name(r.hub)}</Text></div>}</>,
               },
               {
                 title: "Updated", key: "updated",
-                render: (_, r) => <Space size={6} wrap>{r.updated ? <When value={at(r.updated)} /> : "—"}<Tag color={REPORT_STATE[r.state][1]}>{REPORT_STATE[r.state][0]}</Tag></Space>,
+                render: (_, r) => <Space size={10} wrap>{r.updated ? <When value={at(r.updated)} /> : "—"}<Dot tone={REPORT_STATE[r.state][1]} label={REPORT_STATE[r.state][0]} /></Space>,
               },
               {
                 title: <span>Company link <Help text="Share it or turn it off from the report page." /></span>,
                 key: "company", align: "right",
-                render: (_, r) => r.company_on ? <Tag color="blue">On</Tag> : <Text type="secondary">Off</Text>,
+                render: (_, r) => r.company_on ? <Dot tone="blue" label="On" /> : <Text type="secondary">Off</Text>,
               },
             ]}
           />
         </Section>
       )}
+      <RecentRuns agents={agents} />
+      {catalog.length === 0 && reports.length === 0 && (
+        <Empty description="No reports yet. Agents that offer reports list them here, with the request to type in chat." />
+      )}
     </div>
   );
+}
+
+/** Every agent's own scheduled workflows in one list. A row opens the
+ *  workflow in its agent's Runs & schedules. */
+function AgentWorkflows({ hubs }: { hubs: Hub[] }) {
+  const data = useData<{ workflows: Workflow[] }>("/workflows", { keepStale: true });
+  useVisibleRefresh(data.reload, data.refreshing || data.loading);
+  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
+  const rows = data.data.workflows.filter((w) => w.schedule);
+  const hubName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
+  const state = (w: Workflow) => w.state === "error" ? <Dot tone="red" label="Error" />
+    : w.state === "stale" ? <Dot tone="red" label="Scheduler stopped" />
+    : w.state === "paused" ? <Dot tone="gold" label="Paused" /> : <Dot tone="green" label="Active" />;
+  return (
+    <div className="panel">
+      <Table<Workflow>
+        rowKey={(w) => `${w.hub}:${w.name}`}
+        size="middle"
+        dataSource={rows}
+        pagination={false}
+        scroll={{ x: 760 }}
+        rowClassName="clickable"
+        onRow={(w) => ({ onClick: () => { location.hash = `/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`; } })}
+        locale={{ emptyText: <Empty description="No agent has a scheduled workflow. A workflow gets a schedule in its folder's workflow file." /> }}
+        columns={[
+          { title: "Workflow", key: "name", render: (_, w) => <><a className="row-name" href={`#/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`}
+            onClick={(e) => e.stopPropagation()}>{w.name}</a><div style={{ marginTop: 2 }}>{state(w)}</div></> },
+          { title: "Agent", key: "hub", render: (_, w) => hubName(w.hub) },
+          { title: "When", key: "when", render: (_, w) => <><div>{w.schedule}</div><Text type="secondary">{w.timezone}</Text></> },
+          { title: "Next run", key: "next", render: (_, w) => w.next_run ? <When value={w.next_run} /> : <Text type="secondary">—</Text> },
+          { title: "Last started", key: "last", render: (_, w) => w.last_dispatch ? <When value={w.last_dispatch} /> : <Text type="secondary">Not yet</Text> },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** Status as a dot and a word, with the same tones as the rest of Settings. */
+function Dot({ tone, label }: { tone: string; label: string }) {
+  return <StatusDot color={tone} label={label} />;
 }
 
 const DONE: Record<Action, string> = {
@@ -210,7 +269,7 @@ function SchedulesTable({
       {!screens.md ? <List dataSource={rows} locale={{ emptyText: <Empty description={empty} /> }}
         renderItem={(s) => <List.Item><Space direction="vertical" style={{ width: "100%" }}>
           <Button type="link" style={{ padding: 0, whiteSpace: "normal", height: "auto" }} onClick={() => setOpenId(s.id)}>{s.name}</Button>
-          <Tag color={STATE_TAG[s.state]}>{s.state_label}</Tag>
+          <Dot tone={STATE_TAG[s.state] ?? "default"} label={s.state_label} />
           {s.owner && <Text className="identity">{s.owner}</Text>}
           {agentName && <Text type="secondary">{agentName(s.hub)}</Text>}
           {s.next_fire && <Text>Next: <When value={at(s.next_fire)} /></Text>}
@@ -231,7 +290,8 @@ function SchedulesTable({
           ...(agentName ? [{ title: "Agent", key: "agent", render: (_: unknown, s: Row) => agentName(s.hub) }] : []),
           {
             title: "Schedule", key: "name",
-            render: (_, s) => <><Button type="link" style={{ padding: 0 }} onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</Button><div /><Tag color={STATE_TAG[s.state] ?? "default"}>{s.state_label}</Tag></>,
+            render: (_, s) => <><button type="button" className="row-name" onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</button>
+              <div style={{ marginTop: 2 }}><Dot tone={STATE_TAG[s.state] ?? "default"} label={s.state_label} /></div></>,
           },
           {
             title: "Report", key: "report",
@@ -249,7 +309,7 @@ function SchedulesTable({
           },
           {
             title: "Last result", key: "last",
-            render: (_, s) => <Text type={s.last_status === "failed" ? "danger" : undefined}>{s.last_label}</Text>,
+            render: (_, s) => s.last_status === "failed" ? <Dot tone="red" label={s.last_label} /> : <Text>{s.last_label}</Text>,
           },
           ...(mine ? [] : [{
             title: <span style={{ whiteSpace: "nowrap" }}>30-day cost</span>, key: "cost",
@@ -316,7 +376,7 @@ function ScheduleDrawer({
               : row.report },
             ...(row.inputs ? [{ key: "inputs", label: "Inputs", children: row.inputs }] : []),
             { key: "when", label: "When", children: `${row.when} (${row.timezone})` },
-            { key: "state", label: "State", children: <Tag color={STATE_TAG[row.state] ?? "default"}>{row.state_label}</Tag> },
+            { key: "state", label: "State", children: <Dot tone={STATE_TAG[row.state] ?? "default"} label={row.state_label} /> },
             { key: "next", label: "Next run", children: row.next_fire ? <When value={at(row.next_fire)} /> : "—" },
           ]} />
           {row.recovery && <Alert type="warning" showIcon message={row.recovery} />}

@@ -429,6 +429,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @router.get("/hubs")
     def hubs(admin=Depends(require_admin)):
         from .loaders import agents as agents_loader
+        from .loaders import contents as contents_loader
 
         gs = store_for(hub_dir)
         return {
@@ -439,6 +440,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     path=str(Path(h["path"]).resolve()),
                     model_id=h["model_id"],
                     can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
+                    contents=contents_loader.counts(Path(h["path"])),
                 )
                 for h in allowed_hubs(admin)
             ]
@@ -585,7 +587,28 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if agent and not person["access"].get(agent):
                 continue
             rows.append(person)
-        return {"people": rows[offset : offset + limit], "total": len(rows)}
+        page = rows[offset : offset + limit]
+        if admin.is_org_admin:
+            _sign_in_facts(page)
+        return {"people": page, "total": len(rows)}
+
+    def _sign_in_facts(people: list[dict]) -> None:
+        """When each person last signed in, and whether two-step sign-in is
+        on, from their account. Organization administrators only; ``None``
+        where there is no account (local mode, or never signed up)."""
+        from .auth import mfa
+        from .auth import users as userlib
+
+        try:
+            accounts = {userlib.normalize_email(u["email"]): u
+                        for u in userlib.list_users(hub_dir) if u.get("email") and not u.get("deleted_at")}
+        except Exception as exc:  # noqa: BLE001 — sign-in facts are extra; the list stands without them
+            log.warning("people: could not read accounts for sign-in facts: %s", exc)
+            accounts = {}
+        for person in people:
+            account = accounts.get(userlib.normalize_email(person["subject"]))
+            person["last_sign_in"] = account["last_login_at"] if account else None
+            person["two_step"] = mfa.enrolled(hub_dir, account["id"]) if account else None
 
     @router.post("/people/refresh")
     @_denied
