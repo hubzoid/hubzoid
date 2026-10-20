@@ -60,6 +60,7 @@ CHAT_SCOPED_TOOLS = frozenset({
     "list_artifacts",
     "read_upload",
     "read_upload_full",
+    "record_feedback",   # rates an answer in the caller's chat conversation; MCP has none
 })
 
 

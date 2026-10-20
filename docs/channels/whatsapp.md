@@ -114,3 +114,7 @@ write_mode_overrides:
 | `draft_unsupported` | Set `write_mode_overrides.<id>.customer_reply.send` to `off` or `approve`. |
 | `window_closed` | The sender has not written for 24 hours. Wait for their next message, then retry. |
 | `attachment_blocked` | Meta returned a media link on an unexpected host. Nothing was fetched. |
+
+## Ratings
+
+With `feedback: true` in the channel file, a final reply ends with a line inviting a 👍 or 👎 reaction, inside the text the requester approves. The rating is the outside sender's, never an account's. See [Feedback on answers](../feedback.md).

@@ -24,6 +24,9 @@ message. Keywords combine; the parts run in this order:
             gate (``hubzoid.hitl``): it runs when allowed, otherwise it waits for
             a person and the reply says so
   askme     the agent asks one question with two options (``ask_question``)
+  feedback  one ``record_feedback`` call, when the deployment offers that tool:
+            ``negative`` in the request makes the rating negative, the first
+            sentence is the person's quote and the rest their comment
 
 With none of them, the reply is short markdown that quotes the request and lists
 any attached files. Usage (token counts from word counts, zero cost) is recorded
@@ -49,7 +52,8 @@ log = logging.getLogger("hubzoid.testing_runtime")
 
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
-KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme")
+KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme",
+            "feedback")
 
 _WORD = re.compile(r"[A-Za-z]+")
 _NOTE = re.compile(r"^\[(?:Image|User attached file): ([^\](]+?)\s*(?:\(|\])", re.MULTILINE)
@@ -274,6 +278,36 @@ class ScriptedRuntime:
             yield ToolResult(id="call_ask", name="ask_question", ok=True)
             body = ("Which warehouse should ship it?" if '"waiting"' in out
                     else "Nobody can answer now, so I will use the North warehouse.")
+            for piece in _chunks(body):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "feedback" in words:
+            from types import SimpleNamespace
+
+            from .tools import feedback_tool
+
+            said = " ".join(_without_notes(request).split())
+            quote, _, rest = said.partition(". ")
+            negative = re.search(r"\bnegative\b", said, re.IGNORECASE)
+            args = {"rating": "negative" if negative else "positive", "quote": quote}
+            if rest.strip():
+                args["comment"] = rest.strip()
+            offered = feedback_tool.make(SimpleNamespace(hub_dir=self.hub_dir))
+            if not offered:
+                body = "I can't save feedback from chat here. Use the thumbs buttons under the answer."
+            else:
+                _request_ctx.record_tool_call("record_feedback", args)
+                yield ToolCall(id="call_feedback", name="record_feedback", args=args,
+                               legacy=tool_events.format_call("record_feedback", args, mode=self._tool_mode))
+                out = await offered[0].on_invoke_tool(None, json.dumps(args))
+                _request_ctx.record_tool_result("call_feedback", out)
+                status = json.loads(out).get("status")
+                yield ToolResult(id="call_feedback", name="record_feedback",
+                                 ok=status in ("saved", "updated", "unchanged"))
+                body = json.loads(out).get("message") or status
             for piece in _chunks(body):
                 yield text(piece)
             _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,

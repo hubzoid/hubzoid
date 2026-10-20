@@ -4,6 +4,9 @@
 every setting has its product default and a fresh hub works. The file, the CLI,
 the API and Settings → Workspace settings → Chat defaults share one schema and one apply.
 
+Ratings (`feedback.enabled`, `feedback.tool`, `feedback.reasons`) are described in
+[Feedback on answers](feedback.md).
+
 ## The file
 
 ```yaml

@@ -80,6 +80,10 @@ class Adapter:
     #: no acknowledgement, no notice and no automatic final reply. Every reply
     #: is a workflow's `hub.thread.post` under the hub's write mode.
     customer_facing: ClassVar[bool] = False
+    #: which replies can carry rating controls when the channel file says
+    #: ``feedback: true`` (``hubzoid.channels.feedback``): "agent" (a chat
+    #: answer), "workflow" (a workflow's final reply), or "" for none
+    feedback_target: ClassVar[str] = ""
 
     def route(self, hub_dir, conn: "Connection", row: dict, thread: dict, event: InboundEvent):
         """Take over routing for this provider (intake adapters hand events to

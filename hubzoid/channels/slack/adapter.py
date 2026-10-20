@@ -152,6 +152,7 @@ class SlackAdapter(Adapter):
     recovery = "reconcile"
     secret_keys = ("bot_token_ref", "signing_secret_ref", "app_token_ref")
     webhook = True
+    feedback_target = "agent"
 
     # -- intake -----------------------------------------------------------------
     def verify(self, conn, raw: bytes, headers: dict, query: dict) -> Verified | Challenge:
@@ -191,10 +192,80 @@ class SlackAdapter(Adapter):
 
     def parse(self, conn, verified: Verified) -> list[InboundEvent]:
         payload = verified.payload or {}
+        if payload.get("type") in ("block_actions", "view_submission"):
+            # The rating buttons and their dialog (hubzoid.channels.feedback); other buttons settle nothing yet.
+            return [e for e in [self._feedback(conn, payload)] if e is not None]
         if payload.get("type") != "event_callback":
-            return []    # interactivity has nothing to settle until approvals arrive
+            return []
         event = payload.get("event") or {}
         return [e for e in [self._event(conn, verified, payload, event)] if e is not None]
+
+    def _feedback(self, conn, payload: dict) -> InboundEvent | None:
+        """A click on the rating buttons, or the "Not helpful" dialog sent.
+        What it rates is checked against our own record of the post when it
+        is routed; here it is only read and placed in its thread."""
+        from ..feedback import ACTION_ID, DIALOG_ID
+
+        cfg: SlackConfig = conn.settings
+        user = payload.get("user") or {}
+        if payload.get("type") == "block_actions":
+            action = next((a for a in payload.get("actions") or [] if str(a.get("action_id") or "")
+                           .startswith(ACTION_ID)), None)
+            if action is None:
+                return None
+            container = payload.get("container") or {}
+            message = payload.get("message") or {}
+            channel = container.get("channel_id") or (payload.get("channel") or {}).get("id") or ""
+            message_ts = _ts(container.get("message_ts") or message.get("ts"))
+            thread_ts = _ts(container.get("thread_ts") or message.get("thread_ts") or message_ts)
+            block = str(action.get("block_id") or "")
+            value = str(action.get("value") or "")
+            data = {"action": value if value in ("up", "down") else "", "run_id": block.removeprefix("hzfb:")
+                    if block.startswith("hzfb:") else "", "message_ts": message_ts, "action_ts":
+                    _ts(action.get("action_ts"))}
+        else:
+            view = payload.get("view") or {}
+            if view.get("callback_id") != DIALOG_ID:
+                return None
+            try:
+                meta = json.loads(view.get("private_metadata") or "{}")
+            except ValueError:
+                meta = {}
+            values = (view.get("state") or {}).get("values") or {}
+            reasons = [o.get("value") for o in ((values.get("reasons") or {}).get("value") or {})
+                       .get("selected_options") or [] if o.get("value")]
+            comment = ((values.get("comment") or {}).get("value") or {}).get("value") or ""
+            channel, thread_ts = str(meta.get("channel") or ""), _ts(meta.get("thread_ts"))
+            message_ts = _ts(meta.get("message_ts"))
+            data = {"action": "reason", "run_id": str(meta.get("run_id") or ""), "message_ts": message_ts,
+                    "reasons": reasons[:8], "comment": comment[:3000], "action_ts": str(view.get("id") or "")}
+        if not channel or not thread_ts or not user.get("id"):
+            return None
+        origin = Origin("slack", cfg.installation_team_id, f"slack:{channel}:{thread_ts}",
+                        {"channel": channel, "thread_ts": thread_ts},
+                        url=f"https://app.slack.com/client/{cfg.installation_team_id}/{channel}/thread/"
+                            f"{channel}-{thread_ts}")
+        ignore = None
+        if payload.get("is_enterprise_install") or (user.get("team_id") and user["team_id"] !=
+                                                    cfg.installation_team_id):
+            ignore = "shared_channel_denied"     # someone from another workspace (Slack Connect)
+        elif not channel.startswith("D") and channel not in cfg.allowed_channel_ids:
+            ignore = "channel_not_allowed"
+        elif not data["action"] or not data["run_id"]:
+            ignore = "feedback_unreadable"
+        data.update(channel=channel, thread_ts=thread_ts, user=user["id"],
+                    trigger_id=str(payload.get("trigger_id") or ""))
+        return InboundEvent(
+            semantic_key=f"fb:{cfg.installation_team_id}:{channel}:{message_ts}:{user['id']}:{data['action_ts']}",
+            kind="feedback", origin=origin, actor=ExternalActor(user["id"], "", False,
+                                                                {"team": user.get("team_id") or ""}),
+            trigger=True, message_id=message_ts, data=data, ignore_reason=ignore)
+
+    def ack_response(self, admitted):
+        # A dialog closes on an empty 200; events and clicks ignore the body.
+        if any(e.get("kind") == "feedback" for e in admitted.events):
+            return 200, ""
+        return 200, admitted.to_json()
 
     def _event(self, conn, verified: Verified, payload: dict, event: dict) -> InboundEvent | None:
         cfg: SlackConfig = conn.settings
@@ -265,10 +336,21 @@ class SlackAdapter(Adapter):
                 if info.get("is_ext_shared") or info.get("is_pending_ext_shared"):
                     raise Rejected("blocked_destination: the channel is now shared outside the workspace, so the "
                                    "answer was not posted.")
-            resp = web.chat_postMessage(
-                channel=channel, thread_ts=origin.coordinates["thread_ts"], text=outbound.text,
-                reply_broadcast=False, unfurl_links=False, unfurl_media=False,
-                metadata={"event_type": "hubzoid_reply", "event_payload": {"marker": outbound.marker}})
+            post = dict(channel=channel, thread_ts=origin.coordinates["thread_ts"], text=outbound.text,
+                        reply_broadcast=False, unfurl_links=False, unfurl_media=False,
+                        metadata={"event_type": "hubzoid_reply", "event_payload": {"marker": outbound.marker}})
+            if outbound.blocks:
+                post["blocks"] = outbound.blocks
+            try:
+                resp = web.chat_postMessage(**post)
+            except SlackApiError as exc:
+                if not outbound.blocks or (exc.response or {}).get("error") != "invalid_blocks":
+                    raise
+                # Slack answered and posted nothing: a workspace without the feedback element gets plain buttons.
+                from ..feedback import slack_fallback_blocks
+
+                run_id = str((outbound.blocks[0] or {}).get("block_id") or "").removeprefix("hzfb:")
+                resp = web.chat_postMessage(**{**post, "blocks": slack_fallback_blocks(run_id)})
         except SlackApiError as exc:
             raise _refusal(exc) from None
         return Receipt(_ts(resp.get("ts")), {"channel": resp.get("channel") or channel})
