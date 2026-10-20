@@ -3,15 +3,16 @@
 Status: proposed for 2.0, revision 2 (20 Oct 2026). Revision 1 (19 Oct) was
 milestone A's draft of section A. This revision adds the founder's direction of
 20 Oct ("the gateway was a mistake, it should have been simple always"), one
-home for every setting (B) and the database cleanup (C). Nothing here is built
-until the founder approves it.
+home for every setting (B) and the database cleanup (C), reconciled with a
+Codex review (gpt-6.1-sol, high effort, 20 Oct; 24 findings, all checked
+against the code, summarised at the end). Nothing here is built until the
+founder approves it.
 
 It replaces, if approved:
 
 - revision 1's separate units per hub (`--no-bridges`, `hubzoid bridge`);
-- in `2026-10-19-hosted-data-dir-and-deploy.md`, "a gateway refuses
-  `HUBZOID_DATA_DIR`" and "a channel's active configuration is its revision in
-  the database";
+- in `2026-10-19-hosted-data-dir-and-deploy.md`, "a channel's active
+  configuration is its revision in the database";
 - publishing a brand (`docs/branding.md`), applying chat defaults
   (`docs/chat-config.md`) and Workspace drafts (`hubzoid/chat/authoring.py`).
 
@@ -97,9 +98,9 @@ Each pair has its own apply step and its own rule for which copy wins.
   the deployment shape. It should be one shape before more features add their
   own "if gateway" branches.
 - The database tables behind the duplicates are new in 2.0. Release 1.3.2
-  stops at migration `op_0019`; `op_0020` to `op_0071` have never shipped. They
-  can be removed now without moving anyone's data. After launch, each one needs
-  an export path.
+  stops at migration `op_0019`; `op_0020` to `op_0071` have never shipped, so
+  outside development databases they hold no one's data yet. After launch,
+  every one of them would need a migration path for real deployments.
 
 ## What other tools do
 
@@ -155,27 +156,28 @@ and place are open question 2):
 
 ```yaml
 version: 1
-name: Example Hubs
 public_url: https://hubs.example.org
 sign_in: true
 owner: owner@example.org
 hubs:                 # folders; the first also answers at /
   - operations-hub
   - finance/finance-hub
-brand: {...}          # was branding.yaml (B1)
+brand: {...}          # was branding.yaml (B1); brand.identity.name is the deployment's name
 chat: {...}           # was chat/config.yaml (B2)
 diagnostics: {...}    # was admin.yaml, if open question 3 says so
 ```
 
 - Secrets and process settings go in `.env` next to it (`HUBZOID_SECRET_KEY`,
-  `DATABASE_URL`, sign-in client secrets, mail) or the host's environment,
-  which wins over `.env`.
-- State goes in `.hubzoid/` next to it, or `--data-dir` / `HUBZOID_DATA_DIR`:
-  the generated manifest (never edited by hand), the shared store, keys, logs
-  and the control socket. An existing gateway passes its old data folder and
-  nothing moves.
-- With `HUBZOID_DATA_DIR` and several hubs, each hub's state goes under
-  `<data>/hubs/<hub>/`. A one-hub deployment keeps today's layout.
+  `DATABASE_URL`, sign-in client secrets and switches such as `ENABLE_SIGNUP`,
+  mail) or the host's environment. As with a hub's `.env` today
+  (`hubzoid/settings.py`), the file wins over the environment.
+- State goes in `.hubzoid/` next to it, or `--data-dir`: the generated
+  manifest (never edited by hand), the shared store, keys, logs and the control
+  socket. **Existing state never moves.** An existing gateway passes its old
+  data folder; each hub keeps its own state folder, DBOS file, inbound dedup
+  markers, Telegram bindings and outputs where they are today.
+- `HUBZOID_DATA_DIR` stays one hub per data folder, as the hosted proposal
+  says. Several hubs in one hosted container is later work.
 - For one hub, the hub folder is the deployment folder, as today:
   `hubzoid.yaml` is optional, `.env` is the hub's, and state stays in its
   `.hubzoid/`.
@@ -183,9 +185,19 @@ diagnostics: {...}    # was admin.yaml, if open question 3 says so
   when the file leaves the key out, because hosted providers often know the
   public URL only at deploy time. If both are set and differ, the start stops
   and names both.
-- A hub's `.env` holds only that hub's settings. One that sets a deployment
-  setting is refused if it disagrees (as today), and gets a notice to remove
-  the line if it agrees.
+- A hub's `.env` holds only that hub's settings. Every deployment setting
+  (the table below) is resolved by the supervisor before the edge opens, and a
+  hub layer can never override it: a hub `.env`, `restricted/.env` or hub AWS
+  secret that sets one is refused if it disagrees, and gets a notice to remove
+  the line if it agrees. Today only sign-in and the deployment key are checked
+  this way (`_gateway_mode_conflicts` in `hubzoid/cli.py`).
+
+| Kind | Where | Precedence |
+|---|---|---|
+| Deployment settings: hub list, `sign_in`, `public_url`, `owner`, `brand`, `chat`, `diagnostics` | `hubzoid.yaml` | `HUBZOID_AUTH`, `HUBZOID_PUBLIC_URL`, `HUBZOID_ADMIN_EMAIL` fill a key the file leaves out; set in both and different stops the start |
+| Deployment secrets and switches: `HUBZOID_SECRET_KEY`, database URLs, `OAUTH_*`, `GOOGLE_CLIENT_*`, `ENABLE_SIGNUP`, `ENABLE_LOGIN_FORM`, mail | Deployment `.env`, the deployment AWS secret | `.env` over the environment, the AWS secret over both, as today for a gateway |
+| Hub settings: model, tool keys, `MCP_SERVER`, OTel | Hub `.env`, `restricted/.env`, hub AWS secrets | As today. `model:` in `AGENTS.md` overrides `.env` `MODEL`, as today |
+| Process binding: port, host | `--port`, `--host`, `PORT`, `HUBZOID_HOST` | Flags over environment |
 
 **A3. Hubs are independent.**
 
@@ -197,11 +209,24 @@ diagnostics: {...}    # was admin.yaml, if open question 3 says so
   until `hubzoid start <hub>`. Its last error stays in `hubzoid status`.
 - While a hub is down, the edge answers its routes with 503, "This agent is
   restarting" (or "unavailable" with the reason when failed) and
-  `Retry-After`. Today it answers 502 "upstream unavailable". Deployment-wide
-  routes (sign-in, the web app, Settings) are served by any running bridge, as
-  the edge's fallbacks already do.
+  `Retry-After`. Today it answers 502 "upstream unavailable". The public text
+  is neutral; the reason is only in `hubzoid status` and the logs.
+- **Routes are classified.** Only deployment-wide routes (the web app, sign-in,
+  Settings and the deployment APIs) may fail over to another bridge. Today
+  every unmatched path does (`hubzoid/edge.py`), including bare
+  `/v1/chat/completions`, so with the first hub down a personal key could get
+  another agent's answer. The first hub's root aliases (`/v1`, `/mcp`,
+  `/artifacts`, its webhooks) and every `/b/<slug>/…` route stay pinned to
+  their hub and answer 503.
 - The supervisor never ends because a hub ended. It ends on SIGTERM or SIGINT,
-  stopping hubs first and the edge last, or when the edge can't bind its port.
+  stopping hubs first and the edge last, or when the edge can't bind its port
+  at start. An edge that crashes later is started again like a hub; the public
+  port is closed for those seconds.
+- **Migrations run once, in the supervisor, before any child starts**, under
+  the existing migration lock. Bridges no longer upgrade the shared store
+  lazily on their own.
+- One supervisor per deployment: it holds a lock file in the data folder for
+  its lifetime, and refuses to start if another holds it.
 - At start the edge comes up first. Hubs start at most 3 at a time
   (`HUBZOID_START_CONCURRENCY`), so a small machine isn't swamped; a hub that
   isn't ready yet answers "starting".
@@ -209,54 +234,105 @@ diagnostics: {...}    # was admin.yaml, if open question 3 says so
   hub only.
 - The supervisor assigns loopback ports for bridges and 1.x inbound servers
   and records them in the manifest. A `BRIDGE_PORT` in a hub's `.env` is still
-  honoured. Bridge keys are generated per deployment unless a hub sets
-  `BRIDGE_API_KEYS`, which ends the shared `dev` key warning (U9).
-- If the supervisor is killed, its children notice their parent is gone and
-  stop, so nothing keeps holding a port. systemd or the container platform
-  restarts the whole deployment.
+  honoured. A bridge key is generated once per deployment and kept in the data
+  folder (mode 0600) unless a hub sets `BRIDGE_API_KEYS`; the supervisor hands
+  it to the hub's bridge and its 1.x channel processes. This ends the shared
+  `dev` key warning (U9).
+- Each hub runs in its own process group and is stopped as a group. Some
+  descendants start their own session (the Codex app-server,
+  `hubzoid/factory_codex.py`), so the bridge stops those on shutdown, and in
+  production the systemd unit's cgroup is the last net. If the supervisor is
+  killed, its children notice their parent is gone and stop. systemd or the
+  container platform restarts the whole deployment.
 
 **A4. Control commands**, over a control socket in the data folder (a Unix
 socket with mode 0600; on Windows a loopback port with a token file):
 
 - `hubzoid status [--json]`: per hub, its state (starting, ready, draining,
   restarting in N s, failed, stopped), uptime, restarts, last exit, channels,
-  and "restart needed" with the reason.
+  workflow readiness (separately, because the workflow engine can wait for its
+  previous owner's lease, `hubzoid/workflows/ownership.py`), and "restart
+  needed" with the reason.
 - `hubzoid restart <hub> [<hub>...]`, `hubzoid stop <hub>`,
   `hubzoid start <hub>`, `hubzoid reload [<hub>]`, `hubzoid logs <hub> [-f]`.
 - Hubs are named by folder name (`irs-hub`) or slug. The commands find the
   deployment from the current folder or `--data-dir`, and say plainly when
   nothing runs there.
 - Anyone who can open the socket file can use them: the service's user and
-  root. There is no network access.
-- **A restart drains first.** The hub takes no new turns (a new message gets
-  "This agent is restarting, try again in a moment"), and running turns get up
-  to `--grace` seconds (default 120). Then the process stops and starts.
-  - Scheduled runs don't fire while it drains. Channel deliveries are recorded
-    and routed after the start, as they are today.
-  - A turn still running at the deadline ends as interrupted. The chat engine
-    already records that and tells the person.
-  - Durable workflow runs (DBOS) and approvals waiting for a person resume after
-    the start, as they do after any restart today.
+  root. The socket lives in a folder only that user can open; a stale socket
+  is replaced only by the supervisor holding the lock. There is no network
+  access. Commands for one hub run one at a time, and each names the hub's
+  current generation, so a command never acts on a process started after it
+  was sent.
+- **A restart drains first, in this order:**
+  1. The edge stops sending new webhooks to the hub (503, so WhatsApp,
+     Telegram and generic senders retry).
+  2. The hub's 1.x channel processes stop gracefully, finishing deliveries they
+     already acknowledged while the bridge still accepts their turns. Today the
+     1.x WhatsApp and Telegram paths acknowledge, claim a dedup marker and
+     then process in memory (`hubzoid/inbound/harness.py`), so a delivery cut
+     off here is lost and its retry is dropped as a repeat. This order keeps
+     that window to the grace period; it does not close it.
+  3. The bridge enters one drain state, checked everywhere work starts: the web
+     app and `/v1`, MCP calls, the chat queue (which keeps waiting messages
+     queued instead of marking them for review), approval continuations, 2.0
+     channel routing (deliveries stay saved and are routed after the start, as
+     today), the scheduler and the workflow queue. Today the bridge only counts
+     running turns (`_InFlight` in `hubzoid/server.py`); it has no way to
+     refuse new ones.
+  4. Running turns get up to `--grace` seconds (default 120), with their leases
+     and saves still running. Then the process stops and starts.
+  - A reply still running at the deadline ends as **interrupted** ("The agent
+    restarted during this reply"), keeps its partial text, and does not let
+    the next queued message start. Today a graceful stop cancels replies, which
+    records them as stopped (`hubzoid/chat/runs.py`, `hubzoid/chat/engine.py`),
+    and finishing one can admit the next queued message.
+  - Workflow runs (DBOS) and approvals waiting for a person resume after a
+    restart **on the same code**. A run started by different workflow code or
+    a different Hubzoid version is cancelled at start, by design
+    (`_cancel_runs_from_other_code` in `hubzoid/workflows/runtime.py`). So an
+    upgrade, unlike a restart, cancels runs that are waiting; `hubzoid status`
+    lists them first, and the upgrade steps say to let them finish.
+  - 1.x Slack (Socket Mode) has no connection while its hub restarts. Messages
+    sent in those seconds may be missed; Slack's own redelivery is not
+    something Hubzoid controls.
 - Example: with 11 hubs, `hubzoid restart irs-hub gpms-hub` restarts only those
   two, one after the other.
 
-**A5. Reload instead of restart where possible.**
+**A5. Reload: a checked restart of one hub.**
+
+Today a hub's instructions and skills are built into its runtime when the
+bridge starts (`hubzoid/factory.py`, `hubzoid/factory_claude.py`). Only a
+published instruction change rebuilds the chat runtime in place
+(`runtime_reloader` in `hubzoid/chat/authoring_routes.py`), and other surfaces
+(MCP, 1.x channels, workflows) keep the runtime they started with. Building
+in-place generations for every surface is a large, risky piece of work.
+Instead:
 
 | Change | Takes effect |
 |---|---|
-| `AGENTS.md`, skills, knowledge, `hitl.yaml` | On the next turn, as today |
-| `brand`, `chat`, `diagnostics` in `hubzoid.yaml`; `channels/`, `connectors/`, cards | `hubzoid reload` |
+| Knowledge files, `hitl.yaml` | When next read, as today |
+| Instructions published through hub changes | The chat runtime is rebuilt, as today; `hubzoid reload <hub>` brings the other surfaces along |
+| Anything else in the hub folder: `AGENTS.md` edited by hand, skills, `channels/`, `connectors/`, cards, `.env`, `tools_local/`, `restricted/`, packages | `hubzoid reload <hub>` |
+| `brand`, `chat`, `diagnostics` in `hubzoid.yaml` | Every bridge re-reads the file when it changes, as `hitl.yaml` is read today |
 | The hub list in `hubzoid.yaml` | `hubzoid reload` starts new hubs and drains removed ones |
-| `.env`, `tools_local/`, `restricted/`, new packages, `sign_in`, `public_url` | A restart: `hubzoid restart <hub>`, or the service for deployment settings |
+| `sign_in`, `public_url`, deployment `.env` | Restart the service |
 
-- Reload validates first. An invalid file changes nothing, and `reload` exits 1
-  naming the file and line.
-- Reload uses the bridge's existing runtime reloader (the one published
-  instructions use): new turns get the new runtime and running turns finish on
-  the old one, like eve's runtime generations.
-- `hubzoid status` compares what each hub started with (digests of `.env`,
-  `tools_local/`, `restricted/` and requirements) with the folder, and says
-  "restart needed: .env changed". Nothing is silently stale.
+- `hubzoid reload <hub>` validates the whole hub folder first. If anything is
+  invalid it changes nothing and exits 1 naming the file and line. Otherwise it
+  does the drained restart of A4. `hubzoid restart` skips the check, for when
+  you need the process back regardless.
+- A deployment file that becomes invalid while running changes nothing: each
+  bridge keeps the version it has, and `status`, doctor and Settings say since
+  when the file is invalid. At start, an invalid deployment file stops the
+  start (it holds policy: terms acceptance, sharing, exports, file storage).
+- `hubzoid status` compares what each hub started with (digests of its folder,
+  `.env`, `tools_local/`, `restricted/` and requirements) with the folder, and
+  says "reload needed: .env changed". Nothing is silently stale.
+- **Edge routes change without restarting the edge.** The supervisor writes
+  the route table to a file in the data folder (replaced atomically) and the
+  edge re-reads it. A removed hub stays routed until its drain finishes, then
+  answers 503. Today routes are fixed when the edge starts (`hubzoid/edge.py`).
 - No file watcher in this release.
 
 **A6. Channels by file.**
@@ -267,6 +343,10 @@ socket with mode 0600; on Windows a loopback port with a token file):
 - 2.0 connections (Slack, GitHub, Linear, email, WhatsApp Cloud) are files
   already. The file becomes the only copy: start and `hubzoid reload` read it,
   and `hubzoid channels apply` becomes "validate, then reload this hub".
+  Pause and resume already work by rewriting `enabled:` in the file
+  (`set_enabled` in `hubzoid/channels/config.py`); they keep doing that. A
+  read-only hosted folder can't be paused from Settings; stop the hub or
+  change the file in Git.
 - The 1.x surfaces get a file each, so they need no flag. Their code and
   behaviour don't change:
 
@@ -292,17 +372,19 @@ socket with mode 0600; on Windows a loopback port with a token file):
 - `hubzoid doctor` and `hubzoid status` name every channel whose file is
   invalid or whose secrets are missing. That channel stays off and the hub
   runs.
-- Webhooks all arrive on the one public port. The documented address becomes
-  `/b/<hub>/webhooks/<channel-id>` for every kind. Existing addresses
-  (`/webhooks/<hub>/…` and `/api/hubs/<key>/channels/<id>/webhook`) keep
-  working, because providers have them registered.
+- Webhooks all arrive on the one public port, at the addresses they use today
+  (`/webhooks/<hub>/…` for 1.x surfaces and workflow events,
+  `/api/hubs/<key>/channels/<id>/webhook` for 2.0 connections). Providers have
+  these registered. A new `/b/<hub>/webhooks/<id>` shape was considered and
+  left out: it would add a third alias with its own rewrite and collision
+  rules for no new capability.
 
 **A7. Addresses.**
 
 - Links (set-password, approvals, waiting-for-you, shares, downloads) are
   built from the deployment's public origin, never from a hub's path.
 - Each hub has `/b/<slug>/…`: `api`, `v1` (personal API keys), `mcp`,
-  `artifacts`, `branding` and webhooks. The first hub also answers at `/`, so
+  `artifacts` and `branding`. The first hub also answers at `/`, so
   one-hub URLs and bookmarks keep working.
 - Warnings about the deployment are printed once by the supervisor, naming the
   hubs they concern.
@@ -325,6 +407,21 @@ socket with mode 0600; on Windows a loopback port with a token file):
 - A gateway: `hubzoid gateway …` works for one release (A1). To move, write
   `hubzoid.yaml` (the alias prints it) and start `hubzoid run --data-dir <old
   data folder>`.
+- **The cutover is offline.** Today the reference deployment's bridges and
+  inbound servers restart on their own, and each process upgrades the shared
+  store when it first needs it (`hubzoid/migrations/__init__.py`). A new
+  process must never drop tables while old ones still serve. So:
+  1. Let waiting workflow runs finish (A4); `hubzoid status` on the old
+     version isn't available, so the runbook gives the query.
+  2. Stop and disable every old unit.
+  3. `hubzoid backup`, and `hubzoid backup verify` it.
+  4. Install the new version, then `hubzoid upgrade`: it writes `hubzoid.yaml`
+     and the channel files from the old command lines and `.env` files,
+     moving each value as it is (no secret is printed), exports every setting
+     that exists only in the database (C2), and runs the migrations once.
+  5. Install and start `hubzoid.service`.
+  Going back means restoring the backup (database, data folder and deployment
+  key together), the old version and the old units.
 - A hub that ran alone and later joins a multi-hub deployment needs its
   accounts and chats merged into the deployment's store. That is a separate,
   explicit command (`hubzoid deployment add <hub>`), never automatic, and not
@@ -338,9 +435,13 @@ socket with mode 0600; on Windows a loopback port with a token file):
 | IRS: `--slack` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` in its `.env` | `channels/slack-assistant.yaml`; the same two `.env` lines |
 | Nurturing: `WHATSAPP_*` in its `.env`, served by an inbound unit | `channels/whatsapp.yaml` (`provider: whatsapp_inbound`) |
 | Support: `WEBHOOK_INBOUND_SECRET`, `WEBHOOK_INBOUND_NAME` | `channels/<name>.yaml` (`provider: webhook`) |
-| `HUBZOID_AUTH`, `ENABLE_SIGNUP`, `DEFAULT_USER_ROLE`, `BYPASS_MODEL_ACCESS_CONTROL`, `WEBUI_SECRET_KEY`, `WEBUI_NAME`, `HOST`, `LICENSE_KEY` in hub `.env` files | Delete: `sign_in` and `name` live in `hubzoid.yaml`; the rest are retired 1.x names |
+| `HUBZOID_AUTH` in hub `.env` files | `sign_in:` in `hubzoid.yaml`, same value; then delete the lines |
+| `ENABLE_SIGNUP` in hub `.env` files | Still a 2.0 setting (`hubzoid/auth/routes.py`): move it, same value, to the deployment `.env` |
+| `WEBUI_NAME` in hub `.env` files | Still read as the name until one is set (`hubzoid/appmode.py`): set `brand.identity.name`, then delete |
+| `DEFAULT_USER_ROLE`, `BYPASS_MODEL_ACCESS_CONTROL`, `WEBUI_SECRET_KEY`, `LICENSE_KEY` | Retired 1.x names (`appmode.RETIRED`): delete |
 | `BRIDGE_PORT`, `BRIDGE_API_KEYS` in hub `.env` files | Optional; delete to let the supervisor assign them |
 | `HUBZOID_ADMIN_EMAIL` in the gateway's systemd drop-in | `owner:` in `hubzoid.yaml` |
+| `HOST` in two hub `.env` files | Checked during `hubzoid upgrade`; the bind address comes from `--host` |
 | `gateway-data/branding/` | `branding/` in the deployment folder |
 
   The rewritten runbook section (one unit, `hubzoid restart`, the table above)
@@ -363,11 +464,18 @@ Nothing lives in two of these. A file is read at start and at
 `hubzoid reload`. The database never keeps an "active copy" of a file, and
 Settings never writes one.
 
-**A broken file turns off only what it describes, and says so.** An invalid
-brand or chat section shows product defaults; an invalid connector or channel
-file leaves that connector or channel off. Doctor, `hubzoid status` and
-Settings name the file, the line and the reason. There is never a fallback to a
-stale copy.
+**A broken file never loosens anything, and says so.**
+
+- At start, an invalid `hubzoid.yaml` stops the start. Its `brand` and `chat`
+  sections hold policy as well as looks: terms that must be accepted
+  (`hubzoid/chat/routes.py` fails closed when it can't tell), and sharing,
+  copying, exporting and file storage, where the product default is "on"
+  (`hubzoid/chat/sharing.py`). A typo must not switch those.
+- At start, an invalid file for one connector, channel or card leaves that one
+  off; the hub runs.
+- While running, an edit that makes a file invalid changes nothing (A5).
+- Doctor, `hubzoid status` and Settings name the file, the line and the
+  reason.
 
 | Setting | Home | Settings shows | The database keeps |
 |---|---|---|---|
@@ -375,11 +483,13 @@ stale copy.
 | Chat defaults | `chat:` in `hubzoid.yaml` | Read-only | Each person's own appearance choices |
 | Diagnostics limits | `diagnostics:` in `hubzoid.yaml` (open question 3) | Read-only | Diagnostic runs and support bundles |
 | Agent instructions | `AGENTS.md`, `agents/`, `skills/`, `prompts/`; history in Git | Edits go through hub changes (B4) | Hub change proposals and decisions |
-| Connectors | `connectors/<id>.yaml` and `connectors/.mcp.json` | Read-only, plus "Connect my account" | Each person's tokens, and clients registered with a provider |
+| Connectors | `connectors/<id>.yaml` in the deployment folder, and each hub's `connectors/.mcp.json` | Read-only, plus "Connect my account" | Each person's tokens, and clients registered with a provider |
+| Who may start work from a channel | Database: a grant in Settings | Editable, like other grants | The grants |
 | Channels | `channels/<id>.yaml` | Read-only, plus status, deliveries, threads and account links | Deliveries, threads, links, outbox, provider cursors |
-| Cards | `cards/*.yaml`, `mcp-apps.yaml` | Read-only | Card instances and the card pages already shown |
+| Cards | `cards/*.yaml`, `mcp-apps.yaml` | Read-only | Card instances, the card pages already shown, and the card configuration each instance was issued under |
 | Hub setup values | `hub.settings.yaml` (already one file, written by the Setup tab) | Editable, writes the file | Nothing |
-| Secrets | `.env`, `restricted/.env`, the host, AWS (open question 1) | Names and status, never values | Depends on open question 1 |
+| Secrets a person types | `.env`, `restricted/.env`, the host, AWS (open question 1) | Names and status, never values | Nothing (open question 1) |
+| Secrets Hubzoid obtains itself | The encrypted store | Names and status | The encrypted values |
 | Access, people, keys, MFA, sessions, company sign-in, workflow access | Database | Editable, as today | All of it |
 | Chats, files, personal sources, personal memory (labelled Beta), repeated requests, runs, approvals, audit | Database | As today | All of it |
 
@@ -420,66 +530,103 @@ tables. Diagnostic runs and support bundles stay in the database.
   `agents/<name>/AGENTS.md` and `prompts/<id>.md`.
 - Published versions and rollbacks come from Git: a rollback proposes the file
   as it was at an earlier commit.
-- `hz_authoring_drafts` and `hz_authoring_versions` go. Personal prompts
-  (`hz_personal_prompts`) stay.
+- `hz_authoring_drafts` and `hz_authoring_versions` go. `hubzoid upgrade`
+  turns each open draft into a pending hub change, and writes published
+  versions that never reached Git to the data folder before the tables go.
+  Personal prompts (`hz_personal_prompts`) stay.
 - A hub that isn't in a Git repository has no history; doctor says so.
 
 **B5. Connectors.**
 
-- A connector's definition lives in the hub that uses it,
-  `connectors/<id>.yaml`: name, URL, how people sign in (`oauth` per person,
-  `shared` company key, or `none`), scopes, the tool allow-list, whether writes
-  need approval, and whether it is restricted.
+- A connector added in Settings today has one identity for the whole
+  deployment: tokens are keyed by person and connector id
+  (`hz_connector_tokens`), and a dynamically registered client belongs to the
+  connector. So its definition belongs to the deployment, not to each hub:
+  `connectors/<id>.yaml` in the deployment folder (the hub folder for one hub)
+  with the hubs that use it, its name, URL, how people sign in (`oauth` per
+  person, `shared` company key, or `none`), scopes, the tool allow-list,
+  whether writes need approval, and whether it is restricted.
 - Its secrets (a pre-registered OAuth client secret, a shared company key) are
   named by reference (`client_secret: env:GITHUB_MCP_CLIENT_SECRET`), never
   written in the file.
-- `connectors/.mcp.json` stays as it is, for servers the runtime starts or
-  calls with hub-wide credentials. It is Claude Code's own format, which
-  doesn't describe per-person sign-in.
+- If a connector's URL or sign-in type changes, people's tokens for it are
+  marked "connect again", so a token is never sent to a different server.
+- A hub's `connectors/.mcp.json` stays as it is, for servers the runtime
+  starts or calls with hub-wide credentials. It is Claude Code's own format,
+  which doesn't describe per-person sign-in.
 - The database keeps only what people and providers create: each person's
-  tokens (`hz_connector_tokens`), Hubzoid's own MCP sign-ins (`hz_mcp_oauth`),
-  sign-in flows in progress, and clients registered with a provider
-  dynamically.
-- Settings shows connectors read-only, with "Connect my account" for each
-  person.
+  tokens, Hubzoid's own MCP sign-ins (`hz_mcp_oauth`), sign-in flows in
+  progress, and dynamically registered clients.
+- Settings shows connectors read-only, with "Connect my account".
 - Console connectors came in 1.2, so released deployments may have some.
-  `hubzoid connectors export` writes each one into the hub folders that use it
-  and moves its secrets (B8). A deployment with Console connectors that haven't
-  been exported keeps them working for one release, marked "move to the
-  folder", and doctor names them.
+  `hubzoid upgrade` writes each one to the folder and its secrets to the
+  deployment `.env` before the cleanup. There is no release where both are
+  read.
 
 **B6. Channels.** The file is the only copy (A6).
-`hz_channel_connections` keeps the status, the pause switch and provider
-state, and stops storing the configuration. `hubzoid channels export` is
+`hz_channel_connections` keeps the status and provider state, and stops
+storing the configuration. A hosted hub whose channel configuration exists only
+in the database (`hubzoid/channels/config.py` keeps it there for read-only
+folders) gets it written out by `hubzoid upgrade`, to commit. `hubzoid channels export` is
 removed. With `HUBZOID_DATA_DIR`, a channel is set up by committing its file,
 like eve's `agent/channels/*.ts`.
 
 **B7. Cards.** `cards/*.yaml` and `mcp-apps.yaml` are read at start and
-reload. `hz_app_config_revisions` goes. Card instances and the card pages
-already shown (`hz_app_instances`, `hz_app_resources`, stored by digest) stay,
-because a card someone already saw must keep rendering.
+reload, with no apply step. `hz_app_config_revisions` stays, as a record: when
+a hub loads a card configuration it hasn't seen, its digest and content are
+recorded. A card instance may call only the tools allowed both when it was
+issued and today (`granted` in `hubzoid/apps/cards.py`), so the record of what
+it was issued under must stay, or old cards would break or gain tools. Card
+instances and the pages already shown stay too.
 
-**B8. Secrets (open question 1).** Two choices:
+**B8. Secrets (open question 1).** Two kinds of secret exist:
 
-- **(a) `.env` and the host's environment only.** Remove the store (`hz_secrets`,
-  `hubzoid secrets`, its routes and Settings screen). References become
-  `env:NAME` only. Settings shows each name's status and where it is set.
-  Simplest, and the same as eve and Mastra. The cost: on a hosted provider with
-  several hubs in one container, a per-hub key must go in that hub's `.env` on
-  the volume, or in the provider's variables with a hub prefix. A key Hubzoid
-  creates (a GitHub App key from the manifest flow) is written to a file in the
-  data folder.
-- **(b) Keep the store as it is, narrowed.** `.env` stays the default and wins.
-  The store is for people who set keys from a browser with no file access, and
-  for keys Hubzoid creates. Each name has one effective home and Settings says
-  which. The cost: two places to look, and code to keep.
+- Keys a person types (model keys, tool tokens).
+- Keys Hubzoid obtains itself through a sign-in or setup flow: the GitHub App
+  key from the manifest flow (`hubzoid/channels/github/setup.py`), Linear and
+  mailbox OAuth tokens. These have no file to live in.
 
-Recommendation: **(b)** until the first hosted multi-hub deployment shows
-whether browser-set keys are needed, because removing working code that hosted
-deployments may need is costlier than keeping it. If the founder prefers (a),
-it removes about 1,400 lines (`hubzoid/secretstore/`), its uses in 12
-modules and one table, and the connectors export
-writes secrets to `.env` instead of the store.
+Choices:
+
+- **(a) `.env` and the host's environment only.** Remove the store entirely.
+  Generated keys go to files in the data folder. Simplest rule, the same as eve
+  and Mastra; removes about 1,400 lines (`hubzoid/secretstore/`) and its uses
+  in 12 modules, and changes the three setup flows above.
+- **(b) Keep the store as it is.** `.env` wins, and a stored value it
+  overrides is kept but unused (`hubzoid/secretstore/layer.py`); removing the
+  `.env` line silently brings the old value back. Two homes for the same name:
+  this breaks the rule.
+- **(c) Split by kind (recommended).** Keys a person types live only in `.env`,
+  `restricted/.env`, the host or AWS. Settings, the CLI and the API stop
+  offering to store them; they show each name's status and where it is set.
+  The store keeps only keys Hubzoid obtains itself, under names an operator
+  source can't set. Each name has exactly one home, and the setup flows don't
+  change. Typed values already stored are moved by `hubzoid upgrade` to the
+  `.env` of their scope.
+
+**B9. `identity/access.csv`.**
+
+- Hubzoid stops reading it. It is used for three things today:
+  - labels (groups) on people, which have granted nothing in the web app,
+    MCP or tools since 1.1;
+  - on WhatsApp and Telegram, a number-to-person map when the hub has no
+    `identity/access.py`;
+  - **a gate:** a 2.0 channel's `allowed_groups` lets only people with one of
+    those labels start work from it, and an empty list lets nobody
+    (`_groups_ok` in `hubzoid/channels/router.py`).
+- Phone numbers are recorded on people in Settings, which inbound channels
+  already check first.
+- The gate moves to the database, where access lives: a grant per channel in
+  Settings ("may start work from this channel"), the same shape as a
+  connector's grant. It is checked together with access to the agent, as
+  today. It is never widened silently: `hubzoid upgrade` turns each
+  `allowed_groups` entry into grants for the people the CSV gives that label,
+  and a channel file that still has `allowed_groups` with no grants made stays
+  off, with a message saying why.
+- `identity/access.py`, a hub's own code to look a number up in its systems,
+  stays. The reference deployment's one roster reads its own CSV from inside
+  `access.py` and defines no groups, so it doesn't change.
+- Doctor names a hub that still has `identity/access.csv`.
 
 **B9. `identity/access.csv`.**
 
@@ -500,10 +647,12 @@ writes secrets to `.env` instead of the store.
 ### C. Database cleanup
 
 The operational store is one database with 148 tables and one migration head.
-That design stays. The per-hub DBOS file also stays, because each hub
-recovers its own workflows when it restarts on its own.
+That design stays. Each hub's DBOS file and `hub.db` stay too: the DBOS file
+lets a hub recover its own workflows when it restarts alone, and `hub.db`
+holds only 1.x WhatsApp and Telegram history behind a gateway. Moving that is
+not needed for any goal here.
 
-**C1. Tables that go.**
+**C1. Tables that go in this work:** only those that B leaves unused.
 
 | Tables | Why | First shipped |
 |---|---|---|
@@ -511,92 +660,92 @@ recovers its own workflows when it restarts on its own.
 | `hz_chat_config_heads`, `_revisions` (2) | B2. `hz_chat_preferences` stays | 2.0 (`op_0020`) |
 | `hz_admin_config_plans`, `_heads`, `_revisions` (3) | B3, if file-only. Diagnostics tables stay | 2.0 (`op_0022`) |
 | `hz_authoring_drafts`, `_versions` (2) | B4 | 2.0 (`op_0031`) |
-| `hz_app_config_revisions` (1) | B7 | 2.0 (`op_0054`) |
-| `hz_parity_candidates`, `_freezes`, `_reviews` (3) | Internal release tooling, not a product feature. The code and the Settings tab leave the package | 2.0 (`op_0023`) |
 | `hz_connector_agents` (1), and the definition columns of `hz_connectors` | B5. The table keeps only dynamically registered clients | 1.2 (`op_0012`, `op_0016`) |
 | `hz_channel_connections` configuration columns | B6 | 2.0 (`op_0070`) |
-| `hz_shares` (1) | Pre-2.0 read-only links. They can't be made any more, and the 2.0 links have previews and audiences. Doctor counts them before the upgrade; owners share again | 1.x (`op_0010`) |
-| `hz_secrets` (1) | Only if open question 1 is (a) | 2.0 (`op_0060`) |
-| `hz_inbound_history` in each hub's `hub.db` | Moves into the operational store with a hub column (C3) | 1.x (hub store) |
 
-`hz_chat_operations` stays: despite its name it is the shared idempotency
-table for every control route.
+`hz_app_config_revisions` stays (B7). `hz_chat_operations` stays: despite its
+name it is the shared idempotency table for every control route. `hz_secrets`
+stays under B8 (c).
 
-**C2. Kept on purpose.**
+**C2. Data is exported before anything is dropped.** `hubzoid upgrade` writes
+every populated row that has a new home: the active brand and its images, the
+active chat defaults and diagnostics limits, channel configuration that exists
+only in the database, Console connectors, open Workspace drafts (as pending hub
+changes) and published versions not in Git, and typed secrets (B8). It then
+compares the folder with the database. The cleanup migration refuses to run
+while any populated table has no matching export, and says which.
 
-- `hz_run_identities.legacy` marks runs moved from Open WebUI whose owner
-  couldn't be proven. Dropping it would lose that audit fact.
-- `hz_identity_attrs` holds per-hub attributes of a person that workflows read
-  (`hubzoid/workflows/context.py`). Only tests write it today. It is decided
-  with C4.
+**C3. Later, as separate changes** (not needed for one run mode or one home):
 
-**C3. The per-hub `hub.db`.** Behind a gateway it holds one table: WhatsApp
-and Telegram history (`hz_inbound_history`). Moving that into the operational
-store, keyed by hub, leaves each hub with the deployment's store and its own
-DBOS file. A one-hub deployment already uses one file for both, so nothing
-changes there. The 1.x history is copied once at the first start.
+- Parity tooling (`hz_parity_*`, `hubzoid/parity/`, the Settings tab):
+  internal release tooling. A small follow-up change removes it from the
+  package.
+- `hz_shares`, pre-2.0 read-only links: the Open WebUI importer still writes
+  them (`hubzoid/migrate_openwebui.py`) and a reader keeps them working. They
+  go when the importer converts them to 2.0 links.
+- Inbound history out of `hub.db` into the shared store.
+- **Identities.** `hz_users` (the account), `hz_user_identities` (company
+  sign-in bindings), `hz_directory_accounts` (directory bindings) and
+  `hz_identities` (the access subject: email, `owui_id`, which is now the
+  account id for 2.0 accounts, phone, pending) overlap. The target is one
+  account table, with phone and pending invitations on it, that the bindings
+  point at; `owui_id` becomes `account_id`. This touches sign-in and access in
+  about a dozen modules, so it comes after the 2.0 launch with its own proof
+  (open question 5).
+- Kept on purpose: `hz_run_identities.legacy` marks runs moved from Open WebUI
+  whose owner couldn't be proven, an audit fact. `hz_identity_attrs` holds
+  per-hub attributes of a person that workflows read
+  (`hubzoid/workflows/context.py`); only tests write it today, and it is
+  decided with the identity work.
 
-**C4. Identities: one account table, then sign-in bindings.** Today:
-
-- `hz_users`: the account (email, password, role, status).
-- `hz_user_identities`: company sign-in bindings (issuer and subject).
-- `hz_directory_accounts`: directory provisioning (SCIM) bindings.
-- `hz_identities`: the access subject, with email, `owui_id` (now the account
-  id for 2.0 accounts), phone and a pending flag. This overlaps `hz_users`.
-- `hz_identity_attrs`: see C2.
-
-The target: `hz_users` is the one account table, with the phone and pending
-invitations on it, and the two binding tables point at it. `hz_identities` is
-folded into it and `owui_id` is renamed `account_id` on the way.
-
-This touches sign-in and access in about a dozen modules. Recommendation: do it
-**after** the 2.0 launch, as its own migration with its own proof, not in this
-work (open question 5). This work renames nothing in identity.
-
-**C5. How the migrations run.**
+**C4. How the migrations run.**
 
 - New tables and columns come in add-only migrations. One forward cleanup
-  migration at the end of this work drops what C1 lists, with
-  `DROP … IF EXISTS`, so 2.0 development databases that have them and 1.3.2
-  databases that never had some both arrive at the same head.
-- Migrations `op_0020` to `op_0071` stay as they are, because development
-  databases have run them. No revision id is ever reused (lesson F11).
-- Before the cleanup runs, any data that has a new home is moved or the start
-  stops: Console connectors (B5) and 1.x inbound history (C3). Pre-2.0 share
-  links are counted and dropped (C1).
-- Tests upgrade a 1.3.2 database and a 2.0 development database (the reference
-  copy, stamped `op_0071`) to the new head on SQLite and PostgreSQL, and check
-  that people, chats, access, approvals and runs survive.
+  migration at the end drops what C1 lists, with `DROP … IF EXISTS`, so 2.0
+  development databases and 1.3.2 databases (which never had most of them)
+  reach the same head.
+- Migrations `op_0020` to `op_0071` stay exactly as they are, because
+  development databases have run them. No revision id is ever reused (F11).
+- The supervisor runs migrations once before starting any child (A3), during
+  the offline cutover (A9).
+- Tests upgrade a 1.3.2 database and the 2.0 reference copy (stamped
+  `op_0071`) to the new head on SQLite and PostgreSQL, and check that people,
+  chats, access, approvals, runs and the exported settings survive. They also
+  stop the cleanup half way and check that a second start finishes it.
 
 ## Scope and non-goals
 
 - No change to a hub's required files. Every new file is optional.
-- No hosting-provider work (Railway, Maritime). One container running
-  `hubzoid run` makes it simpler later.
+- No hosting-provider work (Railway, Maritime), and no several-hub hosted
+  containers (`HUBZOID_DATA_DIR` stays one hub).
 - No new Settings screens. Brand, chat defaults, connectors, channels and cards
-  become read-only views; instruction edits use the existing hub changes card.
+  become read-only views; instruction edits use the existing hub changes card;
+  the channel grant uses the existing grants screen.
+- No in-place runtime generations (A5) and no file watcher.
+- No new webhook address shape (A6).
 - Not merging the stores of hubs that were run apart (`hubzoid deployment
   add`, A9).
 - Not moving 1.x Slack, WhatsApp, Telegram or webhook users to 2.0 channel
   connections (A6).
-- Not the identity merge (C4), unless the founder wants it now.
-- No file watcher, and no separate units per hub (open question 4).
+- Not the C3 items.
+- No separate units per hub (open question 4).
 - Model defaults don't change: `claude-local` uses Claude Code's default and
   `codex-local` uses Codex's.
 
 ## Open questions for the founder
 
-1. **Secrets:** `.env` and the host's environment only (B8 a), or keep the
-   encrypted store as it is, narrowed (B8 b, recommended for now)?
+1. **Secrets:** split by kind (B8 c, recommended: typed keys only in `.env`,
+   the store only for keys Hubzoid obtains itself), `.env` only (B8 a), or keep
+   the store as it is (B8 b)?
 2. **The deployment file:** `hubzoid.yaml` in the deployment folder
    (recommended: short and easy to find, next to the hub folders it lists), or
    another name or place (`deployment.yaml`, inside `.hubzoid/`)?
 3. **`admin.yaml`:** file-only as `diagnostics:` in the deployment file
    (recommended), or keep its plan and apply step?
-4. **Separate units per hub:** leave them out of this release (recommended:
-   `hubzoid restart` covers the need and it is one code path), or ship
-   `hubzoid@<hub>.service` and an edge unit as well?
-5. **Identity merge (C4):** after launch as its own change (recommended), or
+4. **Separate units per hub:** leave them out (recommended: `hubzoid restart`
+   covers the need and it is one code path), or ship `hubzoid@<hub>.service`
+   and an edge unit as well?
+5. **Identity merge (C3):** after launch as its own change (recommended), or
    in this work?
 
 ## Definition of done
@@ -607,27 +756,41 @@ work (open question 5). This work renames nothing in identity.
 - With 11 hubs running, `hubzoid restart` on 2 of them while chats stream on
   the other 9: the 9 streams finish, the 2 hubs drain and come back, and
   nothing else restarts.
-- A killed bridge comes back on its own. Its routes answer "restarting"
-  meanwhile, and the other agents keep answering.
+- A killed bridge comes back on its own. Its routes answer 503 meanwhile,
+  never another agent's answer, and the other agents keep answering.
 - A broken `tools_local` file fails only its hub, which is marked failed with
   the reason, while the others serve.
 - A restart during a waiting approval and during a running workflow: both
-  resume.
+  resume. An upgrade lists waiting runs first.
+- A reply cut by the grace deadline ends as interrupted with its partial text,
+  and the next queued message waits.
+- A 1.x WhatsApp or Telegram delivery acknowledged just before a restart is
+  still answered.
 - A channel webhook round trip on the shared port, turned on by a file alone.
-- `hubzoid status`, `reload`, `logs`, `stop` and `start` work, and status
-  says when a restart is needed.
-- Brand, chat defaults, connectors, channels and cards each come from one file,
-  Settings shows them read-only, and the C1 tables are gone after the cleanup
-  migration.
-- The five bugs in the Problem have regression tests that run on the one code
-  path.
+- `hubzoid status`, `reload`, `logs`, `stop` and `start` work; status says
+  when a reload is needed; `reload` refuses an invalid folder.
+- Brand, chat defaults, connectors, channels and cards each come from one
+  file, Settings shows them read-only, and the C1 tables are gone after the
+  cleanup migration, with every populated row exported first.
+- The five bugs in the Problem, and the route pinning in A3, have regression
+  tests that run on the one code path.
 - Upgrades from 1.3.2 and from the 2.0 reference copy keep people, chats,
-  access, approvals and runs.
+  access, approvals, runs and settings.
+- The DBOS ownership-loss acceptance test
+  (`tests/test_postgres_acceptance.py::test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable`)
+  passes unchanged. Skipped and timed-out checks are listed, not counted as
+  passes.
 
 ## Proof
 
-On the reference copy (all 11 hubs, 8 GB machine), in the browser, saved with
-screenshots to `HubzoidAgent/factory/one-run-mode/proof.html`:
+Automated, marked `slow` (they start subprocesses): supervisor restart with
+backoff and the failed state; drain admission on each producer; the grace
+deadline; supervisor death (no orphans); edge death and restart; two control
+commands at once; repeated reloads; route pinning with the first hub down;
+cleanup interrupted half way.
+
+On the reference copy (all 11 hubs, the 8 GB machine), in the browser, with
+screenshots, saved to `HubzoidAgent/factory/one-run-mode/proof.html`:
 
 - the same checks in a one-hub and an 11-hub shape;
 - restart 2 hubs while chats stream on the other 9;
@@ -635,4 +798,39 @@ screenshots to `HubzoidAgent/factory/one-run-mode/proof.html`:
 - restart during a waiting approval and during a running workflow, and check
   both resume;
 - break one hub's `tools_local` and check only that hub fails;
-- a channel webhook round trip on the shared port.
+- a channel webhook round trip on the shared port, and a generic webhook
+  acknowledged just before a restart;
+- memory of every process at start and after an hour of use, compared with
+  today's gateway, plus any SQLite lock errors and restart times.
+
+Not provable on the copy, and said so on the page: real Slack, WhatsApp and
+Telegram traffic (its secrets are blanked), and a live production upgrade.
+
+## The Codex review and what changed
+
+Codex (gpt-6.1-sol, high) reviewed revision 2 on 20 Oct and raised 24
+findings. Each was checked against the code; all held. The main changes:
+
+- Upgrade steps: `ENABLE_SIGNUP` and `WEBUI_NAME` are still read, so they are
+  moved, not deleted; values move as they are (A9).
+- A broken deployment file no longer falls back to defaults, which would have
+  turned sharing on or dropped required terms (B).
+- `allowed_groups` is a gate, not a label: it becomes a grant, never widened
+  silently (B9).
+- Every database-only setting is exported before the cleanup, which refuses
+  to run otherwise (C2); the cutover is offline with migrations run once (A9,
+  A3).
+- State never moves; several-hub `HUBZOID_DATA_DIR` is dropped (A2).
+- Inbound history, `hz_shares` and parity are deferred (C3); card revisions are
+  kept as an authorization record (B7).
+- The edge pins hub routes and fails over only deployment-wide ones (A3).
+- Drain is one admission barrier across every producer, with an order for 1.x
+  channels and an honest limit for 1.x deliveries (A4).
+- Reload is a checked restart of one hub instead of in-place runtime
+  generations, which the code doesn't provide today (A5).
+- Restarts on the same code resume workflows; an upgrade cancels waiting runs
+  by design, and the steps say so (A4).
+- Connectors are deployment-owned, matching their database identity (B5).
+- The secrets recommendation changes to a split by kind that keeps one home
+  per name (B8).
+- A precedence table, a control-socket contract, and a larger proof.
