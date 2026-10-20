@@ -2907,10 +2907,10 @@
   .hz-bar-pct { font-weight: 600; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
   .hz-bar-pct.is-warn { color: var(--hz-warning); }
   .hz-bar-pct.is-bad { color: var(--hz-danger); }
-  .hz-bar { display: block; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hz-ink) 13%, transparent); overflow: hidden; }
-  .hz-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--hz-ink); transition: width 240ms var(--hz-ease); }
-  .hz-bar.is-warn > span { background: var(--hz-warning); }
-  .hz-bar.is-bad > span { background: var(--hz-danger-solid); }
+  .hz-meter { display: block; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hz-ink) 13%, transparent); overflow: hidden; }
+  .hz-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--hz-ink); transition: width 240ms var(--hz-ease); }
+  .hz-meter.is-warn > span { background: var(--hz-warning); }
+  .hz-meter.is-bad > span { background: var(--hz-danger-solid); }
   .hz-limits { padding: 8px 12px 22px 56px; }
   .hz-limits-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 260px)); gap: 16px 24px; }
   .hz-limits-field { display: flex; flex-direction: column; gap: 6px; }
@@ -3349,8 +3349,8 @@
 .console-embed .hz-subtabs a[aria-current="page"], .console-embed .hz-agent-tabs > a[aria-current="page"],
 .console-embed .hz-subtabs a:hover, .console-embed .hz-agent-tabs > a:hover { color: var(--hz-ink); }
 .console-embed .hz-agent-tabs > a[aria-current="page"] { font-weight: 600; }
-.console-embed .hz-bar { height: 8px; min-height: 0; }
-.console-embed .hz-bar > span { height: 8px; }
+.console-embed .hz-meter { height: 8px; min-height: 0; }
+.console-embed .hz-meter > span { height: 8px; }
 .console-embed .row-chevron { color: var(--hz-mute); vertical-align: middle; }
 .console-embed tr.clickable:hover .row-chevron { color: var(--hz-ink); }
 .console-embed .row-name { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--hz-ink); text-align: left; cursor: pointer; }
@@ -3398,13 +3398,12 @@
 .hz-agents-filters button[aria-pressed="true"] { background: var(--hz-info-soft); color: var(--hz-info); }
 .hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-info); }
 .hz-usage-edit, .hz-inbox-detail-foot a { color: var(--hz-accent-text); }
-/* Usage meters only: the chat message bar shares the .hz-bar name. */
-.hz-bar[role="meter"] > span { background: var(--hz-accent); }
+.hz-meter > span { background: var(--hz-accent); }
 .hz-set-grouphead h1, .hz-agent-head h1, .hz-usage-head h2 { color: var(--hz-ink); }
 /* Accent tags use the information pair, whose contrast every palette checks
    (orange in the built-in palettes). Unscoped, so drawers and popups match. */
 .ant-tag.hz-tag-accent, .console-embed .ant-tag.hz-tag-accent {
   background: var(--hz-info-soft) !important; border-color: transparent !important; color: var(--hz-info) !important;
 }
-.hz-bar[role="meter"].is-warn > span { background: var(--hz-warning); }
-.hz-bar[role="meter"].is-bad > span { background: var(--hz-danger-solid); }
+.hz-meter.is-warn > span { background: var(--hz-warning); }
+.hz-meter.is-bad > span { background: var(--hz-danger-solid); }
