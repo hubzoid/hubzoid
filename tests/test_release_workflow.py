@@ -121,7 +121,7 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     unit = config["jobs"]["unit"]
     assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
     pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
-    assert pytest_runs == ["pytest -q --no-header -n auto --splits 2 --group ${{ matrix.group }}"]
+    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
@@ -132,7 +132,9 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
     assert ".[dev,postgres]" in install and "openwebui" not in install
     # Every test, heavy ones included: an excluded critical check is not a pass.
-    assert '-m ""' in suite and "-n auto" in suite and "--splits 2" in suite
+    assert '-m ""' in suite and "-n auto --dist loadfile" in suite and "--splits 2" in suite
+    # Without the server binaries the PostgreSQL acceptance tests skip: fail instead.
+    assert "command -v initdb && command -v pg_ctl" in install
     assert "heavy" not in suite and "--ignore=tests/test_workflow" not in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
     # Prerequisites must persist into the broad suite, not just one focused step.

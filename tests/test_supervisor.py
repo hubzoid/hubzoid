@@ -60,6 +60,34 @@ def _unit(name, **kw):
     return sup_lib.Unit(name=name, slug=name, specs=[sup_lib.Spec(["bridge", name], {})], **kw)
 
 
+def test_a_part_started_unit_keeps_and_stops_what_already_runs(tmp_path, started, monkeypatch):
+    """A stop or a failed spawn part-way through a unit (bridge, then its
+    channel) must not leave the processes already started unrecorded."""
+    unit = sup_lib.Unit(name="a", slug="a", specs=[sup_lib.Spec(["bridge", "a"], {}),
+                                                   sup_lib.Spec(["channel", "a"], {}, role="channel")])
+    sup = _sup(tmp_path, [unit])
+    real = sup_lib.subprocess.Popen
+
+    def second_fails(cmd, env=None, **kw):
+        if cmd[0] == "channel":
+            raise OSError("no such program")
+        return real(cmd, env=env, **kw)
+
+    monkeypatch.setattr(sup_lib.subprocess, "Popen", second_fails)
+    assert sup.launch(unit) is False
+    assert unit.procs == [] and started[0].signals  # the bridge was stopped, not leaked
+
+    def interrupted(cmd, env=None, **kw):
+        if cmd[0] == "channel":
+            raise SystemExit(0)  # SIGTERM arriving between the two spawns
+        return real(cmd, env=env, **kw)
+
+    monkeypatch.setattr(sup_lib.subprocess, "Popen", interrupted)
+    with pytest.raises(SystemExit):
+        sup.launch(unit)
+    assert unit.procs == [started[1]]  # recorded, so the caller's cleanup stops it
+
+
 def test_a_hub_that_exits_is_started_again_alone(tmp_path, started):
     a, b = _unit("a"), _unit("b")
     sup = _sup(tmp_path, [a, b])

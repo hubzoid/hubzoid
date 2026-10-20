@@ -59,6 +59,8 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Install with test tools
         run: pip install -e '.[dev,postgres]'
+      - name: PostgreSQL server tools are present (its acceptance tests skip without them)
+        run: command -v initdb && command -v pg_ctl
       - name: Real Codex tool isolation (local fake model, no provider credentials)
         if: matrix.group == 1
         run: |
@@ -77,7 +79,7 @@ jobs:
       - name: Test suite, part ${{ matrix.group }} of 2 (everything, in parallel)
         # The focused checks above already ran; the shards run all the rest.
         run: >-
-          pytest -q -ra --no-header -m "" -n auto --splits 2 --group ${{ matrix.group }}
+          pytest -q -ra --no-header -m "" -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
           --ignore=tests/test_ui_release_smoke.py
           --ignore=tests/test_gitzoid_followup.py
           --deselect=tests/test_codex_runtime.py::test_real_codex_has_only_hub_tools

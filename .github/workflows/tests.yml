@@ -38,7 +38,9 @@ jobs:
       - name: Every module compiles
         run: python -m compileall -q hubzoid
       - name: Fast tests, part ${{ matrix.group }} of 2 (SQLite; no browsers, live models or Docker)
-        run: pytest -q --no-header -n auto --splits 2 --group ${{ matrix.group }}
+        # --dist loadfile: a file's tests share one worker, so module fixtures
+        # (fixed ports, one live gateway) never run twice at once.
+        run: pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
 
   web-lint:
     runs-on: ubuntu-24.04

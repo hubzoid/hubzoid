@@ -76,8 +76,8 @@ adding or speeding up slow tests, refresh the timings with
 `pytest -m "" --store-durations`.
 
 ```bash
-pytest -q -n auto             # pull request and main
-pytest -q -m "" -n auto       # release: everything
+pytest -q -n auto --dist loadfile         # pull request and main
+pytest -q -m "" -n auto --dist loadfile   # release: everything
 pytest -q -m heavy            # the heavy tests pull-request CI leaves out
 (cd portal && npm ci && npm run lint)
 ```
