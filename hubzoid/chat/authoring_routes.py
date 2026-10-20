@@ -1,14 +1,8 @@
-"""Routes for Workspace authoring (``hubzoid.chat.authoring``).
+"""Routes for Workspace authoring (``hubzoid.chat.authoring``). Changes to the
+files are hub changes (``POST /api/hub-changes``), proposed and approved there.
 
   GET    /api/chat/authoring/files                       authorable hub files and their hashes
-  GET    /api/chat/authoring/files/versions?path=        published versions of one file
-  POST   /api/chat/authoring/drafts                      {path, content?} -> a draft (from the current file)
-  GET    /api/chat/authoring/drafts[/{id}]
-  PATCH  /api/chat/authoring/drafts/{id}                 {content, expected_revision}
-  POST   /api/chat/authoring/drafts/{id}/submit          {expected_revision} -> in review (valid only)
-  POST   /api/chat/authoring/drafts/{id}/review          {decision, digest, note?} (authoring.publish)
-  POST   /api/chat/authoring/drafts/{id}/publish         {digest} -> one atomic write; stale base refused
-  POST   /api/chat/authoring/rollbacks                   {path, version_id} -> a draft restoring that version
+  GET    /api/chat/authoring/files/versions?path=        one file's Git history
   POST   /api/chat/authoring/openapi/preview             {spec, selected?} -> operations; tools for the selected
   GET    /api/chat/prompts                               shared and your own prompts
   PUT    /api/chat/prompts/{id}                          {content, expected_revision}: your own prompt
@@ -66,72 +60,6 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, _ = await actor_of(request)
         await need(user, "authoring.draft")
         return {"items": await call(svc.versions, request.query_params.get("path") or "")}
-
-    @app.post(f"{A}/drafts", status_code=201)
-    async def create(request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.draft")
-        body = await er.read_json(request, er.MESSAGE_BODY_LIMIT)
-        writable()
-        return await call(svc.create_draft, actor, str(body.get("path") or ""), body.get("content"))
-
-    @app.get(f"{A}/drafts")
-    async def list_drafts(request: Request):
-        user, _ = await actor_of(request)
-        await need(user, "authoring.draft")
-        return {"items": await call(svc.list_drafts)}
-
-    @app.get(f"{A}/drafts/{{did}}")
-    async def get_draft(did: str, request: Request):
-        user, _ = await actor_of(request)
-        await need(user, "authoring.draft")
-        return await call(svc.get_draft, did)
-
-    @app.patch(f"{A}/drafts/{{did}}")
-    async def update(did: str, request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.draft")
-        body = await er.read_json(request, er.MESSAGE_BODY_LIMIT)
-        writable()
-        return await call(svc.update_draft, actor, did, str(body.get("content") or ""), body.get("expected_revision"))
-
-    @app.post(f"{A}/drafts/{{did}}/submit")
-    async def submit(did: str, request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.draft")
-        body = await er.read_json(request)
-        writable()
-        return await call(svc.submit, actor, did, body.get("expected_revision"))
-
-    @app.post(f"{A}/drafts/{{did}}/review")
-    async def review(did: str, request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.publish")
-        body = await er.read_json(request)
-        writable()
-        return await call(svc.review, actor, did, decision=str(body.get("decision") or ""),
-                          digest=str(body.get("digest") or ""), note=body.get("note"))
-
-    @app.post(f"{A}/drafts/{{did}}/publish")
-    async def publish(did: str, request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.publish")
-        body = await er.read_json(request)
-        writable()
-        out = await call(svc.publish, actor, did, str(body.get("digest") or ""))
-        from .authoring import kind_of
-
-        if kind_of(out["path"]) in ("agent", "skill"):
-            out["runtime_reloaded"] = await _reload_runtime(ctx)
-        return out
-
-    @app.post(f"{A}/rollbacks", status_code=201)
-    async def rollback(request: Request):
-        user, actor = await actor_of(request, True)
-        await need(user, "authoring.draft")
-        body = await er.read_json(request)
-        writable()
-        return await call(svc.rollback_draft, actor, str(body.get("path") or ""), str(body.get("version_id") or ""))
 
     @app.post(f"{A}/openapi/preview")
     async def openapi(request: Request):
