@@ -1035,12 +1035,14 @@ class ChatEngine:
     def run_state(self, run_id: str, branch_id: str, fence: int) -> str:
         """Whether a run may go on writing: ``ok``, ``cancel`` (a stop was
         recorded, possibly by another worker) or ``lost`` (its branch lease is
-        gone or now belongs to someone else: write nothing more)."""
+        gone, expired or now belongs to someone else: write nothing more; an
+        expired lease lets the branch be deleted or taken over)."""
         with self.engine.connect() as conn:
-            lease = conn.execute(sa.select(g.leases.c.run_id, g.leases.c.fence).where(
+            lease = conn.execute(sa.select(g.leases.c.run_id, g.leases.c.fence, g.leases.c.expires_at).where(
                 g.leases.c.branch_id == branch_id)).first()
             r = conn.execute(sa.select(g.runs.c.status, g.runs.c.cancel_requested).where(g.runs.c.id == run_id)).first()
-        if lease is None or lease.run_id != run_id or lease.fence != fence or r is None or r.status in g.TERMINAL_RUN:
+        if lease is None or lease.run_id != run_id or lease.fence != fence or lease.expires_at <= g.now() \
+                or r is None or r.status in g.TERMINAL_RUN:
             return "lost"
         return "cancel" if r.cancel_requested else "ok"
 

@@ -222,12 +222,15 @@ def _is_sqlite(path: Path) -> bool:
 
 def _people_files(rel: Path, root: Root) -> bool:
     """Under a folder of files that people attached or the agent made: a
-    conversation's folder (`.hubzoid/chats/<id>/`), the agent's `output`, and
-    Open WebUI's `uploads`. Their names are chosen by people and the agent."""
+    conversation's folder (`.hubzoid/chats/<id>/`), the chat's stored files
+    (`.hubzoid/files`, `.hubzoid/files-staging`), the agent's `output`, and
+    Open WebUI's `uploads`. Their names and bytes are chosen by people and the
+    agent."""
     first = rel.parts[:1]
     if root.kind == "ui":
         return first == ("uploads",)
-    return root.path.name == "output" or (root.path.name == ".hubzoid" and first == ("chats",))
+    return root.path.name == "output" or (root.path.name == ".hubzoid"
+                                          and first in (("chats",), ("files",), ("files-staging",)))
 
 
 def _credential(rel: Path, root: Root) -> bool:
@@ -316,7 +319,8 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
                 has_meta = target.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hz_meta'").fetchone()
                 if has_meta:
-                    target.execute("DELETE FROM hz_meta WHERE k='maintenance:hold'")
+                    target.execute("DELETE FROM hz_meta WHERE k='maintenance:hold' OR k LIKE ?",
+                                   (_HOLD_WAITING + "%",))
                     target.commit()
         finally:
             target.close()
@@ -324,14 +328,64 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
         source.close()
 
 
+# A run that just asked still posts its card and emails the person: it counts
+# as running until this long after it asked.
+PARKED_SETTLE_SECONDS = 300
+_HOLD_WAITING = "hold-waiting:"  # workflows.context.HOLD_WAITING
+_HOLD_MARK_MAX_AGE = 6 * 3600
+
+
+def _waiting_for_people(hub_dir: Path) -> set[str]:
+    """Runs parked until a person decides: a pending approval or question, or
+    work waiting for input or an approval, asked at least
+    ``PARKED_SETTLE_SECONDS`` ago. They write nothing until then (a decision
+    that arrives during the backup waits out its hold) and may wait for
+    days, so a backup does not wait for them. Read with plain SQL; a store
+    without those tables has none."""
+    import sqlalchemy as sa
+
+    from . import db
+
+    out: set[str] = set()
+    cutoff = time.time() - PARKED_SETTLE_SECONDS
+    engine = None
+    try:
+        engine = sa.create_engine(db.sqlalchemy_url(db.operational_url(hub_dir)))
+        with engine.connect() as conn:
+            for sql in ("SELECT workflow_id FROM hz_hitl_requests WHERE status = 'pending' AND created_at <= :c",
+                        "SELECT workflow_id FROM hz_work_items WHERE state IN ('waiting', 'needs_input') "
+                        "AND updated <= :c"):
+                try:
+                    out |= {r[0] for r in conn.execute(sa.text(sql), {"c": cutoff}) if r[0]}
+                except Exception:  # noqa: BLE001 - an older store without the table
+                    conn.rollback()
+            # Woken by a decision, waiting out this backup's hold. A mark left
+            # by a process that died is ignored once it is older than any hold.
+            try:
+                for k, v in conn.execute(sa.text("SELECT k, v FROM hz_meta WHERE k LIKE :p"),
+                                         {"p": _HOLD_WAITING + "%"}):
+                    if float((json.loads(v or "{}") or {}).get("at") or 0) >= time.time() - _HOLD_MARK_MAX_AGE:
+                        out.add(k[len(_HOLD_WAITING):])
+            except Exception:  # noqa: BLE001
+                conn.rollback()
+    except Exception:  # noqa: BLE001 - unknown: the backup waits for every run
+        log.warning("backup: could not read what waits for people in %s", hub_dir, exc_info=True)
+    finally:
+        if engine is not None:
+            engine.dispose()
+    return out
+
+
 def running_runs(p: Plan, unknown: list[str] | None = None) -> list[str]:
-    """Scheduled runs that are queued or running, across the deployment. A hub
-    whose run history cannot be read (for example a DBOS database from an older
-    release, before the upgrade) is added to `unknown` instead."""
+    """Scheduled runs that are queued or running, across the deployment, not
+    counting runs parked until a person decides. A hub whose run history cannot
+    be read (for example a DBOS database from an older release, before the
+    upgrade) is added to `unknown` instead."""
     from dbos import DBOSClient
 
     from .workflows.runtime import _app_name
 
+    paths = {path.name: path for _key, path in p.hubs}
     busy: list[str] = []
     for hub_name, url in p.dbos:
         path = _sqlite_path(url)
@@ -350,7 +404,8 @@ def running_runs(p: Plan, unknown: list[str] | None = None) -> list[str]:
             if unknown is not None and hub_name not in unknown:
                 unknown.append(hub_name)
             continue
-        busy += [f"{hub_name}: {r.workflow_id}" for r in rows]
+        parked = _waiting_for_people(paths[hub_name]) if rows and hub_name in paths else set()
+        busy += [f"{hub_name}: {r.workflow_id}" for r in rows if r.workflow_id not in parked]
     return sorted(set(busy))
 
 
@@ -523,12 +578,26 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
             for root in p.roots:
                 for path, rel in _files(root, include_secrets, exclude, p.exclude_dirs):
                     arc = f"{root.id}/{rel.as_posix()}"
-                    if path.resolve() in p.sqlite_paths and not _is_sqlite(path):
+                    known = path.resolve() in p.sqlite_paths
+                    if known and not _is_sqlite(path):
                         raise BackupError(f"{path} is a database this deployment uses, but it is not a "
                                           "readable SQLite file. Check it before backing up.")
-                    if _is_sqlite(path):
+                    # A file people attached is saved as its bytes, whatever it
+                    # starts with: only a database is copied through SQLite.
+                    copy = None
+                    if known or (_is_sqlite(path) and not _people_files(rel, root)):
                         copy = Path(tmp) / f"{len(index['sqlite'])}.db"
-                        _snapshot(path, copy, drop_hold=path.resolve() in p.operational_paths)
+                        try:
+                            _snapshot(path, copy, drop_hold=path.resolve() in p.operational_paths)
+                        except sqlite3.DatabaseError as exc:
+                            copy.unlink(missing_ok=True)
+                            if known:
+                                raise BackupError(f"{path} could not be copied as a database ({exc}). "
+                                                  "Check it before backing up.") from exc
+                            log.warning("backup: %s starts like a SQLite database but is not one; saved as "
+                                        "a file", path)
+                            copy = None
+                    if copy is not None:
                         index["files"][arc] = _sha256(copy)
                         tar.add(copy, arcname=arc)
                         copy.unlink()

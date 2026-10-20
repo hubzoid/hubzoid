@@ -26,6 +26,21 @@ OP_STATES = ("pending", "awaiting_approval", "sending", "succeeded", "failed_bef
              "rejected", "ambiguous", "resolved_done", "abandoned")
 OP_UNRESOLVED = ("sending", "ambiguous")
 
+
+def unresolved(op: dict) -> bool:
+    """Whether an operation's outcome must be decided before its work runs
+    again: an uncertain one, or one being sent. A safe-to-resend operation
+    (``idempotent``, ``provider_key``) whose last attempt ended with an
+    unknown outcome is not: no attempt is in flight, and running the stage
+    again sends it through its recovery class (a provider key's window, the
+    approval gate), which turns it uncertain when a resend is not safe."""
+    if op["state"] not in OP_UNRESOLVED:
+        return False
+    if op["state"] == "ambiguous":
+        return True
+    last = (op.get("attempts_json") or [{}])[-1]
+    return not (op.get("recovery") in ("idempotent", "provider_key") and last.get("state") == "unknown")
+
 _ITEM_JSON = ("route_json", "input_json", "result_json", "origin_json", "counters_json", "inbox_json")
 _OP_JSON = ("target_json", "approval_json", "attempts_json", "result_json", "evidence_json",
             "resolution_json")

@@ -443,6 +443,39 @@ def test_interrupted_run_is_not_rerun(client):
     assert branch_of(client, cid, b["id"])["queue_paused"]
 
 
+def test_a_failed_lease_renewal_keeps_the_heartbeat_and_an_expired_lease_fences(client, monkeypatch):
+    import sqlalchemy as sa
+
+    from hubzoid.chat import engine_routes, graph
+
+    monkeypatch.setattr(engine_routes, "HEARTBEAT_SECONDS", 1.0)
+    monkeypatch.setattr(graph, "LEASE_SECONDS", 3.0)
+    real, calls = graph.renew_lease, []
+
+    def flaky(*a, **kw):
+        calls.append(1)
+        if len(calls) == 1:  # one dropped connection
+            raise sa.exc.OperationalError("UPDATE hz_chat_branch_leases", {}, Exception("connection closed"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(graph, "renew_lease", flaky)
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "30")  # still writing throughout
+    cid, b = new_conv(client)
+    first = send(client, cid, "slow", b)
+    eng = client.app.state.chat.engine
+    deadline = time.monotonic() + 20
+    while len(calls) < 2 and time.monotonic() < deadline:
+        time.sleep(0.2)
+    beat = client.app.state.chat.orchestrator._beat
+    assert len(calls) >= 2 and not beat.done()  # renewed again after the failure
+    assert eng.run_state(first["run_id"], b["id"], 1) == "ok"
+    deleted = client.request("DELETE", f"/api/conversations/{cid}", headers=ORIGIN, json={})
+    assert deleted.status_code == 409, deleted.text  # still busy: its lease is held
+    with eng.engine.begin() as conn:
+        conn.execute(graph.leases.update().where(graph.leases.c.run_id == first["run_id"]).values(expires_at=1))
+    assert eng.run_state(first["run_id"], b["id"], 1) == "lost"  # an expired lease writes nothing more
+
+
 def test_branch_binds_native_session_and_invalidates(client, monkeypatch):
     """B038: a branch resumes the runtime's own session for its next turn; an
     edit or regeneration (a new branch) and a failed run start from full history."""

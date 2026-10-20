@@ -120,11 +120,29 @@ def test_revisions_guard_concurrent_changes(hub):
 
 
 @pytest.mark.parametrize("name", ["HUBZOID_SECRET_KEY", "DATABASE_URL", "BRIDGE_API_KEYS", "AWS_SECRET_ACCESS_KEY",
-                                  "WEBUI_SECRET_KEY", "GOOGLE_CLIENT_SECRET", "PATH", "HUBZOID_SMTP_PASSWORD"])
+                                  "WEBUI_SECRET_KEY", "GOOGLE_CLIENT_SECRET", "PATH", "HUBZOID_SMTP_PASSWORD",
+                                  # process control and where model keys go: every subprocess inherits them
+                                  "GIT_CONFIG_KEY_0", "GIT_SSH_COMMAND", "BASH_ENV", "PYTHONWARNINGS",
+                                  "https_proxy", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL",
+                                  "CLAUDE_CODE_USE_BEDROCK"])
 def test_bootstrap_and_operator_names_are_refused(hub, name):
     with pytest.raises(SecretError) as exc:
         put(hub, name)
     assert exc.value.code == "validation_failed" and "operator" in exc.value.message
+
+
+def test_a_claude_subscription_token_can_be_stored(hub):
+    assert put(hub, "CLAUDE_CODE_OAUTH_TOKEN")
+
+
+def test_a_process_control_name_stored_earlier_never_joins_the_environment(hub, monkeypatch):
+    from hubzoid.secretstore import names
+
+    with monkeypatch.context() as m:
+        m.setattr(names, "operator_only", lambda name: False)
+        put(hub, "GIT_CONFIG_COUNT", "1")
+    start_bridge(hub)
+    assert "GIT_CONFIG_COUNT" not in os.environ
 
 
 def test_blank_values_and_restricted_deployment_secrets_are_refused(hub):
@@ -202,6 +220,14 @@ def test_an_azure_key_is_not_sent_to_a_changed_endpoint(hub, monkeypatch):
         resolve("secret:hub/deskhub/AZURE_API_KEY", hub)
     assert exc.value.code == "secret_rebind" and "AZURE_API_BASE" in exc.value.message
     assert VALUE not in exc.value.message
+
+
+def test_a_stored_endpoint_never_redirects_an_operators_azure_key(hub, monkeypatch):
+    monkeypatch.setenv("AZURE_API_KEY", "operator-key")
+    put(hub, "AZURE_API_BASE", "https://elsewhere.example")
+    cs.clear_cache()
+    start_bridge(hub)
+    assert os.environ.get("AZURE_API_BASE") != "https://elsewhere.example"
 
 
 def test_references_resolve_only_this_hubs_secrets(hub):

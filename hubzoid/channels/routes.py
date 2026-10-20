@@ -220,10 +220,10 @@ def mount(app, hub_dir: Path, **_ctx) -> None:
                 raise ChannelError("validation_failed", "The channel configuration is not valid.", status=422,
                                    fields=v.errors).http()
             out = await call(config_lib.apply, hub_dir, v.data, expected_revision=expected, actor=p.email,
-                             text=body["text"], expected_id=cid)
+                             text=body["text"], expected_id=cid, any_secret=p.org_admin)
         else:
             out = await call(config_lib.apply, hub_dir, body.get("config") or {}, expected_revision=expected,
-                             actor=p.email, expected_id=cid)
+                             actor=p.email, expected_id=cid, any_secret=p.org_admin)
         await router_lib.reload_transports()
         router_lib.kick(hub_dir)
         return JSONResponse(out, status_code=201 if out["created"] else 200)

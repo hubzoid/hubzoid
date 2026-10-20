@@ -628,6 +628,7 @@ class Hub:
 
                 time.sleep(1.0)
             req = read(str(ctx.hub_dir), ctx.hub, req["id"])
+        _wait_out_hold(ctx.hub_dir, ctx.run_id or "")
         return req
 
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
@@ -681,6 +682,52 @@ def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
     from ..hitl import service
 
     return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
+
+
+# The hz_meta key a run waiting out a backup's hold leaves, so the backup
+# does not wait for it in turn (``backup._waiting_for_people``).
+HOLD_WAITING = "hold-waiting:"
+HOLD_WAIT_LIMIT = 1800
+
+
+def _wait_out_hold(hub_dir, run_id: str = "") -> None:
+    """A backup copies the hub's state without waiting for runs parked on a
+    person (``backup.running_runs``): one woken by a decision meanwhile waits
+    until the backup's hold ends (a hold expires on its own), marked so the
+    backup knows it is waiting too. A hold it cannot read is looked at again,
+    for at most ``HOLD_WAIT_LIMIT`` seconds without an answer. The mark is
+    always cleared on the way out, also when a recovered run replays this."""
+    import time
+
+    from ..access import store_for
+
+    key = f"{HOLD_WAITING}{run_id}" if run_id else None
+    marked = False
+    unreadable_since = None
+    try:
+        while True:
+            try:
+                st = store_for(Path(hub_dir))
+                if not st.schedule_hold():
+                    return
+                unreadable_since = None
+                if key and not marked:
+                    st.set_metadata(key, {"at": time.time()})
+                    marked = True
+            except Exception:  # noqa: BLE001 - cannot tell: look again shortly
+                unreadable_since = unreadable_since or time.monotonic()
+                if time.monotonic() - unreadable_since > HOLD_WAIT_LIMIT:
+                    log.warning("workflows: the backup hold for %s could not be read for %d s; carrying on",
+                                run_id or "a run", HOLD_WAIT_LIMIT)
+                    return
+                log.warning("workflows: could not read the backup hold; waiting", exc_info=True)
+            time.sleep(5.0)
+    finally:
+        if key:
+            try:
+                store_for(Path(hub_dir)).clear_metadata(key)
+            except Exception:  # noqa: BLE001 - the backup ignores an old mark
+                log.warning("workflows: could not clear %s", key, exc_info=True)
 
 
 def _hitl_receive(request_id: str) -> bool:

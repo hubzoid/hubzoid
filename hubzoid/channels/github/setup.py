@@ -265,7 +265,7 @@ def resolve_names(conn, names: list[str]) -> list[dict]:
 
 
 def configure(conn, *, expected_revision: int, actor: str, repositories_: list[str] | None = None,
-              sets: dict | None = None) -> dict:
+              sets: dict | None = None, any_secret: bool = True) -> dict:
     data = json.loads(json.dumps(config_lib.export(conn.hub_dir, conn.id)["config"]))
     if repositories_:
         data["provider_config"]["repositories"] = resolve_names(conn, repositories_)
@@ -275,7 +275,7 @@ def configure(conn, *, expected_revision: int, actor: str, repositories_: list[s
             target = target.setdefault(part, {})
         target[parts[-1]] = value
     return config_lib.apply(conn.hub_dir, data, expected_revision=expected_revision, actor=actor,
-                            expected_id=conn.id)
+                            expected_id=conn.id, any_secret=any_secret)
 
 
 def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], actor: str,

@@ -509,6 +509,33 @@ def test_label_trigger_starts_unattended_work(hub_dir, api, monkeypatch):
     assert item["route"] == "triage" and item["origin_json"]["requested_by"]["display"] == "ana"
 
 
+def test_review_chatter_after_unattended_work_starts_nothing(hub_dir, api, monkeypatch):
+    from hubzoid.work_items import service as wi
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(wi, "start", lambda hub_dir, item: item)
+    conn = app_conn(hub_dir)
+    pr = {"action": "opened", "repository": REPO, "installation": INSTALL,
+          "sender": {"id": 5, "login": "x", "type": "User"},
+          "pull_request": {"number": 12, "title": "Change", "body": "", "head": {"sha": "abc"},
+                           "base": {"sha": "def"}}}
+    deliver(conn, "pull_request", pr, delivery="d1")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "factory")[0], None)
+    thread = store.list_threads(hub_dir, "factory", "github")["items"][0]
+    first = thread["work_item_id"]
+    wstore.update_item(hub_dir, first, state="completed")
+    for n, text in enumerate(["LGTM", "nit: rename this"], start=1):
+        deliver(conn, "issue_comment", comment(text, number=12, cid=900 + n, pr=True), delivery=f"c{n}")
+        for row in store.open_deliveries(hub_dir, "factory"):
+            router._route_one(hub_dir, row, None)
+    assert store.get_thread(hub_dir, thread["id"])["work_item_id"] == first
+    # A member's mention is still a request.
+    deliver(conn, "issue_comment", comment("@acme-factory please rebase", number=12, cid=950, pr=True),
+            delivery="c9")
+    outcomes = [router._route_one(hub_dir, row, None)[0] for row in store.open_deliveries(hub_dir, "factory")]
+    assert outcomes == ["routed"] and store.get_thread(hub_dir, thread["id"])["work_item_id"] != first
+
+
 # -- review fixes -------------------------------------------------------------------------
 
 def _attended(monkeypatch, number=12, unattended=False):
@@ -617,3 +644,16 @@ def test_tools_follow_the_applied_connection_not_a_half_edited_file(hub_dir):
     (hub_dir / "channels").mkdir(exist_ok=True)
     (hub_dir / "channels" / "github.yaml").write_text("provider: github\n  broken: [\n")
     assert len(github_tools.make(SimpleNamespace(hub_dir=hub_dir))) == 31
+
+
+def test_a_hub_admin_cannot_point_github_at_another_secret_through_configure(hub_dir, api):
+    conn = app_conn(hub_dir)
+    with pytest.raises(ChannelError) as exc:
+        setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
+                        sets={"provider_config.webhook_secret_ref": "env:HUBZOID_SECRET_KEY"},  # gitleaks:allow
+                        any_secret=False)
+    assert exc.value.status == 403
+    # Its own settings, with its own secrets, still change.
+    out = setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
+                          sets={"provider_config.bot_name": "acme-bot"}, any_secret=False)
+    assert out["revision"] == conn.revision + 1

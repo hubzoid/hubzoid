@@ -402,6 +402,36 @@ def test_idempotent_resend_and_outcome_classes(hub_dir):
     assert failed.value.code == "operation_rejected" and "abc123secret" not in failed.value.message
 
 
+@pytest.mark.parametrize("recovery,extra", [("idempotent", {}), ("provider_key", {"provider_key_ttl": 60})])
+def test_a_timed_out_safe_resend_does_not_strand_its_work(hub_dir, monkeypatch, recovery, extra):
+    # A timeout leaves a safe-to-resend operation `sending` for its recovery
+    # class; the failed work can be restarted to send it again.
+    item = ops_item(hub_dir)
+    store.update_item(hub_dir, item["id"], state="running", execution=1, workflow_id="wi-x-e1")
+    item = store.get_item(hub_dir, item["id"])
+    with run_ctx(hub_dir, item):
+        with pytest.raises(TimeoutError):
+            operations.run(name="charge", target={"o": 1}, arguments={"a": 1}, recovery=recovery,
+                           actions="probe.call", dispatch=Sender(TimeoutError("read timed out")), **extra)
+    op = store.list_ops(hub_dir, "desk")[0]
+    assert op["state"] == "sending" and not store.unresolved(op)
+    service.finished(hub_dir, item["id"], "wi-x-e1", error=TimeoutError("read timed out"))
+    from hubzoid.work_items import engine as engine_lib
+
+    class Reached(Exception):
+        pass
+
+    def live(_hub_dir):
+        raise Reached  # past the unresolved-operation check
+
+    monkeypatch.setattr(engine_lib, "live", live)
+    with pytest.raises(Reached):
+        service.restart(hub_dir, item["id"], OWNER, reason="the provider timed out")
+    # An attempt still in flight (no outcome yet) still blocks.
+    in_flight = dict(op, attempts_json=[dict(op["attempts_json"][-1], state="sending")])
+    assert store.unresolved(in_flight)
+
+
 def test_resolution_race_and_late_result(hub_dir):
     send = Sender(TimeoutError("socket closed"))
     item = ops_item(hub_dir)

@@ -367,6 +367,60 @@ def test_mcp_servers_called_directly_are_gated(hub):
     assert calls == [] and "waiting" in out.content[0].text
 
 
+def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub, monkeypatch):
+    # The same rule, by the tool's own name, on the Agents SDK path and in
+    # Claude's PreToolUse hook (which sees mcp__<server>__<tool>).
+    import asyncio
+    from types import SimpleNamespace
+
+    from hubzoid.access import Identity, identity_scope
+    from hubzoid.hitl import gate
+
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  create_issue: {ask: always}\n"
+                                   "  mcp__erp__delete_order: {ask: always}\n")
+    calls = []
+
+    class Server:
+        name = "github"
+
+        async def list_tools(self):
+            return [SimpleNamespace(name="create_issue", annotations=None)]
+
+        async def call_tool(self, tool_name, arguments=None):
+            calls.append(tool_name)
+            return "done"
+
+    hook = gate.claude_hook(hub, "hubzoid")
+
+    def decision(tool_name, args):
+        out = asyncio.run(hook({"tool_name": tool_name, "tool_input": args}, "t1", None))
+        return (out.get("hookSpecificOutput") or {}).get("permissionDecision", "allow")
+
+    with identity_scope(Identity.make("ana@example.org", surface="web")):
+        sdk = asyncio.run(gate.guard_mcp_server(Server(), hub).call_tool("create_issue", {"title": "x"}))
+        assert calls == [] and "waiting" in sdk.content[0].text
+        assert decision("mcp__github__create_issue", {"title": "y"}) == "deny"
+        assert decision("mcp__erp__delete_order", {"id": 1}) == "deny"  # a full-name rule still applies
+        assert decision("mcp__github__list_issues", {}) == "allow"
+    assert gate.mcp_parts(hub, "mcp__github__create_issue") == ("github", "create_issue")
+    from types import SimpleNamespace as NS
+
+    from hubzoid.connectors import registry
+
+    # A personal connector whose id has __ in it.
+    monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme__github")])
+    assert gate.mcp_parts(hub, "mcp__my_acme__github__create_issue") == ("my_acme__github", "create_issue")
+    # Two connectors that could both own the name: the stricter rule decides.
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  delete__order: {ask: always}\n")
+    monkeypatch.setattr(registry, "list_all", lambda hub_dir: [NS(id="acme"), NS(id="acme__delete")])
+    with identity_scope(Identity.make("ana@example.org", surface="web")):
+        assert decision("mcp__my_acme__delete__order", {"id": 2}) == "deny"
+    # Equally strict, but only one may be allowed for good: the other decides.
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  order: {ask: always, allow_always: true}\n"
+                                   "  delete__order: {ask: always}\n")
+    assert gate.mcp_parts(hub, "mcp__my_acme__delete__order") == ("my_acme", "delete__order")
+
+
 def test_only_a_persons_session_decides_never_a_key():
     from types import SimpleNamespace
 

@@ -462,6 +462,27 @@ def test_a_dropped_read_is_retried_for_get_and_502_otherwise(monkeypatch):
         assert sent.status_code == 502 and calls[-1] == "POST" and calls.count("POST") == 1  # never sent twice
 
 
+def test_a_large_get_body_streams_once_instead_of_being_held(monkeypatch):
+    # Only a body within the retry limit is held for a resend: a larger one
+    # (nothing needs one on a GET) must not fill the edge's memory.
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    seen = []
+
+    async def upstream(request):
+        seen.append(len(await request.aread()))
+        raise httpx.ReadError("connection reset")
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1")
+    big = b"x" * (edge._RETRY_BODY_LIMIT + 1)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.request("GET", "/portal/assets/x.js", content=big)
+    assert got.status_code == 502 and seen == [len(big)]  # sent whole, once, never retried
+
+
 def test_a_get_behind_a_gateway_with_fallbacks_is_served_and_retried(monkeypatch):
     """A gateway's default route has fallback bridges: the body is read once
     (for a resend) and a dropped GET is retried, not a 'Stream consumed' 500."""

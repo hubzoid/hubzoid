@@ -174,6 +174,56 @@ def apply(hub_dir: Path, registry: dict, *, connector: str | None = None) -> dic
     return {name: wrap(ft, hub_dir, connector=connector) for name, ft in registry.items()}
 
 
+# How strict a rule is, to judge a name two servers could own by the stricter.
+_STRICTNESS = {"never": 0, "auto": 1, "writes": 2, "once": 2, "always": 3}
+
+
+def mcp_parts(hub_dir: Path, name: str) -> tuple[str | None, str]:
+    """``mcp__<server>__<tool>`` as ``(server, tool)``, the bare tool name the
+    other runtimes evaluate, so one hitl.yaml rule applies on all three. A
+    server key with ``__`` in it is matched against the hub's own servers and
+    its personal connectors'; when more than one split fits (servers ``acme``
+    and ``acme__delete``), the split whose rule is strictest is used. A rule
+    written with the full name still applies to that name."""
+    from . import config as cfglib
+
+    rest = name[len("mcp__"):] if name.startswith("mcp__") else name
+    try:
+        cfg = cfglib.load(hub_dir)
+    except Exception:  # noqa: BLE001 - an unreadable file asks for every tool anyway
+        cfg = None
+    first, _, after = rest.partition("__")
+    if cfg is not None and name in cfg.tools:
+        return first or None, name
+    candidates = [(first, after)]
+    if rest.count("__") > 1:  # which separator ends the server's key
+        servers: set[str] = set()
+        try:
+            from ..personal_mcp import _hub_server_keys
+
+            servers |= _hub_server_keys(hub_dir)
+        except Exception:  # noqa: BLE001 - fall back to the first separator
+            pass
+        try:  # the personal connectors' servers (my_<id>)
+            from ..connectors import per_user, registry
+
+            servers |= {per_user.server_key(c.id) for c in registry.list_all(hub_dir)}
+        except Exception:  # noqa: BLE001
+            pass
+        known = sorted((s for s in servers if rest.startswith(f"{s}__") and len(rest) > len(s) + 2),
+                       key=len, reverse=True)
+        candidates = [(s, rest[len(s) + 2:]) for s in known] + candidates
+    if cfg is not None and len(candidates) > 1:
+        def strictness(c):
+            rule = cfg.rule_for(c[1] or name, c[0])
+            return _STRICTNESS.get(rule.ask, 3), not rule.allow_always
+
+        server, tool = max(candidates, key=strictness)
+    else:
+        server, tool = candidates[0]
+    return server or None, tool or name
+
+
 def claude_hook(hub_dir: Path, hub_namespace: str):
     """A PreToolUse hook for MCP tools Claude calls directly (``mcp__<server>__<tool>``).
     Hub tools (the ``hub_namespace`` server) are already wrapped."""
@@ -183,10 +233,9 @@ def claude_hook(hub_dir: Path, hub_namespace: str):
         name = (tool_input or {}).get("tool_name") or ""
         if not name.startswith("mcp__") or name.startswith(f"mcp__{hub_namespace}__"):
             return {}
-        parts = name.split("__", 2)
-        connector = parts[1] if len(parts) == 3 else None
+        connector, tool = mcp_parts(hub_dir, name)
         args = (tool_input or {}).get("tool_input") or {}
-        verdict = await asyncio.to_thread(evaluate, hub_dir, name, args, connector=connector)
+        verdict = await asyncio.to_thread(evaluate, hub_dir, tool, args, connector=connector)
         if verdict.action == "allow":
             return {}
         if verdict.action == "ask":

@@ -383,6 +383,10 @@ class OpenAIAgentsRuntime:
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             self.last_error = exc
+            # The calls made before the failure (a turn or dollar cap, a
+            # provider error) are spent: budgets count them.
+            if result is not None:
+                _record_openai_usage(result, _agent_model_name(self._agent), status="error")
             _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
             detail = f"{type(exc).__name__}: {exc}"
             yield Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
@@ -395,6 +399,7 @@ class OpenAIAgentsRuntime:
                     result.cancel()
                 except Exception:  # noqa: BLE001 — best-effort
                     log.debug("could not cancel the agents run", exc_info=True)
+                _record_openai_usage(result, _agent_model_name(self._agent), status="cancelled")
             raise
 
     async def run(self, prompt: str) -> str:
@@ -587,7 +592,7 @@ def _agent_model_name(agent) -> str | None:
     return getattr(model, "model", None)
 
 
-def _record_openai_usage(result, model: str | None = None) -> None:
+def _record_openai_usage(result, model: str | None = None, *, status: str = "ok") -> None:
     """Surface the OpenAI Agents run's token usage for the usage envelope.
 
     `result.context_wrapper.usage` accumulates across the run. The OpenAI path
@@ -608,7 +613,7 @@ def _record_openai_usage(result, model: str | None = None) -> None:
             "cost_usd": None,
             "num_turns": getattr(usage, "requests", None),
             "model": model,
-            "status": "ok",
+            "status": status,
         })
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("openai usage capture skipped: %s", exc)
@@ -665,8 +670,12 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         try:
             await rt.aopen()
             with _request_ctx.chat_scope(None):
-                text = await run_events.answer_only(rt, prompt)
-                raw.update(_request_ctx.drain_usage())
+                try:
+                    text = await run_events.answer_only(rt, prompt)
+                finally:
+                    # Also when the deadline cuts the call off: the usage
+                    # carries its budget hold, which the row below settles.
+                    raw.update(_request_ctx.drain_usage())
                 failure = _request_ctx.run_failure() or {}
         finally:
             await rt.aclose()

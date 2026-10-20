@@ -775,6 +775,9 @@ def convert_local_owner(hub_dir: Path, *, email: str, password: str, name: str |
                           source="bootstrap", role="admin", status="active")
         if not done:
             raise KeyError(owner["id"])
+        # Keys and MCP grants anyone made as the local owner, with no sign-in,
+        # do not carry over to the account a person now signs in to.
+        st._revoke(conn, owner["id"], time.time(), credentials=True)  # noqa: SLF001
     gs.upsert_identity(email=email, owui_id=owner["id"], display=name or None)
     for hub, permission in held:
         gs.grant(email, hub, permission, actor="cli:bootstrap")

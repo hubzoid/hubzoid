@@ -128,6 +128,24 @@ def test_revoke_all_and_block_end_keys(hub):
     assert listed[0]["state"] == "revoked"
 
 
+def test_a_key_made_while_sign_in_was_off_stops_when_it_is_on(hub, monkeypatch):
+    # With sign-in off anyone who reached the server was the local owner and
+    # could make a key without proof; nobody can sign in as that owner later.
+    monkeypatch.setenv("HUBZOID_AUTH", "false")
+    sessions.reset_cache()
+    c = client(hub)
+    local = TestClient(c.app, base_url="http://localhost")
+    made = local.post("/api/me/api-keys", json={"name": "laptop", "preset": "all"},
+                      headers={"origin": "http://localhost"})
+    assert made.status_code == 201, made.text
+    key = made.json()["key"]
+    assert local.get("/api/chat/ping", headers=bearer(key)).status_code == 200
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    sessions.reset_cache()
+    hosted = TestClient(c.app, base_url="https://team.example.com")
+    assert hosted.get("/api/chat/ping", headers=bearer(key)).status_code == 401
+
+
 def test_revoke_one_key(hub):
     ana = person(hub)
     c = client(hub)

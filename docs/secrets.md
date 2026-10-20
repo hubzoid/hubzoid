@@ -80,7 +80,13 @@ The Secrets tab lists:
 
 Names an operator alone sets are never offered: database URLs, the deployment
 key, bridge keys, sign-in client secrets, `HUBZOID_*` settings and AWS
-credentials.
+credentials. Nor are names that steer the bridge's own programs or where its
+keys go, because a stored name joins the environment every subprocess
+inherits: `GIT_*`, `SSH_*`, `BASH_ENV`, `PYTHON*`, `NODE_*`, `CLAUDE_CODE_*`
+(except the `CLAUDE_CODE_OAUTH_TOKEN` names), proxies, CA bundles and the
+provider base URLs (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+`OPENAI_API_BASE`, `OPENROUTER_API_BASE`). One stored before this rule is
+left out at start and shown as overridden.
 
 ## Bound values
 

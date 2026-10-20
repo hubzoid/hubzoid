@@ -527,10 +527,12 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     from ..work_items.errors import WorkItemError
 
     person, reason = person_for(conn, event)
-    # An unattended trigger (a label by a verified collaborator, a new PR) or an
-    # actor the provider itself vouches for (a repository member) runs under the
-    # workflow's own identity, with the verified actor recorded as who asked.
-    unattended = bool(event.data.get("unattended")) or (person is None and bool(event.data.get("provider_trusted")))
+    # An unattended trigger (a label by a verified collaborator, a new PR) or a
+    # direct request by an actor the provider itself vouches for (a repository
+    # member's mention) runs under the workflow's own identity, with the
+    # verified actor recorded as who asked. A passing remark never starts work.
+    unattended = bool(event.data.get("unattended")) or (
+        person is None and event.trigger and bool(event.data.get("provider_trusted")))
     if person is None and not unattended:
         return _deny(hub_dir, conn, row, thread, event, reason)
     if person is not None and not unattended and not _groups_ok(conn, person.email):
@@ -585,8 +587,11 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
             store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
             return "waiting", None
         raise ChannelError(exc.code, exc.message, status=exc.status) from exc
+    # Follow-ups without a mention continue a person's request; work nobody
+    # asked for in words (a new PR, a label) leaves the thread as it was.
+    subscribe = conn.config.subscriptions == "on_accept" and not unattended
     store.update_thread(hub_dir, thread["id"], work_item_id=item["id"],
-                        subscribed=1 if conn.config.subscriptions == "on_accept" else thread.get("subscribed", 0),
+                        subscribed=1 if subscribe else thread.get("subscribed", 0),
                         requester=thread.get("requester") or requester)
     _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=item["id"], account=requester)
     if created:

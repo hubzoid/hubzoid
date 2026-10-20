@@ -294,8 +294,7 @@ def operator_retry(hub_dir, item_id: str, call_id: str, actor: str, *, clarifica
                            "retry. Wait until it stops.", call_id, retryable=False)
     if not isinstance(clarification, str) or not clarification.strip():
         raise WorkItemError("validation_failed", "Say what the agent should do differently.", status=422)
-    unresolved = [o for o in wi_store.list_ops(hub_dir, item["hub"], item_id=item_id)
-                  if o["state"] in wi_store.OP_UNRESOLVED]
+    unresolved = [o for o in wi_store.list_ops(hub_dir, item["hub"], item_id=item_id) if wi_store.unresolved(o)]
     if unresolved:
         raise WorkItemError("operation_unresolved", "An operation's outcome is still unknown. Resolve it "
                             "before retrying.", status=409, operation_id=unresolved[0]["id"])

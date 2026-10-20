@@ -90,6 +90,31 @@ def test_secret_ref_grammar(hub_dir):
     assert not other_hub.valid and not other_channel.valid and not garbage.valid
 
 
+def test_a_hub_admin_names_only_the_connections_own_secrets(hub_dir):
+    # A reference decides which value the connection sends to its host: a hub
+    # administrator can't point it at the deployment's environment or secrets.
+    for ref in ("env:HUBZOID_SECRET_KEY", "secret:deployment/model-key", "secret:hub/desk/model-key"):
+        v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": ref}))
+        assert v.valid, v.errors
+        with pytest.raises(ChannelError) as exc:
+            config.apply(hub_dir, v.data, expected_revision="absent", actor="hub-admin", any_secret=False)
+        assert exc.value.status == 403 and exc.value.extra["fields"][0]["field"] == "/provider_config/secret_ref"
+    own = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/desk/fake-main/sig"}))
+    config.apply(hub_dir, own.data, expected_revision="absent", actor="hub-admin", any_secret=False)
+    # An organization administrator's choice stays when a hub admin pauses the
+    # connection, but its provider settings (where the value goes) stay theirs.
+    chosen = config.load_text(hub_dir, yaml_for())
+    config.apply(hub_dir, chosen.data, expected_revision=1, actor="org-admin", any_secret=True)
+    paused = config.load_text(hub_dir, yaml_for(enabled=False))
+    out = config.apply(hub_dir, paused.data, expected_revision=2, actor="hub-admin", any_secret=False)
+    assert out["revision"] == 3
+    moved = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "env:FAKE_CHANNEL_SECRET",
+                                                                "workspace": "elsewhere"}))
+    with pytest.raises(ChannelError) as exc:
+        config.apply(hub_dir, moved.data, expected_revision=3, actor="hub-admin", any_secret=False)
+    assert exc.value.status == 403
+
+
 def test_apply_writes_file_and_checks_revision(hub_dir):
     conn = applied(hub_dir)
     assert conn.revision == 1 and conn.enabled
