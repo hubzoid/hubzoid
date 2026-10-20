@@ -99,7 +99,9 @@ class BrandingService:
             tmp = target.with_suffix(f".{os.getpid()}.tmp")
             tmp.write_bytes(checked.data)
             tmp.replace(target)
-            (self.asset_dir / f"{key}.type").write_text(checked.media_type)
+        kind = self.asset_dir / f"{key}.type"
+        if not kind.exists():   # files kept by the database-era store have no type beside them
+            kind.write_text(checked.media_type)
         return {"digest": dig, "media_type": checked.media_type, "size": len(checked.data),
                 "width": checked.width, "height": checked.height, "extension": checked.extension}
 

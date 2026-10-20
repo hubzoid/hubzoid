@@ -124,6 +124,19 @@ def test_activate_then_public_manifest_and_assets(client):
     assert body["manifest"]["assets"]["icon_192"]  # generated from the raster favicon
 
 
+
+def test_asset_files_kept_from_the_database_era_are_served(hub, client):
+    """An upgraded deployment already has the asset files, without the media
+    type beside each one; they must still be served."""
+    publish(client)
+    client.get("/api/branding")               # stores the files
+    for kind in hub.rglob("branding/assets/*.type"):
+        kind.unlink()
+    publish(client, conf={**CONF, "identity": {**CONF["identity"], "description": "again"}})
+    body = client.get("/api/branding").json()
+    icon = client.get(body["manifest"]["assets"]["icon_192"])
+    assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
+
 def test_install_manifest_follows_active_brand(client):
     assert client.get("/manifest.webmanifest").json()["name"] == "Hubzoid"
     publish(client)
