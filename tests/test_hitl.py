@@ -367,6 +367,44 @@ def test_mcp_servers_called_directly_are_gated(hub):
     assert calls == [] and "waiting" in out.content[0].text
 
 
+def test_ask_writes_on_claude_reads_the_servers_hint_and_a_stopped_run_asks_nobody(hub):
+    """Claude parity with the other runtimes: ``ask: writes`` runs a read-only
+    tool without asking, and a stopped run's step is refused before the
+    approval hook could raise a card (the CLI runs hooks in parallel)."""
+    import asyncio
+
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+
+    from hubzoid import factory_claude
+    from hubzoid.access import Identity, identity_scope
+    from hubzoid.hitl import gate, service
+
+    (hub / "hitl.yaml").write_text("version: 1\nconnectors:\n  crm: {ask: writes}\n")
+
+    async def hint(server, tool):
+        return {"crm": {"lookup": True, "log_contact": False}}.get(server, {}).get(tool)
+
+    hook = gate.claude_hook(hub, "hubzoid", read_only=hint)
+
+    def decide(h, tool):
+        out = asyncio.run(h({"tool_name": f"mcp__crm__{tool}", "tool_input": {}}, "t1", None))
+        return (out.get("hookSpecificOutput") or {}).get("permissionDecision", "allow")
+
+    def requests():
+        return service.list_for(hub, gate.hub_id_of(hub), "ana@example.org", "ana@example.org")
+
+    with identity_scope(Identity.make("ana@example.org", surface="web")):
+        assert decide(hook, "lookup") == "allow"
+        assert decide(hook, "log_contact") == "deny" and len(requests()) == 1
+        options = ClaudeAgentOptions(hooks={"PreToolUse": [HookMatcher(hooks=[hook])]})
+        stopped = factory_claude._in_order(factory_claude._guarded(options, lambda: False))
+        assert len(stopped.hooks["PreToolUse"]) == 1
+        assert decide(stopped.hooks["PreToolUse"][0].hooks[0], "log_contact") == "deny"
+        assert len(requests()) == 1  # no second card for the stopped run
+        running = factory_claude._in_order(factory_claude._guarded(options, lambda: True))
+        assert decide(running.hooks["PreToolUse"][0].hooks[0], "lookup") == "allow"
+
+
 def test_a_tool_rule_on_an_mcp_tool_asks_on_claude_too(hub, monkeypatch):
     # The same rule, by the tool's own name, on the Agents SDK path and in
     # Claude's PreToolUse hook (which sees mcp__<server>__<tool>).

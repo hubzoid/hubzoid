@@ -106,7 +106,7 @@ class CodexRuntime:
     def __init__(self, *, name, instructions, registry, model_setting="codex-local",
                  hub_dir=None, max_turns=20, tool_mode="compact", mcp_servers=None,
                  vision=(True, 1568, 4), effort=None, personal_mcp=False, output_schema=None,
-                 turn_timeout=600):
+                 turn_timeout=600, thinking_mode="off", turn_model=False):
         self.name = name
         # A station's result schema: Codex constrains the turn's final message
         # to it (the app-server's TurnStartParams.outputSchema).
@@ -120,6 +120,11 @@ class CodexRuntime:
         self.tool_mode = tool_mode
         self.vision = vision
         self.effort = effort
+        # SHOW_THINKING for the chat: off | indicator | full (a one-shot caller keeps off).
+        self.thinking_mode = thinking_mode
+        # The hub's main agent runs on a model the person chose for the turn
+        # (SessionSlot.model, from the chat's catalog), as on Claude; delegates keep theirs.
+        self.turn_model = turn_model
         # Only the hub's main agent carries the caller's personal MCP servers,
         # as on the Claude and OpenAI backends (delegates never do).
         self.personal_mcp = personal_mcp
@@ -153,10 +158,14 @@ class CodexRuntime:
                     if tool.name in self.registry:
                         raise RuntimeError(f"Duplicate MCP tool name: {tool.name}")
                     if self.hub_dir is not None:
+                        from .access.guard import run_checked
                         from .hitl import gate as hitl_gate
 
-                        tool = hitl_gate.wrap(tool, self.hub_dir, connector=getattr(server, "name", None),
-                                              read_only=read_only.get(tool.name))
+                        # The access and Stop check first, then the approval gate (as
+                        # hitl.equip and the other runtimes): a stopped or revoked run
+                        # never raises an approval card.
+                        tool = run_checked(hitl_gate.wrap(tool, self.hub_dir, connector=getattr(server, "name", None),
+                                                          read_only=read_only.get(tool.name)), self.hub_dir)
                     self.registry[tool.name] = tool
         except BaseException:
             await self.aclose()
@@ -362,8 +371,11 @@ class CodexRuntime:
                   "dynamicTools": [{"type": "function", "name": t.name,
                     "description": t.description, "inputSchema": t.params_json_schema}
                     for t in shown.values()], "allowProviderModelFallback": False}
-        if self.model:
-            params["model"] = self.model
+        slot = _request_ctx.native_session() if self.turn_model else None
+        chosen = getattr(slot, "model", None) if slot is not None else None
+        model = (chosen.partition("codex-local/")[2] or chosen) if chosen else self.model
+        if model:
+            params["model"] = model
         started = await request(2, "thread/start", params)
         thread = started["thread"]["id"]
         usage["model"] = started.get("model")
@@ -381,6 +393,14 @@ class CodexRuntime:
             turn_params["outputSchema"] = self.output_schema
         if self.effort:
             turn_params["effort"] = self.effort
+        # Reasoning summaries, shown like Claude's thinking (SHOW_THINKING).
+        think = None
+        if typed and self.thinking_mode in ("indicator", "full"):
+            from .factory_claude import _ThinkStream
+
+            think = _ThinkStream(self.thinking_mode)
+            turn_params["summary"] = "auto"
+        reasoning_signalled = False
         # Events can precede the turn/start response, so consume both in one loop.
         await send({"id": 3, "method": "turn/start", "params": turn_params})
         calls = 0
@@ -414,6 +434,11 @@ class CodexRuntime:
                     display = tool_events.format_call(name, arguments, mode=self.tool_mode)
                     call_id = str(p.get("callId") or "")
                     if typed:
+                        if think is not None and display:
+                            closing = think.visible("")
+                            if closing:
+                                yield run_events.ReasoningEnd(legacy=closing)
+                        reasoning_signalled = False
                         yield run_events.ToolCall(id=call_id, name=name, args=arguments, legacy=display)
                     elif display:
                         yield display
@@ -439,18 +464,40 @@ class CodexRuntime:
             elif "id" in msg and method:
                 # No native approvals, elicitation or unconfigured callbacks.
                 await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
+            elif method == "item/reasoning/summaryTextDelta":
+                if think is not None:
+                    thought = p.get("delta") or ""
+                    chunk = think.thinking(thought)
+                    text = thought if self.thinking_mode == "full" else ""
+                    if chunk or text or not reasoning_signalled:
+                        reasoning_signalled = True
+                        yield run_events.ReasoningDelta(text=text, legacy=chunk)
             elif method == "item/agentMessage/delta":
                 saw_delta.add(p.get("itemId"))
+                if think is not None and p.get("delta"):
+                    closing = think.visible("")
+                    if closing:
+                        yield run_events.ReasoningEnd(legacy=closing)
+                    reasoning_signalled = False
                 yield p.get("delta", "")
             elif method == "item/completed":
                 item = p.get("item", {})
                 if item.get("type") == "agentMessage" and item.get("id") not in saw_delta:
+                    if think is not None and item.get("text"):
+                        closing = think.visible("")
+                        if closing:
+                            yield run_events.ReasoningEnd(legacy=closing)
+                        reasoning_signalled = False
                     yield item.get("text", "")
             elif method == "thread/tokenUsage/updated":
                 total = p.get("tokenUsage", {}).get("total", {})
                 usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
             elif method == "turn/completed":
                 turn = p.get("turn") or {}
+                if think is not None:
+                    closing = think.close()
+                    if closing:
+                        yield run_events.ReasoningEnd(legacy=closing)
                 if turn.get("status") != "completed":
                     raise CodexTurnError("Codex turn failed or was interrupted. Check login, model availability and usage limits.",
                                          _turn_error_kind(turn))
@@ -581,7 +628,7 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
                         max_turns=max_turns, tool_mode=config.show_tools,
                         mcp_servers=load_mcp_servers(mcp.load_all_raw(hub_dir)),
                         vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
-                        personal_mcp=True)
+                        personal_mcp=True, thinking_mode=config.thinking_mode, turn_model=True)
 
 
 async def _read_only_tools(server) -> dict:

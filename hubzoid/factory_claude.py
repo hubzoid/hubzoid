@@ -489,7 +489,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .hitl import gate as hitl_gate
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [*hooks.get("PreToolUse", []),
-                           HookMatcher(hooks=[hitl_gate.claude_hook(hub_dir, _MCP_NAMESPACE)])]
+                           HookMatcher(hooks=[hitl_gate.claude_hook(hub_dir, _MCP_NAMESPACE,
+                                                                    read_only=_read_only_hints(hub_dir))])]
     options = dataclasses.replace(options, hooks=hooks)
 
     # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
@@ -510,6 +511,44 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                 settings.vision_max_images),
         registry=registry,
     )
+
+
+def _read_only_hints(hub_dir: Path):
+    """``(server, tool) -> readOnlyHint`` for the hub's own MCP servers, which
+    the Claude CLI connects itself. Each server is listed once, with the same
+    client the other runtimes use, so ``ask: writes`` lets a read-only tool run
+    without asking on Claude too. A server that can't be listed gives no hints
+    (every tool counts as a write, as before)."""
+    import asyncio
+
+    cache: dict[str, dict] = {}
+    locks: dict[str, asyncio.Lock] = {}
+
+    async def listed(server_key: str) -> dict:
+        from .factory import load_mcp_servers
+        from .factory_codex import _read_only_tools
+
+        spec = mcp_loader.load_all_raw(hub_dir).get(server_key)
+        if spec is None:
+            return {}
+        servers = load_mcp_servers({server_key: spec})
+        if not servers:
+            return {}
+        try:
+            async with servers[0] as server:
+                return await _read_only_tools(server)
+        except Exception:  # noqa: BLE001
+            log.warning("MCP server %r: could not read its read-only hints", server_key)
+            return {}
+
+    async def hint(server_key: str, tool: str):
+        if server_key not in cache:
+            async with locks.setdefault(server_key, asyncio.Lock()):
+                if server_key not in cache:
+                    cache[server_key] = await listed(server_key)
+        return cache[server_key].get(tool)
+
+    return hint
 
 
 def _answering_model(message, answered_by: str | None = None) -> str | None:
@@ -789,6 +828,36 @@ def _only_tools(options, allowed: list[str]):
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
     return dataclasses.replace(options, hooks=hooks)
+
+
+def _in_order(options):
+    """Hubzoid's PreToolUse hooks as one hook that runs them one after
+    another and stops at the first refusal.
+
+    The Claude CLI runs the hooks of an event in parallel, so the approval hook
+    would raise a card for a step the Stop or access hook refuses. In order
+    (comparison limit, Stop, access, then approval), a stopped or revoked run
+    never asks a person, as on the other runtimes (``hitl.equip``)."""
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    matchers = list((getattr(options, "hooks", None) or {}).get("PreToolUse") or [])
+    if len(matchers) < 2 or any(getattr(m, "matcher", None) for m in matchers):
+        return options
+    callbacks = [h for m in matchers for h in (m.hooks or [])]
+
+    async def ordered(tool_input, tool_use_id, context):
+        for callback in callbacks:
+            out = await callback(tool_input, tool_use_id, context)
+            decision = ((out or {}).get("hookSpecificOutput") or {}).get("permissionDecision")
+            if decision == "deny":
+                return out
+        return {}
+
+    timeouts = [m.timeout for m in matchers if getattr(m, "timeout", None)]
+    matcher = HookMatcher(hooks=[ordered], timeout=sum(timeouts) if timeouts else None)
+    return dataclasses.replace(options, hooks={**options.hooks, "PreToolUse": [matcher]})
 
 
 async def _query_with_failover(*, prompt, options, hub_dir=None):
@@ -1140,6 +1209,7 @@ class ClaudeRuntime:
                 if slot.model:
                     changes["model"] = slot.model
                 turn_options = _dc.replace(turn_options, **changes)
+            turn_options = _in_order(turn_options)
             messages = _query_with_failover(prompt=qprompt, options=stderr.attach(_budget_caps(turn_options)),
                                             hub_dir=self._hub_dir)
             async for message in messages:

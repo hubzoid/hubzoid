@@ -314,6 +314,12 @@ class OpenAIAgentsRuntime:
         shown: list[str] = []
         # call id -> short tool name, to name the result of each call.
         called: dict[str, str] = {}
+        # Who the caller is, in the user turn as on Claude and Codex, so the
+        # model can answer for (and about) the real person.
+        from .access.identity import current_identity
+
+        ident = current_identity()
+        prompt = f"[Session context] Caller: {ident.user or 'automated run'}; surface: {ident.surface}.\n\n" + prompt
         # Native image vision: expand any [Image: name] reference into an input
         # list (text + input_image blocks). Plain string when nothing to inject.
         run_input = prompt
@@ -326,6 +332,13 @@ class OpenAIAgentsRuntime:
             )
         result = None
         try:
+            # A model the person chose for this turn (SessionSlot.model, from
+            # the chat's catalog), as on Claude; delegates keep their own.
+            slot = _request_ctx.native_session()
+            if slot is not None and getattr(slot, "model", None):
+                from . import model as modellib
+
+                agent = agent.clone(model=modellib.build(slot.model))
             from . import budgets
             hooks = budgets.cost_hooks(getattr(agent, "model", None))
             result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
@@ -374,7 +387,7 @@ class OpenAIAgentsRuntime:
                         yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
                                          message=run_events.TOOL_FAILED if failed else None, card=card)
             # Surface final token usage for the usage envelope (best-effort).
-            _record_openai_usage(result, _agent_model_name(self._agent))
+            _record_openai_usage(result, _agent_model_name(agent))
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
                 _request_ctx.drain_artifacts(), "".join(shown))
@@ -386,8 +399,8 @@ class OpenAIAgentsRuntime:
             # The calls made before the failure (a turn or dollar cap, a
             # provider error) are spent: budgets count them.
             if result is not None:
-                _record_openai_usage(result, _agent_model_name(self._agent), status="error")
-            _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
+                _record_openai_usage(result, _agent_model_name(agent), status="error")
+            _request_ctx.note_usage(status="error", model=_agent_model_name(agent))
             detail = f"{type(exc).__name__}: {exc}"
             yield Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
         except BaseException:
@@ -399,7 +412,7 @@ class OpenAIAgentsRuntime:
                     result.cancel()
                 except Exception:  # noqa: BLE001 — best-effort
                     log.debug("could not cancel the agents run", exc_info=True)
-                _record_openai_usage(result, _agent_model_name(self._agent), status="cancelled")
+                _record_openai_usage(result, _agent_model_name(agent), status="cancelled")
             raise
 
     async def run(self, prompt: str) -> str:
