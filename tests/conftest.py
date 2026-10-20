@@ -117,3 +117,19 @@ def postgres_url(tmp_path_factory):
             capture_output=True,
             text=True,
         )
+
+
+@pytest.fixture
+def fresh_postgres_url(postgres_url):
+    """A new, empty database on the session's server: for tests whose result
+    depends on rows other tests leave behind (who the org admins are)."""
+    import uuid
+
+    from sqlalchemy import create_engine, text
+
+    name = "hz_" + uuid.uuid4().hex[:12]
+    admin = create_engine(postgres_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f"CREATE DATABASE {name}"))
+    admin.dispose()
+    return postgres_url.rsplit("/", 1)[0] + "/" + name

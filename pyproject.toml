@@ -110,6 +110,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-split>=0.10",    # CI spreads the suite over several machines (.test_durations)
   "pytest-timeout>=2.3",   # a hung test fails on its own instead of stalling CI
+  "pytest-xdist>=3.6,<4",  # CI runs each machine's share of the tests in parallel (-n auto)
   "setuptools>=68",  # tests/test_packaging.py runs the build's own package discovery
   "build>=1.2",
   "twine>=5.0",

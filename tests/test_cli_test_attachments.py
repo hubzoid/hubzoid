@@ -205,6 +205,7 @@ def test_missing_file_is_rejected_before_any_model_call(
     result = runner.invoke(
         cli.app,
         ["test", str(hub), "--prompt", "hi", "--file", str(missing)],
+        env={"COLUMNS": "200"},  # the error box must not wrap the message
     )
 
     assert result.exit_code != 0
