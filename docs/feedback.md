@@ -14,7 +14,7 @@ change how the agent works, edit the Hub's instructions, knowledge or skills.
 |---|---|---|
 | Web chat | Thumbs up, or thumbs down with reasons and a comment, under a finished answer | The signed-in person |
 | Asking in chat | "Save negative feedback on your previous answer. The price was outdated." The agent calls `record_feedback` (off by default) | The person in the chat |
-| Slack | **Helpful** / **Not helpful** buttons under a finished agent answer; Not helpful opens a dialog for reasons and a comment | The linked Hubzoid account of the person who clicked |
+| Slack | **Helpful** / **Not helpful** buttons under a finished agent answer. Not helpful opens a dialog for reasons and a comment | The linked Hubzoid account of the person who clicked |
 | WhatsApp | React 👍 or 👎 to a reply, or swipe-reply to it starting with 👎 and a comment | The outside sender, shown as "WhatsApp sender ··1234", never an account |
 
 In the web chat a rating loads with the conversation, so a reload shows it.
@@ -34,7 +34,7 @@ comes with Manage access.
 
 Each row shows the rating, reasons, comment, date, source (web chat, asked in
 chat, Slack, WhatsApp, CLI), who rated it, the answer and a link to its
-conversation or Intake item. Filter by rating, source, reason and period;
+conversation or Intake item. Filter by rating, source, reason and period, and
 download CSV or JSON with the same filters.
 
 Reviewing ratings is not access to what they quote. The comment, the
@@ -71,12 +71,12 @@ a gateway with several hub servers, restart the other servers.
 The agent calls it only when the person explicitly asks to save a rating.
 What the tool trusts comes from the chat run, never from the model:
 
-* the author is the person the reply acts for;
-* the answer is found by walking back along the branch being viewed: by
+* The author is the person the reply acts for.
+* The answer is found by walking back along the branch being viewed: by
   default the previous answer, skipping replies that only confirmed a saved
   rating. It never picks another branch, another conversation or "the last
-  answer" across the deployment;
-* the person's words (`quote`) and any `comment` must appear in their latest
+  answer" across the deployment.
+* The person's words (`quote`) and any `comment` must appear in their latest
   message, so the model can't invent a rating or put words in their mouth.
 
 It answers `saved`, `updated`, `unchanged` (a retried call), `conflict`,
@@ -93,7 +93,7 @@ buttons. Acknowledgements, progress and error notices get none.
 A click is verified with the signing secret like any event, saved once
 (Slack's retries are one rating) and checked against the post it came from.
 The person who clicked must be linked to an active account with access to
-the hub, as for asking the agent. They get a private confirmation; nothing is
+the hub, as for asking the agent. They get a private confirmation, and nothing is
 posted in the thread. Anyone else gets a private note and nothing is saved.
 Someone else in the thread can rate the same answer: each person has their
 own rating.
@@ -112,13 +112,13 @@ That line is part of the text the requester approves under
 `customer_reply.send`, so approval still covers the exact message. A reply
 already waiting for approval keeps the text it was recorded with.
 
-* 👍 or 👎 on that reply records the rating; removing the reaction removes it.
+* 👍 or 👎 on that reply records the rating. Removing the reaction removes it.
 * A reply to it that starts with 👍 or 👎 records the rating and the rest as
   the comment.
 * Anything else, including a reaction to another message, is an ordinary
   message for Intake, as before.
 * Nothing is sent back, and a rating never opens the 24-hour window.
-* Meta's redeliveries are one rating; a late, older reaction never replaces a
+* Meta's redeliveries are one rating, and a late, older reaction never replaces a
   newer one.
 
 The sender has no Hubzoid account and gets none: the rating's author is an
@@ -142,7 +142,7 @@ hubzoid chat feedback export <hub> --format csv --output feedback.csv
 |---|---|
 | `PUT/GET/DELETE /api/conversations/{id}/messages/{mid}/feedback` | Your rating of one answer (`expected_revision`: `"absent"` to create) |
 | `GET /api/conversations/{id}/feedback` | Your ratings in a conversation |
-| `GET /api/hubs/{hub}/feedback` | The review list: `rating`, `source`, `reason`, `since`, `limit`, `cursor`; returns `items`, `next_cursor`, `counts` |
+| `GET /api/hubs/{hub}/feedback` | The review list: `rating`, `source`, `reason`, `since`, `limit`, `cursor`. Returns `items`, `next_cursor`, `counts` |
 | `GET /api/hubs/{hub}/feedback/export?format=csv\|json` | The same, as a file (`/api/chat/feedback[/export]` on a single hub) |
 
 CSV keeps its earlier columns in order and adds `source`, `target_kind`,

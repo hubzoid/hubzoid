@@ -95,13 +95,13 @@ Everything else comes from the trusted run: the run identity record
 conversation and the reply being written. The tool:
 
 1. refuses unless `feedback.enabled` and `feedback.tool` are on now, and the
-   call is inside a chat reply whose run identity is the caller's own;
+   call is inside a chat reply whose run identity is the caller's own.
 2. checks that `quote` and `comment` appear in the person's latest message,
-   so the model cannot invent a vote or put words in their mouth;
+   so the model cannot invent a vote or put words in their mouth.
 3. walks back along the current branch from that message to the
    `answers_back`-th finished answer, skipping replies that only confirmed a
-   saved rating, never another branch, conversation or the reply in progress;
-4. records it with source `tool`, the inbound message id and the quote; a
+   saved rating, never another branch, conversation or the reply in progress.
+4. records it with source `tool`, the inbound message id and the quote. A
    retried call with the same arguments changes nothing.
 
 It returns `saved`, `updated`, `unchanged`, `conflict`, `needs_target` or
@@ -116,7 +116,7 @@ is a recorded post of its own, tied to the run.
 
 A click arrives signed on the existing webhook (or Socket Mode), is committed
 like any delivery (so a repeated delivery is one record), and is routed:
-the clicking Slack user must be linked; the clicked message must be a prompt
+the clicking Slack user must be linked, and the clicked message must be a prompt
 this connection posted in that thread for that run. "Helpful" saves
 immediately. "Not helpful" saves, then opens a dialog for reasons and a
 comment. The person gets a private confirmation. Nothing is posted to the
@@ -135,7 +135,7 @@ approves, so approval still covers the exact message and nothing changes
 after approval. Replies that already wait for approval keep the text they
 were recorded with.
 
-* A 👍 or 👎 reaction to that reply records a rating; removing the reaction
+* A 👍 or 👎 reaction to that reply records a rating, and removing the reaction
   removes it. Other emoji are ordinary messages, handled as today.
 * A swipe-reply to that reply starting with 👍 or 👎 records the rating with
   the rest as the comment.
@@ -198,20 +198,20 @@ journeys in `portal/tests/app-real-journey.cjs` (journey `feedback`).
 
 * A rating saved on the web, by the tool, in Slack and from WhatsApp appears
   once, with its source and author, on the agent's Feedback page and in export.
-* Reload, change and removal work in the browser; a manager without access to
+* Reload, change and removal work in the browser. A manager without access to
   a conversation sees the rating but not its comment or excerpt.
-* Turning feedback off refuses new ratings everywhere; turning the tool off
+* Turning feedback off refuses new ratings everywhere, and turning the tool off
   stops it on the next call.
 
 ## Implementation plan
 
-1. Migration `op_0072` and the service: target, author and source; shared
-   validation; `record()` for tool and channel paths; list with visibility,
-   filters, excerpts and links; tombstone on conversation delete.
-2. Routes: the person's ratings per conversation; hub-scoped list and export
-   for the console; config apply rebuilds the runtime when `feedback` changes.
+1. Migration `op_0072` and the service: target, author and source, shared
+   validation, `record()` for tool and channel paths, list with visibility,
+   filters, excerpts and links, tombstone on conversation delete.
+2. Routes: the person's ratings per conversation, hub-scoped list and export
+   for the console, and config apply rebuilds the runtime when `feedback` changes.
 3. `record_feedback` tool and its registration.
-4. Channel config field; Slack prompt, click and dialog routing; WhatsApp
+4. Channel config field, Slack prompt, click and dialog routing, WhatsApp
    footer, reactions and quoted replies.
-5. Web chat controls; console Feedback tab; built bundle.
+5. Web chat controls, console Feedback tab, built bundle.
 6. Tests, docs (`docs/FEEDBACK.md`), browser and live-model runs, proof.
