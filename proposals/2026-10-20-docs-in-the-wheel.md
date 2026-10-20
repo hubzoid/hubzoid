@@ -13,8 +13,8 @@ install it means reading `main`, which may describe a different version than
 the one installed.
 
 The builder journey of 2026-10-20 (HubzoidAgent `factory/builder-skill/proof.html`)
-gave the agent the pages through a checkout. A real builder in a blank
-folder would not have one.
+read the pages from an SDK checkout named in the brief. A real builder in a
+blank folder would not have one.
 
 ## Why now
 

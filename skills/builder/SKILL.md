@@ -135,7 +135,8 @@ show what changed. Say which file now holds the rule.
 ## 7. Evals
 
 Add one `evals/<name>.md` per behaviour they rely on, including the correction
-(`docs/evals.md`). Prefer exact `contains`/`not_contains` checks where an answer
+(`docs/evals.md`). A tool from the hub's own MCP server is named
+`mcp__<server>__<tool>` in `expect_tools`. Prefer exact `contains`/`not_contains` checks where an answer
 has fixed facts, and `## Criteria` for judgement.
 
 ```bash
@@ -161,7 +162,9 @@ Wait for `Hubzoid is ready` in the log. Each hub on one machine needs its own
 `--port` and `--bridge-port`. Restart after every change to `.env`, `hitl.yaml`,
 `budgets.yaml` or `connectors/`: stop that PID, start again, wait for ready.
 
-Then stop and start it once more and ask the running hub the real request. The
+Do this before step 11. Once sign-in is on, an administrator needs two-step
+sign-in set up in the browser before `hubzoid auth login` or a new personal key
+works for them. Then stop and start the hub once more and ask the running hub the real request. The
 answer must show the corrected rule (check the facts, not the wording). The
 OpenAI-compatible API needs a personal key (`docs/auth.md`, Personal API keys).
 Keep it out of arguments and revoke it after:
@@ -207,7 +210,8 @@ Nobody gets an agent without a grant.
    to choose their own password: that is their sign-in, not your step.
 4. `hubzoid grant <teammate-email> use_hub <hub>`, plus any capability the task
    needs. Check with `hubzoid access check <teammate-email> <hub>`.
-5. Through the API, signed in as the owner:
+5. Through the API, signed in as the owner (after the owner has set up two-step
+   sign-in in the browser, which has no CLI path yet: report it if not done):
    `hubzoid auth login --server $S --email <owner> --password-stdin < <file>`,
    then `hubzoid api GET "/portal/api/access?hub=<hub>" --server $S`. Changes go
    to `POST /portal/api/access/grant` with `subject`, `hub` and `permission`.
