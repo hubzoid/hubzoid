@@ -32,6 +32,8 @@ def _isolated(monkeypatch):
     monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_open_browser", lambda url: None)
+    # These hubs use stand-in stores (a bare hz_users table): nothing to migrate.
+    monkeypatch.setattr(cli, "_migrate_first", lambda url: None)
     with clean_process_env():
         yield
 
