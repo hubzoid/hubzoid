@@ -1981,7 +1981,7 @@ def service_install(
     exe = Path(sys.executable).with_name("hubzoid")
     lines = ["[Unit]", "Description=Hubzoid", "After=network-online.target", "Wants=network-online.target", "",
              "[Service]", f"WorkingDirectory={folder}", f"ExecStart={exe} {' '.join(shlex.quote(a) for a in args)}",
-             "Restart=on-failure", "RestartSec=5", "KillMode=mixed", "TimeoutStopSec=180"]
+             "Restart=always", "RestartSec=5", "KillMode=mixed", "TimeoutStopSec=180"]
     if user:
         lines.append(f"User={user}")
     lines += ["", "[Install]", "WantedBy=multi-user.target", ""]

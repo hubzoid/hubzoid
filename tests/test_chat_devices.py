@@ -25,7 +25,7 @@ def apply(hub, change):
     active = svc.active()
     doc = active.document
     change(doc)
-    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
 
 
 def test_voice_is_off_for_members_until_granted(client, hub, monkeypatch):

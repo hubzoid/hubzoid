@@ -125,6 +125,10 @@ def change(hub: Path, connector_id: str, changes: dict, *, actor: str = "test"):
         if out in doc:
             body[key] = doc[out]
     body.update(changes)
+    if "client_secret" not in changes and doc.get("client_secret") and body.get("client_id"):
+        import os
+
+        body["client_secret"] = os.environ.get(doc["client_secret"].removeprefix("env:"))
     if body.get("auth_type") == "shared" and "shared_secret" not in changes and doc.get("shared_key"):
         import os
 

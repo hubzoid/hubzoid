@@ -27,7 +27,7 @@ def catalog(hub):
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["models"]["catalog"] = {"fast": {"label": "Fast", "model": "haiku"}, "deep": {"label": "Deep", "model": "opus"}}
-    svc.apply(doc, expected_revision=svc.active().revision or None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
 
 
 @pytest.fixture

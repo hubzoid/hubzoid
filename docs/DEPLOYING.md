@@ -356,6 +356,27 @@ hubzoid service install --port 3080 --host 0.0.0.0 --user hubzoid \
   | sudo tee /etc/systemd/system/hubzoid.service
 ```
 
+It writes:
+
+```ini
+[Unit]
+Description=Hubzoid
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/hubzoid/agents
+ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run --port 3080 --host 0.0.0.0 --no-open
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=180
+User=hubzoid
+
+[Install]
+WantedBy=multi-user.target
+```
+
 Then add what your box needs under `[Service]`, for example:
 
 ```ini

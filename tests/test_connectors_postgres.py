@@ -69,10 +69,7 @@ def test_registry_and_audit_on_postgres(hub):
                                      actor="ada@example.org")
     assert reset and updated.url == "https://moved.example.org/mcp"
     assert registry.client_secret(hub, "gmail") == "s3cret"
-    assert f.remove(hub, "gmail_2")
-    rows = store_for(hub).read_access_audit(10, hubs=["*"])
-    assert [r["action"] for r in rows] == ["connector_delete", "connector_update",
-                                           "connector_create", "connector_create"]
+    assert f.remove(hub, "gmail_2")       # connectors are files: their history is Git
 
 
 def test_one_dynamic_client_wins_a_registration_race(hub):

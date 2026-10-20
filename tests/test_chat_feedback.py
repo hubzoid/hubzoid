@@ -81,7 +81,7 @@ def test_helper_followups_native_structured_and_stale_check(client, hub, monkeyp
     svc = cfg.service_for(hub)
     doc = svc.active().document
     doc["helpers"]["enabled"]["followups"] = True
-    svc.apply(doc, expected_revision=None, actor="t")
+    __import__('tests.chat_helpers', fromlist=['x']).write_chat_config(svc.hub_dir, doc)
     cid, out = answered(client)
     b = next(x for x in snap(client, cid)["branches"] if x["id"] == out["branch_id"])
     calls = []
