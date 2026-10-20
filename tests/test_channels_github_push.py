@@ -471,3 +471,117 @@ def test_pr_update_approval_is_bound_to_the_head(hub_dir, api):
         ops_mod._approver_still_allowed = ops_mod_allowed
     assert again.value.reason == "target_changed"
     assert not any(p == "/graphql" for _, p, _ in api.calls)
+
+
+# -- review fixes ---------------------------------------------------------------------------
+
+def test_work_without_a_person_is_unattended(hub_dir, api, remote):
+    """A webhook-started work item has no requester: it gets the unattended
+    limits, never attended authority."""
+    conn = app_conn(hub_dir)
+    for requester in ("", "workflow:factory", "service-account"):
+        with work(hub_dir, requester=requester, origin={"surface": "webhook"}):
+            with pytest.raises(ChannelError) as exc:
+                operations.call(conn, "createIssue", {"repository_id": 2001, "title": "x"})
+            assert exc.value.code == "out_of_scope", requester
+
+
+def test_pull_request_is_bound_to_the_reviewed_head(hub_dir, api, remote):
+    conn = app_conn(hub_dir)
+    with work(hub_dir, origin={"surface": "chat"}):
+        pushed = push(conn, remote.patch(remote.base), base_sha=remote.base)
+        with pytest.raises(OperationFailed) as exc:
+            operations.call(conn, "createPullRequest", {"repository_id": 2001, "title": "Fix", "base": "main",
+                                                        "head": "factory/12-fix-total", "head_sha": "a" * 40})
+        assert exc.value.code == "operation_rejected"
+        assert not any(p.endswith("/pulls") and m == "POST" for m, p, _ in api.calls)
+    with work(hub_dir, origin={"surface": "chat"}, item_id="item-2"):
+        out = operations.call(conn, "createPullRequest", {"repository_id": 2001, "title": "Fix", "base": "main",
+                                                          "head": "factory/12-fix-total",
+                                                          "head_sha": pushed["head_sha"]})
+    assert out["data"]["draft"] is True
+
+
+def test_a_lost_pull_request_response_is_recognised(hub_dir, api, remote, monkeypatch):
+    conn = app_conn(hub_dir)
+    created = {}
+    real = api.__call__
+
+    def lossy(request):
+        if request.method == "POST" and request.url.path.endswith("/pulls"):
+            real(request)
+            created["yes"] = True
+            raise httpx.ReadError("connection reset")
+        if request.method == "GET" and request.url.path.endswith("/pulls") and created:
+            return httpx.Response(200, json=[{"number": 7, "draft": True, "html_url": "https://pr",
+                                              "head": {"ref": "factory/x"}}])
+        return real(request)
+
+    monkeypatch.setattr(gh, "transport", httpx.MockTransport(lossy))
+    with work(hub_dir, origin={"surface": "chat"}):
+        out = operations.call(conn, "createPullRequest", {"repository_id": 2001, "title": "Fix", "base": "main",
+                                                          "head": "factory/x"})
+    assert out["data"]["number"] == 7
+    op = wstore.list_ops(hub_dir, "factory", item_id="item-1")[0]
+    assert op["state"] == "succeeded" and op["recovery"] == "reconcile"
+
+
+def test_pr_update_mode_does_not_depend_on_import_order():
+    import subprocess
+    import sys
+
+    code = ("from hubzoid.work_items import config; import sys; "
+            "assert 'hubzoid.channels.github.operations' not in sys.modules; "
+            "print(config.mode_for(config.Config(), ['github.pr_update']))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "off"
+
+
+def test_a_checkout_can_be_pinned_to_a_commit(remote, tmp_path):
+    from hubzoid.sandbox import service as sandbox_service
+    from hubzoid.work_items.errors import WorkItemError
+
+    first = remote.base
+    second = remote.patch(first)       # leaves the bare repository unchanged
+    del second
+    work_dir = tmp_path / "advance"
+    subprocess.run(["git", "clone", "--quiet", str(remote.bare), str(work_dir)], env=GIT_ENV, check=True)
+    (work_dir / "calc.py").write_text("x = 2\n")
+    git(work_dir, "commit", "--quiet", "-am", "main moves on")
+    git(work_dir, "push", "--quiet", "origin", "main")
+
+    class Prov:
+        def write_tree(self, state, src, target):
+            self.head = git(src, "rev-parse", "HEAD").strip()
+            return {}
+
+    prov = Prov()
+    out = sandbox_service._checkout(prov, {}, {"url": str(remote.bare), "ref": "main", "commit": first})
+    assert out["commit"] == first == prov.head
+    with pytest.raises(WorkItemError):
+        sandbox_service._checkout(prov, {}, {"url": str(remote.bare), "commit": "b" * 40})
+
+
+def test_an_export_says_whether_the_tree_had_uncommitted_changes(tmp_path, monkeypatch):
+    """A reviewer that edits files without committing is visible in its export."""
+    from hubzoid.sandbox import service as sandbox_service
+
+    class Prov:
+        def __init__(self, dirty):
+            self.dirty = dirty
+
+        def quiesce(self, binding):
+            pass
+
+        def run(self, binding, argv, timeout=60):
+            if "status" in argv:
+                return {"exit_code": 0, "stdout": b" M calc.py\n" if self.dirty else b"", "stderr": b""}
+            return {"exit_code": 0, "stdout": b"", "stderr": b""}
+
+    row = {"provider_json": {}, "profile_json": {}, "checkouts_json": [{"path": "/workspace/repo", "commit": "a" * 40}]}
+    monkeypatch.setattr(sandbox_service, "attach", lambda hub_dir, sid: row)
+    monkeypatch.setattr(sandbox_service, "_update", lambda *a, **kw: None)
+    for dirty in (False, True):
+        monkeypatch.setattr(sandbox_service, "_provider_for", lambda hub_dir, r, d=dirty: Prov(d))
+        out = sandbox_service.export_patches(tmp_path, "box-1", tmp_path / "out")
+        assert out[0]["dirty"] is dirty and out[0]["commits"] == 0

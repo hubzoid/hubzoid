@@ -420,11 +420,38 @@ def request_reviewers(conn, web, full, a):
                        json={"reviewers": _logins(a.get("reviewers"), "reviewers")}).json()
 
 
+def _branch_head(web, full, branch) -> str | None:
+    try:
+        got = web.request("GET", f"/repos/{full}/branches/{quote(branch, safe='')}").json() or {}
+    except Exception as exc:  # noqa: BLE001
+        if gh.status_of(exc) == 404:
+            return None
+        raise
+    return (got.get("commit") or {}).get("sha")
+
+
 def create_pull_request(conn, web, full, a):
     body = {"title": _str(a.get("title"), "title", 256), "body": a.get("body") or "",
             "base": _str(a.get("base"), "base", 255), "head": _str(a.get("head"), "head", 255),
             "draft": True}   # always a draft: a person makes it ready
+    if a.get("head_sha"):
+        # Bound to the commit that was reviewed: a branch that moved since opens nothing.
+        expected = _sha(a["head_sha"], "head_sha")
+        current = _branch_head(web, full, body["head"])
+        if current is None or not current.lower().startswith(expected.lower()):
+            from ...work_items.errors import Rejected
+
+            raise Rejected(f"{body['head']} is at {str(current)[:12]}, not the reviewed {expected[:12]}. "
+                           "No pull request was opened.")
     return web.request("POST", f"/repos/{full}/pulls", json=body).json()
+
+
+def find_pull_request(conn, web, full, head: str) -> dict | None:
+    """The pull request whose head is `head` in this repository, open or closed."""
+    owner = full.split("/", 1)[0]
+    found = web.request("GET", f"/repos/{full}/pulls", params={"head": f"{owner}:{head}", "state": "all",
+                                                                "per_page": 5}).json() or []
+    return found[0] if found else None
 
 
 def update_pull_request(conn, web, full, a):
@@ -528,8 +555,9 @@ OPS: dict[str, Op] = {o.name: o for o in [
        "Request reviewers."),
     Op("createPullRequest", "write", {"title": {"type": "string"}, "body": {"type": "string"},
                                       "base": {"type": "string"}, "head": {"type": "string"},
-                                      "draft": {"type": "boolean"}}, ("title", "base", "head"),
-       {"metadata": "read", "pull_requests": "write"}, create_pull_request, "Open a draft pull request."),
+                                      "draft": {"type": "boolean"}, "head_sha": {"type": "string"}},
+       ("title", "base", "head"), {"metadata": "read", "pull_requests": "write"}, create_pull_request,
+       "Open a draft pull request. head_sha, when given, must be the head branch's current commit."),
     Op("updatePullRequest", "write", {**_N, "title": {"type": "string"}, "body": {"type": "string"},
                                       "base": {"type": "string"}, "state": {"enum": ["open", "closed"]},
                                       "draft": {"type": "boolean"}}, ("number",),
@@ -577,8 +605,12 @@ def _bound_origin() -> dict | None:
         thread = store.get_thread(ctx.hub_dir, origin["thread_id"])
         coords = ((thread or {}).get("origin_json") or {}).get("coordinates") or {}
     payload = (item.get("input_json") or {}).get("input")
+    requester = (item.get("requester") or "").strip()
+    # Attended only when a person asked: a webhook or service requester (empty,
+    # workflow:..., or not an account) gets the unattended limits.
+    unattended = not requester or requester.startswith("workflow:") or "@" not in requester
     return {"item": item, "coords": coords, "hub_dir": ctx.hub_dir, "hub": ctx.hub,
-            "unattended": (item.get("requester") or "").startswith("workflow:"),
+            "unattended": unattended,
             "trigger": payload.get("kind") if isinstance(payload, dict) and coords else None,
             "in_station": bool(work.get("station_call"))}
 
@@ -687,9 +719,35 @@ def _write(conn, op: Op, repo, arguments: dict, bound) -> dict:
                                     f"{_int(number, 'number')}").json() or {}
             return str((pr.get("head") or {}).get("sha") or "")
 
+    recovery, reconcile = "escalate", None
+    if op.name == "createPullRequest":
+        # A pull request is unique to its head branch: an interrupted creation is
+        # settled by finding it, never by opening a second one.
+        def reconcile(args: dict):
+            web = gh.for_repo(conn, repo.id, gh.READ)
+            found = find_pull_request(conn, web, gh.current_name(conn, web, repo.id), args["head"])
+            if found:
+                return ops.Reconciled("applied", _strip(found), evidence={"pull_request": found.get("number")})
+            return ops.Reconciled("unknown", evidence={"pull_request": None})
+
+        recovery = "reconcile"
+
+    def dispatch_and_check(args: dict) -> dict:
+        try:
+            return dispatch(args)
+        except Exception as exc:  # noqa: BLE001
+            from ...work_items.errors import NotSent, Rejected
+
+            if reconcile is None or isinstance(exc, (NotSent, Rejected, ChannelError)):
+                raise
+            found = reconcile(args)          # the response was lost: look before deciding
+            if found.status == "applied":
+                return found.result
+            raise
+
     result = ops.run(name=f"github.{op.name}", target={"repository_id": repo.id, "number": number},
-                     arguments=dict(arguments), recovery="escalate", dispatch=dispatch, actions=actions,
-                     channel=conn.id, target_version=target_version)
+                     arguments=dict(arguments), recovery=recovery, dispatch=dispatch_and_check, actions=actions,
+                     channel=conn.id, target_version=target_version, reconcile=reconcile)
     return {"data": result}
 
 
@@ -823,6 +881,13 @@ def _apply(conn, full: str, args: dict, data: bytes, token: str, tmp) -> str:
 
         raise Rejected("The patch has no commits.")
     return head
+
+
+def recorded(name: str, target: dict, key: str | None = None) -> dict | None:
+    """The record of one write in the current work item and stage, if it was
+    already made (`push_branch` with this branch and key, for example), so a
+    hub can tell a replay from new work without re-checking live state."""
+    return _prior(name, target, key)
 
 
 def _prior(name: str, target: dict, key: str | None) -> dict | None:

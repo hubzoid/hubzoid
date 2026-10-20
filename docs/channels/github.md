@@ -127,7 +127,11 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
 - Unattended work writes only on the issue or pull request it came from, and
   never opens a new issue. One exception: work started by the label may open
   one draft pull request, for a branch it pushed itself with `push_branch`.
-- A new pull request is always a draft.
+- A new pull request is always a draft. With `head_sha`, it opens only if the
+  head branch is still at that commit (the one a review covered). An
+  interrupted creation is settled by finding the pull request for that head
+  branch, never by opening a second one.
+- Work no person asked for (a webhook, a service) gets the unattended limits.
 - Updating a pull request (title, body, base, closing it, or marking it ready
   with `draft: false`) is the action `github.pr_update`. It is off until the
   hub's `work-items.yaml` sets it to `approve`. Then the work waits until the

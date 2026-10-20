@@ -17,6 +17,7 @@ the caller gets `sandbox_lost`. A stopped one is started again with its files.
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import logging
 import subprocess
@@ -612,6 +613,15 @@ def _checkout(prov, state: dict, spec: dict) -> dict:
         if result.returncode != 0:
             raise WorkItemError("checkout_failed", "Could not clone the repository: "
                                 + redaction.scrub_text(result.stderr)[-500:], status=409)
+        pin = spec.get("commit")
+        if pin:
+            if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", pin):
+                raise WorkItemError("invalid_request", "checkout commit is a commit SHA.")
+            pinned = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-C", str(dest), "checkout", "--quiet",
+                                     "--detach", pin], capture_output=True, text=True, timeout=120, env=_git_env())
+            if pinned.returncode != 0:
+                raise WorkItemError("checkout_failed", f"The commit {pin[:12]} is not in the repository's history.",
+                                    status=409)
         _git(dest, "remote", "set-url", "origin", clean if "://" in clean else "https://invalid.local/repo.git")
         config = dest / ".git" / "config"
         lines = [line for line in config.read_text().splitlines()
@@ -653,6 +663,9 @@ def export_patches(hub_dir, sandbox_id: str, out_dir: Path) -> list[dict]:
             raise WorkItemError("export_failed", "git format-patch failed: "
                                 + redaction.scrub_text(res["stderr"].decode(errors="replace"))[-500:], status=409)
         data = res["stdout"]
+        status = prov.run(row["provider_json"], ["git", "-c", "core.fsmonitor=false", "-C", co["path"], "status",
+                                                 "--porcelain", "--untracked-files=normal"], timeout=60)
+        dirty = status["exit_code"] != 0 or bool(status["stdout"].strip())
         if len(data) > max_bytes:
             raise WorkItemError("file_too_large", "The patch is larger than the profile allows.", status=422)
         count = res["stdout"].count(b"\nSubject: ") + (1 if res["stdout"].startswith(b"Subject: ") else 0)
@@ -664,6 +677,7 @@ def export_patches(hub_dir, sandbox_id: str, out_dir: Path) -> list[dict]:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         exports.append({"checkout": co["path"], "base": co["commit"], "commits": count, "bytes": len(data),
+                        "dirty": dirty,
                         "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
                         "file": str(target.relative_to(hub_dir)) if target.is_relative_to(hub_dir) else str(target)})
     _update(hub_dir, sandbox_id, exports_json=exports)
