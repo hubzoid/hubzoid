@@ -676,9 +676,20 @@ def _write(conn, op: Op, repo, arguments: dict, bound) -> dict:
                 raise Rejected(f"GitHub refused {op.name} ({status}).") from None
             raise
 
+    target_version = None
+    if PR_UPDATE in actions:
+        def target_version() -> str:
+            """The pull request's head commit: an approval covers the pull
+            request as it was, so a push after it needs a fresh approval
+            (claude-code-action's approvals bound to the head SHA)."""
+            web = gh.for_repo(conn, repo.id, gh.READ)
+            pr = web.request("GET", f"/repos/{gh.current_name(conn, web, repo.id)}/pulls/"
+                                    f"{_int(number, 'number')}").json() or {}
+            return str((pr.get("head") or {}).get("sha") or "")
+
     result = ops.run(name=f"github.{op.name}", target={"repository_id": repo.id, "number": number},
                      arguments=dict(arguments), recovery="escalate", dispatch=dispatch, actions=actions,
-                     channel=conn.id)
+                     channel=conn.id, target_version=target_version)
     return {"data": result}
 
 

@@ -132,9 +132,11 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
   with `draft: false`) is the action `github.pr_update`. It is off until the
   hub's `work-items.yaml` sets it to `approve`. Then the work waits until the
   person who asked approves that exact change, in the Console's Work items
-  page or with `hubzoid operations approve`. This includes `updateIssue` and
-  `closeIssue` on a number that is a pull request. Unattended work and agents
-  inside a station turn never update a pull request.
+  page or with `hubzoid operations approve`. The approval covers the pull
+  request at its current head commit: a push after it needs a fresh approval.
+  This includes `updateIssue` and `closeIssue` on a number that is a pull
+  request. Unattended work and agents inside a station turn never update a
+  pull request.
 - Commit SHAs, branch names and file paths are checked before they go into a
   URL, so no argument can reach another repository.
 - The repository is looked up by its id before each call. A renamed
@@ -168,7 +170,9 @@ pushed = operations.push_branch(
   and never from inside an agent's turn.
 - The host clones the repository at the start commit, applies the patch with
   hooks off, and pushes with a token for that one repository with
-  `contents: write`. The token stays in that process.
+  `contents: write`. The token stays in that process. In personal token mode
+  it pushes with your whole token, which is not narrowed: use a fine-grained
+  token limited to the repository.
 - It refuses the default branch, protected branches, an existing branch when
   `expected_head` is empty (`branch_exists`) and a branch that moved
   (`stale_head`). The push carries a lease on the exact head it expects, so

@@ -69,9 +69,12 @@ class PushGitHub(FakeGitHub):
         super().__init__()
         self.remote = remote
         self.protected = set()
+        self.pr_head = lambda: "c" * 40
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if request.method == "GET" and re.fullmatch(r"/repos/example-co/widget/pulls/\d+", path):
+            return httpx.Response(200, json={"number": 7, "node_id": "PR_7", "head": {"sha": self.pr_head()}})
         if request.method == "GET" and path == "/repos/example-co/widget":
             return httpx.Response(200, json={"full_name": "example-co/widget", "default_branch": "main"})
         m = re.fullmatch(r"/repos/example-co/widget/branches/(.+)", request.url.raw_path.decode().split("?")[0])
@@ -426,3 +429,45 @@ def test_route_names_are_checked():
         Rules(routes={"label": "Not A Route"})
     with pytest.raises(Exception):
         Rules(routes={"schedule": "implement"})
+
+
+def test_a_push_the_remote_refuses_is_rejected_not_ambiguous(hub_dir, api, remote):
+    """A branch rule GitHub enforces (a ruleset on a new branch name) refuses
+    the push itself: recorded as rejected, never as an unknown outcome."""
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'protected branch hook declined' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    conn = app_conn(hub_dir)
+    with work(hub_dir):
+        with pytest.raises(OperationFailed) as exc:
+            push(conn, remote.patch(remote.base), base_sha=remote.base)
+    assert exc.value.code == "operation_rejected"
+    op = wstore.list_ops(hub_dir, "factory", item_id="item-1")[0]
+    assert op["state"] == "rejected" and remote.head("factory/12-fix-total") is None
+
+
+def test_pr_update_approval_is_bound_to_the_head(hub_dir, api):
+    """The pull request moved after approval: a fresh approval is needed."""
+    (hub_dir / "work-items.yaml").write_text("version: 1\nwrite_modes:\n  github.pr_update: approve\n")
+    conn = app_conn(hub_dir)
+    heads = iter(["a" * 40, "b" * 40])
+    api.pr_head = lambda: next(heads)
+    with work(hub_dir):
+        with pytest.raises(Parked) as exc:
+            operations.call(conn, "updatePullRequest", {"repository_id": 2001, "number": 7, "draft": False})
+    op = wstore.get_op(hub_dir, exc.value.operation_id)
+    assert op["target_version"] == "a" * 40
+    wstore.update_op(hub_dir, op["id"], expected_revision=op["revision"], approval_json={
+        "digest": op["args_digest"], "approver": "ana@example.org", "target_version": op["target_version"]})
+    import hubzoid.work_items.operations as ops_mod
+
+    ops_mod_allowed = ops_mod._approver_still_allowed
+    ops_mod._approver_still_allowed = lambda *a: True
+    try:
+        with work(hub_dir):
+            with pytest.raises(Parked) as again:
+                operations.call(conn, "updatePullRequest", {"repository_id": 2001, "number": 7, "draft": False})
+    finally:
+        ops_mod._approver_still_allowed = ops_mod_allowed
+    assert again.value.reason == "target_changed"
+    assert not any(p == "/graphql" for _, p, _ in api.calls)
