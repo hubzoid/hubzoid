@@ -352,3 +352,102 @@ def test_build_codex_keeps_neutral_connector_specs(tmp_path, monkeypatch):
     assert server.params['url'] == 'https://example.org/mcp'
     assert server.params['headers'] == {'X-Test': 'value'}
     assert server.client_session_timeout_seconds == 42
+
+
+@pytest.mark.asyncio
+async def test_reasoning_summaries_show_as_thinking_and_the_chosen_model_is_used():
+    """SHOW_THINKING and a model the person chose for the turn, as on Claude."""
+    def run(rt, slot):
+        proc = Process(events(
+            {"method": "item/reasoning/summaryTextDelta", "params": {"itemId": "r", "delta": "Checking stock."}},
+            {"method": "item/agentMessage/delta", "params": {"itemId": "a", "delta": "Done"}},
+        ))
+
+        async def go():
+            token = _typed_exchange.set(True)
+            try:
+                with _request_ctx.native_session_scope(slot):
+                    return [x async for x in rt._exchange(proc, "hi", "/tmp", {})], proc
+            finally:
+                _typed_exchange.reset(token)
+        return go()
+
+    slot = _request_ctx.SessionSlot()
+    slot.model = "chosen-model"
+    chat = CodexRuntime(name="t", instructions="", registry={}, model_setting="codex-local/hub-model",
+                        thinking_mode="full", turn_model=True)
+    items, proc = await run(chat, slot)
+    assert [x.text for x in items if isinstance(x, run_events.ReasoningDelta)] == ["Checking stock."]
+    assert isinstance(items[-2], run_events.ReasoningEnd) and items[-1] == "Done"
+    assert next(m["params"] for m in proc.messages if m.get("method") == "turn/start")["summary"] == "auto"
+    assert next(m["params"] for m in proc.messages if m.get("method") == "thread/start")["model"] == "chosen-model"
+
+    # A one-shot caller (call_llm, a delegate) keeps its own model and shows no thinking.
+    items, proc = await run(CodexRuntime(name="t", instructions="", registry={},
+                                         model_setting="codex-local/hub-model"), slot)
+    assert items == ["Done"]
+    assert "summary" not in next(m["params"] for m in proc.messages if m.get("method") == "turn/start")
+    assert next(m["params"] for m in proc.messages if m.get("method") == "thread/start")["model"] == "hub-model"
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_run_never_raises_an_approval_card_for_an_outside_mcp_tool(tmp_path, monkeypatch):
+    """F13 on Codex: the Stop and access check wraps the approval gate."""
+    from agents.mcp import MCPServer
+    from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
+
+    from hubzoid.access import guard
+    from hubzoid.hitl import gate
+
+    ran = []
+
+    class Crm(MCPServer):
+        name = "crm"
+
+        async def connect(self): ...
+        async def cleanup(self): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return None
+        async def list_prompts(self): ...
+        async def get_prompt(self, *a, **k): ...
+
+        async def list_tools(self, *a, **k):
+            return [Tool(name="log_contact", inputSchema={"type": "object", "properties": {}},
+                         annotations=ToolAnnotations(readOnlyHint=False))]
+
+        async def call_tool(self, name, arguments=None, *a, **k):
+            ran.append(name)
+            return CallToolResult(content=[TextContent(type="text", text="logged")])
+
+    asked = []
+    monkeypatch.setattr(gate, "evaluate", lambda *a, **k: asked.append(a) or gate.service.Verdict("allow"))
+    rt = CodexRuntime(name="t", instructions="", registry={}, hub_dir=tmp_path, mcp_servers=[Crm()])
+    await rt.aopen()
+    try:
+        slot = _request_ctx.SessionSlot()
+        slot.guard = lambda: False
+        with _request_ctx.native_session_scope(slot):
+            out = await rt.registry["log_contact"].on_invoke_tool(None, "{}")
+    finally:
+        await rt.aclose()
+    assert out == guard.STOPPED
+    assert ran == [] and asked == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_closes_the_thinking_block_before_the_error():
+    proc = Process([
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "thread"}, "model": "m"}},
+        {"method": "item/reasoning/summaryTextDelta", "params": {"itemId": "r", "delta": "Thinking."}},
+    ])  # then EOF: Codex stopped
+    rt = CodexRuntime(name="t", instructions="", registry={}, thinking_mode="full")
+    items = []
+    token = _typed_exchange.set(True)
+    try:
+        with pytest.raises(RuntimeError, match="stopped unexpectedly"):
+            async for x in rt._exchange(proc, "hi", "/tmp", {}):
+                items.append(x)
+    finally:
+        _typed_exchange.reset(token)
+    assert isinstance(items[-1], run_events.ReasoningEnd) and "</think>" in items[-1].legacy
