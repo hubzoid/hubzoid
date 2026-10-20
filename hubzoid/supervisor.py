@@ -293,7 +293,7 @@ def request(state_dir: Path, payload: dict, *, timeout: float = 600.0) -> dict:
 
 class Supervisor:
     def __init__(self, units: list[Unit], *, state_dir: Path, table: dict | None = None,
-                 grace: float = GRACE_SECONDS, probe: Callable[[Unit], bool] | None = None,
+                 grace: float = GRACE_SECONDS, probe: Callable[[Unit], bool | str] | None = None,
                  validate: Callable[[Unit], list[str]] | None = None,
                  say: Callable[[str], None] = print, start_concurrency: int = 3,
                  ready_wait: float = 180.0):
@@ -342,7 +342,10 @@ class Supervisor:
         while time.monotonic() < deadline and not self._stop.is_set():
             if any(p.poll() is not None for p in unit.procs[:1]):
                 return self._failed_start(unit, f"exited during start (status {unit.procs[0].poll()})")
-            if self.probe(unit):
+            ok = self.probe(unit)
+            if isinstance(ok, str):
+                return self._failed_start(unit, ok)
+            if ok:
                 unit.state, unit.ready_since = "ready", time.time()
                 self._write_table()
                 self.say(f"→ {unit.name}  ready")
@@ -667,7 +670,9 @@ class Supervisor:
             stop_procs(u.procs)
 
 
-def _probe(unit: Unit) -> bool:
+def _probe(unit: Unit) -> bool | str:
+    """True when ready, False while not answering yet, a reason when the port
+    answers as something else."""
     import httpx
 
     if not unit.health_url:
@@ -684,5 +689,12 @@ def _probe(unit: Unit) -> bool:
         body = r.json()
     except ValueError:
         return False
-    return (body.get("hub") == unit.identity.get("expected_hub")
-            and unit.identity.get("expected_model") in (None, body.get("model")))
+    if (body.get("hub") == unit.identity.get("expected_hub")
+            and unit.identity.get("expected_model") in (None, body.get("model"))):
+        return True
+    # Something answers on the port, but not this hub as configured (another
+    # program, or a folder that now names a different agent): waiting won't help.
+    if body.get("hub") != unit.identity.get("expected_hub"):
+        return f"port answers as {body.get('hub')!r}, not {unit.identity.get('expected_hub')!r}"
+    return (f"the agent now loads as {body.get('model')!r}, not {unit.identity.get('expected_model')!r}: "
+            f"check AGENTS.md (a renamed agent needs `hubzoid stop` and `hubzoid run`)")

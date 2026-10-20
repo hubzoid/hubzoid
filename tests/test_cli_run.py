@@ -61,3 +61,19 @@ def test_run_propagates_bridge_port_to_bridge_env(monkeypatch):
 
     bridge = next(c for c in captured if "hubzoid.server:build_app" in c["cmd"])
     assert bridge["env"].get("BRIDGE_PORT") == "8010"
+
+
+def test_check_hub_refuses_a_tool_file_that_does_not_load(tmp_path):
+    """`hubzoid reload` checks first. A broken tools_local file only loses its
+    own tools at run time, so the check must still name it."""
+    import shutil
+
+    from typer.testing import CliRunner
+
+    hub = tmp_path / "hub"
+    shutil.copytree(MINIMAL, hub)
+    assert CliRunner().invoke(cli.app, ["check-hub", str(hub)]).exit_code == 0
+    (hub / "tools_local").mkdir(exist_ok=True)
+    (hub / "tools_local" / "broken.py").write_text("def broken(:\n    pass\n")
+    out = CliRunner().invoke(cli.app, ["check-hub", str(hub)])
+    assert out.exit_code == 1 and "tools_local/broken.py" in out.output

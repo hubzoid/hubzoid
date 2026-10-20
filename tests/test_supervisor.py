@@ -53,7 +53,7 @@ def started(monkeypatch):
 
 def _sup(tmp_path, units, *, probe=lambda u: True, **kw):
     return sup_lib.Supervisor(units, state_dir=tmp_path / "state", probe=probe, say=lambda t: None,
-                              table={"default": "http://127.0.0.1:1", "routes": []}, ready_wait=1, **kw)
+                              table={"default": "http://127.0.0.1:1", "routes": []}, **{"ready_wait": 1, **kw})
 
 
 def _unit(name, **kw):
@@ -88,6 +88,14 @@ def test_backoff_doubles_and_five_failed_starts_mark_the_hub_failed(tmp_path, st
     sup.check_once()
     assert bad.state == "failed"
 
+
+
+def test_a_bridge_answering_as_another_hub_fails_its_start_at_once(tmp_path, started):
+    """A folder that now names another agent: no waiting out the ready timeout."""
+    unit = _unit("a")
+    sup = _sup(tmp_path, [unit], probe=lambda u: "answers as 'b', not 'a'", ready_wait=3600)
+    assert sup._start(unit) is False
+    assert unit.state == "restarting" and "answers as 'b'" in unit.last_exit
 
 def test_a_restart_drains_first_and_stops_channels_before_the_bridge(tmp_path, started, monkeypatch):
     order = []

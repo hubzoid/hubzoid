@@ -1594,8 +1594,10 @@ def _supervisor(units, state_dir: Path, *, table: dict):
     """The supervisor for these units, holding the deployment's lock."""
     from . import supervisor as sup_lib
 
-    def probe(unit) -> bool:
-        return _wait_for(unit.health_url, timeout=2.0, **unit.identity)
+    def probe(unit) -> bool | str:
+        if _wait_for(unit.health_url, timeout=2.0, **unit.identity):
+            return True
+        return sup_lib._probe(unit)   # still starting (False), or why it answers as another hub
 
     def say(text: str) -> None:
         console.print(escape(text))
@@ -1862,6 +1864,9 @@ def check_hub(hub: Path = typer.Argument(..., help="Hub folder.")) -> None:
         from .loaders import tools_local
 
         tools_local.load_all(hub)
+        # A broken file only loses its own tools at run time (the loader logs
+        # it and keeps going), so the check reads what failed to load.
+        problems += [f"tools_local/{Path(f).name}: {why}" for f, why in sorted(tools_local.LOAD_ERRORS.items())]
     except Exception as exc:  # noqa: BLE001
         problems.append(f"tools_local: {type(exc).__name__}: {exc}")
     try:
