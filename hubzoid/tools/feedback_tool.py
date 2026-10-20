@@ -156,6 +156,10 @@ def record(hub_dir: Path, args: dict) -> str:
             return result("denied", "This reply has no message from the person to act on.")
         if conv.temporary:
             return result("denied", "Temporary conversations don't keep feedback.")
+        svc = fb.service_for(hub_dir, engine, hub_dir.name.lower())   # the chat context's hub name
+        # This reply handles a feedback request, whatever the outcome: it is
+        # never "the previous answer" for a later request.
+        svc.note_tool_reply(conv.id, reply.id)
         said = inbound.text or ""
         if not _said(quote, said):
             return result("denied", "Only save feedback the person asked for. quote must be their exact words "
@@ -163,7 +167,6 @@ def record(hub_dir: Path, args: dict) -> str:
         if comment and not _said(comment, said):
             return result("denied", "comment must be the person's exact words from their latest message. "
                                     "Nothing was saved.")
-        svc = fb.service_for(hub_dir, engine, hub_dir.name.lower())   # the chat context's hub name
         skip = svc.tool_replies(conv.id)
         answers, cur, steps = [], inbound.parent_id, 0
         while cur and len(answers) < back and steps < MAX_STEPS:

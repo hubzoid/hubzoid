@@ -283,7 +283,15 @@ presence = sa.Table(
     sa.Column("lease_until", sa.Float, nullable=False),
 )
 
-TABLES = (feedback, helper_jobs, notification_events, inbox, target_sets, targets, deliveries, presence)
+#: op_0073: replies in which record_feedback handled a request (ids only)
+tool_replies = sa.Table(
+    "hz_feedback_tool_replies", metadata,
+    sa.Column("message_id", sa.String(64), primary_key=True),
+    sa.Column("conversation_id", sa.String(64), nullable=False, index=True),
+    sa.Column("created_at", sa.Float, nullable=False),
+)
+
+TABLES = (feedback, helper_jobs, notification_events, inbox, target_sets, targets, deliveries, presence, tool_replies)
 RETRY_SECONDS = (1, 5, 30, 120, 600)
 PRESENCE_SECONDS = 45
 TARGET_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -321,6 +329,7 @@ def tombstone_conversation(conn, conversation_id: str, t: float) -> None:
                                          feedback.c.deleted_at.is_(None))
                  .values(comment=None, tags="[]", reason_ids="[]", source_metadata=None, deleted_at=t,
                          updated_at=t, revision=feedback.c.revision + 1))
+    conn.execute(tool_replies.delete().where(tool_replies.c.conversation_id == conversation_id))
 
 
 def _now() -> float:
@@ -528,6 +537,20 @@ class FeedbackService:
         t = _now()
         if content is None:
             if not live:
+                if order is not None:
+                    # Remember the removal's time, so an older vote arriving later
+                    # (even the original one) cannot bring the rating back.
+                    if row is None:
+                        conn.execute(feedback.insert().values(
+                            id=str(uuid.uuid4()), hub_id=self.hub, conversation_id=conversation_id,
+                            branch_id=branch_id, message_id=target_id, author_id=author_id, agent_id=agent_id,
+                            rating="removed", reason_ids="[]", comment=None, tags="[]", score=None, revision=1,
+                            source_metadata=json.dumps({"order": order}), created_at=t, updated_at=t, deleted_at=t,
+                            target_kind=target_kind, source=source, author_kind=author_kind,
+                            author_label=author_label, channel_id=channel_id, thread_id=thread_id,
+                            request_key=request_key))
+                    else:
+                        self._advance(conn, row, old_meta, order)
                 return {"outcome": "unchanged", "feedback": None, "previous": None}
             n = conn.execute(feedback.update().where(feedback.c.id == row.id, feedback.c.revision == row.revision)
                              .values(comment=None, tags="[]", reason_ids="[]", deleted_at=t, updated_at=t,
@@ -539,6 +562,8 @@ class FeedbackService:
         reasons = json.loads(row.reason_ids or "[]") if same_rating and keep_reasons else content["reason_ids"]
         comment = row.comment if same_rating and keep_comment else content["comment"]
         if same_rating and json.loads(row.reason_ids or "[]") == reasons and (row.comment or None) == comment:
+            if order is not None:
+                self._advance(conn, row, old_meta, order)   # a newer repeat still moves the watermark
             return {"outcome": "unchanged", "feedback": self._feedback_json(row), "previous": previous}
         values = dict(rating=content["rating"], reason_ids=json.dumps(reasons), comment=comment,
                       tags=row.tags if same_rating else "[]", score=row.score if same_rating else None,
@@ -562,13 +587,31 @@ class FeedbackService:
         out = conn.execute(sa.select(feedback).where(feedback.c.id == fid)).first()
         return {"outcome": outcome, "feedback": self._feedback_json(out), "previous": previous}
 
+    @staticmethod
+    def _advance(conn, row, meta: dict, order: float) -> None:
+        """Record a newer provider time on a row whose content stays the same
+        (no new revision: nothing a person sees changed)."""
+        if float(meta.get("order") or 0) < order:
+            conn.execute(feedback.update().where(feedback.c.id == row.id)
+                         .values(source_metadata=json.dumps({**meta, "order": order})))
+
+    def note_tool_reply(self, conversation_id: str, message_id: str) -> None:
+        """The reply in which the tool handled a feedback request. Kept apart
+        from the rating, so editing, removing or re-saving the rating never
+        turns this confirmation into an answer to rate. Ids only, no text."""
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(tool_replies.insert().values(message_id=message_id, conversation_id=conversation_id,
+                                                          created_at=_now()))
+        except sa.exc.IntegrityError:
+            pass    # noted already (a retried call in the same reply)
+
     def tool_replies(self, conversation_id: str) -> set[str]:
-        """Replies in which the tool saved a rating: they confirm a rating,
-        so "your previous answer" never means one of them."""
+        """Replies in which the tool handled a feedback request: "your previous
+        answer" never means one of them."""
         with self.engine.connect() as conn:
-            rows = conn.execute(sa.select(feedback.c.source_metadata).where(
-                feedback.c.conversation_id == conversation_id, feedback.c.source == "tool")).all()
-        return {m["reply_message_id"] for m in (_json_obj(r[0]) for r in rows) if m.get("reply_message_id")}
+            return {r[0] for r in conn.execute(sa.select(tool_replies.c.message_id).where(
+                tool_replies.c.conversation_id == conversation_id))}
 
     # -- review ---------------------------------------------------------------------------------
     def _filtered(self, q, *, agent_id=None, rating=None, reason=None, source=None, since=None):

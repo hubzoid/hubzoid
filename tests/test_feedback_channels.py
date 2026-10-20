@@ -382,3 +382,75 @@ def test_whatsapp_disabled_deployment_collects_nothing(hub_dir, meta, started): 
     route_all(hub_dir)
     assert live(ops_engine(hub_dir)) == []
     assert text_msg  # the shared fixtures stay imported for pytest
+
+
+def wa_count(hub_dir):
+    return len(wa_t.items(hub_dir))
+
+
+def deliver(conn, hub_dir, *messages):
+    """Signed Meta webhooks through real admission, then routing."""
+    for m in messages:
+        post(conn, payload(m))
+    route_all(hub_dir)
+
+
+def test_whatsapp_late_older_events_never_win(hub_dir, meta, started):   # noqa: F811
+    conn, work = _released(hub_dir, meta)
+    conn = with_feedback(hub_dir)
+    approved_reply(hub_dir, meta, work)
+    intake = wa_count(hub_dir)
+    rows = lambda: [(r["rating"]) for r in live(ops_engine(hub_dir))]   # noqa: E731
+    up10 = reaction("wamid.o1", "wamid.out1", "👍", ts=10)
+    deliver(conn, hub_dir, up10, up10)                                  # also delivered twice: one rating
+    deliver(conn, hub_dir, reaction("wamid.o2", "wamid.out1", "👍", ts=30))   # newer, same choice
+    deliver(conn, hub_dir, reaction("wamid.o3", "wamid.out1", "👎", ts=20))   # older, arrives late
+    assert rows() == ["positive"]
+    deliver(conn, hub_dir, reaction("wamid.o4", "wamid.out1", "", ts=40))     # removed
+    deliver(conn, hub_dir, reaction("wamid.o5", "wamid.out1", "", ts=50))     # removed again, later
+    deliver(conn, hub_dir, reaction("wamid.o6", "wamid.out1", "👎", ts=45))   # older than that removal
+    assert rows() == []
+    deliver(conn, hub_dir, reaction("wamid.o7", "wamid.out1", "👍", ts=60))   # genuinely newer
+    assert rows() == ["positive"]
+    assert wa_count(hub_dir) == intake and len(meta.sent) == 1
+
+
+def test_whatsapp_removal_before_the_rating_arrives(hub_dir, meta, started):   # noqa: F811
+    conn, work = _released(hub_dir, meta)
+    conn = with_feedback(hub_dir)
+    approved_reply(hub_dir, meta, work)
+    intake = wa_count(hub_dir)
+    deliver(conn, hub_dir, reaction("wamid.b1", "wamid.out1", "", ts=30))   # the removal comes first
+    deliver(conn, hub_dir, reaction("wamid.b2", "wamid.out1", "👍", ts=10))  # then the original vote
+    assert live(ops_engine(hub_dir)) == [] and wa_count(hub_dir) == intake
+
+
+def test_whatsapp_collection_off_removal_works_and_ratings_are_not_intake(hub_dir, meta, started,  # noqa: F811
+                                                                          monkeypatch):
+    from hubzoid.chat import config as chat_config
+    from hubzoid.chat.feedback import FeedbackService
+
+    conn, work = _released(hub_dir, meta)
+    conn = with_feedback(hub_dir)
+    approved_reply(hub_dir, meta, work)
+    deliver(conn, hub_dir, reaction("wamid.c1", "wamid.out1", "👍", ts=10))
+    assert len(live(ops_engine(hub_dir))) == 1
+    svc = chat_config.service_for(hub_dir)
+    active = svc.active()
+    doc = active.document
+    doc["feedback"]["enabled"] = False
+    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    intake = wa_count(hub_dir)
+    deliver(conn, hub_dir, reaction("wamid.c2", "wamid.out1", "", ts=20))     # the person takes it back
+    deliver(conn, hub_dir, reaction("wamid.c3", "wamid.out1", "", ts=25))     # and again
+    assert live(ops_engine(hub_dir)) == [] and wa_count(hub_dir) == intake
+    deliver(conn, hub_dir, reaction("wamid.c4", "wamid.out1", "👎", ts=30),   # a new rating while off
+            quoted("wamid.c5", "wamid.out1", "👎 still wrong", ts=31))
+    assert live(ops_engine(hub_dir)) == [] and wa_count(hub_dir) == intake
+    # Turned off between the check and the save: still consumed, never Intake work.
+    monkeypatch.setattr(FeedbackService, "enabled", lambda self: True)
+    deliver(conn, hub_dir, reaction("wamid.c6", "wamid.out1", "👍", ts=40))
+    assert live(ops_engine(hub_dir)) == [] and wa_count(hub_dir) == intake
+    # A reaction to anything else is still an ordinary message.
+    deliver(conn, hub_dir, reaction("wamid.c7", "wamid.not-ours", "👍", ts=50))
+    assert wa_count(hub_dir) == intake + 1 and len(meta.sent) == 1

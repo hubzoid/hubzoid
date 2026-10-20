@@ -137,9 +137,10 @@ def test_nothing_to_rate_and_no_deployment_wide_last_answer(client, hub):
     _, said = turn(client, cid, ASK)      # the first message here: there is no previous answer
     assert "no such earlier answer" in said.lower() and ratings(client) == []
     _, said = turn(client, cid, "Save positive feedback on your previous answer")
-    # The previous answer here is the "nothing saved" reply, never the other conversation's answer.
-    [row] = ratings(client)
-    assert row["conversation_id"] == cid and row["message_id"] != elsewhere["assistant_message_id"]
+    # The "nothing saved" reply answered a feedback request, so it is not an answer to rate either,
+    # and the other conversation's answer is never reached for.
+    assert "no such earlier answer" in said.lower() and ratings(client) == []
+    assert elsewhere["assistant_message_id"]
 
 
 def test_follows_the_branch_being_viewed(client, hub):
@@ -217,3 +218,32 @@ def test_config_change_rebuilds_the_runtime_for_the_next_turn(client, hub):
                                                              "expected_revision": active.revision or "absent"})
     assert r.status_code == 200, r.text
     assert r.json()["runtime_reloaded"] is True and client.app.state.chat.runtime is not before
+
+
+def test_confirmations_are_never_the_previous_answer(hub):
+    """Repeated requests, an unchanged save, a web edit and a removal all keep
+    rating the same answer, and a restart remembers which replies confirmed."""
+    turn_on(hub)
+    with TestClient(build_app()) as client:
+        cid, _ = new_conv(client)
+        answer, _ = turn(client, cid, "What is the price of the starter plan?")
+        target = answer["assistant_message_id"]
+        turn(client, cid, ASK)                                         # negative
+        turn(client, cid, "Save positive feedback on your previous answer")
+        turn(client, cid, ASK)                                         # negative again
+        assert [(r["message_id"], r["rating"]) for r in ratings(client)] == [(target, "negative")]
+        _, said = turn(client, cid, ASK)                               # the same again: unchanged
+        assert said.startswith("Already saved") and len(ratings(client)) == 1
+        [row] = ratings(client)
+        url = f"/api/conversations/{cid}/messages/{target}/feedback"
+        edited = client.put(url, headers=ORIGIN, json={"expected_revision": row["revision"], "rating": "negative",
+                                                        "comment": "edited in the web chat"})
+        assert edited.status_code == 200                               # the web edit drops the tool's metadata
+        turn(client, cid, "Save positive feedback on your previous answer")
+        assert [(r["message_id"], r["rating"]) for r in ratings(client)] == [(target, "positive")]
+        assert client.request("DELETE", url, headers=ORIGIN, json={}).status_code == 204
+        turn(client, cid, ASK)
+        assert [(r["message_id"], r["rating"]) for r in ratings(client)] == [(target, "negative")]
+    with TestClient(build_app()) as client:                            # restart
+        turn(client, cid, "Save positive feedback on your previous answer")
+        assert [(r["message_id"], r["rating"]) for r in ratings(client)] == [(target, "positive")]

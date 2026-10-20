@@ -280,11 +280,20 @@ def _whatsapp(hub_dir, conn, row, thread, event) -> tuple[str, None] | None:
     op = delivered(conn, thread["id"], data.get("target") or "")
     if op is None or op.get("name") != "channel.result":
         return None     # not a rating of a reply we sent: an ordinary message
-    svc = _service(conn)
-    if not conn.config.feedback or not svc.enabled():
+    if not conn.config.feedback:
         return None
+    svc = _service(conn)
     action = data.get("action")
     rating = None if action == "remove" else ("positive" if action == "up" else "negative")
+
+    def off() -> tuple[str, None]:
+        # A rating of our reply while collection is off: nothing is collected,
+        # and it never becomes Intake work. Removing one still works (below).
+        _finish(hub_dir, row["id"], "ignored", "feedback_off", target="feedback")
+        return "ignored", None
+
+    if rating is not None and not svc.enabled():
+        return off()
     kwargs: dict = {}
     if data.get("comment") is not None:
         kwargs = {"comment": data["comment"], "reason_ids": None}
@@ -297,8 +306,8 @@ def _whatsapp(hub_dir, conn, row, thread, event) -> tuple[str, None] | None:
                          metadata={"via": "whatsapp", "provider_message_id": event.message_id},
                          order=float(data.get("timestamp") or 0), **kwargs)
     except GraphError as exc:
-        if exc.code == "feature_disabled":
-            return None
+        if exc.code == "feature_disabled":    # turned off while this was being routed
+            return off()
         _finish(hub_dir, row["id"], "failed", exc.code)
         return "failed", None
     _finish(hub_dir, row["id"], "routed", None, target="feedback", outcome=out["outcome"],

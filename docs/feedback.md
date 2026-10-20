@@ -75,7 +75,9 @@ What the tool trusts comes from the chat run, never from the model:
 * The answer is found by walking back along the branch being viewed: by
   default the previous answer, skipping replies that only confirmed a saved
   rating. It never picks another branch, another conversation or "the last
-  answer" across the deployment.
+  answer" across the deployment. A reply in which the tool handled a request
+  (saved, unchanged or nothing saved) is never "the previous answer", even after
+  the rating is edited in the web chat or removed.
 * The person's words (`quote`) and any `comment` must appear in their latest
   message, so the model can't invent a rating or put words in their mouth.
 
@@ -120,6 +122,10 @@ already waiting for approval keeps the text it was recorded with.
 * Nothing is sent back, and a rating never opens the 24-hour window.
 * Meta's redeliveries are one rating, and a late, older reaction never replaces a
   newer one.
+  A removal that arrives before the reaction it removes still wins.
+* While `feedback.enabled` is off, removing a reaction still removes the rating,
+  and a new 👍 or 👎 on one of these replies is ignored (it does not become an
+  Intake item).
 
 The sender has no Hubzoid account and gets none: the rating's author is an
 opaque id for that sender and number, never the workflow's owner or the
