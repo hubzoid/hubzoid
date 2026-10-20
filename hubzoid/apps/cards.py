@@ -55,8 +55,61 @@ def has_config(hub_dir) -> bool:
     return (Path(hub_dir) / config_lib.FILE).is_file()
 
 
+_file_seen: dict[str, tuple] = {}
+
+
+def _file_stamp(hub_dir) -> tuple:
+    hub_dir = Path(hub_dir)
+    parts = []
+    cards_dir = hub_dir / "cards"
+    for p in [hub_dir / config_lib.FILE, *(sorted(cards_dir.rglob("*")) if cards_dir.is_dir() else [])]:
+        try:
+            st = p.stat()
+            parts.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            parts.append((str(p), None))
+    return tuple(parts)
+
+
+def _record_file(hub_dir) -> None:
+    """Read mcp-apps.yaml and cards/ when they changed. The files are the
+    configuration (no apply step); each configuration a hub loads is recorded
+    once, so a card keeps the tools it was issued with. A file that is
+    invalid now leaves the last good configuration running."""
+    hub_dir = Path(hub_dir)
+    key = str(hub_dir.resolve())
+    stamp = _file_stamp(hub_dir)
+    if _file_seen.get(key) == stamp:
+        return
+    _file_seen[key] = stamp
+    if not has_config(hub_dir):
+        return
+    try:
+        res = validate(hub_dir, None)
+    except Exception:  # noqa: BLE001 - reported by `hubzoid apps validate` and doctor
+        log.warning("cards: could not read %s", config_lib.FILE, exc_info=True)
+        return
+    if not res.valid:
+        log.warning("cards: %s is not valid now; the last good configuration stays", config_lib.FILE)
+        return
+    hub = hub_key(hub_dir)
+    row = store.active_row(hub_dir, hub, fresh=True)
+    if row is not None and row["digest"] == res.digest():
+        return
+    try:
+        store.apply(hub_dir, hub, expected=row["revision"] if row else None, digest=res.digest(),
+                    config=res.stored(), resources={c.sha256: (c.id, c.html) for c in res.cards.values()},
+                    actor="file")
+    except WorkItemError:  # another bridge recorded it a moment ago
+        pass
+
+
 def active(hub_dir, *, fresh: bool = False) -> tuple[dict | None, config_lib.Resolved | None]:
-    """(active revision row, its configuration), or (None, None)."""
+    """(the configuration's record, its configuration) as the files say, or
+    (None, None) when the hub has no card files."""
+    if not has_config(hub_dir):
+        return None, None
+    _record_file(hub_dir)
     hub = hub_key(hub_dir)
     row = store.active_row(hub_dir, hub, fresh=fresh)
     if row is None:
