@@ -6,13 +6,16 @@ import type {
   ReasoningMessagePartComponent,
   ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
-import { AttachmentPrimitive } from "@assistant-ui/react";
-import { Check, ChevronDown, CircleSlash, FileText, Loader2, Wrench, X, XCircle } from "lucide-react";
+import { AttachmentPrimitive, useAuiState } from "@assistant-ui/react";
+import { Wrench, ChevronDown, CircleSlash, FileText, Sparkles, X, XCircle } from "lucide-react";
 import { t } from "../i18n/en";
 import { formatBytes, truncate } from "../lib/format";
 import { cx } from "../components/ui";
 import { fileRefOf, fileUrl } from "./convert";
 import { safeStringify } from "./stream";
+import { CardEntry, cardOf } from "./cards/cards";
+import { RequestCard } from "./RequestCard";
+import { HubChangeCard } from "./HubChangeCard";
 
 /** Where this thread's files live, for previews and downloads. */
 export const FilesContext = createContext<{ conversationId: string | null; apiBase: string }>({
@@ -30,23 +33,20 @@ function shortValue(value: unknown): string {
 
 export function summarizeArgs(args: unknown): string {
   if (!args || typeof args !== "object") return "";
-  const entries = Object.entries(args as Record<string, unknown>).filter(([, v]) => v !== undefined);
+  // A readable line: empty values left out, names in words, values without
+  // quotes. The exact arguments stay under "Exact action".
+  const entries = Object.entries(args as Record<string, unknown>).filter(
+    ([, v]) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
   if (entries.length === 0) return "";
   if (entries.length === 1 && typeof entries[0][1] === "string") return truncate(entries[0][1] as string, 64);
   return truncate(
     entries
       .slice(0, 3)
-      .map(([k, v]) => `${k}: ${shortValue(v)}`)
-      .join(", "),
-    72,
+      .map(([k, v]) => `${k.replace(/_/g, " ")} ${typeof v === "string" ? truncate(v.replace(/\s+/g, " "), 32) : shortValue(v)}`)
+      .join(" · "),
+    80,
   );
-}
-
-function resultError(result: unknown): string | null {
-  if (!result || typeof result !== "object") return typeof result === "string" && result ? result : null;
-  const r = result as { message?: unknown; error?: unknown; errorText?: unknown };
-  for (const v of [r.message, r.error, r.errorText]) if (typeof v === "string" && v.trim()) return v.trim();
-  return null;
 }
 
 function pretty(value: unknown): string {
@@ -70,7 +70,64 @@ export function toolLabel(name: string): { tool: string; server: string | null }
   return { tool: match[2], server: match[1].replace(/^my_/, "") || null };
 }
 
-export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
+/** "search_sources" reads as "Search sources". */
+export function humanTool(name: string): string {
+  const words = name.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim().toLowerCase();
+  return words ? words[0].toUpperCase() + words.slice(1) : name;
+}
+
+const stateIcon: Record<ToolState, ReactNode> = {
+  running: <Wrench size={13} className="flex-none text-mute" aria-hidden />,
+  done: <Wrench size={13} className="flex-none text-mute" aria-hidden />,
+  failed: <XCircle size={13} className="flex-none text-danger" aria-hidden />,
+  stopped: <CircleSlash size={13} className="flex-none text-mute" aria-hidden />,
+};
+
+/** A call that stopped to ask a person carries {status: "waiting", request_id}. */
+function waitingRequest(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as { status?: unknown; request_id?: unknown };
+  return r.status === "waiting" && typeof r.request_id === "string" ? r.request_id : null;
+}
+
+/** A hub change tool returns {hub_change: {id, ...}, message} as JSON text. */
+function hubChange(result: unknown): number | null {
+  let r = result;
+  if (typeof r === "string" && r.startsWith('{"hub_change"')) {
+    try {
+      r = JSON.parse(r);
+    } catch {
+      return null;
+    }
+  }
+  const id = (r as { hub_change?: { id?: unknown } } | null)?.hub_change?.id;
+  return typeof id === "number" ? id : null;
+}
+
+export const ToolEntry: ToolCallMessagePartComponent = (props) => {
+  const requestId = waitingRequest(props.result);
+  if (requestId) return <RequestCard requestId={requestId} toolName={props.toolName} args={props.args} />;
+  const changeId = hubChange(props.result);
+  if (changeId !== null) return <HubChangeCard id={changeId} />;
+  if (!props.isError && cardOf(props.result)) {
+    const label = toolLabel(props.toolName);
+    return (
+      <CardEntry
+        {...props}
+        header={
+          <span className="hz-act-row is-static">
+            {stateIcon.done}
+            <span className="flex-none text-secondary">{humanTool(label.tool)}</span>
+            {label.server && <span className="hz-tag is-quiet">{label.server}</span>}
+          </span>
+        }
+      />
+    );
+  }
+  return <ToolActivity {...props} />;
+};
+
+const ToolActivity: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   let state: ToolState;
@@ -79,85 +136,90 @@ export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result
   else if (status?.type === "incomplete" && status.reason === "cancelled") state = "stopped";
   else if (status?.type === "incomplete") state = "failed";
   else state = "done";
-  const summary = summarizeArgs(args);
   const label = toolLabel(toolName);
-  const error = state === "failed" ? resultError(result) : null;
   const hasArgs = !!args && typeof args === "object" && Object.keys(args as object).length > 0;
-
-  const badge: Record<ToolState, ReactNode> = {
-    running: (
-      <span className="hz-badge bg-info-soft text-info">
-        <Loader2 size={12} className="hz-spin" aria-hidden />
-        {t.tools.running}
-      </span>
-    ),
-    done: (
-      <span className="hz-badge bg-success-soft text-success">
-        <Check size={12} aria-hidden />
-        {t.tools.done}
-      </span>
-    ),
-    failed: (
-      <span className="hz-badge bg-danger-soft text-danger">
-        <XCircle size={12} aria-hidden />
-        {t.tools.failed}
-      </span>
-    ),
-    stopped: (
-      <span className="hz-badge bg-sunken text-mute">
-        <CircleSlash size={12} aria-hidden />
-        {t.tools.stopped}
-      </span>
-    ),
-  };
+  const stateText = { running: t.tools.running, done: t.tools.done, failed: t.tools.failed, stopped: t.tools.stopped }[state];
 
   return (
-    <div className="hz-panel my-2 overflow-hidden" data-tool-state={state} data-testid="tool-entry">
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-2.5 px-3 py-2 text-left hover:bg-hover"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Wrench size={14} aria-hidden className="flex-none text-mute" />
-        <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="flex-none font-mono text-[13px] font-semibold text-ink">{label.tool}</span>
-          {label.server && (
-            <span className="flex-none rounded bg-sunken px-1.5 text-[11.5px] leading-[18px] text-mute" data-testid="tool-server">
-              {label.server}
-            </span>
-          )}
-          {summary && <span className="min-w-0 truncate font-mono text-[12.5px] text-mute">{summary}</span>}
-        </span>
-        <span className="sr-only">,</span>
-        {badge[state]}
-        <ChevronDown
-          size={15}
-          aria-hidden
-          className={cx("flex-none text-mute transition-transform", open && "rotate-180")}
-        />
-      </button>
-      {error && !open && <p className="m-0 border-t border-line-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
-      <div id={bodyId} hidden={!open} className="border-t border-line-soft bg-canvas px-3 py-2.5">
-        <div className="hz-eyebrow mb-1.5">{t.tools.input}</div>
-        {hasArgs ? (
-          <pre className="m-0 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[12.5px] leading-relaxed text-body">
-            {pretty(args)}
-          </pre>
-        ) : (
-          <p className="m-0 text-[13px] text-mute">{t.tools.noInput}</p>
+    <div className="hz-act" data-tool-state={state} data-tool-name={toolName} data-testid="tool-entry">
+      <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        {stateIcon[state]}
+        <span className={cx("hz-act-label", state === "running" && "is-running")}>{humanTool(label.tool)}</span>
+        {label.server && (
+          <span className="hz-tag is-quiet" data-testid="tool-server">
+            {label.server}
+          </span>
         )}
-        {error && (
+        <span className={state === "failed" || state === "stopped" ? "text-mute" : "sr-only"}>, {stateText}</span>
+        <ChevronDown size={13} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
+      </button>
+      <div id={bodyId} hidden={!open} className="hz-act-detail">
+        <div className="mb-1 text-[11.5px] text-mute">
+          {t.tools.input} · <span className="font-mono">{toolName}</span>
+        </div>
+        {hasArgs ? (
+          <pre className="hz-tech">{pretty(args)}</pre>
+        ) : (
+          <p className="m-0 text-[12.5px] text-mute">{t.tools.noInput}</p>
+        )}
+        {result !== undefined && (
           <>
-            <div className="hz-eyebrow mb-1.5 mt-3">{t.tools.error}</div>
-            <p className="m-0 text-[13px] text-danger">{error}</p>
+            <div className="mb-1 mt-3 text-[11.5px] text-mute">{t.tools.result}</div>
+            <pre className="hz-tech">{typeof result === "string" ? result : pretty(result)}</pre>
           </>
         )}
       </div>
     </div>
   );
 };
+
+/** Consecutive tool calls fold into one quiet summary row ("3 tool calls"). */
+export function ToolGroup({ startIndex, endIndex, children }: { startIndex: number; endIndex: number; children?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  const count = endIndex - startIndex + 1;
+  const pending = useAuiState((s) =>
+    s.message.content
+      .slice(startIndex, endIndex + 1)
+      .filter((p) => p.type === "tool-call" && (p as { result?: unknown }).result === undefined).length,
+  );
+  const messageStatus = useAuiState((s) => s.message.status);
+  const running = messageStatus?.type === "running";
+  const currentTool = useAuiState((s) => {
+    const calls = s.message.content.slice(startIndex, endIndex + 1);
+    const current = calls.findLast((p) => p.type === "tool-call" && p.result === undefined);
+    return current?.type === "tool-call" ? humanTool(toolLabel(current.toolName).tool) : "";
+  });
+  // A card waiting for the person is never folded away.
+  const asking = useAuiState((s) =>
+    s.message.content
+      .slice(startIndex, endIndex + 1)
+      .some((p) => p.type === "tool-call" && (!!waitingRequest((p as { result?: unknown }).result) || hubChange((p as { result?: unknown }).result) !== null)),
+  );
+  const failed = useAuiState((s) =>
+    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && (p as { isError?: boolean }).isError),
+  );
+  // A card is a result to look at, so a group holding one is never folded.
+  const hasCard = useAuiState((s) =>
+    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && !!cardOf((p as { result?: unknown }).result)),
+  );
+  if (count < 2 || asking || hasCard) return <>{children}</>;
+  const busy = running && pending > 0;
+  const stopped = pending > 0 && messageStatus?.type === "incomplete" && messageStatus.reason === "cancelled";
+  const hasFailure = failed || (pending > 0 && messageStatus?.type === "incomplete" && !stopped);
+  const state = busy ? "running" : hasFailure ? "failed" : stopped ? "stopped" : "done";
+  return (
+    <div className="hz-act" data-testid="tool-group" data-tool-state={state}>
+      <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        {stateIcon[state]}
+        <span className={cx("hz-act-label", busy && "is-running")}>{busy ? currentTool || t.tools.usingN(count) : t.tools.usedN(count)}</span>
+        {(hasFailure || stopped) && <span className="text-mute">· {hasFailure ? t.tools.failed : t.tools.stopped}</span>}
+        <ChevronDown size={13} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
+      </button>
+      <div id={bodyId} hidden={!open} className="hz-act-steps">{open && children}</div>
+    </div>
+  );
+}
 
 export const Reasoning: ReasoningMessagePartComponent = ({ text, status }) => {
   const [open, setOpen] = useState(false);
@@ -167,28 +229,22 @@ export const Reasoning: ReasoningMessagePartComponent = ({ text, status }) => {
   if (!hasText && !running) return null;
   if (!hasText)
     return (
-      <div className="my-2 flex items-center gap-2 text-sm" data-testid="reasoning">
-        <span className="hz-shimmer font-medium">{t.reasoning.thinking}</span>
+      <div className="hz-act" data-testid="reasoning">
+        <span className="hz-act-row is-static">
+          <Sparkles size={13} aria-hidden className="flex-none text-mute" />
+          <span className="text-secondary">{t.reasoning.thinking}</span>
+        </span>
       </div>
     );
   return (
-    <div className="my-2" data-testid="reasoning">
-      <button
-        type="button"
-        className="inline-flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-sm font-medium text-mute hover:text-ink"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className={running ? "hz-shimmer" : undefined}>{running ? t.reasoning.thinking : t.reasoning.thought}</span>
-        <ChevronDown size={14} aria-hidden className={cx("transition-transform", open && "rotate-180")} />
+    <div className="hz-act" data-testid="reasoning">
+      <button type="button" className="hz-act-row" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+        <Sparkles size={13} aria-hidden className="flex-none text-mute" />
+        <span className="text-secondary">{running ? t.reasoning.thinking : t.reasoning.thought}</span>
+        <ChevronDown size={13} aria-hidden className={cx("hz-act-chev", open && "rotate-180")} />
         <span className="sr-only">{open ? t.reasoning.hide : t.reasoning.show}</span>
       </button>
-      <div
-        id={bodyId}
-        hidden={!open}
-        className="mt-1.5 whitespace-pre-wrap border-l-2 border-line py-1 pl-3.5 text-[14px] leading-relaxed text-mute"
-      >
+      <div id={bodyId} hidden={!open} className="hz-act-reason">
         {text}
       </div>
     </div>
@@ -240,11 +296,11 @@ export function MessageAttachment({ attachment }: { attachment: Attachment }) {
     );
   const body = (
     <>
-      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-accent-soft text-accent-text">
-        <FileText size={16} aria-hidden />
+      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-sunken text-secondary">
+        <FileText size={15} aria-hidden />
       </span>
       <span className="min-w-0">
-        <span className="block truncate text-[13.5px] font-medium text-ink">{attachment.name}</span>
+        <span className="block truncate text-[13px] font-medium text-ink">{attachment.name}</span>
         <span className="block text-xs text-mute">
           {[fileKind(attachment.name, ref?.mime), ref?.size ? formatBytes(ref.size) : ""].filter(Boolean).join(" · ") ||
             t.chat.file}
@@ -280,7 +336,7 @@ export function ComposerAttachment({ attachment }: { attachment: Attachment }) {
   return (
     <div
       className={cx(
-        "relative flex h-14 max-w-[240px] flex-none items-center gap-2.5 rounded-xl border bg-raised py-1.5 pl-1.5 pr-8",
+        "relative flex h-[52px] max-w-[240px] flex-none items-center gap-2.5 rounded-xl border bg-raised py-1.5 pl-1.5 pr-8",
         failed ? "border-danger/60" : "border-line",
       )}
       data-testid="composer-attachment"
@@ -289,8 +345,8 @@ export function ComposerAttachment({ attachment }: { attachment: Attachment }) {
       {isImage && url ? (
         <img src={url} alt={t.chat.imagePreview(attachment.name)} className="h-11 w-11 flex-none rounded-lg object-cover" />
       ) : (
-        <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-soft text-accent-text">
-          <FileText size={18} aria-hidden />
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-sunken text-secondary">
+          <FileText size={16} aria-hidden />
         </span>
       )}
       <span className="min-w-0">

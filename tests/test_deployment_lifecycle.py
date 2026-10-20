@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from hubzoid import cli, deployment, webui
+from hubzoid import cli, deployment
 
 
 @pytest.mark.slow
@@ -23,18 +23,13 @@ def test_gateway_child_configuration_is_isolated_and_discoverable(
         "HUBZOID_OPERATIONAL_DB",
         "HUBZOID_DBOS_DB",
         "DATABASE_URL",
-        "OWUI_INTERNAL_URL",
         "HUBZOID_GATEWAY",
         "HUBZOID_DISABLE_EDGE",
-        "OWUI_NATIVE_MCP",
     ):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI gateway's lifecycle
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "synthetic-admin@example.com")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "synthetic-test-password")
-    monkeypatch.setenv(
-        "WEBUI_AUTH", "false"
-    )  # no provisioning in this isolated harness
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "synthetic-admin@example.com")
+    monkeypatch.setenv("HUBZOID_ADMIN_PASSWORD", "synthetic-test-password")
+    monkeypatch.setenv("HUBZOID_AUTH", "false")  # no accounts needed in this isolated harness
     hubs = [tmp_path / name for name in ("finance", "ops")]
     for index, hub in enumerate(hubs):
         hub.mkdir()
@@ -48,9 +43,9 @@ def test_gateway_child_configuration_is_isolated_and_discoverable(
 from pathlib import Path
 from hubzoid import settings, db, deployment
 hub=Path(sys.argv[1]); settings.load(hub)
-print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=deployment.owui_url(hub),
- private=os.environ.get('FINANCE_PRIVATE_TOKEN'), admin=os.environ.get('HUBZOID_GATEWAY_ADMIN_EMAIL'),
- password_present=bool(os.environ.get('HUBZOID_GATEWAY_ADMIN_PASSWORD')))))
+print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub),
+ private=os.environ.get('FINANCE_PRIVATE_TOKEN'), admin=os.environ.get('HUBZOID_ADMIN_EMAIL'),
+ password_present=bool(os.environ.get('HUBZOID_ADMIN_PASSWORD')))))
 """
     # Save the original Popen; subprocess.run uses the module's Popen at runtime.
     real_popen = subprocess.Popen
@@ -83,9 +78,6 @@ print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=depl
     # The gateway runs until stopped; here it stops at once, as on a clean shutdown.
     monkeypatch.setattr(cli, "_wait_any", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *args: None)
-    fake_webui = MagicMock()
-    fake_webui.wait.return_value = 0
-    monkeypatch.setattr(webui, "start_gateway", lambda **kwargs: fake_webui)
     result = CliRunner().invoke(
         cli.app,
         [
@@ -107,7 +99,6 @@ print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=depl
         s["admin"] == "synthetic-admin@example.com" and s["password_present"]
         for s in snapshots
     )
-    assert snapshots[0]["ui"] == snapshots[1]["ui"]
     assert deployment.read(hubs[0])["operational_url"] == snapshots[0]["op"]
     assert "FINANCE_PRIVATE_TOKEN" not in os.environ
     # A separate operator process discovers exactly the same store via pointer.

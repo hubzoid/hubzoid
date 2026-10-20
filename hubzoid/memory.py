@@ -25,6 +25,8 @@ import re
 import uuid
 from pathlib import Path
 
+from . import datadir
+
 # How long a chat id we accept from the request body. Open WebUI ids are
 # uuids; Slack thread_ts is a float-string; we cap at this to keep paths
 # sane and stop a hostile caller from inflating directory names.
@@ -40,7 +42,7 @@ def make_session_id() -> str:
 
 
 def session_output_dir(hub_dir: Path, session_id: str) -> Path:
-    p = hub_dir / "output" / session_id
+    p = datadir.root(hub_dir) / "output" / session_id
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -71,7 +73,7 @@ def sanitize_chat_id(raw: object) -> str | None:
 
 def chat_root(hub_dir: Path, chat_id: str) -> Path:
     """Root of all per-chat state for `chat_id`."""
-    return hub_dir / CHATS_DIRNAME / chat_id
+    return datadir.root(hub_dir) / CHATS_DIRNAME / chat_id
 
 
 def chat_artifact_dir(hub_dir: Path, chat_id: str) -> Path:

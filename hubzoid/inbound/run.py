@@ -30,7 +30,9 @@ def build_app_for_hub(hub_dir, env=None):
     hub_dir = Path(hub_dir)
     settings = settingslib.load(hub_dir)
     resolver = load_resolver(hub_dir)
-    bindings = Bindings(hub_dir / ".inbound" / "telegram-bindings")
+    from ..datadir import root
+
+    bindings = Bindings(root(hub_dir) / ".inbound" / "telegram-bindings")
 
     wa = whatsapp_config_from_env(env)
     tg = telegram_config_from_env(env, bindings=bindings)

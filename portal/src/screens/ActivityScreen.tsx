@@ -337,7 +337,12 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
                 const s = describe(r);
                 return (
                   <Space align="start">
-                    {s.tone === "negative" ? (
+                    {s.tag ? (
+                      <Tag color={s.tone === "negative" ? "red" : s.tone === "positive" ? "green" : undefined}
+                        style={{ marginTop: 2 }}>
+                        {s.tag}
+                      </Tag>
+                    ) : s.tone === "negative" ? (
                       <Tag color="red" style={{ marginTop: 2 }}>
                         {feed === "changes" ? "Removed" : "Denied"}
                       </Tag>

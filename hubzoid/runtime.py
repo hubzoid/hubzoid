@@ -233,11 +233,25 @@ class OpenAIAgentsRuntime:
         self._opened = False
 
     async def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]:
-        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
-        the turn runs on a per-turn clone of the agent that also carries those
-        servers, each with the caller's own token. The shared agent is never
-        modified."""
+        """Run one turn as a typed stream (see `hubzoid.run_events`), after the
+        hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        model = getattr(self._agent, "model", None)
+        model = getattr(model, "model", model)
+
+        def refuse(exc):
+            self.last_error = exc
+
+        async for item in budgets.guarded(self._hub_dir, str(model) if model else None,
+                                          lambda: self._turn_events(prompt), refuse):
+            yield item
+
+    async def _turn_events(self, prompt: str) -> AsyncIterator[StreamItem]:
+        """When the caller connected personal MCP servers (see
+        `personal_mcp`), the turn runs on a per-turn clone of the agent that also
+        carries those servers, each with the caller's own token. The shared
+        agent is never modified."""
         personal = self._personal_servers()
         if not personal:
             async for item in self._stream(self._agent, prompt):
@@ -253,10 +267,10 @@ class OpenAIAgentsRuntime:
     def _personal_servers(self) -> list:
         if self._hub_dir is None:
             return []
-        from . import owui_mcp
+        from . import personal_mcp
         from .access.identity import current_identity
         try:
-            return owui_mcp.per_user_servers(self._hub_dir, current_identity())
+            return personal_mcp.per_user_servers(self._hub_dir, current_identity())
         except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
             log.warning("owui-mcp per-user injection skipped", exc_info=True)
             return []
@@ -278,7 +292,8 @@ class OpenAIAgentsRuntime:
         from contextlib import AsyncExitStack
 
         async with AsyncExitStack() as stack:
-            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent))
+            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent),
+                                           hub_dir=self._hub_dir)
             agent = self._agent
             if live:
                 # The connector tools join as function tools under their
@@ -311,7 +326,10 @@ class OpenAIAgentsRuntime:
             )
         result = None
         try:
-            result = Runner.run_streamed(agent, run_input, max_turns=self._max_turns)
+            from . import budgets
+            hooks = budgets.cost_hooks(getattr(agent, "model", None))
+            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
+                                         **({"hooks": hooks} if hooks is not None else {}))
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
@@ -351,8 +369,10 @@ class OpenAIAgentsRuntime:
                         failed = _openai_tool_failed(item)
                         # For an eval's result preview; a no-op in chat.
                         _request_ctx.record_tool_result(call_id, getattr(item, "output", None))
+                        card = None if failed else _request_ctx.take_card(
+                            getattr(item, "output", None), call_id=call_id, tool=called.get(call_id))
                         yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
-                                         message=run_events.TOOL_FAILED if failed else None)
+                                         message=run_events.TOOL_FAILED if failed else None, card=card)
             # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.
@@ -363,6 +383,10 @@ class OpenAIAgentsRuntime:
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             self.last_error = exc
+            # The calls made before the failure (a turn or dollar cap, a
+            # provider error) are spent: budgets count them.
+            if result is not None:
+                _record_openai_usage(result, _agent_model_name(self._agent), status="error")
             _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
             detail = f"{type(exc).__name__}: {exc}"
             yield Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
@@ -375,6 +399,7 @@ class OpenAIAgentsRuntime:
                     result.cancel()
                 except Exception:  # noqa: BLE001 — best-effort
                     log.debug("could not cancel the agents run", exc_info=True)
+                _record_openai_usage(result, _agent_model_name(self._agent), status="cancelled")
             raise
 
     async def run(self, prompt: str) -> str:
@@ -386,11 +411,11 @@ class OpenAIAgentsRuntime:
 
 # ---------------------------------------------------------------------------
 # Personal (per-user) MCP servers for the OpenAI and Codex backends. The Claude
-# backend passes `owui_mcp.per_user_specs` to its SDK, which runs the client.
+# backend passes `personal_mcp.per_user_specs` to its SDK, which runs the client.
 # ---------------------------------------------------------------------------
 def personal_mcp_server(srv):
     """An unconnected Agents-SDK Streamable HTTP client for one
-    `owui_mcp.PerUserServer`, named by its key and limited to the admin's tool
+    `personal_mcp.PerUserServer`, named by its key and limited to the admin's tool
     allow-list. The caller's Bearer rides in the transport headers only."""
     from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 
@@ -433,7 +458,8 @@ def connector_tool_name(server_key: str, tool: str) -> str:
     return name
 
 
-async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None) -> list:
+async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None,
+                            hub_dir=None) -> list:
     """Connect each personal server on `stack` and list its (allow-listed)
     tools, renamed ``mcp__<server key>__<tool>`` (:func:`connector_tool_name`).
     Returns ``[(server, tools)]`` for the servers kept.
@@ -453,6 +479,12 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
     kept: list = []
     for srv in personal:
         server = make(srv)
+        if hub_dir is not None:
+            from .access.guard import checked_server
+            from .hitl import gate as hitl_gate
+
+            # The access check (milestone B) first, then the approval gate.
+            server = checked_server(hitl_gate.guard_mcp_server(server, hub_dir), hub_dir)
         try:
             await stack.enter_async_context(server)
             tools = await MCPUtil.get_function_tools(
@@ -560,7 +592,7 @@ def _agent_model_name(agent) -> str | None:
     return getattr(model, "model", None)
 
 
-def _record_openai_usage(result, model: str | None = None) -> None:
+def _record_openai_usage(result, model: str | None = None, *, status: str = "ok") -> None:
     """Surface the OpenAI Agents run's token usage for the usage envelope.
 
     `result.context_wrapper.usage` accumulates across the run. The OpenAI path
@@ -581,7 +613,7 @@ def _record_openai_usage(result, model: str | None = None) -> None:
             "cost_usd": None,
             "num_turns": getattr(usage, "requests", None),
             "model": model,
-            "status": "ok",
+            "status": status,
         })
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("openai usage capture skipped: %s", exc)
@@ -638,8 +670,12 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         try:
             await rt.aopen()
             with _request_ctx.chat_scope(None):
-                text = await run_events.answer_only(rt, prompt)
-                raw.update(_request_ctx.drain_usage())
+                try:
+                    text = await run_events.answer_only(rt, prompt)
+                finally:
+                    # Also when the deadline cuts the call off: the usage
+                    # carries its budget hold, which the row below settles.
+                    raw.update(_request_ctx.drain_usage())
                 failure = _request_ctx.run_failure() or {}
         finally:
             await rt.aclose()
@@ -674,6 +710,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
             cost_usd=raw.get("cost_usd"), status=status,
             duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=raw.get("budget_reservation"),
         )
 
 
@@ -689,6 +726,13 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     tolerant parsing. Returns {"text", "json", "model"} and records a usage row
     (`surface`, `kind` and `chat_id` label it: the web app's conversation
     titles are `web` / `background`).
+
+    With ``response_format: "json"`` and a ``schema``, the runtime's native
+    structured output is used where it exists (Claude ``output_format``, an
+    OpenAI-compatible ``json_schema`` response format); Codex falls back to the
+    prompted instruction and tolerant parsing. ``result["structured"]`` says
+    which path ran (``native``, ``prompted`` or ``test``), and the object is
+    checked against the schema either way (``schema_errors``).
     """
     import asyncio
     import time
@@ -698,7 +742,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     hub_dir = Path(hub_dir)
     model_id = (spec.get("model") or "").strip() or _resolve_model_id(hub_dir, settingslib.load(hub_dir))
     want_json = spec.get("response_format") == "json"
-    prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json else "")
+    schema = spec.get("schema") if want_json and isinstance(spec.get("schema"), dict) else None
+    native = schema is not None and not (model_id == "codex-local" or model_id.startswith("codex-local/"))
+    prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json and not native else "")
+    path_used = "native" if native else ("prompted" if want_json else None)
     system = spec.get("system")
     from .workflows.deadlines import remaining
     budget = min(float(spec.get("timeout", 120)), remaining(120))
@@ -708,10 +755,14 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     started = time.monotonic()
     usage: dict = {}
     status = "error"
+    from . import budgets
+    admission = budgets.call(hub_dir, model=model_id)
+    admission.__enter__()          # refused here: nothing ran, nothing recorded
     try:
         from . import testing_runtime
         if testing_runtime.is_test_model(model_id):
             text, usage = testing_runtime.complete(spec, model_id=model_id)
+            path_used = "test" if want_json else None
         elif model_id == "codex-local" or model_id.startswith("codex-local/"):
             from .factory_codex import CodexRuntime
             async def codex_complete():
@@ -727,14 +778,23 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
         elif model_id.lower().startswith("claude-local"):
             from .factory_claude import claude_complete
 
-            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id, hub_dir=hub_dir)))
+            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id,
+                                                              hub_dir=hub_dir, output_schema=schema)))
+            if native and usage.get("structured") != "native":
+                raise AgentRunError("The model returned no structured output for the requested schema.")
         else:
             import litellm
 
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}]
             kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget}
-            if want_json:
+            bound = budgets.output_bound(model_id, prompt + (system or ""))
+            if bound is not None:
+                kwargs["max_tokens"] = bound      # what the dollar limit still allows
+            if schema is not None:
+                kwargs["response_format"] = {"type": "json_schema",
+                                             "json_schema": {"name": "result", "schema": schema}}
+            elif want_json:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = asyncio.run(bounded(litellm.acompletion(**kwargs)))
             text = resp.choices[0].message.content or ""
@@ -746,8 +806,12 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             usage = {"input_tokens": getattr(u, "prompt_tokens", None),
                      "output_tokens": getattr(u, "completion_tokens", None),
                      "cost_usd": cost, "model": model_id}
-        result = {"text": text, "json": structured.extract_json(text) if want_json else None,
-                  "model": usage.get("model") or model_id}
+        parsed = structured.extract_json(text) if want_json else None
+        result = {"text": text, "json": parsed, "model": usage.get("model") or model_id}
+        if path_used:
+            result["structured"] = path_used
+        if schema is not None:
+            result["schema_errors"] = structured.schema_errors(parsed, schema)
         status = "ok"
         return result
     finally:
@@ -757,7 +821,9 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=budgets.current_id(),
         )
+        admission.__exit__(None, None, None)
 
 
 def jev_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
@@ -767,3 +833,105 @@ def jev_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
     from . import jev
 
     return jev.call(hub_dir, spec, subject=subject)
+
+
+class StationTimeout(AgentRunError):
+    """A station ran past its active time limit."""
+
+
+def run_station(hub_dir, station: dict, message: str, *, subject: str | None = None,
+                timeout: float | None = None, registry: dict | None = None) -> dict:
+    """One run of an isolated agent (a station), on its own engine.
+
+    Fresh context: the station's instructions, exactly its listed tools, and
+    `message`. Nothing from a parent conversation. The engine's own structured
+    output constrains the result to the station's schema (Claude Agent SDK
+    `output_format`, Codex app-server `outputSchema`), then it is validated
+    here. Returns {"text", "output", "model", "usage"}; `output` is None when
+    the answer held no JSON. Raises AgentRunError when the run fails
+    (StationTimeout past `timeout`, which None leaves off); the caller decides
+    on the one retry. Runs its own event loop, so it is safe inside a
+    workflow step."""
+    import asyncio
+    import time
+
+    from . import _request_ctx, structured, usage as usage_lib
+    from .access import Identity, identity_scope
+    from .stations import tools as station_tools
+
+    hub_dir = Path(hub_dir)
+    engine = station["engine"]
+    model_setting = f"{engine}/{station['model']}" if station.get("model") else engine
+    schema = station.get("schema")
+    if registry is None:
+        registry = station_tools.for_station(hub_dir, station.get("tools") or ())
+    started = time.monotonic()
+    usage: dict = {}
+    status = "error"
+
+    async def go():
+        if engine == "claude-local":
+            from .factory_claude import claude_station
+
+            text, structured_out, measured = await claude_station(
+                message, instructions=station["instructions"], registry=registry, schema=schema,
+                model_setting=model_setting, hub_dir=hub_dir)
+            return text, structured_out, measured
+        if engine == "codex-local":
+            from .factory_codex import CodexRuntime
+
+            rt = CodexRuntime(name=station["name"], instructions=station["instructions"],
+                              registry=dict(registry), model_setting=model_setting, tool_mode="off",
+                              output_schema=schema, max_turns=40, turn_timeout=None)
+            try:
+                await rt.aopen()
+                with _request_ctx.chat_scope(None):
+                    text = await rt.run(message)
+                    measured = _request_ctx.drain_usage()
+            finally:
+                await rt.aclose()
+            if rt.last_error is not None:
+                raise AgentRunError(f"codex station run failed: {rt.last_error}") from rt.last_error
+            return text, None, measured
+        raise AgentRunError(f"Stations run on claude-local or codex-local, not {engine!r}.")
+
+    async def bounded():
+        from .sandbox.tools import closing
+        from .workflows.deadlines import remaining
+        async with closing():
+            async with asyncio.timeout(remaining(timeout)):
+                return await go()
+
+    from . import budgets
+    admission = budgets.call(hub_dir, model=model_setting)
+    admission.__enter__()          # refused here: nothing ran, nothing recorded
+    try:
+        ident = Identity.make(subject, surface="workflow") if subject else None
+        if ident is not None:
+            with identity_scope(ident):
+                text, structured_out, usage = asyncio.run(bounded())
+        else:
+            text, structured_out, usage = asyncio.run(bounded())
+        output = structured_out
+        if output is None and schema is not None:
+            try:
+                output = structured.extract_json(text)
+            except structured.ModelOutputError:
+                output = None      # the caller reports it as a malformed answer
+        status = "ok"
+        return {"text": text, "output": output, "model": (usage or {}).get("model") or model_setting,
+                "usage": {k: v for k, v in (usage or {}).items() if k != "model"}}
+    except TimeoutError as exc:
+        raise StationTimeout(f"station {station['name']} ran past its time limit") from exc
+    except AgentRunError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - one failure type for the caller
+        raise AgentRunError(f"station {station['name']} failed: {type(exc).__name__}: {exc}") from exc
+    finally:
+        usage_lib.record(
+            hub_dir, hub=hub_dir.name, surface="workflow", kind="station", subject=subject,
+            model=(usage or {}).get("model") or model_setting,
+            input_tokens=(usage or {}).get("input_tokens"), output_tokens=(usage or {}).get("output_tokens"),
+            cost_usd=(usage or {}).get("cost_usd"), status=status,
+            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id())
+        admission.__exit__(None, None, None)

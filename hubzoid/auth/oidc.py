@@ -25,8 +25,11 @@ Who signs in (contract 6.1):
     found by provider and subject under its placeholder issuer, and takes the
     real issuer once this sign-in goes ahead.
   * A first sign-in attaches to an existing account with the same email only
-    when the provider marks the email verified and
-    ``OAUTH_MERGE_ACCOUNTS_BY_EMAIL`` is true. Never on an unverified email.
+    when the provider marks the email verified, ``OAUTH_MERGE_ACCOUNTS_BY_EMAIL``
+    is true, and the account is an invitation nobody has used yet (never signed
+    in, no other provider linked). Never on an unverified email, never onto an
+    account already in use: its owner links the provider while signed in
+    (``link_start``).
   * ``OAUTH_ALLOWED_DOMAINS`` (``*`` or unset: any) limits every external
     sign-in to those email domains, judged on a verified email only (a linked
     sign-in whose current email is unverified is judged on its account's
@@ -411,8 +414,10 @@ def callback_url(request, provider_id: str) -> str:
     return f"{base}/oauth/{provider_id}/callback"
 
 
-def start(hub_dir: Path, p: Provider, *, redirect_uri: str, return_to: str) -> tuple[str, str]:
-    """(authorization URL, handshake cookie value)."""
+def start(hub_dir: Path, p: Provider, *, redirect_uri: str, return_to: str,
+          intent: str = "sign_in", user_id: str | None = None) -> tuple[str, str]:
+    """(authorization URL, handshake cookie value). ``intent`` "link" adds
+    this provider to the signed-in ``user_id``; "reauth" confirms it is them."""
     from authlib.oauth2.rfc7636 import create_s256_code_challenge
 
     from .. import secretbox
@@ -424,12 +429,16 @@ def start(hub_dir: Path, p: Provider, *, redirect_uri: str, return_to: str) -> t
     cookie = secretbox.encrypt_json(Path(hub_dir), {
         "p": p.id, "s": state, "n": nonce, "v": verifier, "r": safe_redirect(return_to),
         "u": redirect_uri, "e": time.time() + HANDSHAKE_SECONDS,
+        "i": intent if intent in ("link", "reauth") else "sign_in", "a": user_id or "",
     })
     endpoint = str(meta["authorization_endpoint"])
     query = urlencode({
         "response_type": "code", "client_id": p.client_id, "redirect_uri": redirect_uri,
         "scope": p.scopes, "state": state, "nonce": nonce,
         "code_challenge": create_s256_code_challenge(verifier), "code_challenge_method": "S256",
+        # Linking or confirming it's you needs a fresh provider sign-in, not
+        # a remembered one (checked again on return: ``fresh_enough``).
+        **({"prompt": "login", "max_age": "0"} if intent in ("link", "reauth") else {}),
     })
     return endpoint + ("&" if "?" in endpoint else "?") + query, cookie
 
@@ -556,6 +565,8 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
             checked = email
         if not domain_allowed(p.id, checked, claims, domains):
             raise SignInRefused("domain_not_allowed")
+    if user is not None and user.get("managed_by"):
+        raise SignInRefused("managed_account")
     if user is not None:
         if migrated:
             adopted = st.adopt_migrated_identity(p.id, issuer, subject)
@@ -583,7 +594,7 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
         else:
             winner = _link(st, p, issuer, subject, existing, email)
             if winner["id"] != existing["id"]:
-                st.delete(existing["id"])  # a concurrent first sign-in linked another account
+                st.purge(existing["id"])  # a concurrent first sign-in linked another account
                 return winner
             users.sync_identity(Path(hub_dir), existing)
             log.info("auth: %s sign-up created %s account %s", p.id, existing["status"], email)
@@ -596,6 +607,15 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
         raise SignInRefused("not_linked")
     if existing.get("source") == "local":
         raise SignInRefused("no_account")
+    if existing.get("managed_by"):
+        # A company directory's account signs in through that directory only.
+        raise SignInRefused("managed_account")
+    if existing.get("last_login_at") is not None or st.identities_for(existing["id"]):
+        # Email matching only completes an invitation: an account that has
+        # already been used is never taken over by a provider that says it
+        # owns the same address. Its owner links the provider while signed in
+        # (Settings > Security > Link), which proves both sides.
+        raise SignInRefused("not_linked")
     winner = _link(st, p, issuer, subject, existing, email)
     if winner["id"] == existing["id"]:
         log.info("auth: %s sign-in linked to the existing account %s", p.id, email)
@@ -618,3 +638,53 @@ def _link(st, p: Provider, issuer: str, subject: str, user: dict, email: str) ->
         if winner is None:
             raise SignInRefused("unavailable")
         return winner
+
+
+FRESH_SKEW_SECONDS = 120
+
+
+def fresh_enough(claims: Mapping, handshake: Mapping) -> bool:
+    """Whether the provider signed the person in during this handshake. A
+    provider that sends no ``auth_time`` is trusted to honour ``max_age=0``."""
+    auth_time = claims.get("auth_time")
+    if auth_time is None:
+        return True
+    started = float(handshake.get("e") or 0) - HANDSHAKE_SECONDS
+    try:
+        return float(auth_time) >= started - FRESH_SKEW_SECONDS
+    except (TypeError, ValueError):
+        return False
+
+
+def link_to(hub_dir: Path, p: Provider, claims: Mapping, user_id: str) -> str:
+    """Add this provider sign-in to the signed-in account ``user_id`` (both
+    sides are proven: the session and the provider). Returns "linked", or
+    "already" when it was this account's. Raises SignInRefused("linked_elsewhere")
+    when another account holds it."""
+    from . import users
+
+    st = users.store(Path(hub_dir))
+    owner = st.get(user_id) or {}
+    if owner.get("managed_by"):
+        raise SignInRefused("managed_account")
+    issuer, subject = str(claims["iss"]), str(claims["sub"])
+    email = users.normalize_email(claims.get("email") if isinstance(claims.get("email"), str) else "")
+    found = st.find_identity(issuer, subject)
+    if found is not None:
+        if found["user_id"] == str(user_id):
+            return "already"
+        raise SignInRefused("linked_elsewhere")
+    try:
+        st.link_identity(provider=p.id, issuer=issuer, subject=subject, user_id=str(user_id),
+                         email=email)
+    except users.AccountExists:
+        raise SignInRefused("linked_elsewhere")
+    return "linked"
+
+
+def same_person(hub_dir: Path, claims: Mapping, user_id: str) -> bool:
+    """Whether this provider sign-in is linked to ``user_id`` (reauthentication)."""
+    from . import users
+
+    found = users.store(Path(hub_dir)).find_identity(str(claims["iss"]), str(claims["sub"]))
+    return found is not None and found["user_id"] == str(user_id)

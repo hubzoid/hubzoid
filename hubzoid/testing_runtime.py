@@ -20,6 +20,10 @@ message. Keywords combine; the parts run in this order:
   error     some text, then the run fails
   recall    the reply quotes the previous user message of the conversation
             (the flattened history), so a follow-up turn depends on an earlier one
+  reserve   one call to a ``reserve_stock`` fixture action through the approval
+            gate (``hubzoid.hitl``): it runs when allowed, otherwise it waits for
+            a person and the reply says so
+  askme     the agent asks one question with two options (``ask_question``)
 
 With none of them, the reply is short markdown that quotes the request and lists
 any attached files. Usage (token counts from word counts, zero cost) is recorded
@@ -45,7 +49,7 @@ log = logging.getLogger("hubzoid.testing_runtime")
 
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
-KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall")
+KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme")
 
 _WORD = re.compile(r"[A-Za-z]+")
 _NOTE = re.compile(r"^\[(?:Image|User attached file): ([^\](]+?)\s*(?:\(|\])", re.MULTILINE)
@@ -237,6 +241,44 @@ class ScriptedRuntime:
                            legacy=tool_events.format_call("write_artifact", args, mode=self._tool_mode))
             self._write_artifact(request)
             yield ToolResult(id="call_artifact", name="write_artifact", ok=True)
+
+        if "reserve" in words and "rejected" not in words:
+            from .hitl import gate
+
+            args = {"sku": "SKU-12", "quantity": 4}
+            verdict = await asyncio.to_thread(gate.evaluate, self.hub_dir, "reserve_stock", args)
+            yield ToolCall(id="call_reserve", name="reserve_stock", args=args,
+                           legacy=tool_events.format_call("reserve_stock", args, mode=self._tool_mode))
+            if verdict.action == "ask":
+                gate.note_waiting("reserve_stock", verdict.request)
+            yield ToolResult(id="call_reserve", name="reserve_stock", ok=verdict.action != "refuse")
+            body = {"allow": "Reserved 4 units of SKU-12.",
+                    "ask": "I'd like to reserve 4 units of SKU-12. Waiting for your approval.",
+                    "refuse": verdict.message}[verdict.action]
+            for piece in _chunks(body):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "askme" in words:
+            from .hitl import tools as hitl_tools
+
+            tool = hitl_tools.ask_question_tool(self.hub_dir)
+            args = {"question": "Which warehouse should ship it?",
+                    "options": [{"label": "North (Recommended)", "description": "Ships today."},
+                                {"label": "South", "description": "Ships tomorrow."}]}
+            yield ToolCall(id="call_ask", name="ask_question", args=args,
+                           legacy=tool_events.format_call("ask_question", args, mode=self._tool_mode))
+            out = await tool.on_invoke_tool(None, json.dumps(args)) if tool else '{"status": "unavailable"}'
+            yield ToolResult(id="call_ask", name="ask_question", ok=True)
+            body = ("Which warehouse should ship it?" if '"waiting"' in out
+                    else "Nobody can answer now, so I will use the North warehouse.")
+            for piece in _chunks(body):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
 
         if "error" in words:
             for piece in _chunks("Starting on that. "):

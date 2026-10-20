@@ -134,7 +134,8 @@ export function toThreadMessage(message: ServerMessage, ctx: ConvertContext): Th
       createdAt,
       content: [{ type: "text", text }],
       attachments,
-      metadata: { custom: {} },
+      // A decision on an approval or question card, recorded as the person's turn.
+      metadata: { custom: parts.some((p) => p.type === "request_outcome") ? { decision: true } : {} },
     };
   }
   if (message.role === "assistant") {

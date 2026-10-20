@@ -94,7 +94,13 @@ def _scan_dir(skills_dir: Path | None, *, resilient: bool = False, hub_dir: Path
         if md is None or agent_read_refusal(hub_dir or skills_dir.parent, md):
             continue
         try:
-            out.append(_load_one(md))
+            loaded = _load_one(md)
+            if hub_dir is not None:
+                # A hub skill may use {{settings.KEY}} (hubzoid.hubs.settings).
+                from ..hubs.settings import render
+
+                loaded.body = render(hub_dir, loaded.body, md)
+            out.append(loaded)
         except (ValueError, OSError) as exc:
             if not resilient:
                 raise

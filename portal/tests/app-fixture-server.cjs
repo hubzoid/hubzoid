@@ -338,8 +338,8 @@ function createApp(options = {}) {
     if (state.flags.no_agents) return [];
     if (state.flags.one_agent) return [AGENTS[0]];
     if (state.flags.many_agents) return [...AGENTS, ...MORE_AGENTS];
-    if (user.role === "admin") return AGENTS;
-    return AGENTS.slice(0, 2);
+    if (user.role === "admin") return options.agents || AGENTS;
+    return (options.agents || AGENTS).slice(0, 2);
   }
 
   // ---- scripted runs ---------------------------------------------------------
@@ -921,7 +921,7 @@ function createApp(options = {}) {
     res.end(fs.readFileSync(index));
   }
 
-  let consoleFixture = null;
+  let consoleFixture = options.consoleFixture || null;
   function consoleApi() {
     if (!consoleFixture) consoleFixture = require("./fixture.cjs").createFixture();
     return consoleFixture;
@@ -1047,6 +1047,8 @@ function createApp(options = {}) {
           return send(res, e.status || 500, { detail: e.detail || String(e) });
         }
       }
+      if (req.method === "GET" && options.controls?.[url.pathname]) return send(res, 200, options.controls[url.pathname]);
+      if (url.pathname === "/api/chat/theme" && options.theme && req.method === "GET") return send(res, 200, options.theme);
       if (url.pathname.startsWith("/api/") || /^\/b\/[^/]+\/(api|artifacts)\//.test(url.pathname) || url.pathname.startsWith("/artifacts/"))
         return await api(req, res, url);
       if (url.pathname === "/portal" || url.pathname.startsWith("/portal/")) {
@@ -1054,7 +1056,7 @@ function createApp(options = {}) {
         if (staticFile(res, path.join(dist, relative))) return;
         return page(res);
       }
-      if (/^\/(c|s)\/[^/]+$/.test(url.pathname) || /^\/(auth|account|new)(\/|$)/.test(url.pathname) || url.pathname === "/") return page(res);
+      if (/^\/(c|s)\/[^/]+$/.test(url.pathname) || /^\/(auth|account|new|settings|sources|spaces|workspace)(\/|$)/.test(url.pathname) || url.pathname === "/") return page(res);
       return send(res, 404, { detail: { code: "not_found", message: "Not found." } });
     } catch (error) {
       const status = error.status || 500;

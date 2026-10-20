@@ -1,7 +1,7 @@
 """GitZoid's chat and MCP tools for people allowed to use them (the `gitzoid`
 capability, granted per agent in the Console). They read GitZoid's own data
 and GitHub, never the hub's files. Hubzoid refuses restricted tools on Slack
-and Telegram, so these answer in web chat (native or Open WebUI) and over MCP
+and Telegram, so these answer in web chat and over MCP
 from Claude Code or Codex.
 """
 from __future__ import annotations

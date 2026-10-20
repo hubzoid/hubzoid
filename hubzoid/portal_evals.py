@@ -81,15 +81,9 @@ def read_cases(hub_path: Path) -> tuple[bool, list, list[dict]]:
     root = resolve_bucket(hub_path, "evals")
     if root is None:
         return False, [], []
-    found, errors = [], []
-    for path in sorted(root.glob("*.md"), key=lambda p: p.name.lower()):
-        if path.name.startswith(("_", ".")):
-            continue
-        try:
-            found.append(cases_lib.parse(path))
-        except cases_lib.EvalCaseError as exc:
-            errors.append(dict(file=f"{root.name}/{path.name}", error=str(exc)))
-    return True, found, errors
+    problems: list[tuple[str, str]] = []
+    found = cases_lib.discover(hub_path, strict=False, errors=problems)
+    return True, found, [dict(file=f"{root.name}/{rel}", error=error) for rel, error in problems]
 
 
 def _case_row(case) -> dict:

@@ -61,7 +61,7 @@ def record(hub_dir, hub, kind, source, payload):
     base = os.environ.get('HUBZOID_PUBLIC_URL', '').rstrip('/')
     # Explicit allowlist: no workflow outputs or raw exceptions in messages.
     data = {k:payload[k] for k in ('workflow','run_id','count') if k in payload}
-    link = base+'/portal/#/agents/'+quote(hub,safe='')+'/runs'
+    link = base+'/settings#/agents/'+quote(hub,safe='')+'/runs'
     if payload.get('workflow') and payload.get('run_id'):
         link += '/'+quote(payload['workflow'],safe='')+'/'+quote(payload['run_id'],safe='')
     data.update(hub=hub, kind=kind, url=link)
@@ -73,6 +73,15 @@ def record(hub_dir, hub, kind, source, payload):
         for target in targets:
             aid = 'alert:' + hashlib.sha256(json.dumps([hub,kind,source,target],sort_keys=True).encode()).hexdigest()
             conn.execute(text("INSERT INTO hz_workflow_alerts (id,hub,kind,payload,destination,state,attempt,due,created) VALUES (:i,:h,:k,:p,:d,'pending',0,:n,:n) ON CONFLICT (id) DO NOTHING"), {'i':aid,'h':hub,'k':kind,'p':json.dumps(data),'d':json.dumps(target),'n':now})
+
+
+def _where(row):
+    """'hub/workflow' for a log line, from the alert's payload."""
+    try:
+        payload = json.loads(row.get('payload') or '{}')
+    except ValueError:
+        return '?'
+    return f"{payload.get('hub', '?')}/{payload.get('workflow', payload.get('kind', '?'))}"
 
 
 def _row(hub_dir, aid):
@@ -123,7 +132,8 @@ def _email(hub_dir, row, recipient, payload):
     msg.set_content(json.dumps(payload,indent=2))
     if cfg.mode == 'preview':
         from pathlib import Path
-        directory = Path(hub_dir)/'.hubzoid'/'alert-preview'
+        from ..datadir import state
+        directory = state(hub_dir)/'alert-preview'
         directory.mkdir(parents=True,exist_ok=True,mode=0o700)
         fd = os.open(directory/(row['id'].split(':')[-1]+'.eml'),os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600)
         with os.fdopen(fd,'wb') as stream:
@@ -163,8 +173,12 @@ async def deliver(hub_dir, aid, *, sender=None):
         await (sender or send)(hub_dir, row)
     except Exception as exc:
         state = 'failed' if attempt >= 5 else 'pending'
-        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__
-        log.warning('Alert %s delivery failed (%s)', aid, error)
+        # A ValueError here is our own configuration problem with a plain reason
+        # ("No alert destination configured"). Other errors can carry a webhook
+        # URL, so only their type is kept.
+        reason = f': {exc}' if isinstance(exc, ValueError) else ''
+        due, error = time.time()+min(3600,30*2**attempt), type(exc).__name__+reason
+        log.warning('Alert %s for %s delivery failed (%s)', aid, _where(row), error)
     else:
         state, due, error = 'sent', time.time(), None
     await asyncio.to_thread(_finish, hub_dir, aid, attempt, state, due, error)

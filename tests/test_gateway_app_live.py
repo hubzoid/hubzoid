@@ -144,7 +144,7 @@ def test_branding_through_the_edge(live):
         base = live["base"]
         assert httpx.get(base + "/api/branding", timeout=TIMEOUT).json() == {
             "name": "Acme", "logo_url": "/branding/logo.svg", "favicon_url": "/branding/logo.svg",
-            "custom_css_url": None}
+            "custom_css_url": None, "manifest": None}  # no published brand: the folder's files
         assert httpx.get(base + "/branding/logo.svg", timeout=TIMEOUT).content == b"<svg>acme</svg>"
         assert httpx.get(base + "/b/sales/branding/logo.png", timeout=TIMEOUT).content == b"sales-logo"
         hub = httpx.get(base + "/b/sales/api/branding", timeout=TIMEOUT).json()
@@ -159,8 +159,9 @@ def test_the_bridge_api_stays_on_loopback(live):
                        headers={"Authorization": "Bearer k-sales-0123456789",
                                 "X-OpenWebUI-User-Email": OWNER},
                        json={"model": "sales", "messages": [{"role": "user", "content": "hi"}]})
-        assert r.status_code == 404
-        assert httpx.get(base + "/v1/models", timeout=TIMEOUT).status_code == 404
+        # The public /v1 takes personal keys (hzp_) only: a bridge key or none is refused.
+        assert r.status_code == 401
+        assert httpx.get(base + "/v1/models", timeout=TIMEOUT).status_code == 401
         # On loopback the bridge still answers its own callers.
         r = httpx.get(f"http://127.0.0.1:{SALES}/v1/models", timeout=TIMEOUT,
                       headers={"Authorization": "Bearer k-sales-0123456789"})

@@ -221,11 +221,14 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
     ]
     if not specs:
         return None
-    if not _git(top, "status", "--porcelain", "--", *specs).strip():
-        return None
-    _git(top, "add", "--", *specs)
-    _git(top, "commit", "-m", message, "--", *specs)
-    sha = _git(top, "rev-parse", "HEAD")
+    from .hub_changes.service import write_lock
+
+    with write_lock(hub_dir):  # one writer at a time: reviewed hub changes use the same lock
+        if not _git(top, "status", "--porcelain", "--", *specs).strip():
+            return None
+        _git(top, "add", "--", *specs)
+        _git(top, "commit", "-m", message, "--", *specs)
+        sha = _git(top, "rev-parse", "HEAD")
     if push:
         push_head(hub_dir)
     return sha
@@ -299,6 +302,18 @@ def push_head(hub_dir: Path) -> None:
     if top is None:
         raise RuntimeError(f"{hub_dir} is not inside a git repository; cannot push.")
     head = _git_run(top, "rev-parse", "HEAD").stdout.strip()
+    reviewed = _git_run(top, "log", "--format=%H", "--fixed-strings", "--grep=Hubzoid-Change: ",
+                        "@{upstream}..HEAD").stdout.strip()
+    if reviewed:
+        # A reviewed hub change is published exactly as it was approved: never
+        # rebased. Push as is; a refused push is for a person to reconcile.
+        ps = _git_run(top, *_push_args(top))
+        if ps.returncode != 0:
+            raise RuntimeError(
+                "git push failed and the branch holds a reviewed hub change, which Hubzoid never "
+                "rebases. The commits exist locally but were NOT pushed; reconcile by hand.\n"
+                + ps.stderr.strip())
+        return
     stash_before = _stash_top(top)[0]
     pr = _git_run(top, "pull", "--rebase", "--autostash")
     if pr.returncode != 0:
@@ -531,7 +546,7 @@ def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: flo
         model=raw.get("model") or task.model,
         input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
         cost_usd=raw.get("cost_usd"), status=raw.get("status") or status,
-        duration_ms=int((time.monotonic() - t0) * 1000),
+        duration_ms=int((time.monotonic() - t0) * 1000), reservation=raw.get("budget_reservation"),
     )
 
 
@@ -568,7 +583,19 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     task.state_rel = idlib.markdown_scratch(Path(hub_dir), task.name, identity)
     # Establish the scope before runtime construction/aopen: MCP tool-serving
     # tasks inherit it, as do every round and its timeout child task.
-    with (identity_scope(Identity.make(identity.subject, surface="workflow")),
+    ident = Identity.make(identity.subject, surface="workflow")
+    if identity.is_person:
+        import uuid
+
+        from .access import run_identity
+
+        record = run_identity.admit_or_refuse(
+            Path(hub_dir), run_kind="schedule", run_id=f"{task.name}:{uuid.uuid4().hex[:12]}",
+            acts_as_id=identity.account_id, acts_as_email=identity.subject,
+            requested_by=identity.subject, started_from="schedule", origin_id=task.name,
+            person_present=False, credential_kind="schedule")
+        ident = run_identity.identity(record, "workflow")
+    with (identity_scope(ident),
           _request_ctx.schedule_read_scope(Path(hub_dir), task.scratch_rel)):
         return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture,
                                events=events or [])
@@ -582,10 +609,14 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     started_dt = datetime.now()
     state = ScheduleState(hub_dir)
 
-    scratch = hub_dir / task.scratch_rel
+    from .datadir import resolve
+
+    scratch = resolve(hub_dir, task.scratch_rel)
     log_path = scratch / "runs" / f"{started_dt.strftime('%Y%m%dT%H%M%S')}.jsonl"
     rlog = RunLog(log_path)
     result = RunResult(task=task.name, run_log=log_path, result="error")
+    from . import usage as usage_lib
+    run_key = f"schedule-{task.name}-{started_dt.strftime('%Y%m%dT%H%M%S')}"
 
     ident = task.run_identity or {}
     rlog.emit(event="run_start", task=task.name, schedule=task.schedule,
@@ -672,7 +703,8 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             round_status = "error"
             failure = None
             try:
-                with _request_ctx.chat_scope(None):
+                # All rounds of this run are one run for budgets.yaml.
+                with _request_ctx.chat_scope(None), usage_lib.run_tag(run_key):
                     try:
                         reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
                         # A usage limit (or refused login, or overload) reads as a

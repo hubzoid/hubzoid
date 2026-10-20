@@ -20,7 +20,7 @@ import claude_agent_sdk
 import pytest
 from claude_agent_sdk import ResultMessage
 
-from hubzoid import factory_claude, owui_mcp
+from hubzoid import factory_claude, personal_mcp
 from hubzoid.access import Identity, identity_scope
 from hubzoid.factory_claude import PrivateMcpConfig
 from tests.test_claude_mcp_isolation import _cli
@@ -51,7 +51,7 @@ def rt(tmp_path, monkeypatch):
                                   "headers": {"Authorization": f"Bearer {TOKENS[who]}"}}},
                 [f"mcp__notes-{who}__*"])
 
-    monkeypatch.setattr(owui_mcp, "per_user_specs", specs)
+    monkeypatch.setattr(personal_mcp, "per_user_specs", specs)
     return factory_claude.build_claude_runtime(d)
 
 

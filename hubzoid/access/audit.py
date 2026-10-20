@@ -65,7 +65,10 @@ def import_legacy(hub_dir) -> int:
     key = (str(engine.url), _hub(hub_dir))
     if key in _IMPORTED:
         return 0
-    files = sorted((hub_dir / "logs").glob("access-*.jsonl")) if (hub_dir / "logs").is_dir() else []
+    from ..datadir import root
+
+    logs = root(hub_dir) / "logs"
+    files = sorted(logs.glob("access-*.jsonl")) if logs.is_dir() else []
     rows = []
     for fp in files:
         try:

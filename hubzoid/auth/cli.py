@@ -47,10 +47,10 @@ def _fail(message: str, code: int = 1) -> None:
 
 def _prepare(hub: Path) -> Path:
     """The hub, with its configuration loaded as ``hubzoid run`` loads it."""
-    from .. import appmode
-
     hub = Path(hub).resolve()
-    if not (hub / "AGENTS.md").is_file() and not (hub / ".hubzoid" / "deployment.json").is_file():
+    from ..datadir import state
+
+    if not (hub / "AGENTS.md").is_file() and not (state(hub) / "deployment.json").is_file():
         _fail(f"{hub} is not a hub (no AGENTS.md). Run this in a hub directory or pass one.", 2)
     try:
         from ..cli import _load_settings
@@ -60,16 +60,30 @@ def _prepare(hub: Path) -> Path:
         raise
     except Exception as exc:  # noqa: BLE001 — never print a configuration value
         _fail(f"The hub's configuration could not be loaded ({type(exc).__name__}).", 2)
-    if appmode.is_openwebui(hub):
-        _fail("This deployment uses Open WebUI accounts (HUBZOID_UI=openwebui). Manage people "
-              "in the Console (People) or in Open WebUI.", 2)
+    from .. import appmode
+
+    # An Open WebUI (1.x) deployment keeps its accounts there until it is moved.
+    problems = appmode.retired_problems(hub)
+    if problems:
+        _fail("\n".join(problems), 2)
     return hub
 
 
-def _link_base() -> str:
-    from .. import appmode
+def _link_base(hub: Path | None = None) -> str:
+    """Where the person opens the link: HUBZOID_PUBLIC_URL, else the public URL
+    the gateway recorded for this hub's deployment (``--public-url``), else the
+    local default port. Run from a shell, the gateway's own environment is not
+    here, so without the record the link pointed at a port nobody serves."""
+    from .. import appmode, deployment
 
-    return appmode.public_url() or f"http://127.0.0.1:{os.environ.get('PORT') or 3080}"
+    recorded = ""
+    if hub is not None:
+        try:
+            recorded = str((deployment.read(hub) or {}).get("public_url") or "")
+        except Exception:  # noqa: BLE001 — an unreadable record means no record
+            recorded = ""
+    return (appmode.public_url() or recorded.rstrip("/")
+            or f"http://127.0.0.1:{os.environ.get('PORT') or 3080}")
 
 
 def _when(ts: float | None) -> str:
@@ -100,11 +114,11 @@ def _ask_password() -> str:
     raise AssertionError  # unreachable
 
 
-def _print_link(token: str, expires: float) -> None:
+def _print_link(token: str, expires: float, hub: Path | None = None) -> None:
     from . import links
 
     console.print("One-time sign-in link (share it with them directly; it works once):")
-    console.print(f"  {links.url(token, _link_base())}", soft_wrap=True, highlight=False)
+    console.print(f"  {links.url(token, _link_base(hub))}", soft_wrap=True, highlight=False)
     console.print(f"Expires {_when(expires)}.")
 
 
@@ -194,7 +208,7 @@ def create(
     elif not password:
         token, expires = links.create(hub, user["id"], purpose="set_password",
                                       created_by=operator)
-        _print_link(token, expires)
+        _print_link(token, expires, hub)
     else:
         console.print("They sign in with the password you typed.")
 
@@ -230,12 +244,13 @@ def reset_password(
                                       created_by=operator)
         console.print(f"[green]Password reset[/green] for {email}. Their sessions were signed "
                       "out and the old password no longer works.")
-        _print_link(token, expires)
+        _print_link(token, expires, hub)
     store_for(hub).audit_event(operator, "account_password_reset", subject=email, hub=ORG)
 
 
 @admin_app.command("list")
-def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP)) -> None:
+def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP),
+                  as_json: bool = typer.Option(False, "--json", help="Print the accounts as JSON.")) -> None:
     """List every account: role, status, how they sign in, last sign-in."""
     from ..access import store_for
     from . import users
@@ -243,6 +258,19 @@ def list_accounts(hub: Path = typer.Argument(Path("."), help=_HUB_HELP)) -> None
     hub = _prepare(hub)
     gs = store_for(hub)
     people = users.list_users(hub)
+    if as_json:
+        import json as _json
+
+        rows = []
+        for u in people:
+            with gs.engine.connect() as conn:
+                blocked = gs._meta_get(conn, "suspended:" + u["email"]) == "1"  # noqa: SLF001
+            rows.append({"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"],
+                         "status": "blocked" if blocked else u["status"],
+                         "sign_in": users.sign_in_of(u) if u["source"] != "local" else "local",
+                         "last_login_at": u["last_login_at"]})
+        print(_json.dumps({"accounts": rows}, indent=2, default=str))
+        return
     table = Table(show_header=True, header_style="bold")
     for column in ("Email", "Name", "Role", "Status", "Signs in with", "Last sign-in"):
         table.add_column(column, overflow="fold")

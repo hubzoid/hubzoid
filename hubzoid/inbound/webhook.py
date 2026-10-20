@@ -172,7 +172,9 @@ _PROCESSED_DIRNAME = ".processed"
 
 def inbox_dir(hub_dir: Path, name: str) -> Path:
     """The directory holding pending events for the ``<name>`` webhook."""
-    return Path(hub_dir) / ".inbound" / "webhooks" / name
+    from ..datadir import root
+
+    return root(Path(hub_dir)) / ".inbound" / "webhooks" / name
 
 
 def pending_events(hub_dir: Path, name: str) -> "list[Path]":

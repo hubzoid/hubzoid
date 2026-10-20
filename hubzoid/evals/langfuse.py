@@ -217,7 +217,9 @@ def push(hub_dir: Path, suite: SuiteResult, *, run_name: str | None = None) -> s
     if cfg is None:
         return None
     base, public, secret = cfg
+    from .calls import redact
 
+    suite = SuiteResult.from_dict(redact(suite.to_dict()))   # what leaves the machine, as saved locally
     run_name = run_name or (suite.finished_at or suite.started_at).replace(":", "").replace("-", "")
     events = _events(hub_dir, suite, run_name)
     if not events:

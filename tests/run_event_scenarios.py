@@ -244,8 +244,8 @@ def _claude_messages(steps):
                 yield AssistantMessage(content=[ToolUseBlock(id=tid, name=name, input=args)],
                                        model="claude-golden")
             elif kind == "tool_result":
-                _, tid, is_error = step
-                yield UserMessage(content=[ToolResultBlock(tool_use_id=tid, content="r",
+                _, tid, is_error, *content = step       # the tool's text, "r" unless given
+                yield UserMessage(content=[ToolResultBlock(tool_use_id=tid, content=content[0] if content else "r",
                                                            is_error=is_error)])
             elif kind == "result":
                 _, is_error, subtype, result = step
@@ -361,7 +361,9 @@ def codex_registry() -> dict:
     return {"lookup": lookup, "broken": broken, "saver": saver}
 
 
-def run_codex(mp, tmp_path: Path, scenario: str, *, tool_mode: str, typed: bool = False):
+def codex_runtime(mp, tmp_path: Path, middle: list[dict], registry: dict, *, tool_mode: str = "compact"):
+    """A CodexRuntime whose app-server answers with the notifications `middle`
+    and calls the tools in `registry` as the real one does."""
     from hubzoid import factory_codex
     from hubzoid.factory_codex import CodexRuntime
 
@@ -374,14 +376,17 @@ def run_codex(mp, tmp_path: Path, scenario: str, *, tool_mode: str, typed: bool 
         proc.returncode = 0
 
     mp.setattr(factory_codex, "_stop", stop)
-    events = _codex_events(CODEX_SCENARIOS[scenario])
+    events = _codex_events(middle)
 
     async def spawn(*args, **kwargs):  # noqa: ARG001
         return _CodexProcess(events)
 
     mp.setattr(asyncio, "create_subprocess_exec", spawn)
-    rt = CodexRuntime(name="golden", instructions="", registry=codex_registry(),
-                      tool_mode=tool_mode)
+    return CodexRuntime(name="golden", instructions="", registry=registry, tool_mode=tool_mode)
+
+
+def run_codex(mp, tmp_path: Path, scenario: str, *, tool_mode: str, typed: bool = False):
+    rt = codex_runtime(mp, tmp_path, CODEX_SCENARIOS[scenario], codex_registry(), tool_mode=tool_mode)
 
     async def go():
         with _request_ctx.chat_scope(CHAT_ID):

@@ -77,7 +77,8 @@ export function displayName(name: string | null | undefined): string {
 
 /** One or two letters for an avatar. */
 export function initials(name: string | null | undefined): string {
-  const words = displayName(name).replace(/@.*$/, "").split(/[\s._-]+/).filter(Boolean);
+  // Split on anything that is not a letter or digit, so "Owner (test)" gives "OT", not "O(".
+  const words = displayName(name).replace(/@.*$/, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   if (words.length === 0) return "?";
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[words.length - 1][0]).toUpperCase();
@@ -96,4 +97,16 @@ export function fileNameFromUrl(href: string): string {
   } catch {
     return href;
   }
+}
+
+/** "now", "5m", "3h", "Yesterday", or a short date. */
+export function formatRelative(value: Timestamp, now = new Date()): string {
+  const d = toDate(value);
+  if (!d) return "";
+  const s = Math.round((now.getTime() - d.getTime()) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (dateGroup(value, now) === "today") return `${Math.floor(s / 3600)}h`;
+  if (dateGroup(value, now) === "yesterday") return "Yesterday";
+  return formatDate(value, { month: "short", day: "numeric" });
 }

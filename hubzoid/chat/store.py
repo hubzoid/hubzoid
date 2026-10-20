@@ -62,6 +62,11 @@ conversations = sa.Table(
     sa.Column("source", sa.String(16), nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # op_0024: the conversation graph (``hubzoid.chat.graph``).
+    sa.Column("graph_revision", sa.Integer),
+    sa.Column("temporary", sa.Integer),
+    sa.Column("expires_at", sa.Float),
+    sa.Column("deleted_at", sa.Float),
 )
 
 messages = sa.Table(
@@ -78,6 +83,16 @@ messages = sa.Table(
     sa.Column("usage", sa.Text),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # op_0024: who wrote it, on which branch, and what it revises.
+    sa.Column("branch_id", sa.String(64)),
+    sa.Column("revises_id", sa.String(64)),
+    sa.Column("author_id", sa.String(64)),
+    sa.Column("editor_id", sa.String(64)),
+    sa.Column("run_id", sa.String(64)),
+    sa.Column("requested_model", sa.String(255)),
+    sa.Column("historical_only", sa.Integer),
+    sa.Column("context_changed", sa.Integer),
+    sa.Column("deleted_at", sa.Float),
 )
 
 shares = sa.Table(
@@ -203,12 +218,14 @@ def _message(row) -> dict:
 def remove_chat_files(hub_dir: Path, key: str) -> None:
     """Delete the conversation's files folder (its ``store.chat_key``), only
     ever inside the hub's chats folder."""
-    base = (Path(hub_dir) / memlib.CHATS_DIRNAME).resolve()
+    from ..datadir import root
+
+    base = (root(Path(hub_dir)) / memlib.CHATS_DIRNAME).resolve()
     target = memlib.chat_root(Path(hub_dir), key)
     if not target.exists():
         return
     resolved = target.resolve()
-    if (not base.is_relative_to(Path(hub_dir).resolve())
+    if (not base.is_relative_to(root(Path(hub_dir)).resolve())
             or resolved.parent != base or target.is_symlink()):
         log.warning("chat: refused to delete %s (outside %s)", target, base)
         return
@@ -265,7 +282,9 @@ class ConversationStore:
         """The conversation when ``owner_id`` owns it, else None (never tells
         whether someone else's exists)."""
         conv = self.get_conversation(conv_id)
-        return conv if conv is not None and conv["owner_id"] == owner_id else None
+        if conv is None or conv.get("deleted_at") is not None:
+            return None
+        return conv if conv["owner_id"] == owner_id else None
 
     def list_conversations(self, owner_id: str, *, archived: bool = False, q: str | None = None,
                            limit: int = DEFAULT_PAGE, cursor: str | None = None,
@@ -274,7 +293,7 @@ class ConversationStore:
         the cursor of the next page (None on the last page)."""
         limit = max(1, min(int(limit or DEFAULT_PAGE), MAX_PAGE))
         c = conversations.c
-        stmt = sa.select(conversations).where(c.owner_id == owner_id,
+        stmt = sa.select(conversations).where(c.owner_id == owner_id, c.deleted_at.is_(None),
                                               c.archived == (1 if archived else 0))
         q = (q or "").strip()
         if q:
@@ -376,7 +395,7 @@ class ConversationStore:
             conn.execute(messages.update().where(messages.c.id == message_id).values(**values))
 
     def list_messages(self, conv_id: str) -> list[dict]:
-        stmt = (messages.select().where(messages.c.conversation_id == conv_id)
+        stmt = (messages.select().where(messages.c.conversation_id == conv_id, messages.c.deleted_at.is_(None))
                 .order_by(messages.c.created_at, messages.c.id))
         with self.engine.connect() as conn:
             return [_message(r) for r in conn.execute(stmt)]
@@ -388,7 +407,8 @@ class ConversationStore:
             return []
         with self.engine.connect() as conn:
             links = dict(conn.execute(sa.select(messages.c.id, messages.c.parent_id)
-                                      .where(messages.c.conversation_id == conv_id)).all())
+                                      .where(messages.c.conversation_id == conv_id,
+                                             messages.c.deleted_at.is_(None))).all())
             if message_id not in links:
                 return []
             path: list[str] = []
@@ -414,13 +434,21 @@ class ConversationStore:
 
     def sweep_running(self, hub: str, *, error: str) -> int:
         """Mark this hub's replies still 'running' as failed (their run ended with
-        the process that owned it). Returns how many."""
+        the process that owned it). A reply whose run still holds a live branch
+        lease belongs to another worker and is left alone. Returns how many."""
+        from . import graph as g
+
+        t = time.time()
         owned = sa.select(conversations.c.id).where(conversations.c.hub == hub)
+        live = (sa.select(g.runs.c.message_id).join(g.leases, sa.and_(g.leases.c.run_id == g.runs.c.id,
+                                                                      g.leases.c.branch_id == g.runs.c.branch_id))
+                .where(g.leases.c.expires_at > t))
         with self.engine.begin() as conn:
             return conn.execute(
                 messages.update()
-                .where(messages.c.status == "running", messages.c.conversation_id.in_(owned))
-                .values(status="error", error=error, updated_at=time.time())).rowcount
+                .where(messages.c.status == "running", messages.c.conversation_id.in_(owned),
+                       messages.c.id.not_in(live))
+                .values(status="error", error=error, updated_at=t)).rowcount
 
     # -- shares ----------------------------------------------------------------
     def share_for(self, conv_id: str) -> dict | None:

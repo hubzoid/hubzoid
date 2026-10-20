@@ -49,6 +49,60 @@ def test_usage_sink_record_and_drain():
         assert _request_ctx.drain_usage() == {}   # cleared after drain
 
 
+def test_an_openai_run_that_ends_in_an_error_still_reports_its_tokens():
+    # A run stopped by its turn cap (or a dollar cap, or a provider error)
+    # spent its calls: the usage row, and so the budgets, must count them.
+    import asyncio
+    import time
+
+    from agents import Agent, function_tool, set_tracing_disabled
+    from agents.models.interface import Model
+    from openai.types.responses import (Response, ResponseCompletedEvent, ResponseFunctionToolCall,
+                                        ResponseUsage)
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+
+    from hubzoid.runtime import OpenAIAgentsRuntime
+
+    set_tracing_disabled(True)
+
+    class Looping(Model):
+        model = "gpt-4o"
+        calls = 0
+
+        async def get_response(self, *a, **kw):
+            raise NotImplementedError
+
+        async def stream_response(self, *a, **kw):
+            Looping.calls += 1
+            n = Looping.calls
+            yield ResponseCompletedEvent(type="response.completed", sequence_number=1, response=Response(
+                id=f"r{n}", created_at=time.time(), model="gpt-4o", object="response", parallel_tool_calls=False,
+                tool_choice="auto", tools=[],
+                output=[ResponseFunctionToolCall(type="function_call", call_id=f"c{n}", name="ping",
+                                                 arguments="{}", id=f"fc{n}", status="completed")],
+                usage=ResponseUsage(input_tokens=500, output_tokens=200, total_tokens=700,
+                                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0))))
+
+    @function_tool
+    def ping() -> str:
+        "Ping."
+        return "pong"
+
+    rt = OpenAIAgentsRuntime(Agent(name="a", instructions="x", model=Looping(), tools=[ping]),
+                             max_turns=2, hub_dir=None)
+
+    async def go():
+        with _request_ctx.chat_scope("c1"):
+            async for _ in rt.stream_events("hi"):
+                pass
+            return _request_ctx.drain_usage()
+
+    usage = asyncio.run(go())
+    assert type(rt.last_error).__name__ == "MaxTurnsExceeded"
+    assert usage["status"] == "error" and usage["input_tokens"] == 500 * Looping.calls >= 1000
+
+
 # ---------------------------------------------------------------------------
 # server integration
 # ---------------------------------------------------------------------------

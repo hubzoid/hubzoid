@@ -118,7 +118,7 @@ def team(tmp_path):
                         "HUBZOID_SMTP_HOST", "HUBZOID_GATEWAY_ADMIN_EMAIL")}
     env.update(HUBZOID_OPERATIONAL_DB=f"sqlite:///{tmp_path / 'ops.db'}",
                HUBZOID_DBOS_DB=f"sqlite:///{tmp_path / 'dbos.db'}",
-               WEBUI_AUTH="true", HUBZOID_EMAIL_DELIVERY="preview")
+               HUBZOID_AUTH="true", HUBZOID_EMAIL_DELIVERY="preview")
     subprocess.run([sys.executable, "-c", _SETUP, str(hub)], env=env, check=True,
                    capture_output=True, text=True)
     return hub, env

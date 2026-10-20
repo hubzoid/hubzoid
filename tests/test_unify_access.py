@@ -17,19 +17,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from hubzoid import server
 from hubzoid.access import effective_groups
 from hubzoid.access.resolver import reset_roster_cache
-
-
-@pytest.fixture(autouse=True)
-def _legacy_ui(monkeypatch):
-    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui), where
-    the bridge trusts Open WebUI's forwarded identity and reads its groups; the
-    web app mode is covered by tests/test_assertions*.py and test_groups_*.py."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 def _write(hub: Path, rel: str, content: str) -> Path:
@@ -71,16 +61,22 @@ def test_header_groups_still_union(tmp_path):
 # ---------------------------------------------------------------------------
 # _derive_identity — the same, through the real bridge entry point
 # ---------------------------------------------------------------------------
-def test_derive_identity_unifies_roster_on_owui_login(tmp_path):
+def _signed(hub, email):
+    from hubzoid.assertions import identity_headers
+
+    return {k.lower(): v for k, v in identity_headers(hub, surface="web", email=email).items()}
+
+
+def test_derive_identity_unifies_roster_on_a_web_sign_in(tmp_path):
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
         919800000001,ravi@example.org,coordinator
     """)
-    req = _FakeRequest({"x-openwebui-user-email": "ravi@example.org"})
+    req = _FakeRequest(_signed(tmp_path, "ravi@example.org"))
     ident = server._derive_identity({}, req, tmp_path)
     assert ident.user == "ravi@example.org"
     assert "coordinator" in ident.groups
-    assert ident.surface == "owui"
+    assert ident.surface == "web"
 
 
 def test_derive_identity_roster_reloads_without_restart(tmp_path):
@@ -88,7 +84,7 @@ def test_derive_identity_roster_reloads_without_restart(tmp_path):
         phone,email,groups
         919800000001,ravi@example.org,coordinator
     """)
-    req = _FakeRequest({"x-openwebui-user-email": "ravi@example.org"})
+    req = _FakeRequest(_signed(tmp_path, "ravi@example.org"))
     ident1 = server._derive_identity({}, req, tmp_path)
     assert "auditor" not in ident1.groups
     p.write_text(textwrap.dedent("""\

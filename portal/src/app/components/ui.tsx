@@ -13,13 +13,14 @@ import { Dialog as RDialog, Tooltip as RTooltip } from "radix-ui";
 import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle } from "lucide-react";
 import { t } from "../i18n/en";
 import { displayName, initials } from "../lib/format";
+import { useTheme } from "../lib/theme";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
 }
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "neutral" | "secondary" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   icon?: ReactNode;
@@ -79,7 +80,7 @@ export function Tip({ label, children, side = "top" }: { label: string; children
         <RTooltip.Content
           side={side}
           sideOffset={6}
-          className="z-[70] rounded-md bg-ink px-2 py-1 text-xs font-medium text-bg"
+          className="z-[70] max-w-[min(20rem,calc(100vw-2rem))] rounded-md bg-ink px-2 py-1 text-[11.5px] font-medium text-bg"
         >
           {label}
         </RTooltip.Content>
@@ -140,12 +141,12 @@ export function Notice({
   return (
     <div
       role={tone === "error" ? "alert" : "status"}
-      className={cx("flex items-start gap-3 rounded-[10px] px-3.5 py-3 text-sm", toneStyle[tone], className)}
+      className={cx("flex items-start gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px]", toneStyle[tone], className)}
     >
       <span className="mt-0.5 flex-none">{toneIcon[tone]}</span>
       <div className="min-w-0 flex-1 leading-relaxed">
         {title && <div className="font-semibold">{title}</div>}
-        {children && <div className={cx(title ? "mt-0.5" : "", "text-[13.5px]")}>{children}</div>}
+        {children && <div className={cx(title ? "mt-0.5" : "", "text-[13px]")}>{children}</div>}
         {action && <div className="mt-2.5">{action}</div>}
       </div>
       {onDismiss && (
@@ -226,18 +227,15 @@ export function AgentAvatar({
           if (img.naturalHeight && img.naturalWidth / img.naturalHeight > 1.6) setUnusable(src);
         }}
         onError={() => setUnusable(src)}
-        className={cx("flex-none border border-line bg-raised object-contain", className)}
+        className={cx("flex-none bg-raised object-contain", className)}
         style={{ width: size, height: size, borderRadius: radius }}
       />
     );
   return (
     <span
       aria-hidden
-      className={cx(
-        "inline-flex flex-none items-center justify-center border border-line bg-sunken font-mono font-semibold text-ink",
-        className,
-      )}
-      style={{ width: size, height: size, borderRadius: radius, fontSize: Math.max(10, Math.round(size * 0.38)) }}
+      className={cx("inline-flex flex-none items-center justify-center bg-active font-semibold text-secondary", className)}
+      style={{ width: size, height: size, borderRadius: radius, fontSize: Math.max(9, Math.round(size * 0.42)), letterSpacing: "-0.02em" }}
     >
       {initials(displayName(name))}
     </span>
@@ -272,8 +270,18 @@ export function Wordmark({ className }: { className?: string }) {
  * The deployment's mark: its logo (a square icon beside the name, or a
  * wordmark on its own), the Hubzoid wordmark by default, or the name.
  */
-export function BrandMark({ logoUrl, name }: { logoUrl?: string | null; name: string }) {
+export function BrandMark({
+  logoUrl: lightUrl,
+  darkLogoUrl,
+  name,
+}: {
+  logoUrl?: string | null;
+  darkLogoUrl?: string | null;
+  name: string;
+}) {
   const [wordmark, setWordmark] = useState(false);
+  const { resolved } = useTheme();
+  const logoUrl = resolved === "dark" && darkLogoUrl ? darkLogoUrl : lightUrl;
   if (logoUrl)
     return (
       <>
@@ -286,7 +294,7 @@ export function BrandMark({ logoUrl, name }: { logoUrl?: string | null; name: st
           }}
           className={cx("flex-none object-contain", wordmark ? "h-6 max-w-[170px]" : "h-7 w-7 rounded-md")}
         />
-        {!wordmark && <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>}
+        {!wordmark && <span className="truncate text-[14px] font-semibold tracking-tight text-ink">{name}</span>}
       </>
     );
   if (name === t.product) return <Wordmark className="text-[17px]" />;
@@ -299,7 +307,7 @@ export function BrandMark({ logoUrl, name }: { logoUrl?: string | null; name: st
         <span className="text-brand">/</span>
         {name.slice(0, 1).toLowerCase()}
       </span>
-      <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>
+      <span className="truncate text-[14px] font-semibold tracking-tight text-ink">{name}</span>
     </>
   );
 }
@@ -326,7 +334,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} role="alertdialog">
-      <div className="text-[14.5px] leading-relaxed text-body">{body}</div>
+      <div className="text-[13.5px] leading-relaxed text-body">{body}</div>
       {error && (
         <Notice tone="error" className="mt-4">
           {error}
@@ -365,7 +373,7 @@ export function Modal({
         <RDialog.Overlay className="hz-overlay" />
         <RDialog.Content className="hz-dialog" role={role}>
           <div className="mb-3 flex items-start justify-between gap-4">
-            <RDialog.Title className="m-0 text-lg font-semibold tracking-tight text-ink">{title}</RDialog.Title>
+            <RDialog.Title className="m-0 text-[15px] font-semibold tracking-tight text-ink">{title}</RDialog.Title>
             <RDialog.Close asChild>
               <button type="button" className="hz-icon-btn -mr-2 -mt-1" aria-label={t.close}>
                 <X size={18} aria-hidden />
@@ -398,8 +406,8 @@ export function StateMessage({
   return (
     <div className="mx-auto flex max-w-md flex-col items-center px-6 py-16 text-center">
       {icon && <div className="mb-4 text-mute">{icon}</div>}
-      <h1 className="m-0 text-xl font-semibold tracking-tight text-ink">{title}</h1>
-      {children && <div className="mt-2 text-[14.5px] leading-relaxed text-mute">{children}</div>}
+      <h1 className="m-0 text-[17px] font-semibold tracking-tight text-ink">{title}</h1>
+      {children && <div className="mt-2 text-[13px] leading-relaxed text-mute">{children}</div>}
       {action && <div className="mt-6 flex flex-wrap justify-center gap-2">{action}</div>}
     </div>
   );

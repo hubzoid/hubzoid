@@ -1,0 +1,393 @@
+"""Verified backups (HUB-109): checksums and integrity checks, a failed backup
+never counts, scheduled weekly backups, PostgreSQL dumps and a restore
+rehearsal that touches nothing."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import json
+import sqlite3
+import tarfile
+import time
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from hubzoid import backup as bk
+from hubzoid import backup_schedule as sched
+from hubzoid import cli
+from tests.test_backup import _standalone, clean  # noqa: F401 — clean is an autouse fixture
+
+
+def _meta(hub: Path, key: str):
+    from hubzoid import db
+
+    url = db.operational_url(hub)
+    conn = sqlite3.connect(url.split(":///", 1)[1])
+    try:
+        row = conn.execute("SELECT v FROM hz_meta WHERE k=?", (key,)).fetchone()
+    finally:
+        conn.close()
+    return json.loads(row[0]) if row else None
+
+
+def _repack(src: Path, dst: Path, change) -> None:
+    """Copy an archive, passing each member's bytes through change(name, data)."""
+    with tarfile.open(src, "r:gz") as old, tarfile.open(dst, "w:gz") as new:
+        for m in old.getmembers():
+            data = old.extractfile(m).read() if m.isfile() else None
+            data = change(m.name, data) if data is not None else None
+            if data is not None:
+                m.size = len(data)
+            new.addfile(m, io.BytesIO(data) if data is not None else None)
+
+
+def test_every_backup_records_checksums_and_is_verified(tmp_path):
+    hub = _standalone(tmp_path)
+    archive = tmp_path / "b.tar.gz"
+    index = bk.backup(hub, archive, wait=0)
+    assert index["verified"]["ok"] and index["verified"]["databases"] == len(index["sqlite"]) >= 2
+    with tarfile.open(archive) as tar:
+        for name, digest in index["files"].items():
+            assert hashlib.sha256(tar.extractfile(name).read()).hexdigest() == digest
+    last = _meta(hub, "backup:last")
+    assert last["verified"] is True and last["files"] == index["verified"]["files"]
+
+
+def test_a_changed_or_cut_archive_fails_verification(tmp_path):
+    hub = _standalone(tmp_path)
+    good = tmp_path / "b.tar.gz"
+    bk.backup(hub, good, wait=0)
+
+    changed = tmp_path / "changed.tar.gz"
+    _repack(good, changed, lambda name, data: data.replace(b"report", b"REPORT") if name.endswith("report.txt") else data)
+    result = bk.verify(changed)
+    assert not result["ok"] and any("report.txt: checksum does not match" in p for p in result["problems"])
+
+    cut = tmp_path / "cut.tar.gz"
+    cut.write_bytes(good.read_bytes()[: good.stat().st_size // 2])
+    result = bk.verify(cut)
+    assert not result["ok"] and result["problems"]
+
+
+def test_a_damaged_database_fails_its_integrity_check(tmp_path):
+    hub = _standalone(tmp_path)
+    good = tmp_path / "b.tar.gz"
+    index = bk.backup(hub, good, wait=0)
+    target = index["sqlite"][0]
+    broken: dict[str, str] = {}
+
+    def damage(name, data):
+        if name == target:
+            data = data[:100] + b"\xff" * 4000 + data[4100:]
+            broken["sha"] = hashlib.sha256(data).hexdigest()
+        return data
+
+    first = tmp_path / "first.tar.gz"
+    _repack(good, first, damage)
+    # The index's checksum matches the damaged file, so only the integrity check can catch it.
+    index["files"][target] = broken["sha"]
+    out = tmp_path / "damaged.tar.gz"
+    _repack(first, out, lambda name, data: json.dumps(index).encode() if name == bk.INDEX else data)
+    result = bk.verify(out)
+    assert not result["ok"] and any(p.startswith(target) for p in result["problems"])
+    assert not any("checksum" in p for p in result["problems"])
+
+
+def test_a_backup_that_fails_verification_is_deleted_and_never_counts(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setattr(bk, "verify", lambda archive: {"ok": False, "problems": ["a checksum does not match"]})
+    archive = tmp_path / "b.tar.gz"
+    with pytest.raises(bk.BackupError, match="did not pass verification"):
+        bk.backup(hub, archive, wait=0)
+    assert not archive.exists()
+    assert _meta(hub, "backup:last") is None
+    assert "did not pass verification" in _meta(hub, "backup:failed")["error"]
+
+    from hubzoid import doctor
+
+    row = doctor._backup_age(None, _meta(hub, "backup:failed"))
+    assert row.status == "warn" and "failed" in row.summary
+
+
+def test_scheduled_backups_are_weekly_verified_kept_and_pruned(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.SETTING, "weekly")
+    monkeypatch.setenv(sched.KEEP_SETTING, "2")
+    monkeypatch.setenv(sched.DIR_SETTING, str(tmp_path / "backups"))
+    monkeypatch.delenv("HUBZOID_DATA_DIR", raising=False)
+    assert sched.due(hub)                                       # never backed up
+    names = iter(f"hubzoid-backup-2026101{n}-030000.tar.gz" for n in range(1, 4))
+    real_backup = bk.backup
+    monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
+        hub_dir, out.with_name(next(names)), wait=0, **{k: v for k, v in kw.items() if k != "wait"}))
+    for _ in range(3):
+        sched.run_once(hub)
+    kept = [a["name"] for a in sched.archives(hub)]
+    assert kept == ["hubzoid-backup-20261013-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz"]
+    assert all(bk.verify(Path(a["path"]))["ok"] for a in sched.archives(hub))
+    assert not sched.due(hub) and sched.due(hub, now=time.time() + 8 * 86400)
+    # Earlier archives never go into the next one.
+    with tarfile.open(sched.archives(hub)[0]["path"]) as tar:
+        assert not any("/backups/" in n for n in tar.getnames())
+    monkeypatch.setenv(sched.SETTING, "off")
+    assert not sched.due(hub, now=time.time() + 30 * 86400)
+
+
+def test_a_failed_scheduled_backup_waits_before_trying_again(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.SETTING, "daily")
+    monkeypatch.setattr(sched, "_meta", lambda hub_dir, key: {"at": time.time() - 60, "error": "disk full"}
+                        if key == "backup:failed" else None)
+    assert not sched.due(hub)
+    assert sched.due(hub, now=time.time() + sched.RETRY_AFTER)
+
+
+def test_the_loop_backs_up_when_due_and_survives_a_failure(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.SETTING, "weekly")
+    calls = []
+
+    def run_once(hub_dir):
+        calls.append(hub_dir)
+        if len(calls) == 1:
+            raise bk.BackupError("disk full")
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(sched, "due", lambda hub_dir: True)
+    monkeypatch.setattr(sched, "run_once", run_once)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(sched.loop(hub, first=0, every=0))
+    assert len(calls) == 2
+
+
+def test_rehearsal_restores_into_scratch_and_touches_nothing(tmp_path):
+    hub = _standalone(tmp_path)
+    archive = tmp_path / "b.tar.gz"
+    bk.backup(hub, archive, wait=0)
+    before = {p: p.stat().st_mtime_ns for p in hub.rglob("*") if p.is_file()}
+    report = bk.rehearse(archive)
+    assert report["ok"], report["problems"]
+    upgraded = [d for d in report["databases"] if d.get("upgraded")]
+    assert upgraded and all(not d["problems"] for d in report["databases"])
+    assert {p: p.stat().st_mtime_ns for p in hub.rglob("*") if p.is_file()} == before
+
+
+def test_the_cli_verifies_lists_and_rehearses(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    runner = CliRunner()
+    archive = tmp_path / "b.tar.gz"
+    r = runner.invoke(cli.app, ["backup", str(hub), "--out", str(archive), "--wait", "0"])
+    assert r.exit_code == 0 and "verified" in r.output, r.output
+    r = runner.invoke(cli.app, ["backup", "verify", str(archive), "--json"])
+    assert r.exit_code == 0 and json.loads(r.output)["ok"]
+    r = runner.invoke(cli.app, ["restore", str(archive), "--rehearse", "--json"])
+    assert r.exit_code == 0 and json.loads(r.output)["ok"], r.output
+    r = runner.invoke(cli.app, ["backup", "list", str(hub), "--json"])
+    assert r.exit_code == 0 and json.loads(r.output)["archives"] == []
+    cut = tmp_path / "cut.tar.gz"
+    cut.write_bytes(archive.read_bytes()[:200])
+    assert runner.invoke(cli.app, ["backup", "verify", str(cut)]).exit_code == 1
+
+
+@pytest.mark.slow  # starts PostgreSQL
+def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatch, postgres_url):
+    from sqlalchemy import create_engine, text
+
+    from hubzoid import access, migrations
+
+    scratch_db = f"hz_scratch_{int(time.time() * 1000)}"
+    admin = create_engine(postgres_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as c:
+        c.execute(text(f"CREATE DATABASE {scratch_db}"))
+    admin.dispose()
+    scratch = postgres_url.rsplit("/", 1)[0] + "/" + scratch_db
+
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", postgres_url)
+    access._stores.clear()
+    migrations._done.clear()
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("pg@example.org", "hub", "use_hub", actor="test")
+    archive = tmp_path / "pg.tar.gz"
+    index = bk.backup(hub, archive, wait=0)
+    assert [d["roles"] for d in index["postgres"]] == [["operational"]] and index["verified"]["postgres"] == 1
+    assert "hz_test" in index["postgres"][0]["url"] and index["not_included"] == []
+
+    def databases():
+        with create_engine(postgres_url).connect() as c:
+            return set(c.execute(text("SELECT datname FROM pg_database")).scalars())
+
+    before = databases()
+    upgraded_in = []
+    real_upgrade = bk._upgrade_and_count
+
+    def upgrade(engine, *a):
+        with engine.connect() as c:
+            upgraded_in.append(c.execute(text("SELECT current_database()")).scalar())
+        return real_upgrade(engine, *a)
+
+    monkeypatch.setattr(bk, "_upgrade_and_count", upgrade)
+    live = postgres_url.rsplit("/", 1)[1].split("?", 1)[0]
+    joined = "&" if "?" in postgres_url else "?"
+    # The live database named twice, in the path and the query: the query would
+    # win over the scratch database's name.
+    report = bk.rehearse(archive, postgres_url=f"{postgres_url}{joined}dbname={live}")
+    assert report["ok"], report["problems"]
+    assert report["postgres"][0]["upgraded"]
+    assert upgraded_in and all(n.startswith("hubzoid_rehearsal_") for n in upgraded_in)
+    assert databases() == before                       # its temporary database is gone
+
+    engine = create_engine(postgres_url)
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM hz_grants WHERE subject='pg@example.org'"))
+    bk.restore(archive, [(str(tmp_path / "live"), str(tmp_path / "moved"))], postgres_url=postgres_url)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM hz_grants WHERE subject='pg@example.org'")).scalar_one() == 1
+        assert c.execute(text("SELECT COUNT(*) FROM hz_meta WHERE k='maintenance:hold'")).scalar_one() == 0
+    engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Review findings
+# ---------------------------------------------------------------------------
+def _crafted(tmp_path: Path, members: list[tuple[str, bytes | None]], index: dict) -> Path:
+    archive = tmp_path / "crafted.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        for name, data in [*members, (bk.INDEX, json.dumps(index).encode())]:
+            info = tarfile.TarInfo(name)
+            if data is None:
+                info.type = tarfile.DIRTYPE
+                t.addfile(info)
+            else:
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+    return archive
+
+
+def test_an_archive_with_odd_or_repeated_entries_is_refused(tmp_path):
+    root = {"id": "r0", "path": str(tmp_path / "live" / "hub" / ".hubzoid"), "kind": "state"}
+    base = {"format": 1, "roots": [root], "sqlite": [], "files": {}}
+    escaping = _crafted(tmp_path, [("r0//srv/live/.hubzoid/hub.db", b"SQLite format 3\x00")],
+                        {**base, "sqlite": ["r0//srv/live/.hubzoid/hub.db"]})
+    repeated = _crafted(tmp_path / "b", [("r0/a.txt", b"one"), ("r0/a.txt", b"two")], base) \
+        if (tmp_path / "b").mkdir() is None else None
+    as_folder = _crafted(tmp_path / "c", [("r0/hub.db", None)], {**base, "sqlite": ["r0/hub.db"]}) \
+        if (tmp_path / "c").mkdir() is None else None
+    for archive, why in ((escaping, "unsafe entry"), (repeated, "more than once"), (as_folder, "as a file")):
+        with pytest.raises(bk.BackupError, match=why):
+            bk.read_index(archive)
+        assert not bk.verify(archive)["ok"]
+        assert not bk.rehearse(archive)["ok"]
+
+
+def test_postgres_connection_details_never_reach_a_command_line(monkeypatch):
+    seen = {}
+
+    def run(cmd, env, what, timeout=3600):
+        seen["cmd"], seen["service"] = cmd, Path(env["PGSERVICEFILE"]).read_text()
+        seen["inherited"] = {k for k in env if k.startswith("PG")}
+
+    monkeypatch.setenv("PGHOST", "elsewhere")
+    monkeypatch.setattr(bk, "_pg_run", run)
+    monkeypatch.setattr(bk, "_pg_tool", lambda name: name)
+    bk._pg_dump("postgresql+psycopg://hz:s3cret@db.internal:6543/app?sslmode=require", Path("/tmp/x.dump"))
+    assert "s3cret" not in " ".join(seen["cmd"]) and "db.internal" not in " ".join(seen["cmd"])
+    assert {"host=db.internal", "port=6543", "password=s3cret", "dbname=app", "sslmode=require"} \
+        <= set(seen["service"].splitlines())
+    assert seen["inherited"] == {"PGSERVICEFILE", "PGSERVICE", "PGPASSFILE"}       # no stray PGHOST
+    with pytest.raises(bk.BackupError, match="twice"):
+        bk._pg_dump("postgresql://u@prod/app?host=scratch", Path("/tmp/x.dump"))
+
+
+def test_a_failed_postgres_restore_touches_no_file(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    archive = tmp_path / "b.tar.gz"
+    monkeypatch.setenv("HUBZOID_DBOS_DB", "postgresql://hz@127.0.0.1:1/app")   # its dump is faked here
+    monkeypatch.setattr(bk, "_pg_dump", lambda url, dest: dest.write_bytes(b"PGDMP"))
+    monkeypatch.setattr(bk, "_pg_run", lambda *a, **k: None)
+    bk.backup(hub, archive, wait=0)
+
+    def refuse(dump, url, database=None):
+        raise bk.BackupError("pg_restore into postgresql://hz@127.0.0.1:1/app failed: refused")
+
+    monkeypatch.setattr(bk, "_pg_restore", refuse)
+    target = tmp_path / "moved"
+    with pytest.raises(bk.BackupError, match="refused"):
+        bk.restore(archive, [(str(tmp_path / "live"), str(target))], postgres_url="postgresql://hz@127.0.0.1:1/app")
+    assert not target.exists()
+
+
+def test_a_damaged_known_database_fails_the_backup(tmp_path):
+    hub = _standalone(tmp_path)
+    dbos = hub / ".hubzoid" / "dbos.db"
+    dbos.write_bytes(b"not a database at all")
+    with pytest.raises(bk.BackupError, match="not a readable SQLite file"):
+        bk.backup(hub, tmp_path / "b.tar.gz", wait=0)
+    assert "not a readable SQLite file" in _meta(hub, "backup:failed")["error"]
+
+
+def test_waiting_on_busy_work_is_recorded_as_a_failure(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setattr(bk, "running_runs", lambda plan, unknown=None: ["hub: wf-1"])
+    with pytest.raises(bk.BackupError, match="still in progress"):
+        bk.backup(hub, tmp_path / "b.tar.gz", wait=0.01, poll=0.01, settle=0)
+    assert "still in progress" in _meta(hub, "backup:failed")["error"]
+
+
+def test_a_backups_folder_that_holds_the_state_is_refused_and_recorded(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.DIR_SETTING, str(hub / ".hubzoid"))      # the state folder itself
+    with pytest.raises(bk.BackupError, match="holds"):
+        sched.run_once(hub)
+    assert "holds" in _meta(hub, "backup:failed")["error"]           # doctor says why
+
+
+def test_a_backups_folder_inside_a_saved_folder_is_never_archived(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.delenv(sched.DIR_SETTING, raising=False)              # <state>/backups, inside .hubzoid
+    monkeypatch.delenv("HUBZOID_DATA_DIR", raising=False)
+    names = iter(["hubzoid-backup-20261011-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz"])
+    real_backup = bk.backup
+    monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
+        hub_dir, out.with_name(next(names)), wait=0, **{k: v for k, v in kw.items() if k != "wait"}))
+    sched.run_once(hub)
+    sched.run_once(hub)
+    with tarfile.open(sched.archives(hub)[0]["path"]) as tar:
+        assert not any(n.endswith(".tar.gz") for n in tar.getnames())
+
+
+def test_one_backup_at_a_time_and_a_busy_one_is_not_a_failure(tmp_path):
+    hub = _standalone(tmp_path)
+    with bk._one_at_a_time(bk.plan(hub)):
+        with pytest.raises(bk.BackupBusy, match="Another backup"):
+            bk.backup(hub, tmp_path / "second.tar.gz", wait=0)
+    assert _meta(hub, "backup:failed") is None and not (tmp_path / "second.tar.gz").exists()
+    bk.backup(hub, tmp_path / "after.tar.gz", wait=0)                  # the lock is released
+
+
+def test_every_password_parameter_is_redacted():
+    url = "postgresql://u:secret1@db/app?sslpassword=secret2&sslmode=require&Password=secret3"  # gitleaks:allow
+    out = bk._redact(url)
+    assert "secret" not in out and "sslmode=require" in out and "sslpassword=***" in out
+
+
+def test_pruning_never_keeps_a_broken_archive_over_a_verified_one(tmp_path, monkeypatch):
+    hub = _standalone(tmp_path)
+    monkeypatch.setenv(sched.KEEP_SETTING, "2")
+    monkeypatch.setenv(sched.DIR_SETTING, str(tmp_path / "backups"))
+    names = iter(["hubzoid-backup-20261011-030000.tar.gz", "hubzoid-backup-20261012-030000.tar.gz",
+                  "hubzoid-backup-20261014-030000.tar.gz"])
+    real_backup = bk.backup
+    monkeypatch.setattr(bk, "backup", lambda hub_dir, out, **kw: real_backup(
+        hub_dir, out.with_name(next(names)), wait=0, **{k: v for k, v in kw.items() if k != "wait"}))
+    sched.run_once(hub)
+    sched.run_once(hub)
+    (tmp_path / "backups" / "hubzoid-backup-20261013-030000.tar.gz").write_bytes(b"not an archive")
+    sched.run_once(hub)
+    kept = [a["name"] for a in sched.archives(hub)]
+    assert kept == ["hubzoid-backup-20261014-030000.tar.gz", "hubzoid-backup-20261013-030000.tar.gz",
+                    "hubzoid-backup-20261012-030000.tar.gz"]        # the 12th still counts; the 11th goes

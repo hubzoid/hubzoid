@@ -6,6 +6,7 @@ import hmac
 import json
 
 import pytest
+from starlette.responses import PlainTextResponse
 from starlette.testclient import TestClient
 
 from hubzoid.inbound.env import missing_webhook_vars, webhook_config_from_env
@@ -237,9 +238,18 @@ def test_a_store_cut_short_does_not_swallow_the_retry(tmp_path):
         if len(calls) == 1:
             raise Killed()
 
-    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=dies_first)))
-    with pytest.raises(Killed):
-        _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"})
+    app = _app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=dies_first))
+
+    async def process(scope, receive, send):
+        # The death ends here, where the process would. Starlette 1.9's
+        # TestClient reports a BaseException from the app as CancelledError.
+        try:
+            await app(scope, receive, send)
+        except Killed:
+            await PlainTextResponse("killed", status_code=500)(scope, receive, send)
+
+    client = TestClient(process)
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "killed"
     assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "ok"
     assert len(calls) == 2
     assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "duplicate"

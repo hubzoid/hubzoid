@@ -622,7 +622,9 @@ def _deliver(hub_dir, *, hub: str, owner: str, recipient: str, subject: str, bod
     if cfg.mode == "preview":
         from .workflows.identity import person_slug
 
-        outbox = Path(hub_dir) / ".hubzoid" / "outbox"
+        from .datadir import state
+
+        outbox = state(hub_dir) / "outbox"
         folder = outbox / person_slug(owner)
         path = folder / f"{time.strftime('%Y%m%dT%H%M%S')}-{delivery_id}.eml"
         _write_private(outbox, folder, path, msg.as_bytes())

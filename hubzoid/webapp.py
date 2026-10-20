@@ -1,12 +1,12 @@
 """The Hubzoid web app on the bridge: one page for chat and Console.
 
-``mount`` runs in the default UI mode (not Open WebUI mode). It
-registers, in order:
+``mount`` registers, in order:
 
   1. sign-in routes          hubzoid.auth.routes.mount        (/api/auth, /oauth)
   2. chat routes             hubzoid.chat.routes.mount        (/api/chat, /api/conversations, /api/shares)
   3. connection routes       hubzoid.connectors.routes.mount  (/api/connections, /portal/api/connectors)
-  4. agents and branding    hubzoid.webapp_gateway.mount     (/api/agents, /api/branding)
+  4. channels                hubzoid.channels.routes.mount    (/api/hubs/{hub_id}/channels)
+  5. agents and branding    hubzoid.webapp_gateway.mount     (/api/agents, /api/branding)
   5. the page shell          GET /, /c/*, /s/*, /auth*, /account*
 
 It must run BEFORE ``portal.mount_portal``: the Console's static files are
@@ -29,12 +29,24 @@ DIST = Path(__file__).parent / "portal_dist"
 
 # Client-side routes of the chat app. The Console keeps its hash routes under /portal/.
 SHELL_PATHS = ("/", "/c/{rest:path}", "/s/{rest:path}", "/auth", "/auth/{rest:path}",
-               "/account", "/account/{rest:path}", "/new", "/new/{rest:path}")
+               "/account", "/account/{rest:path}", "/new", "/new/{rest:path}",
+               "/branding-preview/{rest:path}", "/sources", "/sources/{rest:path}",
+               "/workspace", "/settings", "/requests")
 
 _MOUNTS = (
     "hubzoid.auth.routes",
     "hubzoid.chat.routes",
+    "hubzoid.chat.config_routes",
+    "hubzoid.ui.branding_routes",
+    "hubzoid.admin.routes",
+    "hubzoid.parity.routes",
     "hubzoid.connectors.routes",
+    "hubzoid.secretstore.routes",
+    "hubzoid.hubs.routes",
+    "hubzoid.channels.routes",
+    "hubzoid.intake.routes",
+    "hubzoid.access.access_routes",
+    "hubzoid.auth.directory.scim",
     "hubzoid.webapp_gateway",
 )
 

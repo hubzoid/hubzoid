@@ -26,9 +26,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from .. import _request_ctx, access, run_events
+from ..access import run_identity
 from ..run_events import Notice, ToolCall, ToolResult
 from .stream import DONE, KEEPALIVE, MessageBuilder, encode
 
@@ -58,6 +59,19 @@ class Run:
     # True once the stream has ended for subscribers ('finish' sent).
     closed: bool = False
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    # The engine's run record (``hubzoid.chat.engine``): its id, branch and lease fence.
+    run_id: str | None = None
+    branch_id: str | None = None
+    fence: int = 0
+    on_update: Any = None     # (run) -> None after each published chunk
+    on_finish: Any = None     # async (run, status, error) after the reply is saved
+    session_slot: Any = None  # _request_ctx.SessionSlot: the runtime's own session
+    guard: Any = None         # () -> "ok" | "cancel" | "lost" (engine.run_state), checked at checkpoints
+    fenced_out: bool = False  # the branch lease is gone: nothing more is written for this run
+    # What signed the request in: "session", "api_key" or "local", and a key's agent limit.
+    credential: str = "session"
+    credential_id: str = ""
+    key_hubs: tuple | None = None
 
     @property
     def finished(self) -> bool:
@@ -72,6 +86,18 @@ def web_identity(hub_dir, email: str):
         log.warning("chat: group lookup failed for a web turn", exc_info=True)
         groups = set()
     return access.Identity.make(user=email, groups=groups, surface="web")
+
+
+def _admit(hub_dir, run) -> dict | None:
+    """The reply's run identity (``access.run_identity``): the signed-in person
+    in the chat window, or the owner of the API key that sent it."""
+    via_key = run.credential == "api_key"
+    return run_identity.admit_or_refuse(
+        hub_dir, run_kind="api" if via_key else "chat", run_id=run.message_id,
+        acts_as_id=run.owner_id, acts_as_email=run.email, started_from="api" if via_key else "chat",
+        origin_id=run.conversation_id, person_present=not via_key,
+        credential_kind=run.credential, credential_id=run.credential_id,
+        scope={"hubs": list(run.key_hubs)} if run.key_hubs is not None else None)
 
 
 class RunManager:
@@ -103,16 +129,28 @@ class RunManager:
         self._claimed.discard(conversation_id)
 
     # -- start -------------------------------------------------------------------
+    def active_runs(self) -> list[Run]:
+        return [r for r in list(self._runs.values()) if not r.finished]
+
     def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
-              title: str | None = None) -> Run:
+              title: str | None = None, run_id: str | None = None, branch_id: str | None = None,
+              fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None,
+              session_slot=None, guard=None) -> Run:
         """Begin writing ``message_id`` (already stored as 'running'). Must be
         called on the event loop, with the conversation claimed. ``chat_key``
         is the conversation's ``store.chat_key``, the run's chat scope."""
         builder = MessageBuilder(message_id, conversation_id,
                                  show_tools=getattr(self.ctx.settings, "show_tools", "compact") != "off")
+        if prefix:
+            builder.seed(prefix)
         run = Run(message_id=message_id, conversation_id=conversation_id, chat_key=chat_key,
                   owner_id=user.id, email=user.email, builder=builder,
-                  loop=asyncio.get_running_loop(), started=time.monotonic())
+                  credential=getattr(user, "credential", "session") or "session",
+                  credential_id=getattr(user, "credential_id", "") or "",
+                  key_hubs=getattr(user, "hubs", None),
+                  loop=asyncio.get_running_loop(), started=time.monotonic(), run_id=run_id,
+                  branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish,
+                  session_slot=session_slot, guard=guard)
         self._runs[message_id] = run
         self._publish(run, builder.start())
         if title:
@@ -158,6 +196,11 @@ class RunManager:
             run.history.append(chunk)
             for queue in list(run.subscribers):
                 queue.put_nowait(chunk)
+        if chunks and run.on_update is not None:
+            try:
+                run.on_update(run)
+            except Exception:  # noqa: BLE001 - observers never break the reply
+                log.warning("chat: live update for %s failed", run.message_id, exc_info=True)
 
     def title_ready(self, conversation_id: str, title: str) -> None:
         """A generated title (called from any thread): tell the live reply's
@@ -209,7 +252,10 @@ class RunManager:
             ctx.inflight.enter()
         try:
             identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
-            with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity):
+            record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
+            identity = run_identity.identity(record, "web", identity.groups)
+            with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity), \
+                    _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)
                 try:
                     async for item in stream:
@@ -241,6 +287,18 @@ class RunManager:
         if not force and now - run.last_persist < PERSIST_INTERVAL:
             return
         run.last_persist = now
+        if run.guard is not None:
+            try:
+                state = await asyncio.to_thread(run.guard)
+            except Exception:  # noqa: BLE001 - an unknown state is checked again next time
+                log.warning("chat: could not check the lease of %s", run.message_id, exc_info=True)
+                state = "ok"
+            if state == "lost":
+                # Another worker owns the branch now: write nothing more, stop.
+                run.fenced_out = True
+                raise asyncio.CancelledError
+            if state == "cancel":
+                raise asyncio.CancelledError
         try:
             await asyncio.to_thread(self.ctx.store.update_message, run.message_id,
                                     content=run.builder.snapshot(), text=run.builder.plain_text())
@@ -266,6 +324,13 @@ class RunManager:
             except Exception:  # noqa: BLE001
                 log.exception("chat: could not save the end of %s", run.message_id)
             await self._record_usage(run, status, usage, identity)
+            # The engine records the end and frees the branch before 'finish'
+            # goes out, so a client that sends again at once finds it free.
+            if run.on_finish is not None:
+                try:
+                    await run.on_finish(run, status, error)
+                except Exception:  # noqa: BLE001 - the reply is saved; its end is recovered later
+                    log.exception("chat: could not finish run %s", run.run_id or run.message_id)
         finally:
             self._publish(run, chunks)
             run.closed = True
@@ -278,6 +343,11 @@ class RunManager:
 
     def _save_final(self, run: Run, status: str, error: str | None, model: str | None,
                     summary: dict) -> None:
+        if not run.fenced_out and run.guard is not None and run.guard() == "lost":
+            run.fenced_out = True
+        if run.fenced_out:
+            log.warning("chat: %s lost its branch lease; its end is not saved", run.message_id)
+            return
         store = self.ctx.store
         store.update_message(run.message_id, content=run.builder.snapshot(),
                              text=run.builder.plain_text(), status=status, error=error,

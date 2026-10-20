@@ -83,6 +83,8 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
     by = _by_id(entries)
     assert {p: e["group"] for p, e in by.items()} == {
         "use_hub": "hub", "curator": "tools", "jev": "tools", "share_public_links": "tools",
+        "chat_dictation": "tools", "chat_read_aloud": "tools", "chat_web_search": "tools",
+        "chat_model_compare": "tools",
         "workflows_view": "tools", "workflows_manage": "tools", "access_tools": "tools",
         "schedule_reports": "tools", "share_domain_links": "tools",
         "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
@@ -90,8 +92,8 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
     # agent's own tools first, Hubzoid tools last, and inside Hubzoid tools the
     # unsectioned rows, then Workflows, then Access control.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "ledger", "payroll", "manage_access", "curator", "jev", "share_public_links",
-        "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links", "access_tools"]
+        "use_hub", "ledger", "payroll", "manage_access", "chat_dictation", "chat_model_compare",
+        "chat_read_aloud", "chat_web_search", "curator", "jev", "share_public_links", "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links", "access_tools"]
     assert [by[p]["section"] for p in ("curator", "workflows_view", "access_tools")] == [
         "", "workflows", "access"]
     for e in entries:

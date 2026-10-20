@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { Menu as MenuIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
@@ -10,23 +10,28 @@ const tabs = [
   { href: "/account/connections", label: t.account.connections },
 ];
 
+/** Inside the Settings page a section brings only its content. */
+export const InSettings = createContext(false);
+
 /** Account and Connections share one frame with tabs between them. */
 export function SettingsFrame({ title, current, children }: { title: string; current: string; children: ReactNode }) {
   const app = useApp();
+  const embedded = useContext(InSettings);
   useEffect(() => {
-    document.title = `${title} · ${app.brandName}`;
-  }, [title, app.brandName]);
+    if (!embedded) document.title = `${title} · ${app.brandName}`;
+  }, [title, app.brandName, embedded]);
+  if (embedded) return <>{children}</>;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 flex-none items-center gap-2 border-b border-line px-2 sm:px-4 lg:hidden">
+      <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-2 sm:px-4 lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />
         </IconButton>
-        <span className="text-[15px] font-semibold">{title}</span>
+        <span className="text-[14px] font-semibold">{title}</span>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[720px] px-4 pb-16 pt-8 sm:px-8 sm:pt-12">
-          <h1 className="m-0 text-[26px] font-semibold tracking-tight text-ink">{title}</h1>
+          <h1 className="m-0 text-[20px] font-semibold tracking-tight text-ink">{title}</h1>
           <nav aria-label={t.account.account} className="mt-5 flex gap-1 border-b border-line">
             {tabs.map((tab) => {
               const active = tab.href === current;
@@ -69,10 +74,10 @@ export function Section({
     <section aria-labelledby={headingId} className="border-b border-line-soft py-7 first:pt-0 last:border-b-0">
       <div className="grid gap-5 sm:grid-cols-[200px_1fr] sm:gap-8">
         <div>
-          <h2 id={headingId} className="m-0 text-[15px] font-semibold text-ink">
+          <h2 id={headingId} className="m-0 text-[14px] font-semibold text-ink">
             {title}
           </h2>
-          {description && <p className="m-0 mt-1 text-[13.5px] leading-relaxed text-mute">{description}</p>}
+          {description && <p className="m-0 mt-1 text-[13px] leading-relaxed text-mute">{description}</p>}
         </div>
         <div className="min-w-0">{children}</div>
       </div>

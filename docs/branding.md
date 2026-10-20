@@ -1,105 +1,103 @@
 # Branding and UI configuration
 
-Hubzoid's native chat is the default; Open WebUI is an optional, permanently
-supported interface. Both use files under `<hub>/branding/`. The sections below
-separate their branding settings and defaults.
+The Hubzoid web app's brand is published, not picked up from whatever files
+sit in a folder. One brand covers sign-in, chat, shared pages and Settings.
+Choosing an agent changes the agent's name, avatar and suggestions, never the
+deployment's brand.
 
-## Native chat branding
+### Files
 
-For the default interface (`HUBZOID_UI=hubzoid`), set the agent's display name
-in the main `AGENTS.md` frontmatter and add your assets under `<hub>/branding/`.
-Filenames are case-insensitive; the first available filename in each row wins.
+`branding.yaml` (optional, `version: 1`) lives in the deployment folder: the
+hub folder for a standalone hub, or the folder that holds the gateway's
+deployment manifest. Its files live under `branding/`.
 
-| Surface | Files or setting |
+```yaml
+version: 1
+identity:
+  name: Example Operations
+  short_name: Example
+  description: Internal work with shared knowledge
+assets:
+  logo_light: branding/logo-light.svg
+  logo_dark: branding/logo-dark.svg
+  favicon: branding/favicon.png
+copy:
+  en:
+    welcome_title: Your team's workspace
+    welcome_body: Choose an agent to get started.
+    signin_title: Welcome to Example Operations
+    signin_body: Sign in with your work account.
+    footer: Example Operations
+    suggestions: [Summarise the materials I select]
+links:
+  help: https://example.invalid/help
+legal:
+  version: null
+  require_acceptance: false
+announcement: null
+presentation:
+  hidden_features: []
+  response_watermark: null
+  decorative_css: null
+```
+
+| Key | Limits |
 |---|---|
-| Agent name and standalone app name | `name:` in the main `AGENTS.md` frontmatter |
-| Logo and agent avatar | `logo.svg`, `logo.png`, `logo.webp`, then `favicon.svg`, `favicon.png` |
-| Browser favicon | `favicon.svg`, `favicon.png`, `favicon.ico`, then `logo.svg`, `logo.png` |
-| Custom stylesheet | `custom.css` |
+| `identity.name`, `short_name`, `description` | 80, 24 and 240 characters |
+| `assets.*` | `logo_light`, `logo_dark`, `wordmark`, `favicon`: SVG, PNG, WebP or JPEG. `icon_192`, `icon_512`, `touch_icon`: exact-size PNG (generated from a raster favicon or logo when absent). `splash_light`, `splash_dark`, `signin_background`: PNG, WebP or JPEG. 5 MiB each, 20 MiB in all, 4096 x 4096 at most, no animation |
+| `copy.en.*` | Plain text. Titles 160, other text 2000 characters, up to 12 suggestions. English is the only language |
+| `links.help`, `privacy`, `terms` | `https://` URLs or paths starting with `/` |
+| `legal.version`, `require_acceptance` | `require_acceptance: true` needs a version and `links.terms`. People accept once per version |
+| `announcement` | `{id, text_by_locale: {en: ...}, dismissible}`. Each person can dismiss it |
+| `presentation.hidden_features` | Hides navigation items (`connections`, `schedules`, `console_link`, ...). Concealment only: the server still decides what each person may do |
+| `presentation.response_watermark` | Text shown under each answer |
+| `presentation.decorative_css` | A `.css` file under `branding/` for the three brand slots only (below) |
 
-Without a custom logo, native chat displays Hubzoid's own mark; unchanged
-Hubzoid template marks are treated as the default. Native chat serves these
-files directly and does not use the Open WebUI asset-patching settings below.
+Colours, fonts and corner radius go in `branding/theme.json`, the shared theme
+schema (see [chat configuration](chat-config.md#theme)).
 
-In a gateway, `hubzoid gateway --name` sets the shared app name. Shared branding
-comes from `HUBZOID_GATEWAY_BRANDING` (a hub slug or a path containing
-`branding/`), then a populated `<gateway data dir>/branding/`, then the first
-hub. Each agent keeps its own name and avatar. Restart after configuration
-changes and refresh the browser to check the result.
+SVG files may only draw: no scripts, event attributes, external references,
+`<style>`, `style=` or `foreignObject`. Raster images are re-encoded, which
+removes metadata. Unsafe files are refused with a reason, never silently
+changed.
 
-## Open WebUI branding
+Decorative CSS may style exactly `[data-brand-slot="brand.logoFrame"]`,
+`[data-brand-slot="brand.welcome"]` and `[data-brand-slot="brand.footer"]`, with
+`background-color` and `border-color` (six-digit hex), `border-radius` (0 to
+24px) and `padding` (0 to 32px). Approval cards, errors and permission notices
+are never inside a brand slot. `custom.css` is no longer served.
 
-The remaining Open WebUI-specific settings apply with `HUBZOID_UI=openwebui`.
-Open WebUI's own branding stays by default. Custom branding is subject to the
-conditions below. Agent prompt suggestions apply to both interfaces.
+### Publishing
 
-With no assets in `<hub>/branding/`, the chat app shows Open WebUI's stock
-logo and the name reads `<your name> (Open WebUI)`. As soon as the folder
-holds at least one asset (a logo, favicon or splash; a README doesn't
-count), the hub is branded: each file replaces its Open WebUI counterpart,
-the `(Open WebUI)` suffix is removed, and the static surfaces below use your
-name. Remove the assets to go back to Open WebUI's branding.
+Nothing reaches teammates until an exact candidate is reviewed and activated.
 
-Open WebUI's license allows removing its branding only for deployments with
-50 or fewer end users in any rolling 30 days, or with an Open WebUI
-enterprise license. Above that, set `HUBZOID_KEEP_OWUI_SUFFIX=true`, which
-keeps Open WebUI's branding even when your files are present. In gateway
-mode the decision follows the branding source the gateway uses (its own
-`branding/` folder, `HUBZOID_GATEWAY_BRANDING`, or the first hub's).
+```bash
+hubzoid branding inspect . --json            # source, active revision, legacy files
+hubzoid branding validate . --json           # every file, every palette mode
+hubzoid branding draft create . --json       # returns id, revision, digest, preview_url
+hubzoid branding diff <draft> . --json
+hubzoid branding review <draft> . --digest <digest> --expected-revision <draft revision> --decision approve
+hubzoid branding activate <draft> . --review <review id> --expected-revision <active generation>
+hubzoid branding history . --json
+hubzoid branding rollback . --revision <revision id>   # a new draft: review and activate it
+hubzoid branding export . --output brand-export
+```
 
-## Per-hub identity
+Open the `preview_url` (`/branding-preview/<draft>`) while signed in as an
+administrator to see the draft on sign-in, chat, a shared page and Settings
+in light, dark and OLED. Settings → Workspace settings → Brand does the same steps,
+and can edit the main fields and upload a logo or favicon as a new draft. A
+changed file, a changed active brand or a new validator release needs a fresh
+review. Activation is atomic: a retried request with the same
+`Idempotency-Key` returns the same activation, and a stale `expected-revision`
+is refused.
 
-Three knobs control the agent's visible identity. Two live in `.env`,
-one lives in a folder.
+`hubzoid branding import-legacy . --write` turns a pre-2.0 `branding/` folder
+into a `branding.yaml` and reports each file: mapped, not used, or dropped
+(`custom.css`).
 
-| Surface | Source | Default |
-|---|---|---|
-| Top-bar name + tab title | `WEBUI_NAME` in `.env` | Cascades: `WEBUI_NAME` → `MODEL_LABEL` → main agent's `name:` from `AGENTS.md` → `"Hubzoid"` |
-| Watermark on copied messages | `RESPONSE_WATERMARK` in `.env` | Hub folder name |
-| Logo, favicon, splash | `<hub>/branding/` folder (see below) | Open WebUI defaults |
-
-### Branding folder
-
-Drop files into `<hub>/branding/`. Filenames are case-insensitive. Open
-WebUI's defaults render for any slot you leave empty.
-
-| Slot | Accepted filenames |
-|---|---|
-| logo | `logo.{svg,png,webp,jpg,jpeg}` |
-| favicon | `favicon.{svg,ico,png}` |
-| splash | `splash.{png,svg,webp,jpg,jpeg}` |
-
-If both `logo.*` and `favicon.*` exist, favicon wins. Open WebUI uses one
-mark in both top-bar and tab positions.
-
-The demo-hub template ships sample Hubzoid SVGs, so it starts branded.
-Replace them with your own, or delete them to fall back to Open WebUI's
-branding.
-
-### Static surfaces (tab title, link previews, PWA name)
-
-`WEBUI_NAME` only renames what the SPA re-renders in the browser at
-runtime. Three surfaces are served as **static files** that ship as
-"Open WebUI" and never see `WEBUI_NAME`:
-
-- the `<title>` a browser tab shows before the app hydrates,
-- the `<meta>` description/OpenGraph a link-preview crawler reads when
-  someone pastes the hub URL into Slack/iMessage/etc.,
-- the PWA `site.webmanifest` name.
-
-For a branded hub, Hubzoid rewrites all three on every `hubzoid run`, using
-the same resolved name as the cascade above. An unbranded hub (or
-`HUBZOID_KEEP_OWUI_SUFFIX=true`) keeps Open WebUI's originals, restoring
-them if an earlier run had rewritten them. The patch is idempotent and
-reverts cleanly on a `pip install --upgrade open-webui`.
-
-## Admins and other people's chats
-
-By default an Open WebUI admin can't open, list or export another user's
-chats. To allow it, set `ENABLE_ADMIN_CHAT_ACCESS=true` (viewing) and/or
-`ENABLE_ADMIN_EXPORT=true` (export) in the hub's `.env` (in gateway mode,
-the gateway's environment) and restart. These are environment-only
-settings, so nobody can switch them on from the admin panel.
+The API is `/api/branding/...` (drafts, assets, preview, reviews, activate,
+history, export, rollbacks) and the public `GET /api/branding`.
 
 ## Quick-start prompt suggestions
 
@@ -122,114 +120,20 @@ Suggestions are part of the agent's identity, not an environment knob.
 They do not change between dev and prod. They are not configurable from
 `.env`.
 
-## Strip flags (the 24 defaults)
+## Coming from Open WebUI (1.x)
 
-Hubzoid passes ~24 env vars to Open WebUI to strip features that do not
-belong in a customer-facing single-product surface. Every flag is
-overridable from `.env`. Add a line like `ENABLE_CODE_INTERPRETER=True`
-to flip one back on.
+Hubzoid 1.x passed Open WebUI a set of environment flags to brand it and strip
+features. The web app reads none of them; `hubzoid doctor` and the start name
+any it finds ([upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-webui-removed)).
 
-### Off by default (16 flags)
-
-| Flag | What turning it on does |
+| 1.x setting | In the web app |
 |---|---|
-| `ENABLE_COMMUNITY_SHARING` | Adds a "Share to Open WebUI Community" button under every reply. |
-| `ENABLE_DIRECT_CONNECTIONS` | Lets users plug in their own provider API keys, bypassing the hub. |
-| `ENABLE_EVALUATION_ARENA_MODELS` | Multi-model A/B comparison UI. |
-| `ENABLE_NOTES` | A parallel personal-notes product inside the chat app. |
-| `ENABLE_CHANNELS` | Slack-style channels. |
-| `ENABLE_CODE_INTERPRETER` | Open WebUI's own Python sandbox. **Bypasses hubzoid's tool model: no audit, no whitelist.** Add a `tools_local/` Python tool instead. |
-| `ENABLE_IMAGE_GENERATION` | Inline image generation. Requires a separate image-gen account. |
-| `ENABLE_RAG_WEB_SEARCH` | Open WebUI's web search. Hubzoid already has `web_search`. |
-| `ENABLE_USER_WEBHOOKS` | Per-user outbound webhooks. |
-| `ENABLE_TAGS_GENERATION` | Auto-tags chats with an extra LLM call. |
-| `ENABLE_API_KEY` | Per-user API keys (defeats auth: a user can export hub access into a script). |
-| `ENABLE_VERSION_UPDATE_CHECK` | Phones home to check for OWUI updates. |
-| `ENABLE_MEMORY` | OWUI's user-memory feature. Conflicts with hubzoid's per-session memory tools. Will revisit when hubzoid ships per-user memory. |
-| `ENABLE_OLLAMA_API` | Proxies Ollama. Hubzoid does not. |
-| `ENABLE_SIGNUP`, `ENABLE_OAUTH_SIGNUP` | Public email and SSO account registration. Administrators add accounts; explicit operator opt-in remains supported. |
-| `SHOW_ADMIN_DETAILS` | Shows admin emails to regular users. |
-| `ENABLE_PERSISTENT_CONFIG` | **Critical, do not flip.** When true, OWUI pins settings to SQLite on first boot and ignores env-var changes forever. Breaks hubzoid's entire env-var-as-source-of-truth model. |
+| `WEBUI_NAME` | `identity.name` in `branding.yaml`. Until one is published, the name comes from the gateway or the main agent, then `WEBUI_NAME` |
+| `RESPONSE_WATERMARK` | `presentation.response_watermark` |
+| `<hub>/branding/logo.*`, `favicon.*`, `splash.*` | `assets.*`; `hubzoid branding import-legacy` maps them |
+| `HUBZOID_KEEP_OWUI_SUFFIX` | No equivalent: Open WebUI's branding terms don't apply to the web app |
+| `ENABLE_*` feature flags, `DEFAULT_PROMPT_SUGGESTIONS`, `DEFAULT_MODELS`, `ENABLE_ADMIN_CHAT_ACCESS`, `ENABLE_ADMIN_EXPORT` | Chat defaults in Settings → Workspace settings → Chat defaults and `chat/config.yaml` ([chat configuration](chat-config.md)) |
+| `RAG_EMBEDDING_ENGINE`, `AUDIO_STT_ENGINE`, `MALLOC_ARENA_MAX` for Open WebUI | Not needed: no Open WebUI process runs |
 
-### Slim runtime (3 flags)
-
-Open WebUI loads a local ~500MB embedding model (`all-MiniLM-L6-v2`) at
-startup for its RAG features. hubzoid strips OWUI's RAG entirely and reads
-documents itself, so the embedder is dead weight. These defaults stop it
-loading — and because hubzoid never triggers an OWUI RAG operation, the
-external engine is never actually called, so no key or service is needed.
-
-| Flag | Default | Why |
-|---|---|---|
-| `RAG_EMBEDDING_ENGINE` | `openai` | Any non-empty value makes OWUI skip the local embedding-model load (~500MB RAM saved). hubzoid never calls it. |
-| `OFFLINE_MODE` | `True` | Don't phone HuggingFace for model updates at boot. |
-| `AUDIO_STT_ENGINE` | `webapi` | Browser-side speech-to-text — 0 server RAM. |
-
-### Process memory allocator (1 flag)
-
-Not an OWUI setting — read by the subprocess's libc at startup. OWUI runs
-~70 worker threads (Starlette's threadpool plus imported torch/BLAS pools),
-and glibc-malloc gives each thread its own ~64MB arena, bloating RSS to
-several GB of mostly-idle space (the cause of gateway OOM kills — not a
-model in memory; the embedder above is already stripped). Capping arenas
-holds OWUI to a normal footprint with no correctness change and no
-measurable latency cost for this I/O-bound workload. Inert no-op on
-musl/non-glibc.
-
-| Flag | Default | Why |
-|---|---|---|
-| `MALLOC_ARENA_MAX` | `2` | Cap per-thread glibc-malloc arenas. Prevents the ~4-5GB arena bloat that OOM-killed gateway boxes. |
-
-### Workspace permissions off for non-admins (5 flags)
-
-Admin users still see all tabs. These four hide them from regular users.
-
-- `USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS`
-- `USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS`
-- `USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS`
-- `USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS`
-- `USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS`
-
-### Model visibility for non-admins (launch-mode specific)
-
-`BYPASS_MODEL_ACCESS_CONTROL` is **not** one of the fixed strip flags above —
-its default depends on how OWUI is launched, so it is set in `_spawn_owui`
-rather than `_DEFAULT_OWUI_ENV`.
-
-OWUI (>= 0.5; confirmed on 0.9.6) filters the chat model list for `role=user`
-accounts: `routers/openai.py` `get_filtered_models` keeps only models that have
-a Workspace > Models DB row the user can access. Hubzoid surfaces a hub's model
-as a *connection/base* model with no such row, so without a bypass every
-invited non-admin user gets an empty model selector and "Model not selected"
-(admins skip the filter, so they see it fine).
-
-| Launch mode | Default | Why |
-|---|---|---|
-| Single hub (`hubzoid run`) | `True` | One model per hub, nothing to scope — every user should see it. |
-| Gateway (`hubzoid gateway`) | `False` | Fronts many models; per-team isolation relies on per-model Private ACLs (see [DEPLOYING.md](DEPLOYING.md)). A bypass would let every user see every team's model. |
-
-Overridable from `.env` either way (`setdefault` semantics; the operator's
-explicit value wins).
-
-### On by default (4 flags)
-
-| Flag | Why kept on |
-|---|---|
-| `ENABLE_MESSAGE_RATING` | Thumbs up/down. Useful feedback for hub authors. |
-| `ENABLE_TITLE_GENERATION` | Auto chat titles. One extra LLM call per new chat, worth it for history navigation. |
-| `ENABLE_ADMIN_EXPORT` | Admin can export chat history. Useful for compliance and training data. |
-| `ENABLE_FOLLOW_UP_GENERATION` | After each reply, OWUI suggests 2 or 3 follow-up prompts. Discovery aid for novice users. Costs one extra LLM call per turn. Operator can flip off if cost-sensitive. |
-
-## Audio and voice
-
-Browser-side audio (Web Speech API) is on by default: TTS read-aloud, STT
-mic input, full-duplex voice mode. Zero config, no key, no cost.
-
-Server-side audio (OpenAI / Azure / Whisper) is off. Per-hub opt-in via
-`AUDIO_*` env vars when keys are available.
-
-## File uploads
-
-Upload UI is on. Open WebUI's server-side RAG indexing of uploaded files
-is left at OWUI's defaults for now. Will revisit after the first
-customer deployment with real upload patterns.
+Voice uses the browser's own speech features, with no server key. Uploaded
+files are kept per conversation and read by the agent's tools.

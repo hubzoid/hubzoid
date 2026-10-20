@@ -51,17 +51,12 @@ def test_bridge_always_binds_loopback():
     assert '"--host", "127.0.0.1", "--port", str(br_port)' in source
 
 
-def test_image_uses_cpu_pytorch_without_cuda():
-    """The default image has no PyTorch at all; the Open WebUI image
-    (and its lock) uses the CPU build."""
+def test_image_has_no_pytorch_or_cuda():
     core = (ROOT / "requirements.lock").read_text().lower()
     assert "\ntorch==" not in core
-    lock = (ROOT / "requirements-openwebui.lock").read_text().lower()
-    assert "download.pytorch.org/whl/cpu" in (ROOT / "Dockerfile").read_text()
-    assert "+cpu" in lock
-    for text in (core, lock):
-        for pkg in ("nvidia-", "cuda-toolkit", "triton=="):
-            assert f"\n{pkg}" not in text, pkg
+    assert "pytorch" not in (ROOT / "Dockerfile").read_text()
+    for pkg in ("nvidia-", "cuda-toolkit", "triton=="):
+        assert f"\n{pkg}" not in core, pkg
 
 
 def test_image_base_has_a_new_enough_sqlite():
@@ -84,19 +79,17 @@ def _run_steps(dockerfile: str) -> list[str]:
     return steps
 
 
-def test_default_image_is_slim_and_open_webui_is_a_build_argument():
-    """No ffmpeg, PyAV build tools or PyTorch unless WITH_OPENWEBUI=true."""
+def test_image_is_slim_and_has_no_open_webui_option():
+    """One system package (the PostgreSQL client, for backups), no Open WebUI
+    build argument, one reviewed lock."""
     dockerfile = (ROOT / "Dockerfile").read_text()
-    assert "ARG WITH_OPENWEBUI=false" in dockerfile
+    assert "WITH_OPENWEBUI" not in dockerfile and "openwebui" not in dockerfile.lower()
     steps = _run_steps(dockerfile)
-    apt = [s for s in steps if "apt-get install" in s]
-    assert len(apt) == 1 and 'if [ "$WITH_OPENWEBUI" = "true" ]' in apt[0]
-    assert "ffmpeg" in apt[0] and "libavcodec-dev" in apt[0]
+    installs = [s for s in steps if "apt-get install" in s]
+    assert len(installs) == 1 and "--no-install-recommends postgresql-client" in installs[0]
+    assert "rm -rf /var/lib/apt/lists/*" in installs[0]
     (deps,) = [s for s in steps if "-r /tmp/hubzoid-src/requirements" in s]
-    legacy, default = deps.split("else", 1)
-    assert "requirements-openwebui.lock" in legacy and "download.pytorch.org/whl/cpu" in legacy
-    assert "requirements.lock" in default and "pytorch" not in default
-    assert "requirements-openwebui.lock" in dockerfile.split("COPY", 1)[1]  # in the build context
+    assert "requirements.lock" in deps and "pytorch" not in deps
     assert '--no-deps /tmp/hubzoid-src' in dockerfile
     assert 'CMD ["run", "/hub"]' in dockerfile
 
@@ -108,8 +101,8 @@ def test_compose_runs_the_web_app_with_sign_in():
     assert env["HUBZOID_AUTH"] == "${HUBZOID_AUTH:-true}"  # the port is reachable from other machines
     assert env["HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK"] == "${HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK:-false}"
     assert not [k for k in env if k.startswith(("WEBUI_", "OPENAI_API_", "OWUI_"))]
-    assert service["build"]["args"]["WITH_OPENWEBUI"] == "${HUBZOID_WITH_OPENWEBUI:-false}"
+    assert "args" not in service["build"]
     text = (ROOT / "docker" / "docker-compose.yml").read_text()
-    for needle in ("HUBZOID_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "HUBZOID_UI=openwebui",
-                   "127.0.0.1:3080"):
+    for needle in ("HUBZOID_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "127.0.0.1:3080"):
         assert needle in text, needle
+    assert "openwebui" not in text.lower()

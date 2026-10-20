@@ -1,6 +1,6 @@
 """The connector MCP servers the caller may reach this turn, in both UI modes.
 
-``hubzoid.owui_mcp.per_user_servers`` dispatches here, so all three runtimes
+``hubzoid.personal_mcp.per_user_servers`` dispatches here, so all three runtimes
 use it unchanged. In this order:
 
   * nobody for an anonymous caller, on a surface that may not carry
@@ -89,11 +89,11 @@ def used_by(hub_dir, email: str, ids) -> dict[str, list[str]]:
 
 
 def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None, **_kw) -> list:
-    """``[owui_mcp.PerUserServer]`` for ``identity`` (default: the current
+    """``[personal_mcp.PerUserServer]`` for ``identity`` (default: the current
     request's). Empty on every refusal path; never raises for missing data."""
     from ..access.guard import allowed_surfaces
     from ..access.identity import current_identity
-    from ..owui_mcp import PerUserServer, _connector_gate, _hub_server_keys
+    from ..personal_mcp import PerUserServer, _connector_gate, _hub_server_keys
 
     if identity is None:
         identity = current_identity()
@@ -110,17 +110,7 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
             return []
         user_id = tokens.user_id_for(hub_dir, identity.user)
         if not user_id:
-            # No verified account (in Open WebUI mode: none bound to the email).
-            return []
-        from .. import _request_ctx, appmode
-
-        forwarded = _request_ctx.get_owui_account()
-        if surface == "owui" and appmode.is_openwebui(Path(hub_dir)) \
-                and forwarded is not _request_ctx.UNSET and forwarded != user_id:
-            # An Open WebUI chat turn must carry the very account the
-            # connections belong to, not only its email.
-            log.info("connectors: no forwarded Open WebUI account for this turn")
-            return []
+            return []  # no verified account
         connections = {c.connector_id: c for c in tokens.for_user(hub_dir, user_id)
                        if c.status != "expired"}
     except Exception:  # noqa: BLE001 — a store problem must never break chat
@@ -128,6 +118,11 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
         return []
     usable = [c for c in by_id.values() if c.auth_type == "shared" or c.id in connections]
     if not usable or _blocked(hub_dir, identity.user):
+        return []
+    from .. import tool_fakes
+
+    if tool_fakes.withheld(sorted(c.id for c in usable)):
+        # A faked eval case: a connector's calls would run for real.
         return []
     permitted = _connector_gate(hub_dir, identity)
 

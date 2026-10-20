@@ -3,7 +3,7 @@
 Run with the Python of a fresh venv that installed the built wheel (not the
 source tree). Scaffolds a hub, builds the bridge app and requests the web app
 page, the Console page and one of its assets. Also renders a formatted email
-without relying on the optional Open WebUI dependencies.
+using Hubzoid's declared dependencies.
 
     python .github/scripts/verify_install.py [expected-version]
 """

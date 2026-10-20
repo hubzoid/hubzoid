@@ -513,3 +513,50 @@ def test_a_migrated_identity_of_another_provider_or_a_deleted_account_is_not_use
         conn.exec_driver_sql("DELETE FROM hz_users WHERE id = ?", (gone["id"],))
     assert error_of(sign_in(client(hub))) == "no_account"
     assert st.find_identity("openwebui-migrated:oidc", "user-1") is None
+
+
+# ---- adding a sign-in, confirming it's you ----------------------------------------
+
+def _password_session(hub):
+    from tests.test_auth_routes import PASSWORD
+    user = existing(hub, password=PASSWORD)
+    c = client(hub)
+    r = c.post("/api/auth/login", json={"email": user["email"], "password": PASSWORD},
+               headers={"origin": "http://testserver"})
+    assert r.status_code == 200, r.text
+    return user, c
+
+
+def test_adding_a_sign_in_needs_a_recent_proof(hub, idp, monkeypatch):
+    user, c = _password_session(hub)
+    monkeypatch.setattr(sessions, "RECENT_SECONDS", -1)  # the sign-in is no longer recent
+    r = c.get("/oauth/oidc/login", params={"link": "1", "redirect": "/settings"},
+              follow_redirects=False)
+    assert r.headers["location"] == "/settings?link=confirm_first"
+    monkeypatch.setattr(sessions, "RECENT_SECONDS", 600)
+    r = c.get("/oauth/oidc/login", params={"link": "1"}, follow_redirects=False)
+    assert r.headers["location"].startswith("http://127.0.0.1")
+    assert "prompt=login" in r.headers["location"] and "max_age=0" in r.headers["location"]
+
+
+def test_two_step_accounts_confirm_with_their_code_not_a_provider(hub, idp):
+    from hubzoid.auth import mfa
+
+    user, c = _password_session(hub)
+    secret = mfa.new_secret()
+    mfa.activate(hub, user["id"], secret, mfa.matching_step(secret, mfa.code_at(secret, 1), now=30))
+    r = c.get("/oauth/oidc/login", params={"reauth": "1", "redirect": "/settings"},
+              follow_redirects=False)
+    assert r.headers["location"] == "/settings?reauth=use_code"
+
+
+def test_a_directory_account_is_never_matched_by_email(hub, idp, monkeypatch):
+    import sqlalchemy as sa
+    from hubzoid.auth.schema import engine_for, users as users_table
+
+    monkeypatch.setenv("OAUTH_MERGE_ACCOUNTS_BY_EMAIL", "true")
+    user = existing(hub)
+    with engine_for(hub).begin() as conn:
+        conn.execute(sa.update(users_table).where(users_table.c.id == user["id"])
+                     .values(managed_by="okta"))
+    assert error_of(sign_in(client(hub))) == "managed_account"

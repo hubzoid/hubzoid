@@ -3,7 +3,9 @@
 We import every `.py` file under the hub's `tools_local/` (case/plural-flexible
 via _fs.resolve_bucket) and collect any module-level attributes that are
 `FunctionTool` instances. Naming convention: the attribute name is the tool
-name unless `@function_tool(name_override="...")` was used.
+name unless `@function_tool(name_override="...")` was used. A file that fails to
+import (a missing package, a syntax error) is skipped with an error naming it;
+the rest of the hub still loads.
 """
 from __future__ import annotations
 
@@ -18,6 +20,9 @@ from .._fs import resolve_bucket
 
 log = logging.getLogger(__name__)
 
+#: tools_local files that failed to import at the last load: path -> reason.
+LOAD_ERRORS: dict[str, str] = {}
+
 
 def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
     tools_dir = resolve_bucket(hub_dir, "tools_local")
@@ -28,7 +33,16 @@ def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
     for path in sorted(tools_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue  # convention: underscore = private/example
-        mod = _load_module(path)
+        try:
+            mod = _load_module(path)
+        except Exception as exc:  # noqa: BLE001 — one broken file fails its own tools, not the hub
+            # A missing package or a typo in one file must not stop the bridge
+            # (and with it a whole gateway). The agent runs without these tools.
+            log.error("%s: tools_local/%s was not loaded, so its tools are unavailable: %s: %s",
+                      Path(hub_dir).name, path.name, type(exc).__name__, exc)
+            LOAD_ERRORS[str(path)] = f"{type(exc).__name__}: {exc}"
+            continue
+        LOAD_ERRORS.pop(str(path), None)
         for attr_name in dir(mod):
             if attr_name.startswith("_"):
                 continue
@@ -41,6 +55,10 @@ def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
                         name, path,
                     )
                     continue
+                try:   # lets a station pin the code it ran (stations/tools.py: digest)
+                    obj._hz_source = str(path)
+                except AttributeError:
+                    pass
                 out[name] = obj
     return out
 
