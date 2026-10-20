@@ -113,6 +113,19 @@ and restore the old `.env` files. Open WebUI's database was never changed.
 
 ## Upgrading to 1.3.2
 
+### Memory settings for deployments staying on 1.x
+
+With Open WebUI 0.11.4, `ENABLE_MEMORY` is not the memory switch. A deployment
+staying on 1.3.2 can disable Open WebUI memory explicitly in its operator
+configuration with `ENABLE_MEMORIES=false`, `ENABLE_MEMORY_SYSTEM_CONTEXT=false`
+and `ENABLE_MEMORY_BACKGROUND_REVIEW=false`, then restart. Existing saved
+memories remain in the Open WebUI database. The web-search switch is
+`ENABLE_WEB_SEARCH`, not `ENABLE_RAG_WEB_SEARCH`.
+
+These are historical 1.x instructions. Hubzoid 2.0 removes the Open WebUI
+runtime; it does not apply these defaults or restore that interface.
+
+
 Back up the Hub and operational state, install `pip install -U 'hubzoid==1.3.2'`
 (retain `[openwebui]` if used), then restart the gateway and bridges. There are
 no new required Hub files or database schema changes. Claude failover is opt-in;
