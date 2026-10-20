@@ -570,13 +570,14 @@ def delete(hub_dir, cid: str, *, actor: str) -> bool:
     raise _file_owned(cid)
 
 
-def stored_definitions(hub_dir) -> list[dict]:
+def stored_definitions(hub_dir, *, eng=None) -> list[dict]:
     """Connectors defined in the database before 2.0 (Settings, 1.2 to 1.3),
     with their secrets decrypted, for ``hubzoid upgrade`` to write into files
     and .env. Never shown or logged."""
     out = []
-    with engine(hub_dir).connect() as conn:
-        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY id")).fetchall()]
+    with (eng if eng is not None else engine(hub_dir)).connect() as conn:
+        rows = [_row(r) for r in conn.execute(text(_SELECT + " WHERE created_by IS NOT NULL ORDER BY id"))
+                .fetchall()]
         agents = {}
         try:
             for cid, hub in conn.execute(text("SELECT connector_id, hub FROM hz_connector_agents")):

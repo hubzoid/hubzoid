@@ -594,6 +594,9 @@ def run(
     from . import supervisor as sup_lib
 
     state = datadir.state(hub)
+    from . import db as dblib
+
+    _migrate_first(dblib.operational_url(hub))
     key = _deployment_bridge_key(state) if settings.first_api_key == "dev" else ""
     unit_key = settings.first_api_key
     if key and not (os.environ.get("BRIDGE_API_KEYS") or "").strip():
@@ -1161,11 +1164,25 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
         gw_data.mkdir(parents=True, exist_ok=True)
     shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
 
+    _migrate_first(shared_op_url)
     _gateway_web_app(
         gp=gp, hub_dirs=hub_dirs, deployment_env=deployment_env, process_env=process_env,
         dep_secret=dep_secret, dep_values=dep_values, conflicts=conflicts, host=host,
         ui_port=ui_port, pub=pub, gw_data=gw_data, log_level=log_level,
         shared_op_url=shared_op_url, name=name, launch_bridges=True)
+
+
+def _migrate_first(url: str) -> None:
+    """Bring the shared store to the current schema once, here, before any hub
+    starts: a hub process never upgrades a store others are still using."""
+    from . import db as dblib
+    from . import migrations
+
+    try:
+        migrations.upgrade(dblib._engine_for_url(url), "operational")
+    except Exception as exc:  # noqa: BLE001 - said plainly, then stop
+        console.print(f"[red]The database could not be brought up to date:[/red] {escape(str(exc))}")
+        raise typer.Exit(2)
 
 
 def _deployment_state_dir(df) -> Path:
@@ -1860,6 +1877,79 @@ def check_hub(hub: Path = typer.Argument(..., help="Hub folder.")) -> None:
         typer.echo(p)
     if problems:
         raise typer.Exit(1)
+
+
+@app.command("upgrade", rich_help_panel="Run")
+def upgrade_cmd(
+    folder: Path = typer.Argument(Path("."), help="The deployment folder: hubzoid.yaml, a hub, or where "
+                                                  "`hubzoid gateway` ran."),
+    data_dir: Path = typer.Option(None, "--data-dir", help="The state folder (a gateway's --data-dir)."),
+    hubs: list[Path] = typer.Option(None, "--hub", help="Hub folders, when there is no hubzoid.yaml or manifest."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be written; change nothing."),
+) -> None:
+    """Move a deployment to one run mode, once, offline, after `hubzoid backup`:
+    write every setting kept only in the database into its file (hubzoid.yaml,
+    branding/, connectors/, .env, channel files), export Workspace drafts, then
+    bring the database to the current schema. Never overwrites a file and never
+    prints a secret."""
+    from . import db as dblib
+    from . import deployfile
+    from . import one_home
+
+    root = folder.resolve()
+    found = deployfile.find(root)
+    df = deployfile.load(found) if found else None
+    if df is not None:
+        hub_dirs = df.hub_dirs()
+    elif hubs:
+        hub_dirs = [h.resolve() for h in hubs]
+    elif (root / "AGENTS.md").is_file():
+        hub_dirs = [root]
+    else:
+        hub_dirs = []
+    if data_dir is not None:
+        state = data_dir.resolve()
+    elif hub_dirs == [root]:
+        state = datadir.state(root)
+    else:
+        state = _deployment_state_dir(df) if df is not None else (
+            root / ".hubzoid-gateway" if (root / ".hubzoid-gateway").is_dir() else root / ".hubzoid")
+    if not hub_dirs:
+        try:
+            manifest = json.loads((state / "deployment.json").read_text())
+            hub_dirs = [Path(h["path"]) for h in manifest.get("hubs", [])]
+        except (OSError, ValueError, KeyError):
+            pass
+    if not hub_dirs:
+        console.print("[red]No hubs found.[/red] Run it in the deployment folder, or pass --data-dir or --hub.")
+        raise typer.Exit(2)
+    from . import supervisor as sup_lib
+
+    probe = sup_lib.Supervisor([], state_dir=state)
+    try:
+        probe.lock()
+    except RuntimeError:
+        console.print("[red]This deployment is running.[/red] Stop it first (systemctl stop hubzoid), take "
+                      "a backup (hubzoid backup), then run hubzoid upgrade.")
+        raise typer.Exit(2)
+    try:
+        url = dblib.operational_url(hub_dirs[0])
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2)
+    console.print(f"[cyan]→ upgrade[/cyan]  {root}  (state {state}, {len(hub_dirs)} hub(s))")
+    up = one_home.Upgrade(root, state, hub_dirs, dblib._engine_for_url(url), dry_run=dry_run,
+                          say=lambda t: console.print(f"  {escape(t)}"))
+    try:
+        done = up.run()
+    except Exception as exc:  # noqa: BLE001 - said plainly
+        console.print(f"[red]The upgrade stopped:[/red] {escape(str(exc))}")
+        raise typer.Exit(1)
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] {len(done)} change(s) listed, none made.")
+    else:
+        console.print(f"[green]Done.[/green] Review the files (git diff), then start with `hubzoid run`"
+                      f"{' --data-dir ' + str(state) if data_dir else ''}.")
 
 
 service_app = typer.Typer(no_args_is_help=True, help="Run the deployment as a system service.")
