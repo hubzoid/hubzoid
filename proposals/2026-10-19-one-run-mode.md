@@ -260,7 +260,7 @@ socket with mode 0600; on Windows a loopback port with a token file):
   needed" with the reason.
 - `hubzoid restart <hub> [<hub>...]`, `hubzoid stop <hub>`,
   `hubzoid start <hub>`, `hubzoid reload [<hub>]`, `hubzoid logs <hub> [-f]`.
-- Hubs are named by folder name (`irs-hub`) or slug. The commands find the
+- Hubs are named by folder name (`sales-hub`) or slug. The commands find the
   deployment from the current folder or `--data-dir`, and say plainly when
   nothing runs there.
 - Anyone who can open the socket file can use them: the service's user and
@@ -301,7 +301,7 @@ socket with mode 0600; on Windows a loopback port with a token file):
   - 1.x Slack (Socket Mode) has no connection while its hub restarts. Messages
     sent in those seconds may be missed; Slack's own redelivery is not
     something Hubzoid controls.
-- Example: with 11 hubs, `hubzoid restart irs-hub gpms-hub` restarts only those
+- Example: with 11 hubs, `hubzoid restart sales-hub billing-hub` restarts only those
   two, one after the other.
 
 **A5. Reload: a checked restart of one hub.**
@@ -437,7 +437,7 @@ Instead:
 | Today | After |
 |---|---|
 | `hubzoid gateway <hubs> --no-bridges --name … --public-url …` (gateway unit), a unit per hub `hubzoid run <hub> --no-ui [--slack] --bridge-port 800X`, and `hubzoid inbound run <hub>` units | `hubzoid.yaml` with `hubs`, `name`, `public_url`; one `hubzoid.service` |
-| IRS: `--slack` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` in its `.env` | `channels/slack-assistant.yaml`; the same two `.env` lines |
+| A hub with `--slack` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` in its `.env` | `channels/slack-assistant.yaml`; the same two `.env` lines |
 | Nurturing: `WHATSAPP_*` in its `.env`, served by an inbound unit | `channels/whatsapp.yaml` (`provider: whatsapp_inbound`) |
 | Support: `WEBHOOK_INBOUND_SECRET`, `WEBHOOK_INBOUND_NAME` | `channels/<name>.yaml` (`provider: webhook`) |
 | `HUBZOID_AUTH` in hub `.env` files | `sign_in:` in `hubzoid.yaml`, same value; then delete the lines |
