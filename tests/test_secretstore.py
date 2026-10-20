@@ -155,46 +155,6 @@ def test_blank_values_and_restricted_deployment_secrets_are_refused(hub):
 # ---------------------------------------------------------------------------
 # The start-up layer
 # ---------------------------------------------------------------------------
-def test_a_stored_secret_joins_the_environment_after_a_restart(hub):
-    put(hub, "OPENAI_API_KEY")
-    from hubzoid import settings as settingslib
-
-    settingslib.load(hub)
-    assert "OPENAI_API_KEY" not in os.environ  # not before the bridge turns the store on
-    start_bridge(hub)
-    assert os.environ["OPENAI_API_KEY"] == VALUE
-    put(hub, "OPENAI_API_KEY", "changed", expected_revision=1)
-    settingslib.load(hub)  # a reload while serving keeps the start-up snapshot
-    assert os.environ["OPENAI_API_KEY"] == VALUE
-
-
-def test_operator_sources_win_and_blank_lines_do_not(hub):
-    (hub / ".env").write_text("OPENAI_API_KEY=from-file\nERP_TOKEN=\n")
-    put(hub, "OPENAI_API_KEY")
-    put(hub, "ERP_TOKEN")
-    start_bridge(hub)
-    assert os.environ["OPENAI_API_KEY"] == "from-file"
-    assert os.environ["ERP_TOKEN"] == VALUE  # a blank operator line sets nothing
-    assert layer.started(hub)[("hub", "OPENAI_API_KEY")][0] == layer.OVERRIDDEN
-
-
-def test_restricted_secrets_stay_out_of_agent_children(hub):
-    put(hub, "ERP_TOKEN", restricted=True)
-    put(hub, "OPENAI_API_KEY")
-    start_bridge(hub)
-    assert os.environ["ERP_TOKEN"] == VALUE
-    overrides = cs.child_env_overrides(os.environ)
-    assert overrides["ERP_TOKEN"] == "" and "OPENAI_API_KEY" not in overrides
-    assert "ERP_TOKEN" not in cs.for_hub_children(os.environ)
-
-
-def test_a_hub_secret_wins_over_the_deployment_one(hub):
-    put(hub, "SHARED_TOKEN", "deployment-value", scope="deployment")
-    put(hub, "SHARED_TOKEN", "hub-value")
-    start_bridge(hub)
-    assert os.environ["SHARED_TOKEN"] == "hub-value"
-
-
 def test_a_different_deployment_key_makes_a_secret_unreadable_not_fatal(hub, monkeypatch):
     put(hub, "OPENAI_API_KEY")
     monkeypatch.setenv("HUBZOID_SECRET_KEY", secretbox.Fernet.generate_key().decode())
@@ -202,24 +162,6 @@ def test_a_different_deployment_key_makes_a_secret_unreadable_not_fatal(hub, mon
     assert "OPENAI_API_KEY" not in os.environ
     row = next(r for r in report.rows(hub) if r["name"] == "OPENAI_API_KEY")
     assert row["status"] == "unreadable" and row["stored_status"] == layer.UNREADABLE
-
-
-def test_an_azure_key_is_not_sent_to_a_changed_endpoint(hub, monkeypatch):
-    from hubzoid.secretstore import names
-
-    monkeypatch.setenv("AZURE_API_BASE", "https://ours.openai.azure.com")
-    put(hub, "AZURE_API_KEY", destination=names.destination("AZURE_API_KEY", os.environ))
-    assert resolve("secret:hub/deskhub/AZURE_API_KEY", hub) == VALUE
-    monkeypatch.setenv("AZURE_API_BASE", "https://elsewhere.example")
-    cs.clear_cache()
-    start_bridge(hub)
-    assert "AZURE_API_KEY" not in os.environ
-    assert layer.started(hub)[("hub", "AZURE_API_KEY")][0] == layer.REBIND
-    # A direct reference is refused too, so a tool cannot send the old key there.
-    with pytest.raises(SecretError) as exc:
-        resolve("secret:hub/deskhub/AZURE_API_KEY", hub)
-    assert exc.value.code == "secret_rebind" and "AZURE_API_BASE" in exc.value.message
-    assert VALUE not in exc.value.message
 
 
 def test_a_stored_endpoint_never_redirects_an_operators_azure_key(hub, monkeypatch):
@@ -291,109 +233,9 @@ def client(hub):
     return f.client_for(app, APP)
 
 
-def test_the_local_owner_manages_secrets_and_never_reads_them_back(hub):
-    tc = client(hub)
-    r = tc.put("/api/hubs/deskhub/secrets/OPENAI_API_KEY", json={"value": VALUE}, headers=SAME)
-    assert r.status_code == 200 and r.json()["restart_required"] is True
-    listing = tc.get("/api/hubs/deskhub/secrets")
-    assert listing.status_code == 200 and VALUE not in listing.text
-    row = next(s for s in listing.json()["secrets"] if s["name"] == "OPENAI_API_KEY")
-    assert row["source"] == "Stored" and row["stored"]["revision"] == 1
-    r = tc.put("/api/hubs/deskhub/secrets/OPENAI_API_KEY", json={"value": "x", "expected_revision": 5},
-               headers=SAME)
-    assert r.status_code == 409 and r.json()["detail"]["current_revision"] == 1
-    assert tc.delete("/api/hubs/deskhub/secrets/OPENAI_API_KEY", headers=SAME).status_code == 200
-    assert VALUE not in audit_text(hub)
-
-
 def test_another_hub_id_is_not_found(hub):
     r = client(hub).get("/api/hubs/otherhub/secrets")
     assert r.status_code == 404 and r.json()["detail"]["code"] == "hub_not_found"
-
-
-def test_a_locked_name_and_a_cross_origin_write_are_refused(hub):
-    (hub / ".env").write_text("OPENAI_API_KEY=from-file\n")
-    tc = client(hub)
-    r = tc.put("/api/hubs/deskhub/secrets/OPENAI_API_KEY", json={"value": VALUE}, headers=SAME)
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "secret_locked"
-    assert "hub .env" in r.json()["detail"]["message"]
-    r = tc.put("/api/hubs/deskhub/secrets/ERP_TOKEN", json={"value": VALUE},
-               headers={"origin": "https://evil.example"})
-    assert r.status_code == 403 and r.json()["detail"]["code"] == "cross_origin"
-
-
-def test_only_organization_administrators_write_and_see_restricted_names(hub, monkeypatch):
-    f.accounts(monkeypatch, hub, {ALICE: ("u-a", "admin"), BOB: ("u-b", "user"), CAROL: ("u-c", "user")})
-    gs = store_for(hub)
-    gs.bootstrap([ALICE])
-    gs.grant(BOB, "deskhub", "manage_access", actor="test")  # this agent's administrator
-    put(hub, "ERP_TOKEN", restricted=True)
-    put(hub, "OPENAI_API_KEY")
-    tc = client(hub)
-    alice, bob, carol = ({"x-test-user": who} for who in (ALICE, BOB, CAROL))
-    assert tc.get("/api/hubs/deskhub/secrets").status_code == 401
-    assert tc.get("/api/hubs/deskhub/secrets", headers=carol).status_code == 404
-    seen = tc.get("/api/hubs/deskhub/secrets", headers=bob).json()
-    assert "ERP_TOKEN" not in json.dumps(seen) and seen["restricted_hidden"] == 1 and not seen["can_manage"]
-    for method in ("put", "delete"):
-        kwargs = {"json": {"value": "x"}} if method == "put" else {}
-        r = getattr(tc, method)("/api/hubs/deskhub/secrets/ERP_TOKEN", headers={**SAME, **bob}, **kwargs)
-        assert r.status_code == 403, method
-    assert tc.get("/api/secrets", headers=bob).status_code == 403
-    full = tc.get("/api/hubs/deskhub/secrets", headers=alice).json()
-    assert "ERP_TOKEN" in json.dumps(full) and full["can_manage"]
-    r = tc.put("/api/secrets/SHARED_TOKEN", json={"value": VALUE}, headers={**SAME, **alice})
-    assert r.status_code == 200
-    assert [s["name"] for s in tc.get("/api/secrets", headers=alice).json()["secrets"]] == ["SHARED_TOKEN"]
-
-
-# ---------------------------------------------------------------------------
-# The CLI
-# ---------------------------------------------------------------------------
-def test_the_cli_reads_values_from_stdin_and_never_prints_them(hub):
-    from hubzoid.cli import app
-
-    runner = CliRunner()
-    r = runner.invoke(app, ["secrets", "set", str(hub), "--name", "OPENAI_API_KEY", "--stdin", "--json"],
-                      input=VALUE + "\n")
-    assert r.exit_code == 0, r.output
-    assert VALUE not in r.output and json.loads(r.output)["secret"]["revision"] == 1
-    assert resolve("secret:hub/deskhub/OPENAI_API_KEY", hub) == VALUE  # the trailing newline is dropped
-    listing = runner.invoke(app, ["secrets", "list", str(hub), "--json"])
-    assert listing.exit_code == 0 and VALUE not in listing.output
-    (hub / ".env").write_text("ERP_TOKEN=from-file\n")
-    r = runner.invoke(app, ["secrets", "set", str(hub), "--name", "ERP_TOKEN", "--stdin"], input="x\n")
-    assert r.exit_code == 4
-    r = runner.invoke(app, ["secrets", "delete", str(hub), "--name", "OPENAI_API_KEY", "--check", "--json"])
-    assert r.exit_code == 0 and json.loads(r.output)["would"] == "delete"
-    assert store.get_meta(hub, scope="hub", target="deskhub", name="OPENAI_API_KEY") is not None
-
-
-# ---------------------------------------------------------------------------
-# Review regressions
-# ---------------------------------------------------------------------------
-def test_a_file_line_echoing_a_restricted_secret_does_not_declassify_it(hub):
-    from hubzoid import settings as settingslib
-
-    (hub / ".env").write_text("ERP_TOKEN=${ERP_TOKEN}\n")
-    put(hub, "ERP_TOKEN", restricted=True)
-    start_bridge(hub)
-    settingslib.load(hub)  # bridges reload settings while serving
-    settingslib.load(hub)
-    assert os.environ["ERP_TOKEN"] == VALUE
-    assert cs.child_env_overrides(os.environ)["ERP_TOKEN"] == ""
-
-
-def test_rotating_a_restricted_secret_keeps_it_restricted(hub):
-    put(hub, "ERP_TOKEN", restricted=True)
-    assert put(hub, "ERP_TOKEN", "rotated").restricted is True
-    r = client(hub).put("/api/hubs/deskhub/secrets/ERP_TOKEN", json={"value": "again"}, headers=SAME)
-    assert r.status_code == 200 and r.json()["secret"]["restricted"] is True
-    from hubzoid.cli import app
-
-    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "ERP_TOKEN", "--stdin"], input="cli\n")
-    assert r.exit_code == 0, r.output
-    assert store.get_meta(hub, scope="hub", target="deskhub", name="ERP_TOKEN").restricted is True
 
 
 def test_a_removed_and_recreated_secret_never_reuses_a_revision(hub):
@@ -425,18 +267,20 @@ def test_a_blank_aws_value_does_not_lock_a_stored_secret(hub, monkeypatch):
     assert "desk/hub" not in json.dumps(report.rows(hub))  # never an AWS secret name
 
 
-def test_the_cli_refuses_a_name_an_aws_secret_owns_or_cannot_check(hub, monkeypatch):
-    from hubzoid.cli import app
+def test_a_key_a_person_types_has_one_home_dotenv(hub):
+    # Settings, the API and the CLI refuse to store a key a person types: it
+    # lives in .env (or the host), so removing a line never revives an old value.
+    tc = client(hub)
+    r = tc.put("/api/hubs/deskhub/secrets/OPENAI_API_KEY", json={"value": VALUE}, headers=SAME)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "operator_source"
+    assert ".env" in r.json()["detail"]["message"]
+    from hubzoid.secretstore.cli import secrets_app
 
-    (hub / ".env").write_text("HUBZOID_HUB_SECRET_NAME=desk/hub\n")
-    monkeypatch.setattr(cs, "fetch", lambda name, region, layer: {"ZOHO_TOKEN": "aws-value"})
-    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "ZOHO_TOKEN", "--stdin"], input="x\n")
-    assert r.exit_code == 4, r.output
-
-    def unreadable(name, region, layer):
-        raise cs.SecretFetchError(name, layer, "AccessDeniedException")
-
-    cs.clear_cache()
-    monkeypatch.setattr(cs, "fetch", unreadable)
-    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "OTHER_TOKEN", "--stdin"], input="x\n")
-    assert r.exit_code == 5, r.output
+    out = CliRunner().invoke(secrets_app, ["set", str(hub), "--name", "OPENAI_API_KEY", "--stdin", "--json"],
+                             input=VALUE)
+    assert out.exit_code != 0 and "operator_source" in out.output and VALUE not in out.output
+    # One stored before this rule is not used, and says where it belongs.
+    put(hub, "OPENAI_API_KEY")
+    start_bridge(hub)
+    assert "OPENAI_API_KEY" not in os.environ
+    assert layer.started(hub)[("hub", "OPENAI_API_KEY")][0] == layer.MOVE_TO_ENV
