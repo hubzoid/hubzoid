@@ -5,6 +5,12 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.0]
+
+One chat interface, the Hubzoid web app, with Settings in the same app. See
+[the 2.0 release notes](docs/release-notes/2.0.md) and
+[Upgrading to 2.0](docs/UPGRADING.md#upgrading-to-20-open-webui-removed).
+
 ### Removed (Hubzoid 2.0)
 - Open WebUI. There is no `hubzoid[openwebui]` extra, `HUBZOID_UI` switch,
   Open WebUI image build, account sync or model-visibility mirror. Deployments
@@ -15,6 +21,16 @@ All notable changes to Hubzoid. Versions follow the package version in
   Open WebUI API keys on the management API.
 
 ### Changed
+- Settings → Agents: an agent opens on Access (its Overview tab is gone; old
+  `/overview` links land on Access). The Settings nav uses one type size, the
+  accent orange marks the current item, tab and filters, and informational
+  messages and tags use the accent instead of blue in the built-in palettes.
+- Connectors can be added, edited, tested, switched, offered and removed in
+  Settings → Agents → Connectors again. Settings writes the same
+  `connectors/<id>.yaml` files operators edit by hand (locked, atomic, refusing
+  stale or concurrent edits) and keeps secrets entered there in the deployment
+  `.env` as `env:` references. A stored client secret or key is never sent to a
+  changed server. See [docs/mcp.md](docs/mcp.md#settings-and-files-use-the-same-definitions).
 - Open WebUI settings are named, never ignored. `WEBUI_AUTH`, `WEBUI_URL`,
   `WEBUI_ADMIN_EMAIL`/`_PASSWORD`, `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD`,
   `HUBZOID_UI` other than `hubzoid` and a deployment recorded in Open WebUI
@@ -48,6 +64,14 @@ All notable changes to Hubzoid. Versions follow the package version in
   them) and listed under run details.
 
 ### Fixed
+- `hubzoid doctor` no longer creates the operational database (building the
+  feedback tool read the chat defaults through a service that opened it).
+- Stopping `hubzoid gateway` while its bridges start stops them too; before,
+  bridges launched during the start were left running.
+- In local mode, every hub sharing one operational store gives the local owner
+  access, so a second hub's scheduled runs are no longer refused.
+- The Usage meters no longer restyle the chat's message action bar (they shared
+  a class name).
 - An unknown or not-permitted Settings address opened an empty pane; it now
   opens the first section (a person's own Schedules for the team's schedules).
 - Shared snapshots and their copies no longer carry signed download links; the
