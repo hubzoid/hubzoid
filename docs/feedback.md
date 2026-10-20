@@ -62,9 +62,10 @@ feedback:
 
 When does a change apply? Turning `feedback.enabled` or `feedback.tool` off
 holds from the next rating or tool call, everywhere. Turning the tool on
-rebuilds the chat runtime of the server that applied the change, so the next
-web or Slack turn has it (`runtime_reloaded: true` in the apply response). In
-a gateway with several hub servers, restart the other servers.
+requires a checked `hubzoid reload <agent>` (or a restart) so the runtime
+offers the new tool on the next web or Slack turn. These settings live in
+the deployment file’s `chat:` section, or `chat/config.yaml` when no section
+is defined; Settings and the configuration API are read-only.
 
 ## The record_feedback tool
 

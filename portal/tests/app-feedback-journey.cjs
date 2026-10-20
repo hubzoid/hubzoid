@@ -71,8 +71,6 @@ async function main() {
     const [port, slackPort] = await h.freePorts(2, Number(process.env.APP_REAL_PORT || 4150));
     console.log(`Scratch folder: ${WORK}`);
     const hub = h.makeHub("feedback", `name: ${AGENT_NAME}`);
-    fs.mkdirSync(path.join(hub, "identity"), { recursive: true });
-    fs.writeFileSync(path.join(hub, "identity", "access.csv"), `phone,email,groups\n,${SAM.email},support\n`);
     slack = await fakeSlack(slackPort);
     const env = {
       HUBZOID_AUTH: "true",
@@ -149,11 +147,33 @@ async function main() {
       await anon.dispose();
     }
     const setFeedback = async (values) => {
-      const cur = await (await admin.get("/api/chat/config")).json();
+      const current = await admin.get("/api/chat/config");
+      assert.equal(current.status(), 200, await current.text());
+      const cur = await current.json();
+      // This scratch hub has no hubzoid.yaml chat section: its settings are
+      // owned by chat/config.yaml. Preserve every other active setting.
       const config = { ...cur.config, feedback: { ...cur.config.feedback, ...values } };
-      const res = await admin.put("/api/chat/config", { data: { config, expected_revision: cur.revision || "absent" } });
-      assert.equal(res.status(), 200, await res.text());
-      return res.json();
+      const file = path.join(hub, "chat", "config.yaml");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(config, null, 2) + "\n");
+      fs.renameSync(`${file}.tmp`, file);
+      if (!cur.config.feedback.tool && config.feedback.tool) {
+        // The tool list is built at startup. A real restart is required to
+        // add record_feedback; file writes do not promise a runtime reload.
+        await server.stop();
+        server = new h.Server("feedback", hub, port, "127.0.0.1", env);
+        server.start();
+        await server.ready();
+      }
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const res = await admin.get("/api/chat/config");
+        assert.equal(res.status(), 200, await res.text());
+        const active = await res.json();
+        if (Object.entries(values).every(([key, value]) => active.config.feedback[key] === value)) return active;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error("chat/config.yaml feedback settings did not become active");
     };
 
     // ---- 1 to 4: rate, reload, edit, remove ----------------------------------------------------
@@ -277,8 +297,7 @@ async function main() {
 
     // ---- the tool, through a real chat run ---------------------------------------------------
     step("record_feedback (opt-in): Sam asks the agent to save negative feedback on its previous answer");
-    const applied = await setFeedback({ tool: true });
-    assert.equal(applied.runtime_reloaded, true);
+    await setFeedback({ tool: true });
     await ask(p, "What does the enterprise plan cost?");
     // The answer just given, found by what it says (the snapshot can lag the screen by a moment).
     let target = null;
@@ -320,12 +339,18 @@ async function main() {
 
     // ---- Slack, local simulation -------------------------------------------------------------
     console.log("\n[slack] Signed Slack requests against the real server, fake Slack Web API");
-    const channelFile = path.join(WORK, "feedback", "slack-main.yaml");
+    const channelFile = path.join(hub, "channels", "slack-main.yaml");
+    fs.mkdirSync(path.dirname(channelFile), { recursive: true });
     fs.writeFileSync(channelFile, [
-      "version: 1", "id: slack-main", "provider: slack", "enabled: true", "agent: main", "allowed_groups: [support]",
+      "version: 1", "id: slack-main", "provider: slack", "enabled: true", "agent: main",
       "feedback: true", "provider_config:", "  transport: http", "  installation_team_id: T0E2E", "  app_id: A0E2E",
       "  bot_token_ref: env:SLACK_E2E_BOT", "  signing_secret_ref: env:SLACK_E2E_SIGNING", "  allowed_channel_ids: [C0E2E]", ""].join("\n"));
-    h.python(["-m", "hubzoid.cli", "channels", "apply", hub, "--file", channelFile, "--expected-revision", "absent"], { env });
+    // The channel file auto-configures this connection. Transport access is
+    // an explicit account grant, separate from Sam's existing use_hub grant.
+    const grantChannel = await admin.post("/portal/api/accounts/grant", {
+      data: { email: SAM.email, grants: [{ hub: hubKey, permission: "channel_slack-main" }] },
+    });
+    assert.equal(grantChannel.status(), 200, await grantChannel.text());
     h.python(["-m", "hubzoid.cli", "channels", "link", hub, "slack-main", "--external-id", "U0SAM", "--account", SAM.email], { env });
     const hook = `${BASE}/api/hubs/${encodeURIComponent(hubKey)}/channels/slack-main/webhook`;
     const event = JSON.stringify({ type: "event_callback", api_app_id: "A0E2E", team_id: "T0E2E", event_id: "EvE2E1",
