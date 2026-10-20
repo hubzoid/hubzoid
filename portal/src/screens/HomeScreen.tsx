@@ -5,7 +5,7 @@ import { useHashQuery } from "../hooks/useRoute";
 import { LoadState, PageHeader } from "../components/common";
 import { formatTime, short } from "../lib/format";
 import { Cost } from "../components/UsageCost";
-import { AgentCards } from "./AgentsScreen";
+import { AgentCards, AgentGrid } from "./AgentsScreen";
 
 const { Text } = Typography;
 const PERIODS = [
@@ -83,14 +83,19 @@ export function HomeScreen({ hubs, reloadHubs, embedded = false }: { hubs: Hub[]
         </div>
       </>}
   </>;
+  if (embedded)
+    return (
+      <>
+        <PageHeader title="Agents" description={`${hubs.length} ${hubs.length === 1 ? "agent" : "agents"}. Each one is a folder of instructions, knowledge and tools. Open one to see who uses it and what it does.`} />
+        {workflows.error && <Alert type="warning" showIcon className="home-note"
+          title="Couldn’t refresh workflow status" description="Open an agent to check its workflows, or try refreshing again." />}
+        <AgentGrid hubs={hubs} workflows={workflows.data?.workflows} usage={s?.hubs} />
+      </>
+    );
   return (
     <>
-      <PageHeader title="Agents" description={embedded ? "Manage access, connectors and workflows for each agent." : undefined} extra={embedded ? undefined : controls} />
-      {embedded ? <details className="hz-usage-details">
-        <summary>Usage overview</summary>
-        {controls}
-        {overview}
-      </details> : overview}
+      <PageHeader title="Agents" extra={controls} />
+      {overview}
       {workflows.error && <Alert type="warning" showIcon className="home-note"
         title="Couldn’t refresh workflow status" description="Open an agent to check its workflows, or try refreshing again." />}
       <AgentCards hubs={hubs} workflows={workflows.data?.workflows} usage={s?.hubs} />

@@ -21,10 +21,11 @@ function selectedId(): number | null {
   return id && /^\d+$/.test(id) ? Number(id) : null;
 }
 
-export default function HubChangesPage() {
+export default function HubChangesPage({ hub }: { hub?: string } = {}) {
   const app = useApp();
   const agents = app.agents.list;
-  const [agentId, setAgentId] = useState<string | null>(agents[0]?.id ?? null);
+  const fixed = hub ? agents.find((a) => a.hub === hub || a.id === hub) : undefined;
+  const [agentId, setAgentId] = useState<string | null>(fixed?.id ?? agents[0]?.id ?? null);
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
   const base = agent?.api_base ?? "";
   const [tab, setTab] = useState<(typeof TABS)[number]>("pending");
@@ -59,7 +60,7 @@ export default function HubChangesPage() {
   return (
     <PageFrame title={H.title} description={H.lede}>
       <div className="flex flex-col gap-4" data-testid="hub-changes">
-        {agents.length > 1 && (
+        {agents.length > 1 && !fixed && (
           <label className="flex items-center gap-2 text-[13px] text-secondary">
             {H.agent}
             <Select className="!w-auto" aria-label={H.agent} value={agent?.id ?? ""} onValueChange={setAgentId} options={agents.map(a => ({value: a.id, label: displayName(a.name)}))} />

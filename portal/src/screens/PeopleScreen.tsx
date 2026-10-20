@@ -15,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { MoreHorizontal, RefreshCw, Search, UserPlus } from "lucide-react";
+import { ChevronRight, MoreHorizontal, RefreshCw, Search, UserPlus } from "lucide-react";
 import {
   ApiError,
   request,
@@ -213,6 +213,8 @@ export function PeopleScreen({
             size="middle"
             dataSource={data.data.people}
             scroll={{ x: embedded ? 620 : 720 }}
+            rowClassName="clickable"
+            onRow={(p) => ({ onClick: (e) => { if (!(e.target as HTMLElement).closest("a, button")) location.hash = personHref(p.subject).slice(1); } })}
             pagination={{
               current: page,
               pageSize: PAGE,
@@ -282,14 +284,10 @@ export function PeopleScreen({
               },
               {
                 title: "",
-                key: "actions",
-                width: 110,
+                key: "open",
+                width: 40,
                 align: "right",
-                render: (_, p) => (
-                  <Button href={personHref(p.subject)} aria-label={`Details for ${personName(p.subject, p.display)}`}>
-                    Details
-                  </Button>
-                ),
+                render: (_, p) => <ChevronRight size={16} aria-label={`Open ${personName(p.subject, p.display)}`} className="row-chevron" />,
               },
             ]}
           />

@@ -1,11 +1,15 @@
 // A page's frame: a title, an optional line under it, actions on the right,
 // and the page's own content below. Inside Settings it is a section heading.
-import { useContext, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { Menu as MenuIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { IconButton } from "../components/ui";
 import { InSettings } from "./SettingsFrame";
+
+/** Inside another page's tab (an agent's Instructions, say): only the content
+ *  and its actions, under the host page's own heading. */
+export const BarePage = createContext(false);
 
 export function PageFrame({ title, description, actions, wide, children }: {
   title: string;
@@ -16,9 +20,17 @@ export function PageFrame({ title, description, actions, wide, children }: {
 }) {
   const app = useApp();
   const embedded = useContext(InSettings);
+  const bare = useContext(BarePage);
   useEffect(() => {
     if (!embedded) document.title = `${title} · ${app.brandName}`;
   }, [title, app.brandName, embedded]);
+  if (bare)
+    return (
+      <>
+        {actions && <div className="mb-4 flex flex-wrap items-center justify-end gap-2">{actions}</div>}
+        {children}
+      </>
+    );
   if (embedded)
     return (
       <>

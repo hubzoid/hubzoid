@@ -31,7 +31,7 @@ DIST = Path(__file__).parent / "portal_dist"
 SHELL_PATHS = ("/", "/c/{rest:path}", "/s/{rest:path}", "/auth", "/auth/{rest:path}",
                "/account", "/account/{rest:path}", "/new", "/new/{rest:path}",
                "/branding-preview/{rest:path}", "/sources", "/sources/{rest:path}",
-               "/workspace", "/settings", "/requests")
+               "/workspace", "/settings", "/requests", "/inbox")
 
 _MOUNTS = (
     "hubzoid.auth.routes",

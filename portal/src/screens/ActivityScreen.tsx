@@ -12,7 +12,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { RefreshCw } from "lucide-react";
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { query, type AuditRow, type Hub, type Person } from "../api";
 import { useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
@@ -299,6 +299,8 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
           rowKey={(r, i) => `${r.ts}:${i}`}
           size="middle"
           dataSource={rows}
+          rowClassName="clickable"
+          onRow={(r) => ({ onClick: () => setDetail(r) })}
           scroll={{ x: 640 }}
           pagination={{
             current: page,
@@ -372,14 +374,10 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
               : []),
             {
               title: "",
-              key: "details",
-              width: 90,
+              key: "open",
+              width: 40,
               align: "right" as const,
-              render: (_: unknown, r: AuditRow) => (
-                <Button size="small" onClick={() => setDetail(r)}>
-                  Details
-                </Button>
-              ),
+              render: () => <ChevronRight size={16} aria-hidden className="row-chevron" />,
             },
           ]}
         />

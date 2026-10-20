@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url'
 // hubzoid/portal_dist so the package ships a static SPA (no Node at runtime).
 // Tailwind only processes the chat app's stylesheet (src/app/app.css); the
 // Console keeps its own CSS in portal.css.
-const bridge = 'http://localhost:8000'
+// HUBZOID_DEV_TARGET points the dev server at another deployment (for example
+// a running gateway's edge). Same-origin checks there see the target's origin.
+const bridge = process.env.HUBZOID_DEV_TARGET || 'http://localhost:8000'
 
 export default defineConfig({
   base: '/portal/',
@@ -52,7 +54,13 @@ export default defineConfig({
   server: {
     host: true,
     proxy: Object.fromEntries(
-      ['/portal/api', '/api', '/oauth', '/branding', '/artifacts', '/b/'].map((p) => [p, bridge]),
+      ['/portal/api', '/api', '/oauth', '/branding', '/artifacts', '/b/'].map((p) => [p, {
+        target: bridge,
+        changeOrigin: true,
+        configure: (proxy: { on: (event: string, fn: (req: { getHeader: (n: string) => unknown; setHeader: (n: string, v: string) => void }) => void) => void }) => {
+          proxy.on('proxyReq', (req) => { if (req.getHeader('origin')) req.setHeader('origin', bridge) })
+        },
+      }]),
     ),
   },
 })
