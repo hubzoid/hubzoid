@@ -99,7 +99,7 @@ def test_a_bridge_answering_as_another_hub_fails_its_start_at_once(tmp_path, sta
 
 def test_a_restart_drains_first_and_stops_channels_before_the_bridge(tmp_path, started, monkeypatch):
     order = []
-    unit = sup_lib.Unit(name="irs", slug="irs", bridge_url="http://127.0.0.1:9", key="k",
+    unit = sup_lib.Unit(name="sales", slug="sales", bridge_url="http://127.0.0.1:9", key="k",
                         specs=[sup_lib.Spec(["bridge"], {}), sup_lib.Spec(["slack"], {}, role="channel")])
     sup = _sup(tmp_path, [unit])
     sup.start_all([unit])
@@ -116,7 +116,7 @@ def test_a_restart_drains_first_and_stops_channels_before_the_bridge(tmp_path, s
     monkeypatch.setattr(httpx, "post", lambda url, **k: order.append(("drain", url)) or R())
     monkeypatch.setattr(httpx, "get", lambda url, **k: order.append(("check", url)) or R())
     monkeypatch.setattr(sup_lib, "_signal_group", lambda p, sig: order.append(("stop", p.cmd[0])) or p.terminate())
-    out = sup.handle({"op": "restart", "hubs": ["irs"]})
+    out = sup.handle({"op": "restart", "hubs": ["sales"]})
     assert out["ok"] and unit.state == "ready"
     drained = order.index(("drain", "http://127.0.0.1:9/internal/drain"))
     assert order.index(("stop", "slack")) < drained            # 1.x channels finish first
