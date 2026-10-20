@@ -413,6 +413,8 @@ from hubzoid.workflows import alerts, events, runtime
 from hubzoid.workflows.state import WorkflowState
 
 hub = Path(sys.argv[1])
+# The hub's own name, as a bridge uses: the local owner is provisioned for it.
+name = hub.name.lower()
 os.environ['HUBZOID_OPERATIONAL_DB'] = f'sqlite:///{hub / "ops.db"}'
 os.environ['HUBZOID_DBOS_DB'] = f'sqlite:///{hub / "dbos.db"}'
 os.environ['HUBZOID_SCHEDULES'] = '1'
@@ -425,7 +427,7 @@ async def sender(_, row):
     delivered.append(row['id'])
 
 alerts.send = sender
-runtime.init(hub, hub_name='alert-test')
+runtime.init(hub)
 try:
     @runtime.workflow('* * * * *', timezone='UTC')
     def check():
@@ -438,10 +440,10 @@ try:
     assert scheduled_run.attributes == {'trigger': 'schedule'}
     assert runtime.start('check').get_result() == 'done'
     # A queued failure alert must be dispatched despite a schedule being present.
-    alerts.record(hub, 'alert-test', 'run_failed', 'failed-run',
+    alerts.record(hub, name, 'run_failed', 'failed-run',
                   {'workflow': 'check', 'run_id': 'failed-run'})
-    alerts.reconcile(hub, 'alert-test')
-    state = WorkflowState(events._engine(hub), 'alert-test', '__alerts__')
+    alerts.reconcile(hub, name)
+    state = WorkflowState(events._engine(hub), name, '__alerts__')
     assert state['dispatch:check'] == scheduled_run.dequeued_at / 1000
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
@@ -452,7 +454,7 @@ try:
         time.sleep(0.05)
     assert rows == [('run_failed', 'sent')], rows
     assert len(delivered) == 1
-    alerts.reconcile(hub, 'alert-test')
+    alerts.reconcile(hub, name)
     assert len(delivered) == 1
 finally:
     runtime.shutdown()

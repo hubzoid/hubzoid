@@ -1573,8 +1573,12 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     if owner is not None and owner.parent / ".hubzoid" != gw_data:
         sup.pointers.append(owner.parent / ".hubzoid")  # `hubzoid status` from the deployment folder
 
-    started = sup.start_all(units)
-    procs.extend(p for u in units for p in u.procs)
+    try:
+        started = sup.start_all(units)
+    finally:
+        # Recorded even when a stop arrives during the start, so the caller
+        # still stops every bridge already launched.
+        procs.extend(p for u in units for p in u.procs)
     ready = [u.slug for u in units if started.get(u.name)]
     console.print(f"[green]→ bridges[/green]  {len(ready)} of {len(units)} ready: {', '.join(ready) or 'none'}")
     for u in units:
@@ -1582,10 +1586,13 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
             console.print(f"[red]→ {u.slug}[/red]  {escape(u.error or u.last_exit)}. The other agents "
                           f"run; see `hubzoid logs {u.name}`.")
     display_url = f"http://{host}:{ui_port}"
-    if not sup.start(edge).get("ok"):
+    try:
+        edge_ok = sup.start(edge).get("ok")
+    finally:
+        procs.extend(edge.procs)
+    if not edge_ok:
         console.print(f"[red]→ gateway[/red]  failed to start. Check logs. URL: {display_url}")
         raise typer.Exit(1)
-    procs.extend(edge.procs)
     console.print(f"[green]→ gateway[/green]  ready    {display_url}")
     _wait_any(procs, supervisor=sup)
 
