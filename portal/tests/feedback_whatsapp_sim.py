@@ -51,12 +51,13 @@ def main() -> None:
             return {"ok": True}
     '''))
     (HUB / "work-items.yaml").write_text("version: 1\nwrite_modes:\n  customer_reply.send: approve\n")
-    data = config.load_text(HUB, config.render({
+    channel_file = HUB / "channels" / "whatsapp-desk.yaml"
+    channel_file.parent.mkdir(parents=True, exist_ok=True)
+    channel_file.write_text(config.render({
         "version": 1, "id": "whatsapp-desk", "provider": "whatsapp_cloud", "enabled": True, "workflow": "requests",
         "run_as": "workflow", "feedback": True,
         "provider_config": {"waba_id": WABA, "phone_number_id": PNID, "app_secret_ref": "env:WA_E2E_SECRET",
-                            "verify_token_ref": "env:WA_E2E_VERIFY", "access_token_ref": "env:WA_E2E_TOKEN"}})).data
-    config.apply(HUB, data, expected_revision="absent", actor="e2e")
+                            "verify_token_ref": "env:WA_E2E_VERIFY", "access_token_ref": "env:WA_E2E_TOKEN"}}), encoding="utf-8")
     conn = config.active(HUB, "whatsapp-desk")
 
     def deliver(*messages):

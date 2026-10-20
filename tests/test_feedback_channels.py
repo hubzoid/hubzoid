@@ -20,7 +20,7 @@ from hubzoid.channels import config, links, store
 from hubzoid.channels import feedback as cfb
 from hubzoid.chat import feedback as fb
 from tests import test_channels_whatsapp as wa_t
-from tests.chat_helpers import build_app, make_hub
+from tests.chat_helpers import build_app, make_hub, write_chat_config
 from tests.test_channels_slack import SIGNING, FakeWeb, signed
 from tests.test_channels_whatsapp import (APP_SECRET, SENDER, _mode, _post, _released, hub_dir, meta,  # noqa: F401
                                           payload, post, route_all, started, text_msg)
@@ -72,13 +72,13 @@ def slack_hub(tmp_path, monkeypatch, slack_web):
     hub = make_hub(tmp_path, monkeypatch)
     monkeypatch.setenv("SLACK_TEST_SIGNING", SIGNING)
     monkeypatch.setenv("SLACK_TEST_BOT", "xoxb-test-value")    # gitleaks:allow (a test value)
-    (hub / "identity").mkdir(exist_ok=True)
-    (hub / "identity" / "access.csv").write_text("phone,email,groups\n,ana@example.org,support\n"
-                                                 ",ben@example.org,support\n")
     from hubzoid.auth import users
     from tests.chat_helpers import PEOPLE
 
+    from hubzoid.access import store_for
+
     for person in PEOPLE.values():
+        store_for(hub).grant(person.email, hub.name, "channel_slack-main", actor="test")
         if users.find_by_email(hub, person.email) is None:
             users.create(hub, email=person.email, name=person.name, id=person.id)
     data = config.load_text(hub, config.render({
@@ -377,7 +377,7 @@ def test_whatsapp_disabled_deployment_collects_nothing(hub_dir, meta, started): 
     svc = chat_config.service_for(hub_dir)
     doc = svc.active().document
     doc["feedback"]["enabled"] = False
-    svc.apply(doc, expected_revision=svc.active().revision or None, actor="t")
+    write_chat_config(hub_dir, doc)
     post(conn, payload(reaction("wamid.r1", "wamid.out1")))
     route_all(hub_dir)
     assert live(ops_engine(hub_dir)) == []
@@ -439,7 +439,7 @@ def test_whatsapp_collection_off_removal_works_and_ratings_are_not_intake(hub_di
     active = svc.active()
     doc = active.document
     doc["feedback"]["enabled"] = False
-    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    write_chat_config(hub_dir, doc)
     intake = wa_count(hub_dir)
     deliver(conn, hub_dir, reaction("wamid.c2", "wamid.out1", "", ts=20))     # the person takes it back
     deliver(conn, hub_dir, reaction("wamid.c3", "wamid.out1", "", ts=25))     # and again

@@ -8,6 +8,8 @@ import json
 import time
 
 import pytest
+
+from tests.chat_helpers import write_chat_config
 from fastapi.testclient import TestClient
 
 from hubzoid.chat import feedback as fb
@@ -231,7 +233,7 @@ def set_feedback(hub, **values):
     active = svc.active()
     doc = active.document
     doc["feedback"].update(values)
-    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+    write_chat_config(hub, doc)
 
 
 def fb_url(cid, mid):
