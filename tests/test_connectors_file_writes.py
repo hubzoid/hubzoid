@@ -308,3 +308,28 @@ def test_a_manual_edit_after_reading_is_not_deleted(hub, tc, monkeypatch):
     r = tc.delete("/portal/api/connectors/gmail", headers=SAME)
     assert r.status_code == 409
     assert path.read_text() == manual
+
+
+def test_a_manual_removal_during_delete_stays_removed(hub, tc, monkeypatch):
+    from hubzoid.connectors import file_writes
+
+    assert create(tc).status_code == 201
+    path = hub / "connectors/gmail.yaml"
+    real = file_writes._check_revision
+
+    def remove_meanwhile(raw, expected):
+        real(raw, expected)
+        path.unlink()
+
+    monkeypatch.setattr(file_writes, "_check_revision", remove_meanwhile)
+    assert tc.delete("/portal/api/connectors/gmail", headers=SAME).status_code == 409
+    assert not path.exists()
+
+
+def test_a_padded_client_id_in_the_file_keeps_its_secret(hub, tc):
+    assert create(tc, client_id="client", client_secret="kept").status_code == 201
+    path = hub / "connectors/gmail.yaml"
+    path.write_text(path.read_text().replace("client_id: client", "client_id: ' client '"))
+    r = tc.patch("/portal/api/connectors/gmail", json={"client_id": "client", "name": "Renamed"}, headers=SAME)
+    assert r.status_code == 200, r.text
+    assert registry.client_secret(hub, "gmail") == "kept"

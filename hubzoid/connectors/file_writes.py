@@ -99,10 +99,7 @@ def _check_revision(raw: str, expected: str | None) -> None:
                              "Refresh the page and reopen it before saving.", 409)
 
 
-_ANY = object()  # restoring a file: no content check
-
-
-def _atomic(path: Path, value: str, *, previous) -> None:
+def _atomic(path: Path, value: str, *, previous: str | None) -> None:
     _safe(path)
     fd, name = tempfile.mkstemp(prefix=".connector-", dir=path.parent)
     try:
@@ -114,7 +111,7 @@ def _atomic(path: Path, value: str, *, previous) -> None:
             # Catch a manual edit made while this save was being prepared,
             # checked as late as possible: just before the file is replaced.
             current = path.read_text(encoding="utf-8") if path.exists() else None
-            if previous is not _ANY and current != previous:
+            if current != previous:
                 raise ConnectorError("conflict", "The file changed during this save. Refresh and "
                                      "try again.", 409)
             # mkstemp's 0600 also protects an existing, previously permissive .env.
@@ -132,25 +129,32 @@ def _atomic(path: Path, value: str, *, previous) -> None:
         Path(name).unlink(missing_ok=True)
 
 
+class _Undo:
+    changed = False  # set once this operation has replaced or deleted the file
+
+
 @contextmanager
 def _undo_on_failure(path: Path, *, previous: str | None, written: str | None):
     """When the database part of a change fails, put the definition file back
     as it was: the API reports a failure, so the change must not stay active.
-    Only a file still holding what this save wrote (``written``; None when it
-    was deleted) is restored, so a manual edit made meanwhile is kept."""
+    Only a file this operation changed, and that still holds what it wrote
+    (``written``; None when it was deleted), is restored, so a manual edit
+    made meanwhile is kept."""
+    undo = _Undo()
     try:
-        yield
+        yield undo
     except BaseException:
-        try:
-            current = path.read_text(encoding="utf-8") if path.exists() else None
-            if current == written:
+        if undo.changed:
+            try:
                 if previous is None:
-                    path.unlink(missing_ok=True)
+                    current = path.read_text(encoding="utf-8") if path.exists() else None
+                    if current == written:
+                        path.unlink(missing_ok=True)
                 else:
-                    _atomic(path, previous, previous=_ANY)
-        except (OSError, ConnectorError):
-            log.error("connectors: could not restore %s after a failed save", path.name)
-        r._seen.pop(str(path), None)
+                    _atomic(path, previous, previous=written)
+            except (OSError, ConnectorError):
+                log.error("connectors: could not restore %s after a failed save", path.name)
+            r._seen.pop(str(path), None)
         raise
 
 
@@ -158,8 +162,11 @@ def _prepare(path: Path, doc: dict, data: dict) -> tuple[dict, dict[str, str]]:
     """Merge known input fields; validate everything before writing either file."""
     doc = dict(doc)
     secrets: dict[str, str] = {}
+    def client(value):
+        return (value.strip() if isinstance(value, str) else value) or None
+
     if ("client_id" in data and "client_secret" not in data
-            and (data["client_id"] or None) != (doc.get("client_id") or None)):
+            and client(data["client_id"]) != client(doc.get("client_id"))):
         # A secret belongs to its client ID.
         doc.pop("client_secret", None)
     for source, dest in (("name", "name"), ("url", "url"), ("auth_type", "sign_in"),
@@ -238,8 +245,9 @@ def create(hub_dir, data, *, actor: str, hub: str = "") -> r.Connector:
         path = base / f"{cid}.yaml"
         doc, secrets = _prepare(path, {"version": 1, "hubs": [r._hub(hub)] if hub else []}, data)
         written = yamlfile.dumps(doc)
-        with _undo_on_failure(path, previous=None, written=written), engine(hub_dir).begin() as conn:
+        with _undo_on_failure(path, previous=None, written=written) as undo, engine(hub_dir).begin() as conn:
             _save(path, written, secrets, previous=None)
+            undo.changed = True
             r._audit(conn, hub_dir, actor, "connector_create", cid)
         return r.get(hub_dir, cid)
 
@@ -268,8 +276,9 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[r.Connector, bool]:
             raise ConnectorError("client_secret_required", "A new server needs its client "
                                  "secret again. Enter it, or remove the stored secret.", 422)
         written = yamlfile.dumps(newdoc)
-        with _undo_on_failure(path, previous=raw, written=written), engine(hub_dir).begin() as conn:
+        with _undo_on_failure(path, previous=raw, written=written) as undo, engine(hub_dir).begin() as conn:
             _save(path, written, secrets, previous=raw)
+            undo.changed = True
             # Tokens are removed after committing to avoid a second writer on SQLite.
             if reset:
                 conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
@@ -289,12 +298,13 @@ def delete(hub_dir, cid: str, *, actor: str, expected_revision: str | None = Non
             return False
         path, raw, _, _ = _read(base, cid)
         _check_revision(raw, expected_revision)
-        with _undo_on_failure(path, previous=raw, written=None), engine(hub_dir).begin() as conn:
-            # A manual edit since the file was read wins over this delete.
-            if path.read_text(encoding="utf-8") != raw:
+        with _undo_on_failure(path, previous=raw, written=None) as undo, engine(hub_dir).begin() as conn:
+            # A manual edit (or removal) since the file was read wins over this delete.
+            if (path.read_text(encoding="utf-8") if path.exists() else None) != raw:
                 raise ConnectorError("conflict", "The file changed during this delete. Refresh and "
                                      "try again.", 409)
             path.unlink()
+            undo.changed = True
             r._seen.pop(str(path), None)
             conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
             conn.execute(text("DELETE FROM hz_connectors WHERE id = :id"), {"id": cid})
@@ -316,8 +326,9 @@ def offering(hub_dir, cid: str, hub, *, actor: str, offered: bool) -> bool:
             return False
         doc["hubs"] = sorted(set(hubs + [hub])) if offered else [h for h in hubs if h != hub]
         written = yamlfile.dumps(doc)
-        with _undo_on_failure(path, previous=raw, written=written), engine(hub_dir).begin() as conn:
+        with _undo_on_failure(path, previous=raw, written=written) as undo, engine(hub_dir).begin() as conn:
             _save(path, written, {}, previous=raw)
+            undo.changed = True
             from ..access import store_for
             store_for(Path(hub_dir)).write_audit(
                 conn, r.normalize(actor) or "unknown",
