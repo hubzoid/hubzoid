@@ -188,6 +188,10 @@ async def _run() -> None:
 async def route_pending(hub_dir, app=None) -> int:
     """Route what is accepted or waiting, oldest first, in thread order. Returns
     how many deliveries moved on."""
+    from .. import drain
+
+    if drain.active():  # restarting: deliveries stay saved and are routed after the start
+        return 0
     hub_dir = Path(hub_dir)
     hub = config_lib.hub_of(hub_dir)
     rows = await asyncio.to_thread(store.open_deliveries, hub_dir, hub)

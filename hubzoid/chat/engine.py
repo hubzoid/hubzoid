@@ -501,6 +501,10 @@ class ChatEngine:
             raise Err(400, "invalid_operation", f"kind is one of: {', '.join(KINDS)}.")
         if op.get("version", 1) != 1:
             raise Err(400, "invalid_operation", "version is 1.")
+        from .. import drain
+
+        if drain.active() and kind not in ("delete", "fork"):
+            raise Err(503, "restarting", drain.MESSAGE)
         # Content is validated (files resolved) before the transaction.
         with self.engine.connect() as conn:
             conv, _ = self._readable(conn, conversation_id, actor)
@@ -1082,7 +1086,13 @@ class ChatEngine:
     def run_finished(self, run_id: str, message_status: str, error: str | None = None) -> RunPlan | None:
         """Record the end of a reply, release its branch and, unless the queue
         is parked, admit the branch's next queued message."""
+        from .. import drain
+
         status = {"complete": "complete", "cancelled": "stopped", "error": "failed"}.get(message_status, "failed")
+        restarting = drain.active()
+        if restarting and status == "stopped":
+            # Cut off by a restart's grace period, not by a person.
+            status, error = "interrupted", error or drain.INTERRUPTED
         with self.engine.begin() as conn:
             r = conn.execute(sa.select(g.runs).where(g.runs.c.id == run_id)).first()
             if r is None or r.status in g.TERMINAL_RUN:
@@ -1101,12 +1111,16 @@ class ChatEngine:
             for item in conn.execute(sa.select(g.queue).where(g.queue.c.dispatched_run_id == run_id)):
                 if status != "complete":
                     self._block_dependents(conn, r.conversation_id, item.id, f"the earlier message {status}", t)
+            if restarting:
+                # Nothing new starts while the hub drains: what waits stays
+                # parked, as after any restart, for the person to send on.
+                self._park(conn, r.conversation_id, r.branch_id, "interrupted", t)
         self.notify(r.conversation_id)
         if self.on_terminal is not None:
             self.on_terminal(run_id=run_id, conversation_id=r.conversation_id, branch_id=r.branch_id,
                              message_id=r.message_id, actor_id=r.actor_id, status=status,
                              stopped_by_self=bool(r.cancel_requested))
-        if status not in ("complete", "stopped"):
+        if status not in ("complete", "stopped") or restarting:
             return None
         # After a stop the queue was parked unless the person chose "send next
         # and stop current": dispatch_next sends nothing from a paused queue.

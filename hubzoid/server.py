@@ -149,7 +149,8 @@ def build_app() -> FastAPI:
         wf_dispatcher = await wf_boot.start(hub_dir)
         app.state.workflows = wf_dispatcher
         from .workflows import runtime as _wf_runtime
-        sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
+        from . import drain as _drain
+        sched = scheduler_lib.Scheduler(hub_dir, is_busy=lambda: inflight.busy() or _drain.active())
         if _wf_runtime._LAUNCHED or wf_dispatcher is not None:
             # Also while the engine waits for ownership: a slot that cannot be
             # queued yet is not stamped, so it fires once the engine is back.
@@ -281,6 +282,41 @@ def build_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "hub": hub_dir.name, "agent": rt.name, "model": model_label}
 
+    def _loopback_key(request: Request) -> None:
+        """The supervisor's own calls: from this machine, with a bridge key."""
+        host = (request.client.host if request.client else "") or ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            raise HTTPException(status_code=404, detail="not found")
+        auth = request.headers.get("authorization", "")
+        token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
+        if not token or token.startswith("hzp_") or token not in api_keys:
+            raise HTTPException(status_code=401, detail="invalid api key")
+
+    def _busy(request: Request) -> bool:
+        if inflight.busy():
+            return True
+        runs = getattr(getattr(request.app.state, "chat", None), "runs", None)
+        try:
+            return bool(runs is not None and runs.active_runs())
+        except Exception:  # noqa: BLE001 - when in doubt, still busy
+            return True
+
+    @app.post("/internal/drain")
+    async def drain_start(request: Request) -> dict:
+        """Stop taking new work (``hubzoid.drain``); the supervisor stops the
+        process once ``busy`` is false or its grace period ends."""
+        _loopback_key(request)
+        from . import drain as drain_lib
+
+        return {"draining": True, "since": drain_lib.start(), "busy": _busy(request)}
+
+    @app.get("/internal/drain")
+    async def drain_state(request: Request) -> dict:
+        _loopback_key(request)
+        from . import drain as drain_lib
+
+        return {"draining": drain_lib.active(), "since": drain_lib.since(), "busy": _busy(request)}
+
     @app.get("/v1/models")
     async def list_models(request: Request) -> JSONResponse:
         _auth(request, personal=True)
@@ -296,6 +332,11 @@ def build_app() -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         _auth(request, personal=True)
+        from . import drain as drain_lib
+
+        if drain_lib.active():
+            return JSONResponse({"error": {"message": drain_lib.MESSAGE, "type": "unavailable"}},
+                                status_code=503, headers={"Retry-After": "5"})
         try:
             body = await request.json()
         except Exception as exc:  # noqa: BLE001
