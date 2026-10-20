@@ -336,6 +336,9 @@ class ChatEngine:
             conn.execute(messages.update().where(messages.c.conversation_id == conversation_id)
                          .values(content="[]", text="", deleted_at=t))
             conn.execute(shares.delete().where(shares.c.conversation_id == conversation_id))
+            from .feedback import tombstone_conversation
+
+            tombstone_conversation(conn, conversation_id, t)
             conn.execute(g.queue.update().where(g.queue.c.conversation_id == conversation_id,
                                                 g.queue.c.state.in_(g.QUEUE_LIVE))
                          .values(state="removed", reason="conversation deleted", updated_at=t))

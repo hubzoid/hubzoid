@@ -37,6 +37,8 @@ class ChannelConfig(BaseModel):
     queue_limit: int = Field(default=100, ge=1, le=1000)
     subscriptions: Literal["on_accept", "explicit"] = "on_accept"
     progress: bool = True
+    #: rating controls on final replies (Slack agent answers, WhatsApp workflow replies)
+    feedback: bool = False
     provider_config: dict = Field(default_factory=dict)
 
     @field_validator("id")

@@ -46,7 +46,7 @@ def fb_put(hub: Path = HUB, conversation: str = typer.Option(..., "--conversatio
         conv, _ = loc.engine.readable(conversation, loc.actor_obj)
         cc.emit(_svc(loc).put_feedback(conv, loc.actor_obj.id, message, {
             "rating": rating, "reason_ids": reason, "comment": comment, "score": score, "tags": tag,
-            "expected_revision": expected}), as_json)
+            "expected_revision": expected}, source="cli"), as_json)
 
 
 @feedback_app.command("remove")
@@ -63,11 +63,13 @@ def fb_remove(hub: Path = HUB, conversation: str = typer.Option(..., "--conversa
 
 @feedback_app.command("list")
 def fb_list(hub: Path = HUB, agent: str = typer.Option(None, "--agent"), rating: str = typer.Option(None, "--rating"),
-            limit: int = 50, as_json: bool = JSON) -> None:
-    """Every rating of this hub (the CLI runs as someone who controls the hub folder)."""
+            source: str = typer.Option(None, "--source", help="web, tool, slack, whatsapp or cli"),
+            reason: str = typer.Option(None, "--reason"), limit: int = 50, as_json: bool = JSON) -> None:
+    """Every rating of this hub, from every surface (the CLI runs as someone who controls the hub folder)."""
     loc = _local(hub, as_json, None)
     with loc.guard():
-        cc.emit(_svc(loc).list_feedback(agent_id=agent, rating=rating, limit=limit), as_json)
+        cc.emit(_svc(loc).list_feedback(agent_id=agent, rating=rating, source=source, reason=reason, limit=limit),
+                as_json)
 
 
 @feedback_app.command("export")

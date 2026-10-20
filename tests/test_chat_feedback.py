@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from hubzoid.chat import feedback as fb
 from tests.chat_helpers import ORIGIN, as_people, build_app, make_hub, who
-from tests.test_chat_operations import h, new_conv, op, send, snap, wait_run
+from tests.test_chat_operations import h, new_conv, op, send, snap, wait_run  # noqa: F401
 
 
 @pytest.fixture
@@ -219,3 +219,174 @@ def test_personal_notification_preferences_follow_policy(client, hub):
     with pytest.raises(cfg.ConfigError) as exc:
         svc.set_preferences(owner, {"helpers.enabled.followups": True}, expected_revision=1)
     assert exc.value.code == "policy_locked"
+
+
+# -- feedback across surfaces (proposals/2026-10-20-feedback-across-channels.md) -------------------
+
+def set_feedback(hub, **values):
+    from hubzoid.chat import config as cfg
+
+    svc = cfg.service_for(hub)
+    active = svc.active()
+    doc = active.document
+    doc["feedback"].update(values)
+    svc.apply(doc, expected_revision=active.revision or None, actor="t")
+
+
+def fb_url(cid, mid):
+    return f"/api/conversations/{cid}/messages/{mid}/feedback"
+
+
+def test_reload_shows_mine_and_change_or_remove_keeps_revisions(client):
+    cid, out = answered(client)
+    mid = out["assistant_message_id"]
+    saved = client.put(fb_url(cid, mid), headers=ORIGIN, json={
+        "expected_revision": "absent", "rating": "negative", "reason_ids": ["missing_source"],
+        "comment": "Cite the policy"}).json()
+    # A reload asks once for the whole conversation and gets the reason and comment back.
+    mine = client.get(f"/api/conversations/{cid}/feedback").json()["items"]
+    assert [(m["message_id"], m["rating"], m["reason_ids"], m["comment"]) for m in mine] == [
+        (mid, "negative", ["missing_source"], "Cite the policy")]
+    assert mine[0]["source"] == "web" and mine[0]["target_kind"] == "message"
+    # Another window saved first: an edit made from the old revision never overwrites it.
+    client.put(fb_url(cid, mid), headers=ORIGIN, json={"expected_revision": saved["revision"], "rating": "positive"})
+    stale = client.put(fb_url(cid, mid), headers=ORIGIN, json={"expected_revision": saved["revision"],
+                                                               "rating": "negative", "comment": "draft"})
+    assert stale.status_code == 409 and stale.json()["detail"]["current_revision"] == saved["revision"] + 1
+    assert client.get(fb_url(cid, mid)).json()["feedback"]["rating"] == "positive"
+    gone = client.request("DELETE", fb_url(cid, mid), headers=ORIGIN, json={"expected_revision": saved["revision"]})
+    assert gone.status_code == 409    # removing from an old revision is refused too
+    assert client.request("DELETE", fb_url(cid, mid), headers=ORIGIN,
+                          json={"expected_revision": saved["revision"] + 1}).status_code == 204
+    assert client.get(f"/api/conversations/{cid}/feedback").json()["items"] == []
+    again = client.put(fb_url(cid, mid), headers=ORIGIN, json={"expected_revision": "absent", "rating": "positive"})
+    assert again.status_code == 200 and again.json()["revision"] == saved["revision"] + 3
+
+
+def test_off_refuses_every_new_rating_but_not_removal(client, hub):
+    cid, out = answered(client)
+    mid = out["assistant_message_id"]
+    client.put(fb_url(cid, mid), headers=ORIGIN, json={"rating": "positive"})
+    set_feedback(hub, enabled=False)
+    assert client.get("/api/chat/capabilities").json()["features"]["feedback"] is False
+    refused = client.put(fb_url(cid, mid), headers=ORIGIN, json={"expected_revision": 1, "rating": "negative"})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "feature_disabled"
+    svc = client.app.state.chat.feedback
+    from hubzoid.chat.graph import GraphError
+
+    with pytest.raises(GraphError):    # the tool and channel path too
+        svc.record(target_kind="message", target_id=mid, author_id="u_other", source="slack", rating="positive")
+    assert client.request("DELETE", fb_url(cid, mid), headers=ORIGIN, json={}).status_code == 204
+
+
+def test_unfinished_and_temporary_answers_take_no_rating(client):
+    cid, b = new_conv(client)
+    slow = send(client, cid, "slow please", b)
+    early = client.put(fb_url(cid, slow["assistant_message_id"]), headers=ORIGIN, json={"rating": "positive"})
+    assert early.status_code == 409 and early.json()["detail"]["code"] == "message_not_terminal"
+    wait_run(client, slow["run_id"])
+    agent = client.app.state.chat.model_label
+    tmp = client.post("/api/conversations", headers=ORIGIN, json={"agent": agent, "temporary": True}).json()
+    out = send(client, tmp["conversation"]["id"], "hello", tmp["branch"])
+    wait_run(client, out["run_id"])
+    r = client.put(fb_url(tmp["conversation"]["id"], out["assistant_message_id"]), headers=ORIGIN,
+                   json={"rating": "positive"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "temporary_resource"
+
+
+def test_review_list_filters_counts_and_hides_what_the_reviewer_cannot_open(client, hub, monkeypatch):
+    from hubzoid.access import store_for
+    from hubzoid.auth import users
+    from tests.chat_helpers import PEOPLE
+
+    as_people(monkeypatch)
+    for person in PEOPLE.values():   # real accounts, so the review shows who rated
+        if users.find_by_email(hub, person.email) is None:
+            users.create(hub, email=person.email, name=person.name, id=person.id)
+    rated = {}
+    for name, rating, comment in (("ana", "negative", "Price is =SUM(A1) wrong"), ("ben", "positive", None)):
+        cid, b = new_conv(client, who(name))
+        out = send(client, cid, f"stock question from {name}", b, who(name))
+        wait_run(client, out["run_id"], who(name))
+        body = {"rating": rating, **({"comment": comment, "reason_ids": ["incorrect"]} if comment else {})}
+        assert client.put(fb_url(cid, out["assistant_message_id"]), headers=who(name), json=body).status_code == 200
+        rated[name] = cid
+    assert client.get("/api/chat/feedback", headers=who("ben")).status_code == 403
+    store_for(hub).grant("ben@example.org", hub.name, "manage_access", actor="t")
+    hub_id = hub.name.lower()
+    page = client.get(f"/api/hubs/{hub_id}/feedback", headers=who("ben")).json()
+    assert page["counts"] == {"positive": 1, "negative": 1}
+    by = {i["rating"]: i for i in page["items"]}
+    # Ben reviews Ana's rating but cannot open her conversation: no comment, words, answer or link.
+    assert by["negative"]["reason_ids"] == ["incorrect"] and by["negative"]["comment"] is None
+    assert by["negative"]["comment_hidden"] and by["negative"]["source_hidden"]
+    assert by["negative"]["excerpt"] is None and by["negative"]["context"] is None
+    assert by["negative"]["author"] == "Ana Example"
+    # His own conversation shows the answer and where it is.
+    assert "stock question from ben" in by["positive"]["excerpt"]
+    assert by["positive"]["context"] == {"kind": "conversation", "conversation_id": rated["ben"]}
+    only = client.get(f"/api/hubs/{hub_id}/feedback?rating=negative&source=web&reason=incorrect",
+                      headers=who("ben")).json()
+    assert [i["rating"] for i in only["items"]] == ["negative"] and only["counts"]["positive"] == 0
+    assert client.get(f"/api/hubs/{hub_id}/feedback?source=slack", headers=who("ben")).json()["items"] == []
+    assert client.get(f"/api/hubs/{hub_id}/feedback?source=email", headers=who("ben")).status_code == 400
+    assert client.get("/api/hubs/another-hub/feedback", headers=who("ben")).status_code == 404
+    first = client.get(f"/api/hubs/{hub_id}/feedback?limit=1", headers=who("ben")).json()
+    second = client.get(f"/api/hubs/{hub_id}/feedback?limit=1&cursor={first['next_cursor']}",
+                        headers=who("ben")).json()
+    assert {first["items"][0]["id"], second["items"][0]["id"]} == {i["id"] for i in page["items"]}
+    # Export: the same rules; the 1.x columns first and in order, the new ones after.
+    rows = list(csv.reader(io.StringIO(client.get(f"/api/hubs/{hub_id}/feedback/export?format=csv",
+                                                  headers=who("ben")).text)))
+    assert rows[0][:11] == ["id", "conversation_id", "message_id", "author_id", "agent_id", "rating", "reason_ids",
+                            "score", "tags", "comment", "updated_at"]
+    assert rows[0][11:] == ["source", "target_kind", "author_kind", "author", "channel_id", "excerpt"]
+    assert "SUM" not in "".join(sum(rows, []))
+    assert client.get("/api/chat/feedback/export?format=csv", headers=who("ana")).status_code == 403
+    exported = json.loads(client.get(f"/api/hubs/{hub_id}/feedback/export?format=json", headers=who("ben")).text)
+    assert {i["id"] for i in exported["items"]} == {i["id"] for i in page["items"]}
+
+
+def test_safe_csv_neutralises_formulas_in_visible_comments(client, hub):
+    cid, out = answered(client)
+    client.put(fb_url(cid, out["assistant_message_id"]), headers=ORIGIN,
+               json={"rating": "negative", "comment": "@cmd|' /C calc'!A0"})
+    rows = list(csv.reader(io.StringIO(client.get("/api/chat/feedback/export?format=csv").text)))
+    assert rows[1][rows[0].index("comment")].startswith("'@")
+
+
+def test_deleting_a_conversation_takes_its_ratings(client):
+    import sqlalchemy as sa
+
+    cid, out = answered(client)
+    client.put(fb_url(cid, out["assistant_message_id"]), headers=ORIGIN,
+               json={"rating": "negative", "comment": "quotes the private chat"})
+    conv = snap(client, cid)["conversation"]
+    r = client.request("DELETE", f"/api/conversations/{cid}", headers=h(),
+                       json={"expected_revision": conv.get("graph_revision")})
+    assert r.status_code in (200, 202, 204), r.text
+    assert client.get("/api/chat/feedback").json()["items"] == []
+    with client.app.state.chat.engine.engine.connect() as c:
+        row = c.execute(sa.select(fb.feedback).where(fb.feedback.c.conversation_id == cid)).first()
+    assert row.deleted_at is not None and row.comment is None
+
+
+def test_rows_from_before_the_migration_read_as_web_ratings(client):
+    import sqlalchemy as sa
+
+    cid, out = answered(client)
+    owner = snap(client, cid)["conversation"]["owner_id"]
+    with client.app.state.chat.engine.engine.begin() as c:   # a 1.x row: none of the op_0072 columns set
+        c.execute(sa.text("INSERT INTO hz_feedback (id, hub_id, conversation_id, branch_id, message_id, author_id, "
+                          "agent_id, rating, reason_ids, comment, tags, score, revision, source_metadata, created_at, "
+                          "updated_at) VALUES ('old-1', :hub, :cid, NULL, :mid, :owner, 'a', 'positive', '[]', NULL, "
+                          "'[]', 4, 1, NULL, 1, 1)"),
+                  {"hub": client.app.state.chat.hub, "cid": cid, "mid": out["assistant_message_id"], "owner": owner})
+    item = client.get("/api/chat/feedback").json()["items"][0]
+    assert (item["source"], item["target_kind"], item["author_kind"], item["score"]) == ("web", "message",
+                                                                                          "account", 4)
+    mine = client.get(fb_url(cid, out["assistant_message_id"])).json()["feedback"]
+    assert mine["id"] == "old-1"
+    edited = client.put(fb_url(cid, out["assistant_message_id"]), headers=ORIGIN,
+                        json={"expected_revision": 1, "rating": "negative"})
+    assert edited.status_code == 200 and edited.json()["revision"] == 2

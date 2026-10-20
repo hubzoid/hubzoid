@@ -1,9 +1,15 @@
 """Feedback on answers, generated helpers (titles, follow-ups), and notices.
 
-* **Feedback** is one person's rating of one finished answer (its immutable
-  message id): positive or negative, reasons from the configured list, an
-  optional comment, tags and score. Its author sees and changes it; people who
-  manage the hub list and export it. CSV export neutralises formula prefixes.
+* **Feedback** is one person's rating of one delivered result: a native chat
+  answer (its immutable message id) or a delivered channel reply (the
+  recorded outside write that sent it). Positive or negative, reasons from the
+  configured list, an optional comment, tags and score. It comes from the web
+  chat, the ``record_feedback`` tool, Slack or WhatsApp (``source``), by an
+  account or an outside sender who is never mapped to an account
+  (``author_kind``). Its author sees and changes it; people who manage the hub
+  list and export it, and see a comment or the answer only where they could
+  open its source themselves. Feedback is an assessment: it never becomes
+  memory, a Hub edit or an action. CSV export neutralises formula prefixes.
 * **Helpers** are small tool-free model calls about a conversation (follow-up
   suggestions, a title). They run through ``runtime.complete_once`` with the
   runtime's native structured output and are checked against their schema.
@@ -60,7 +66,10 @@ class _Strict(BaseModel):
 
 
 class FeedbackSettings(_Strict):
+    #: every surface: off refuses new and changed ratings (a person can still remove theirs)
     enabled: bool = True
+    #: offer the record_feedback tool to the agent
+    tool: bool = False
     reasons: list[str] = Field(default_factory=lambda: ["accurate", "useful", "missing_source", "incorrect", "other"])
     score_range: tuple[int, int] = (1, 5)
 
@@ -148,7 +157,7 @@ feedback = sa.Table(
     "hz_feedback", metadata,
     sa.Column("id", sa.String(64), primary_key=True),
     sa.Column("hub_id", sa.String(255), nullable=False),
-    sa.Column("conversation_id", sa.String(64), nullable=False, index=True),
+    sa.Column("conversation_id", sa.String(64), index=True),
     sa.Column("branch_id", sa.String(64)),
     sa.Column("message_id", sa.String(64), nullable=False),
     sa.Column("author_id", sa.String(64), nullable=False),
@@ -163,7 +172,16 @@ feedback = sa.Table(
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
     sa.Column("deleted_at", sa.Float),
+    # op_0072: what is rated, by whom and where (NULL: message, account, web)
+    sa.Column("target_kind", sa.String(16)),
+    sa.Column("source", sa.String(16)),
+    sa.Column("author_kind", sa.String(16)),
+    sa.Column("author_label", sa.String(120)),
+    sa.Column("channel_id", sa.String(64)),
+    sa.Column("thread_id", sa.String(64)),
+    sa.Column("request_key", sa.String(160)),
     sa.UniqueConstraint("message_id", "author_id", name="uq_hz_feedback_author_message"),
+    sa.Index("ix_hz_feedback_hub_updated", "hub_id", "updated_at"),
 )
 
 helper_jobs = sa.Table(
@@ -269,6 +287,40 @@ TABLES = (feedback, helper_jobs, notification_events, inbox, target_sets, target
 RETRY_SECONDS = (1, 5, 30, 120, 600)
 PRESENCE_SECONDS = 45
 TARGET_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+#: what a rating rates, who wrote it and where it came from (hz_feedback, op_0072)
+TARGET_KINDS = ("message", "channel_reply")
+AUTHOR_KINDS = ("account", "external")
+SOURCES = ("web", "tool", "slack", "whatsapp", "cli")
+EXCERPT_CHARS = 280
+
+
+def _kind(row) -> str:
+    return row.target_kind or "message"
+
+
+def _json_obj(text: str | None) -> dict:
+    try:
+        value = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _excerpt(text: str | None) -> str | None:
+    if text is None:
+        return None
+    text = " ".join(text.split())
+    return text if len(text) <= EXCERPT_CHARS else text[: EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def tombstone_conversation(conn, conversation_id: str, t: float) -> None:
+    """A deleted conversation takes its ratings with it, in the same
+    transaction: what they quote (comment, tags, reasons, the person's words)
+    is cleared, as the conversation's messages are."""
+    conn.execute(feedback.update().where(feedback.c.conversation_id == conversation_id,
+                                         feedback.c.deleted_at.is_(None))
+                 .values(comment=None, tags="[]", reason_ids="[]", source_metadata=None, deleted_at=t,
+                         updated_at=t, revision=feedback.c.revision + 1))
 
 
 def _now() -> float:
@@ -303,23 +355,12 @@ class FeedbackService:
         self._lock = threading.Lock()
 
     # -- feedback ---------------------------------------------------------------------------
-    def _terminal_message(self, conn, conversation_id: str, message_id: str) -> dict:
-        row = conn.execute(sa.select(messages).where(messages.c.id == message_id)).first()
-        if row is None or row.conversation_id != conversation_id or row.deleted_at is not None:
-            raise Err(404, "not_found", "That message was not found in this conversation.")
-        m = _message(row)
-        if m["role"] != "assistant":
-            raise Err(422, "validation_failed", "Feedback is for answers.")
-        if m["status"] == "running":
-            raise Err(409, "message_not_terminal", "Wait for the answer to finish, then rate it.")
-        return m
-
-    def put_feedback(self, conv: dict, actor_id: str, message_id: str, body: dict) -> dict:
+    def _content(self, body: dict) -> dict:
+        """A rating's content, checked against this deployment's settings.
+        Raises 403 feature_disabled when feedback is off."""
         cfg = _settings(self.hub_dir)["feedback"]
         if not cfg["enabled"]:
             raise Err(403, "feature_disabled", "Feedback is turned off for this deployment.")
-        if conv.get("temporary"):
-            raise Err(422, "temporary_resource", "Temporary conversations don't keep feedback.")
         rating = body.get("rating")
         if rating not in ("positive", "negative"):
             raise Err(422, "validation_failed", "rating is positive or negative.", fields={"rating": "required"})
@@ -336,6 +377,32 @@ class FeedbackService:
         lo, hi = cfg["score_range"]
         if score is not None and (not isinstance(score, int) or isinstance(score, bool) or not lo <= score <= hi):
             raise Err(422, "validation_failed", f"score is a whole number from {lo} to {hi}.")
+        return {"rating": rating, "reason_ids": list(dict.fromkeys(reasons)), "comment": comment or None,
+                "tags": tags, "score": score}
+
+    def enabled(self) -> bool:
+        try:
+            return bool(_settings(self.hub_dir)["feedback"]["enabled"])
+        except Exception:  # noqa: BLE001 - unknown: collect nothing
+            return False
+
+    def _terminal_message(self, conn, conversation_id: str, message_id: str) -> dict:
+        row = conn.execute(sa.select(messages).where(messages.c.id == message_id)).first()
+        if row is None or row.conversation_id != conversation_id or row.deleted_at is not None:
+            raise Err(404, "not_found", "That message was not found in this conversation.")
+        m = _message(row)
+        if m["role"] != "assistant":
+            raise Err(422, "validation_failed", "Feedback is for answers.")
+        if m["status"] == "running":
+            raise Err(409, "message_not_terminal", "Wait for the answer to finish, then rate it.")
+        return m
+
+    def put_feedback(self, conv: dict, actor_id: str, message_id: str, body: dict, *, source: str = "web") -> dict:
+        """The web and CLI path: the person edits their own rating with the
+        revision they last saw ("absent" to create)."""
+        c = self._content(body)
+        if conv.get("temporary"):
+            raise Err(422, "temporary_resource", "Temporary conversations don't keep feedback.")
         expected = body.get("expected_revision", "absent")
         with self.engine.begin() as conn:
             m = self._terminal_message(conn, conv["id"], message_id)
@@ -351,18 +418,27 @@ class FeedbackService:
                 raise Err(409, "revision_conflict", "Your rating changed elsewhere. Reload it.",
                           current_revision=current)
             t = _now()
-            values = dict(rating=rating, reason_ids=json.dumps(reasons), comment=comment, tags=json.dumps(tags),
-                          score=score, updated_at=t, deleted_at=None, branch_id=m.get("branch_id"))
+            values = dict(rating=c["rating"], reason_ids=json.dumps(c["reason_ids"]), comment=c["comment"],
+                          tags=json.dumps(c["tags"]), score=c["score"], updated_at=t, deleted_at=None,
+                          branch_id=m.get("branch_id"), source=source, request_key=None, source_metadata=None)
             if row is None:
                 fid = str(uuid.uuid4())
-                conn.execute(feedback.insert().values(id=fid, hub_id=self.hub, conversation_id=conv["id"],
-                                                      message_id=message_id, author_id=actor_id,
-                                                      agent_id=conv.get("agent"), revision=1, created_at=t,
-                                                      source_metadata=None, **values))
+                try:
+                    conn.execute(feedback.insert().values(
+                        id=fid, hub_id=self.hub, conversation_id=conv["id"], message_id=message_id,
+                        author_id=actor_id, agent_id=conv.get("agent"), revision=1, created_at=t,
+                        target_kind="message", author_kind="account", **values))
+                except sa.exc.IntegrityError:
+                    raise Err(409, "revision_conflict", "This answer was just rated elsewhere. Reload it.",
+                              current_revision=1) from None
             else:
                 fid = row.id
-                conn.execute(feedback.update().where(feedback.c.id == row.id)
-                             .values(revision=(row.revision if live else row.revision) + 1, **values))
+                n = conn.execute(feedback.update().where(feedback.c.id == row.id,
+                                                         feedback.c.revision == row.revision)
+                                 .values(revision=row.revision + 1, **values)).rowcount
+                if n != 1:
+                    raise Err(409, "revision_conflict", "Your rating changed elsewhere. Reload it.",
+                              current_revision=current + 1)
             out = conn.execute(sa.select(feedback).where(feedback.c.id == fid)).first()
         return self._feedback_json(out)
 
@@ -373,7 +449,16 @@ class FeedbackService:
                                                          feedback.c.deleted_at.is_(None))).first()
         return self._feedback_json(row) if row else None
 
+    def mine(self, conversation_id: str, actor_id: str) -> list[dict]:
+        """This person's live ratings in one conversation (the chat shows them on load)."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(sa.select(feedback).where(feedback.c.conversation_id == conversation_id,
+                                                          feedback.c.author_id == actor_id,
+                                                          feedback.c.deleted_at.is_(None))).all()
+        return [self._feedback_json(r) for r in rows]
+
     def delete_feedback(self, actor_id: str, message_id: str, expected_revision: int | None) -> None:
+        """Remove your rating. Allowed while feedback is off: what you said stays yours to take back."""
         with self.engine.begin() as conn:
             row = conn.execute(sa.select(feedback).where(feedback.c.message_id == message_id,
                                                          feedback.c.author_id == actor_id)).first()
@@ -382,25 +467,149 @@ class FeedbackService:
             if expected_revision is not None and expected_revision != row.revision:
                 raise Err(409, "revision_conflict", "Your rating changed elsewhere. Reload it.",
                           current_revision=row.revision)
-            conn.execute(feedback.update().where(feedback.c.id == row.id)
-                         .values(comment=None, tags="[]", reason_ids="[]", deleted_at=_now(),
-                                 revision=row.revision + 1, source_metadata=None))
+            n = conn.execute(feedback.update().where(feedback.c.id == row.id, feedback.c.revision == row.revision)
+                             .values(comment=None, tags="[]", reason_ids="[]", deleted_at=_now(),
+                                     revision=row.revision + 1, source_metadata=None)).rowcount
+            if n != 1:
+                raise Err(409, "revision_conflict", "Your rating changed elsewhere. Reload it.",
+                          current_revision=row.revision + 1)
 
-    def list_feedback(self, *, agent_id: str | None = None, rating: str | None = None, reason: str | None = None,
-                      limit: int = 50, cursor: str | None = None, reader=None) -> dict:
-        """Ratings of this hub. With ``reader`` (a manager in the web app), a
-        comment or tags on a conversation the reader may not open are left out:
-        managing feedback is not access to the conversation it quotes."""
-        limit = max(1, min(int(limit or 50), 100))
-        q = sa.select(feedback).where(feedback.c.hub_id == self.hub, feedback.c.deleted_at.is_(None))
+    def record(self, *, target_kind: str, target_id: str, author_id: str, source: str, rating: str | None,
+               author_kind: str = "account", author_label: str | None = None, conversation_id: str | None = None,
+               branch_id: str | None = None, agent_id: str | None = None, channel_id: str | None = None,
+               thread_id: str | None = None, reason_ids: list[str] | None = None, comment: str | None = None,
+               request_key: str | None = None, metadata: dict | None = None, order: float | None = None) -> dict:
+        """One author's rating of one target, from a trusted server-side path
+        (the record_feedback tool, a channel interaction). The caller has
+        already bound the author and the target; nothing here comes from a
+        model or a provider payload unchecked.
+
+        ``rating`` None removes the rating. With the same rating as saved,
+        ``reason_ids`` or ``comment`` None keeps what is saved (a second "Not
+        helpful" click keeps its reasons). ``order`` is the provider's time
+        for the event: an event older than the one that last wrote the row
+        changes nothing. Returns ``{"outcome", "feedback", "previous"}`` with
+        outcome saved, updated, unchanged, removed, conflict or stale."""
+        if target_kind not in TARGET_KINDS or author_kind not in AUTHOR_KINDS or source not in SOURCES:
+            raise ValueError("unknown target, author or source kind")
+        content = None
+        if rating is not None:
+            content = self._content({"rating": rating, "reason_ids": reason_ids or [], "comment": comment})
+        for attempt in (1, 2):
+            try:
+                with self.engine.begin() as conn:
+                    return self._record(conn, content, target_kind=target_kind, target_id=target_id,
+                                        author_id=author_id, source=source, author_kind=author_kind,
+                                        author_label=author_label, conversation_id=conversation_id,
+                                        branch_id=branch_id, agent_id=agent_id, channel_id=channel_id,
+                                        thread_id=thread_id, keep_reasons=reason_ids is None,
+                                        keep_comment=comment is None, request_key=request_key,
+                                        metadata=metadata, order=order)
+            except sa.exc.IntegrityError:
+                if attempt == 2:   # the same author's first rating, written twice at once
+                    return {"outcome": "conflict", "feedback": None, "previous": None}
+        raise AssertionError("unreachable")
+
+    def _record(self, conn, content: dict | None, *, target_kind, target_id, author_id, source, author_kind,
+                author_label, conversation_id, branch_id, agent_id, channel_id, thread_id, keep_reasons,
+                keep_comment, request_key, metadata, order) -> dict:
+        row = conn.execute(sa.select(feedback).where(feedback.c.message_id == target_id,
+                                                     feedback.c.author_id == author_id)).first()
+        live = row is not None and row.deleted_at is None
+        old_meta = _json_obj(row.source_metadata) if row is not None else {}
+        if order is not None and row is not None and float(old_meta.get("order") or 0) > order:
+            return {"outcome": "stale", "feedback": self._feedback_json(row) if live else None, "previous": None}
+        previous = row.rating if live else None
+        meta = {**(metadata or {}), **({"order": order} if order is not None else {})}
+        t = _now()
+        if content is None:
+            if not live:
+                return {"outcome": "unchanged", "feedback": None, "previous": None}
+            n = conn.execute(feedback.update().where(feedback.c.id == row.id, feedback.c.revision == row.revision)
+                             .values(comment=None, tags="[]", reason_ids="[]", deleted_at=t, updated_at=t,
+                                     revision=row.revision + 1, source=source, request_key=request_key,
+                                     source_metadata=json.dumps({"order": order}) if order is not None else None)
+                             ).rowcount
+            return {"outcome": "removed" if n == 1 else "conflict", "feedback": None, "previous": previous}
+        same_rating = live and row.rating == content["rating"]
+        reasons = json.loads(row.reason_ids or "[]") if same_rating and keep_reasons else content["reason_ids"]
+        comment = row.comment if same_rating and keep_comment else content["comment"]
+        if same_rating and json.loads(row.reason_ids or "[]") == reasons and (row.comment or None) == comment:
+            return {"outcome": "unchanged", "feedback": self._feedback_json(row), "previous": previous}
+        values = dict(rating=content["rating"], reason_ids=json.dumps(reasons), comment=comment,
+                      tags=row.tags if same_rating else "[]", score=row.score if same_rating else None,
+                      updated_at=t, deleted_at=None, source=source, request_key=request_key,
+                      source_metadata=json.dumps(meta) if meta else None, author_label=author_label,
+                      channel_id=channel_id, thread_id=thread_id)
+        if row is None:
+            fid = str(uuid.uuid4())
+            conn.execute(feedback.insert().values(
+                id=fid, hub_id=self.hub, conversation_id=conversation_id, branch_id=branch_id,
+                message_id=target_id, author_id=author_id, agent_id=agent_id, revision=1, created_at=t,
+                target_kind=target_kind, author_kind=author_kind, **values))
+            outcome = "saved"
+        else:
+            fid = row.id
+            n = conn.execute(feedback.update().where(feedback.c.id == row.id, feedback.c.revision == row.revision)
+                             .values(revision=row.revision + 1, **values)).rowcount
+            if n != 1:
+                return {"outcome": "conflict", "feedback": None, "previous": previous}
+            outcome = "updated" if live else "saved"
+        out = conn.execute(sa.select(feedback).where(feedback.c.id == fid)).first()
+        return {"outcome": outcome, "feedback": self._feedback_json(out), "previous": previous}
+
+    def tool_replies(self, conversation_id: str) -> set[str]:
+        """Replies in which the tool saved a rating: they confirm a rating,
+        so "your previous answer" never means one of them."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(sa.select(feedback.c.source_metadata).where(
+                feedback.c.conversation_id == conversation_id, feedback.c.source == "tool")).all()
+        return {m["reply_message_id"] for m in (_json_obj(r[0]) for r in rows) if m.get("reply_message_id")}
+
+    # -- review ---------------------------------------------------------------------------------
+    def _filtered(self, q, *, agent_id=None, rating=None, reason=None, source=None, since=None):
+        q = q.where(feedback.c.hub_id == self.hub, feedback.c.deleted_at.is_(None))
+        # A deleted conversation's ratings went with it (older rows may still be live).
+        gone = sa.select(conversations.c.id).where(conversations.c.deleted_at.is_not(None))
+        q = q.where(sa.or_(feedback.c.conversation_id.is_(None), feedback.c.conversation_id.not_in(gone)))
         if agent_id:
             q = q.where(feedback.c.agent_id == agent_id)
         if rating:
+            if rating not in ("positive", "negative"):
+                raise Err(400, "invalid_request", "rating is positive or negative.")
             q = q.where(feedback.c.rating == rating)
         if reason:
             if not re.fullmatch(r"[a-z0-9_\-]{1,64}", reason):
                 raise Err(400, "invalid_request", "reason is a reason id.")
             q = q.where(feedback.c.reason_ids.like(f'%"{reason}"%'))
+        if source:
+            if source not in SOURCES:
+                raise Err(400, "invalid_request", f"source is one of: {', '.join(SOURCES)}.")
+            q = q.where(sa.or_(feedback.c.source == "web", feedback.c.source.is_(None))
+                        if source == "web" else feedback.c.source == source)
+        if since is not None:
+            try:
+                q = q.where(feedback.c.updated_at >= float(since))
+            except (TypeError, ValueError):
+                raise Err(400, "invalid_request", "since is a time in seconds.") from None
+        return q
+
+    def list_feedback(self, *, agent_id: str | None = None, rating: str | None = None, reason: str | None = None,
+                      source: str | None = None, since: float | None = None, limit: int = 50,
+                      cursor: str | None = None, reader=None, intake_visible: bool = False) -> dict:
+        """Ratings of this hub, newest first, with how many of each rating
+        match the filters.
+
+        With ``reader`` (a reviewer in the web app), what quotes a source the
+        reader could not open is left out: the comment, tags, the person's
+        words and the answer excerpt of a conversation they may not open, or
+        of a WhatsApp reply without ``intake_visible``. Managing feedback is
+        not access to the conversation or thread it quotes. Without a reader
+        (the CLI, run by someone who controls the hub folder) everything is
+        shown."""
+        limit = max(1, min(int(limit or 50), 100))
+        filters = dict(agent_id=agent_id, rating=rating, reason=reason, source=source, since=since)
+        q = self._filtered(sa.select(feedback), **filters)
         if cursor:
             try:
                 ts, fid = cursor.split("|", 1)
@@ -410,16 +619,40 @@ class FeedbackService:
                 raise Err(400, "invalid_request", "That page link is not valid.")
         with self.engine.connect() as conn:
             rows = conn.execute(q.order_by(feedback.c.updated_at.desc(), feedback.c.id.desc()).limit(limit + 1)).all()
+            counts = dict(conn.execute(self._filtered(
+                sa.select(feedback.c.rating, sa.func.count()), **filters).group_by(feedback.c.rating)).all())
+            page = rows[:limit]
             readable = None
             if reader is not None:
-                readable = self._readable_ids(conn, reader, {r.conversation_id for r in rows[:limit]})
-        items = [self._feedback_json(r) for r in rows[:limit]]
-        if readable is not None:
-            for i in items:
-                if i["conversation_id"] not in readable and (i["comment"] or i["tags"]):
-                    i.update(comment=None, tags=[], comment_hidden=True)
+                readable = self._readable_ids(conn, reader, {r.conversation_id for r in page if r.conversation_id})
+            excerpts = self._message_texts(conn, [r.message_id for r in page if _kind(r) == "message"])
+        replies = self._channel_replies([r.message_id for r in page if _kind(r) == "channel_reply"])
+        authors = self._authors({r.author_id for r in page if (r.author_kind or "account") == "account"})
+        items = []
+        for r in page:
+            i = self._feedback_json(r)
+            meta = _json_obj(r.source_metadata)
+            if i["target_kind"] == "channel_reply":
+                reply = replies.get(r.message_id) or {}
+                visible = reader is None or intake_visible
+                excerpt = reply.get("text")
+                context = {"kind": "intake", "intake_id": reply["intake_id"]} if reply.get("intake_id") else None
+            else:
+                visible = readable is None or r.conversation_id in readable
+                excerpt = excerpts.get(r.message_id)
+                context = {"kind": "conversation", "conversation_id": r.conversation_id}
+            i["author"] = (authors.get(r.author_id) if i["author_kind"] == "account" else r.author_label) or ""
+            i["quote"] = meta.get("quote")
+            i["excerpt"] = _excerpt(excerpt)
+            i["context"] = context
+            if not visible:
+                if i["comment"] or i["tags"] or i["quote"]:
+                    i["comment_hidden"] = True
+                i.update(comment=None, tags=[], quote=None, excerpt=None, context=None, source_hidden=True)
+            items.append(i)
         nxt = f"{rows[limit - 1].updated_at}|{rows[limit - 1].id}" if len(rows) > limit else None
-        return {"items": items, "next_cursor": nxt}
+        return {"items": items, "next_cursor": nxt,
+                "counts": {"positive": int(counts.get("positive", 0)), "negative": int(counts.get("negative", 0))}}
 
     @staticmethod
     def _readable_ids(conn, reader, ids: set[str]) -> set[str]:
@@ -435,6 +668,48 @@ class FeedbackService:
                         g.members.c.principal_id.in_(list(reader.groups) or [""])))))}
         return owned | shared
 
+    @staticmethod
+    def _message_texts(conn, ids: list[str]) -> dict[str, str]:
+        if not ids:
+            return {}
+        return {r.id: r.text or "" for r in conn.execute(sa.select(messages.c.id, messages.c.text).where(
+            messages.c.id.in_(ids), messages.c.deleted_at.is_(None)))}
+
+    def _channel_replies(self, op_ids: list[str]) -> dict[str, dict]:
+        """The text of each delivered channel reply and the Intake item its work came from."""
+        out: dict[str, dict] = {}
+        if not op_ids:
+            return out
+        from ..work_items import operations as ops
+        from ..work_items import store as wstore
+
+        for op_id in dict.fromkeys(op_ids):
+            try:
+                row = wstore.get_op(self.hub_dir, op_id)
+                if row is None or row.get("hub") != self.hub:
+                    continue
+                item = wstore.get_item(self.hub_dir, row["item_id"]) if row.get("item_id") else None
+                out[op_id] = {"text": ops.row_arguments(self.hub_dir, row).get("text") or "",
+                              "intake_id": ((item or {}).get("origin_json") or {}).get("intake_id")}
+            except Exception:  # noqa: BLE001 - a reply that can't be read shows without its text
+                log.warning("feedback: could not read reply %s", op_id, exc_info=True)
+        return out
+
+    def _authors(self, ids: set[str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        if not ids:
+            return out
+        from ..auth import users
+
+        for uid in ids:
+            try:
+                u = users.get(self.hub_dir, uid)
+            except Exception:  # noqa: BLE001
+                u = None
+            if u:
+                out[uid] = u.get("name") or u.get("email") or ""
+        return out
+
     def export_feedback(self, fmt: str, **filters) -> tuple[bytes, str]:
         items: list[dict] = []
         cursor = None
@@ -448,11 +723,13 @@ class FeedbackService:
             return json.dumps({"version": 1, "items": items}, indent=2).encode(), "application/json"
         buf = io.StringIO()
         w = csv.writer(buf)
+        # The 1.x columns first, in their order; newer ones after them.
         cols = ["id", "conversation_id", "message_id", "author_id", "agent_id", "rating", "reason_ids", "score",
-                "tags", "comment", "updated_at"]
+                "tags", "comment", "updated_at", "source", "target_kind", "author_kind", "author", "channel_id",
+                "excerpt"]
         w.writerow(cols)
         for i in items:
-            w.writerow([safe_csv_cell(";".join(i[c]) if isinstance(i[c], list) else i[c]) for c in cols])
+            w.writerow([safe_csv_cell(";".join(i[c]) if isinstance(i.get(c), list) else i.get(c)) for c in cols])
         return buf.getvalue().encode(), "text/csv"
 
     @staticmethod
@@ -461,7 +738,9 @@ class FeedbackService:
                 "branch_id": r.branch_id, "author_id": r.author_id, "agent_id": r.agent_id, "rating": r.rating,
                 "reason_ids": json.loads(r.reason_ids or "[]"), "comment": r.comment,
                 "tags": json.loads(r.tags or "[]"), "score": r.score, "revision": r.revision,
-                "created_at": r.created_at, "updated_at": r.updated_at}
+                "created_at": r.created_at, "updated_at": r.updated_at,
+                "target_kind": _kind(r), "source": r.source or "web", "author_kind": r.author_kind or "account",
+                "channel_id": r.channel_id}
 
     # -- helpers ---------------------------------------------------------------------------
     def helper_allowed(self, kind: str, actor_id: str) -> bool:

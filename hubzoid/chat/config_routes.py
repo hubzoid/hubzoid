@@ -39,6 +39,21 @@ def _raise(exc: cfg.ConfigError):
     raise hz.error(exc.status, exc.code, exc.message, **exc.extra)
 
 
+async def _reload_chat_runtime(request: Request) -> bool:
+    """Rebuild this bridge's chat runtime from the hub's files and settings.
+    False when this process has no chat or no reloader (the next start applies it)."""
+    from .authoring_routes import _reload_runtime
+
+    ctx = getattr(request.app.state, "chat", None)
+    if ctx is None:
+        return False
+    try:
+        return bool(await asyncio.wait_for(_reload_runtime(ctx), timeout=60))
+    except Exception:  # noqa: BLE001 - the settings are applied; a restart applies the tool list
+        log.warning("chat config: runtime rebuild failed", exc_info=True)
+        return False
+
+
 def _document(body: dict) -> dict:
     """``{"version": 1, "config": {...}}`` or ``{"config": {"version": 1, ...}}``."""
     config = body.get("config")
@@ -133,6 +148,11 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
         expected = hz.expected_revision(body.get("expected_revision"))
         result = await call(svc().apply, doc, expected_revision=expected, actor=p.email,
                             idempotency_key=hz.idempotency_key(request))
+        if any(c.get("pointer", "").startswith("/feedback/") for c in result.get("changed") or []):
+            # The record_feedback tool is offered from the next turn: rebuild
+            # this bridge's chat runtime (web and Slack replies). The tool also
+            # checks the setting on every call, so turning it off holds at once.
+            result["runtime_reloaded"] = await _reload_chat_runtime(request)
         return result
 
     @app.get("/api/chat/config/history")
@@ -221,6 +241,14 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
 
         # Whether the chat should ask for follow-up suggestions (deployment and person both on).
         out["features"]["helper_followups"] = await asyncio.to_thread(helpers_on)
+
+        def feedback_on() -> bool:
+            from .feedback import FeedbackService
+
+            return FeedbackService(hub_dir, None, "").enabled()
+
+        # Rating controls show only while the deployment collects feedback (the server refuses otherwise).
+        out["features"]["feedback"] = await asyncio.to_thread(feedback_on)
 
         def web_on() -> bool:
             from .config import service_for
