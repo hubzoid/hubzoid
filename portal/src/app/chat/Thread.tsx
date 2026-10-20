@@ -6,7 +6,7 @@
 // empty state with the composer in the middle.
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { DropdownMenu as Menu, Popover } from "radix-ui";
-import { enc, get, hubUrl, post, put } from "../lib/api";
+import { enc, get, hubUrl, post } from "../lib/api";
 import { navigate } from "../lib/router";
 import {
   ActionBarPrimitive,
@@ -48,8 +48,6 @@ import {
   RefreshCw,
   Sparkles,
   Square,
-  ThumbsDown,
-  ThumbsUp,
   Trash2,
   Upload,
   UserRoundSearch,
@@ -71,6 +69,7 @@ import { MarkdownText } from "./Markdown";
 import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models";
 import { PromptPicker } from "./prompts";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry, ToolGroup } from "./parts";
+import { FeedbackControls } from "./feedback";
 
 export type ThreadProps = {
   agent: Agent;
@@ -1167,92 +1166,16 @@ function ContextNote() {
 
 // ---- feedback and follow-ups ----------------------------------------------------
 
-// What can be wrong with an answer (the deployment also accepts "accurate" and "useful").
-const REASONS = ["incorrect", "missing_source", "other"] as const;
-
-/** Rate this answer. A rating belongs to you and to this exact answer. */
+/** Rate this answer. A rating belongs to you and to this exact answer (./feedback.tsx). */
 function FeedbackActions() {
   const value = useFeed();
   const id = useAuiState((s) => s.message.id);
   const status = useAuiState((s) => (s.message.role === "assistant" ? s.message.status.type : null));
-  const [mine, setMine] = useState<{ rating: string; revision: number } | null>(null);
-  const [open, setOpen] = useState(false);
-  const [reasons, setReasons] = useState<string[]>([]);
-  const [comment, setComment] = useState("");
   const conv = value?.feed.conversationId;
   const temporary = value?.feed.snapshot?.conversation.temporary;
   if (!value || !conv || id.startsWith("pending") || status === "running" || temporary) return null;
-  const url = `/api/conversations/${encodeURIComponent(conv)}/messages/${encodeURIComponent(id)}/feedback`;
-  const save = async (rating: "positive" | "negative", extra: Record<string, unknown> = {}) => {
-    try {
-      const cur = mine ?? (await get<{ feedback: { rating: string; revision: number } | null }>(url)).feedback;
-      const out = await put<{ rating: string; revision: number }>(url, {
-        expected_revision: cur ? cur.revision : "absent",
-        rating,
-        ...extra,
-      });
-      setMine(out);
-      toast(t.chat.feedbackThanks);
-    } catch (e) {
-      value.onError(e);
-    }
-  };
-  return (
-    <>
-      <IconButton
-        label={t.chat.feedbackGood}
-        aria-pressed={mine?.rating === "positive"}
-        onClick={() => void save("positive")}
-        data-testid="feedback-positive"
-      >
-        <ThumbsUp size={15} aria-hidden />
-      </IconButton>
-      <Popover.Root open={open} onOpenChange={setOpen}>
-        <Popover.Trigger asChild>
-          <IconButton label={t.chat.feedbackBad} aria-pressed={mine?.rating === "negative"} data-testid="feedback-negative">
-            <ThumbsDown size={15} aria-hidden />
-          </IconButton>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content className="hz-menu w-72 space-y-2 !p-3" sideOffset={6} align="start" aria-label={t.chat.feedbackWhat}>
-            <p className="m-0 text-[13px] font-medium text-ink">{t.chat.feedbackWhat}</p>
-            <div className="flex flex-wrap gap-1.5">
-              {REASONS.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  className="hz-chip"
-                  aria-pressed={reasons.includes(r)}
-                  onClick={() => setReasons((all) => (all.includes(r) ? all.filter((x) => x !== r) : [...all, r]))}
-                >
-                  {t.chat.feedbackReason[r]}
-                </button>
-              ))}
-            </div>
-            <textarea
-              className="hz-input !min-h-16 w-full text-[13px]"
-              placeholder={t.chat.feedbackComment}
-              value={comment}
-              maxLength={4000}
-              onChange={(e) => setComment(e.target.value)}
-            />
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  setOpen(false);
-                  void save("negative", { reason_ids: reasons, comment: comment.trim() || null });
-                }}
-              >
-                {t.chat.feedbackSend}
-              </Button>
-            </div>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
-    </>
-  );
+  if (value.features?.feedback === false) return null;
+  return <FeedbackControls apiBase={value.apiBase} conversationId={conv} messageId={id} onError={value.onError} />;
 }
 
 /** Suggested next questions for the latest answer, when the helper is on. */
