@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import socket
 import sqlite3
@@ -194,8 +195,18 @@ def grant_connector(hub: Path, connector_id: str, *emails: str) -> None:
         store_for(hub).grant(email, Path(hub).name, "connector_" + connector_id, actor="test")
 
 
+def _ports_for_this_worker() -> list[int]:
+    """PORTS, starting at this pytest-xdist worker's own share: a port is only
+    checked free here and taken later, so parallel workers starting at the
+    same place would race for it."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")[2:]
+    ports = list(PORTS)
+    start = (int(worker) * 12) % len(ports) if worker.isdigit() else 0
+    return ports[start:] + ports[:start]
+
+
 def free_port(taken: set[int] | None = None) -> int:
-    for port in PORTS:
+    for port in _ports_for_this_worker():
         if taken and port in taken:
             continue
         with socket.socket() as s:
