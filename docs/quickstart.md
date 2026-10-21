@@ -21,14 +21,14 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-On Windows PowerShell, use Python 3.12 and Hubzoid **2.0.0 or newer**. Until
-2.0.0 is published, use the
+On Windows PowerShell, use Python 3.12 and Hubzoid **2.0.1 or newer**. Until
+2.0.1 is published, use the
 [source-install steps](#run-this-checkout) instead of the package install below.
 Calling the virtual environment's Python directly avoids activation-policy changes:
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install "hubzoid>=2.0.0"
+.\.venv\Scripts\python -m pip install "hubzoid>=2.0.1"
 .\.venv\Scripts\python -m hubzoid init my-hub
 .\.venv\Scripts\python -m hubzoid run my-hub
 ```

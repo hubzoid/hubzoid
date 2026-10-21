@@ -5,6 +5,20 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.1]
+
+The first published 2.0 release: 2.0.0 was tagged, but its release checks
+failed, so it was never published to PyPI or as an image. Everything in 2.0.0
+below is in 2.0.1.
+
+### Fixed
+- Two scheduled runs starting together on a new local hub no longer refuse
+  each other: setting up the local owner's access happens one run at a time.
+
+### Changed
+- Release checks run the live gateway and concurrent-workflow tests on their
+  own, outside the parallel shards, and once more if one fails.
+
 ## [2.0.0]
 
 One chat interface, the Hubzoid web app, with Settings in the same app. See
