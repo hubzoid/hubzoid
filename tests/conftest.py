@@ -17,6 +17,9 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 # about something else sign in with a password alone; the MFA tests turn the
 # policy on themselves (tests/test_auth_mfa.py).
 os.environ.setdefault("HUBZOID_MFA_REQUIRED", "none")
+# A wide, fixed terminal: long temp paths (CI, parallel workers) must not wrap
+# the CLI's messages that tests look for.
+os.environ["COLUMNS"] = "250"
 
 # Every bridge takes a weekly backup by default. Tests that build an app are
 # about something else; tests/test_backup_verify.py runs the schedule itself.
