@@ -34,6 +34,7 @@ import hashlib
 import logging
 import os
 import re
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -160,15 +161,22 @@ def configured(hub_dir: Path, *, hub: str | None = None,
     return None, "none"
 
 
+_local_owner_lock = threading.Lock()
+
+
 def _provision_local_owner(hub_dir: Path) -> None:
     from ..access.session import LOCAL_OWNER
     from ..auth.users import ensure_local_owner, provision_owner
 
-    try:
-        ensure_local_owner(hub_dir)  # the account its answers are delivered to
-        provision_owner(hub_dir, LOCAL_OWNER)
-    except Exception:  # noqa: BLE001 — access checks still fail closed
-        log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
+    # One at a time: two runs starting together on a new hub would otherwise
+    # race, and the one whose write met the other's lock would check access
+    # before the first had given it.
+    with _local_owner_lock:
+        try:
+            ensure_local_owner(hub_dir)  # the account its answers are delivered to
+            provision_owner(hub_dir, LOCAL_OWNER)
+        except Exception:  # noqa: BLE001 — access checks still fail closed
+            log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
 
 
 def _missing_default_message(hub_dir: Path, hub: str, what: str) -> str:

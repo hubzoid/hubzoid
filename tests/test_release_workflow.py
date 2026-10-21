@@ -133,9 +133,13 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
     assert ".[dev,postgres]" in install and "openwebui" not in install
     # Every test, heavy ones included: an excluded critical check is not a pass.
     assert '-m ""' in suite and "-n auto --dist loadfile" in suite and "--splits 2" in suite
+    # Live-process checks run alone (not in the parallel shards), never skipped.
+    serial = next(s["run"] for s in jobs["tests"]["steps"] if "-p no:xdist" in s.get("run", ""))
+    for f in ("tests/test_gateway_app_live.py", "tests/test_workflow_concurrency.py"):
+        assert f in serial and f"--ignore={f}" in suite
     # Without the server binaries the PostgreSQL acceptance tests skip: fail instead.
     assert "command -v initdb && command -v pg_ctl" in install
-    assert "heavy" not in suite and "--ignore=tests/test_workflow" not in suite
+    assert "heavy" not in suite and "--ignore=tests/test_workflows_from_chat" not in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
     # Prerequisites must persist into the broad suite, not just one focused step.
     assert 'echo "$(pg_config --bindir)" >> "$GITHUB_PATH"' in install
