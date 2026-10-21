@@ -327,9 +327,14 @@ class Supervisor:
         unit.started_at = time.time()
         unit.stamp = stamp(unit.hub_dir)
         self._write_table()
+        # Each process is recorded as it starts, so a stop or a failed spawn
+        # part-way through still finds (and stops) the ones already running.
+        unit.procs = []
         try:
-            unit.procs = [spawn(spec, name=unit.name, log_dir=self.log_dir) for spec in unit.specs]
+            for spec in unit.specs:
+                unit.procs.append(spawn(spec, name=unit.name, log_dir=self.log_dir))
         except OSError as exc:
+            stop_procs(unit.procs, timeout=5)
             unit.procs = []
             return self._failed_start(unit, f"could not start: {exc}")
         return True

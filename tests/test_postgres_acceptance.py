@@ -12,8 +12,9 @@ from sqlalchemy import create_engine, text
 from hubzoid.access.store import GrantStore, LastAdminError, RevisionConflict, USE_HUB
 
 
-def test_postgres_concurrent_admin_revocation_and_policy_refresh(postgres_url):
-    engines = [create_engine(postgres_url) for _ in range(2)]
+def test_postgres_concurrent_admin_revocation_and_policy_refresh(fresh_postgres_url):
+    # Its own database: an admin another test left would make both revokes legal.
+    engines = [create_engine(fresh_postgres_url) for _ in range(2)]
     try:
         a, b = [GrantStore(e) for e in engines]
         a.bootstrap(["first", "second"])

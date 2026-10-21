@@ -1,8 +1,10 @@
 name: tests
 
 # Quick checks for every pull request and every push to main, a few minutes:
-# the fast Python tests on SQLite without Open WebUI, browsers, live models or
-# Docker, spread over two machines (.test_durations), and the web app's lint.
+# the fast Python tests on SQLite without browsers, live models or Docker
+# (tests of 5 s or more are `heavy` and left out, see tests/conftest.py),
+# spread over two machines by .test_durations and run in parallel on each, and
+# the web app's lint.
 # They hold no secrets and publish nothing. The slow and end-to-end tests run
 # for labeled release candidates, manual checks and published releases (ci.yml).
 on:
@@ -31,12 +33,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install the core package and test tools (no Open WebUI)
+      - name: Install the core package and test tools
         run: pip install -e '.[dev]'
       - name: Every module compiles
         run: python -m compileall -q hubzoid
       - name: Fast tests, part ${{ matrix.group }} of 2 (SQLite; no browsers, live models or Docker)
-        run: pytest -q --no-header --splits 2 --group ${{ matrix.group }}
+        # --dist loadfile: a file's tests share one worker, so module fixtures
+        # (fixed ports, one live gateway) never run twice at once.
+        run: pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
 
   web-lint:
     runs-on: ubuntu-24.04

@@ -13,7 +13,7 @@ deployment of one)::
     hubs: [support-hub, ops-hub]                  # the agents that offer it
     enabled: true
 
-Settings shows connectors read-only; each person connects their own account
+Settings edits these same files; each person connects their own account
 there. The database keeps only what people and providers create: each
 person's tokens, sign-in flows in progress, and clients registered with a
 provider dynamically (the ``hz_connectors`` row caches those).
@@ -30,11 +30,12 @@ A client Hubzoid registers dynamically (RFC 7591) is cached here too, encrypted,
 one per redirect URI, so every person reuses it.
 
 Secrets never leave this module in a listing: ``Connector.public()`` says only
-whether a secret exists. Every change writes one row to the access audit log
-(``hz_access_audit``) in the same transaction, like other Console changes.
+whether a secret exists. Settings changes are recorded in the access audit log (``hz_access_audit``);
+connector definitions remain in files, never duplicated in the database.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -99,6 +100,7 @@ class Connector:
     registered: bool  # a dynamically registered client is cached
     shared_header: str | None = None  # Shared key: the header it is sent in
     has_shared_secret: bool = False
+    revision: str | None = None  # digest of the file shown in Settings
 
     @property
     def capability(self) -> str:
@@ -115,6 +117,7 @@ class Connector:
             "dynamic_client": self.registered, "created_by": self.created_by,
             "created_at": self.created_at, "updated_at": self.updated_at,
             "shared_header": self.shared_header, "has_shared_secret": self.has_shared_secret,
+            "revision": self.revision,
         }
 
 
@@ -299,11 +302,18 @@ def parse_file(path: Path) -> Definition:
     """One ``connectors/<id>.yaml``. Raises ConnectorError naming the file."""
     from ..control import yamlfile
 
-    cid = check_id(path.stem)
     try:
-        data = yamlfile.load(path).data or {}
-    except yamlfile.YamlError as exc:
-        raise ConnectorError("invalid_file", f"{path.name}: {exc.message}", 422) from None
+        raw = path.read_text(encoding="utf-8")
+        data = yamlfile.loads(raw, path=str(path)).data
+    except (OSError, UnicodeError, yamlfile.YamlError):
+        raise ConnectorError("invalid_file", f"{path.name}: cannot read valid connector YAML. "
+                             "Repair the file before editing it in Settings.", 422) from None
+    return parse_document(path, data, revision=hashlib.sha256(raw.encode()).hexdigest())
+
+
+def parse_document(path: Path, data: dict, *, revision: str | None = None) -> Definition:
+    """Validate a definition before it is written, using the same file grammar."""
+    cid = check_id(path.stem)
     if not isinstance(data, dict):
         raise ConnectorError("invalid_file", f"{path.name} is a mapping of settings.", 422)
     unknown = sorted(set(data) - FILE_KEYS)
@@ -329,7 +339,7 @@ def parse_file(path: Path) -> Definition:
             tool_allowlist=tuple(_allowlist(data.get("tools")) or ()) or None,
             enabled=_enabled(data.get("enabled", True)), created_by="file", created_at=0.0, updated_at=0.0,
             registered=False, shared_header=_shared_header(data.get("shared_header")) if auth == "shared" else None,
-            has_shared_secret=bool(shared_ref))
+            has_shared_secret=bool(shared_ref), revision=revision)
     except ConnectorError as exc:
         raise ConnectorError(exc.code, f"{path.name}: {exc.message}", 422) from None
     return Definition(connector, tuple(_hub(h) for h in hubs), secret_ref, shared_ref, path)
@@ -409,7 +419,19 @@ def _resolve(hub_dir, ref: str | None, what: str) -> str | None:
     from ..secretstore import resolve
 
     try:
-        return resolve(ref, Path(hub_dir))
+        # UI-entered values are available to every running bridge immediately.
+        import os
+        from dotenv import dotenv_values
+        values = dotenv_values(folder(hub_dir).parent / ".env", interpolate=False)
+        source = {**values, **os.environ}
+        # These unique names belong to Settings. Always read their literal file
+        # value: startup's dotenv interpolation must not alter a key containing
+        # ${...}. Hand-authored references retain operator-environment precedence.
+        if re.fullmatch(r"env:HUBZOID_CONNECTOR_[A-Z0-9_]+_[A-F0-9]{32}", ref):
+            name = ref[4:]
+            if name in values:
+                source[name] = values[name]
+        return resolve(ref, Path(hub_dir), env=source)
     except Exception:  # noqa: BLE001 - SecretError and friends
         log.error("connectors: %s (%s) is not set", what, ref)
         return None
@@ -551,23 +573,22 @@ def _audit(conn, hub_dir, actor: str, action: str, cid: str) -> None:
                                          permission=capability(cid), surface="console")
 
 
-def _file_owned(cid: str | None = None) -> ConnectorError:
-    where = f"connectors/{cid}.yaml" if cid else "connectors/<id>.yaml"
-    return ConnectorError("file_owned", f"Connectors are defined in {where} in the deployment folder. "
-                          "Edit the file (or ask Claude Code or Codex to); every agent picks it up. Each "
-                          "person still connects their own account here.", 409)
+def create(hub_dir, data, *, actor: str, hub: str = "") -> Connector:
+    from .file_writes import create as write
 
-
-def create(hub_dir, data, *, actor: str) -> Connector:
-    raise _file_owned()
+    return write(hub_dir, data, actor=actor, hub=hub)
 
 
 def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
-    raise _file_owned(cid)
+    from .file_writes import update as write
+
+    return write(hub_dir, cid, data, actor=actor)
 
 
-def delete(hub_dir, cid: str, *, actor: str) -> bool:
-    raise _file_owned(cid)
+def delete(hub_dir, cid: str, *, actor: str, expected_revision: str | None = None) -> bool:
+    from .file_writes import delete as write
+
+    return write(hub_dir, cid, actor=actor, expected_revision=expected_revision)
 
 
 def stored_definitions(hub_dir, *, eng=None) -> list[dict]:
@@ -616,11 +637,15 @@ def agents_of(hub_dir, cid: str) -> list[str]:
 
 
 def offer(hub_dir, cid: str, hub, *, actor: str) -> bool:
-    raise _file_owned(cid)
+    from .file_writes import offering
+
+    return offering(hub_dir, cid, hub, actor=actor, offered=True)
 
 
 def withdraw(hub_dir, cid: str, hub, *, actor: str) -> bool:
-    raise _file_owned(cid)
+    from .file_writes import offering
+
+    return offering(hub_dir, cid, hub, actor=actor, offered=False)
 
 
 # ---------------------------------------------------------------------------

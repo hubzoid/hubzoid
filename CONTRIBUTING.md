@@ -63,29 +63,27 @@ acceptance separately.
 Every pull request and every push to `main` runs
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) in a few minutes:
 the fast default tests (no `slow` or end-to-end tests) on SQLite, without
-browsers, live models or Docker, spread over two machines, and the web
-app's lint (`npm run lint` in `portal/`). Publishing a release adds the slow and
-end-to-end tests, except those marked `heavy`. A focused release step explicitly
-includes report handoff/recovery and PostgreSQL claim/upgrade checks regardless
-of their duration classification.
+browsers, live models or Docker, spread over two machines and run in parallel
+on each (`pytest-xdist`), and the web app's lint (`npm run lint` in `portal/`).
+Publishing a release runs every test: slow, `heavy` and end-to-end ones too.
 
 A test that took 5 s or more in `.test_durations` is marked `heavy` and left
-out of CI; run them locally before a change to the workflow engine, the gateway
-or process handling. With the development dependencies installed, a test still
+out of pull-request CI; run them locally before a change to the workflow
+engine, the gateway or process handling. With the development dependencies installed, a test still
 running after two minutes fails through `pytest-timeout`. A timeout or an
 excluded critical test does not count as a pass. After
 adding or speeding up slow tests, refresh the timings with
 `pytest -m "" --store-durations`.
 
 ```bash
-pytest -q                     # pull request and main
-pytest -q -m "not heavy"      # release
-pytest -q -m heavy            # the heavy tests CI leaves out
+pytest -q -n auto --dist loadfile         # pull request and main
+pytest -q -m "" -n auto --dist loadfile   # release: everything
+pytest -q -m heavy            # the heavy tests pull-request CI leaves out
 (cd portal && npm ci && npm run lint)
 ```
 
 Publishing a GitHub release runs the automated validation in `ci.yml`: the
-suite with the exclusions described above, the live interface check, chat and
+whole suite, the live interface check, chat and
 Settings browser journeys, a clean wheel install and Docker images on both CPU
 architectures. Maintainers: see
 [publishing a release](docs/RELEASING.md).

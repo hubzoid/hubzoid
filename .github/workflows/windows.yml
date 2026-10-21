@@ -16,7 +16,8 @@ concurrency:
 jobs:
   startup:
     runs-on: windows-latest
-    timeout-minutes: 15
+    # The slow native-startup and migration-lock checks run in full (-m "").
+    timeout-minutes: 25
     env:
       PYTHONUTF8: "1"
       LITELLM_LOCAL_MODEL_COST_MAP: "True"

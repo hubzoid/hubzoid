@@ -117,11 +117,11 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
     assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
     assert "npm run lint" in runs
-    # Only the fast default, spread over two machines: no -m override.
+    # Only the fast default, spread over two machines, parallel on each: no -m override.
     unit = config["jobs"]["unit"]
     assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
     pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
-    assert pytest_runs == ["pytest -q --no-header --splits 2 --group ${{ matrix.group }}"]
+    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
@@ -131,7 +131,11 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
     suite = next(s["run"] for s in jobs["tests"]["steps"] if "--splits" in s.get("run", ""))
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
     assert ".[dev,postgres]" in install and "openwebui" not in install
-    assert '-m "not heavy"' in suite and "--splits 2" in suite
+    # Every test, heavy ones included: an excluded critical check is not a pass.
+    assert '-m ""' in suite and "-n auto --dist loadfile" in suite and "--splits 2" in suite
+    # Without the server binaries the PostgreSQL acceptance tests skip: fail instead.
+    assert "command -v initdb && command -v pg_ctl" in install
+    assert "heavy" not in suite and "--ignore=tests/test_workflow" not in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
     # Prerequisites must persist into the broad suite, not just one focused step.
     assert 'echo "$(pg_config --bindir)" >> "$GITHUB_PATH"' in install

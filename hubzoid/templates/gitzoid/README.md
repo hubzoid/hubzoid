@@ -8,14 +8,14 @@ code, delivery and people reports.
 
 ## Install and try the sample
 
-GitZoid is included in **Hubzoid 1.3.1**. Use Python 3.11 or 3.12 in a virtual
-environment. This checkout targets 1.3.2. Until it is published, install this checkout with `pip install -e .`
-instead of the versioned install below. 1.3.0 will not be released.
+GitZoid is included in Hubzoid since **1.3.1**. Use Python 3.11 or 3.12 in a virtual
+environment. This checkout targets 2.0.0. Until it is published, install this checkout with `pip install -e .`
+instead of the versioned install below.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install 'hubzoid==1.3.2'
+pip install 'hubzoid==2.0.0'
 hubzoid init my-gitzoid --template gitzoid
 hubzoid grant admin@localhost gitzoid my-gitzoid
 hubzoid schedule run my-gitzoid setup_check

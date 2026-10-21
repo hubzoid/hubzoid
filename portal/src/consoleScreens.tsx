@@ -22,7 +22,7 @@ const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then
 const UsageScreen = lazyChunk(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
-const TABS: AgentTab[] = ["overview", "access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "feedback", "setup", "secrets", "channels", "intake", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "feedback", "setup", "secrets", "channels", "intake", "activity"];
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
@@ -38,7 +38,8 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} embedded={embedded} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);
-      const tab = (rest[1] || "overview") as AgentTab;
+      // An agent opens on Access; an old link to its overview lands there too.
+      const tab = (!rest[1] || rest[1] === "overview" ? "access" : rest[1]) as AgentTab;
       if (!hub)
         screen = (
           <RecoveryScreen
@@ -50,8 +51,8 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Overview, Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity, but no “${tab}”.`}
-            to={`/agents/${encodeURIComponent(hub.key)}/overview`}
+            subtitle={`${hub.name} has Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity, but no “${tab}”.`}
+            to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />
         );

@@ -184,9 +184,25 @@ def test_plan_dedupes_colliding_slugs(tmp_path):
 def test_plan_rejects_duplicate_bridge_ports(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(); b.mkdir()
+    for hub in (a, b):  # both pinned in their own .env
+        (hub / ".env").write_text("BRIDGE_PORT=8000\n")
     load = _loader({str(a): _settings(a, 8000), str(b): _settings(b, 8000)})
     with pytest.raises(ValueError, match="BRIDGE_PORT"):
         gateway.plan([a, b], load=load)
+
+
+def test_plan_gives_hubs_without_a_port_the_next_free_one(tmp_path, monkeypatch):
+    """`hubzoid init` leaves BRIDGE_PORT unset, so every new hub defaults to
+    8000: a deployment of new hubs must still start, around any pinned port."""
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+    hubs = [tmp_path / n for n in ("a", "b", "c")]
+    for i, hub in enumerate(hubs):
+        hub.mkdir()
+        (hub / "AGENTS.md").write_text(f"---\nname: Agent {i}\n---\nbody")
+    (hubs[2] / ".env").write_text("BRIDGE_PORT=8001\n")  # c pins 8001, so b skips it
+    load = _loader({str(h): _settings(h, 8001 if h == hubs[2] else 8000) for h in hubs})
+    gp = gateway.plan(hubs, load=load)
+    assert [x.bridge_port for x in gp.backends] == [8000, 8002, 8001]
 
 
 def test_plan_rejects_duplicate_model_labels(tmp_path):

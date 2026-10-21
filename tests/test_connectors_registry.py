@@ -56,10 +56,7 @@ def test_invalid_connector_files_are_refused(hub, change, code):
     assert err.value.code == code and err.value.message
 
 
-def test_settings_cannot_change_connectors_and_never_shows_a_secret(hub, tc, monkeypatch):
-    r = tc.post("/portal/api/connectors", json=body(), headers=SAME)
-    assert r.status_code == 409 and detail(r)["code"] == "file_owned"
-    assert "connectors/" in detail(r)["message"]
+def test_settings_listing_never_shows_a_secret(hub, tc, monkeypatch):
     secret = "pre-registered-secret-value"
     f.define(hub, body(client_id="hubzoid-app", client_secret=secret, scopes="mail.read, mail.read",
                        tool_allowlist="search_threads, get_thread"))
@@ -71,9 +68,6 @@ def test_settings_cannot_change_connectors_and_never_shows_a_secret(hub, tc, mon
     assert registry.client_secret(hub, "gmail") == secret          # from the environment it names
     assert "env:" in (hub / "connectors" / "gmail.yaml").read_text() and secret not in (
         hub / "connectors" / "gmail.yaml").read_text()
-    for path, method in (("/portal/api/connectors/gmail", "patch"), ("/portal/api/connectors/gmail", "delete")):
-        r = getattr(tc, method)(path, headers=SAME, **({"json": {"enabled": False}} if method == "patch" else {}))
-        assert r.status_code == 409 and detail(r)["code"] == "file_owned", path
 
 
 def test_a_broken_edit_keeps_the_last_good_definition(hub):

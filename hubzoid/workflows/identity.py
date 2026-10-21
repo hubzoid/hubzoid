@@ -138,23 +138,37 @@ def configured(hub_dir: Path, *, hub: str | None = None,
         recorded = ""
     if recorded:
         return normalize(recorded), "deployment"
-    default = store_for(hub_dir).workflow_default(hub or hub_dir.name)
+    gs = store_for(hub_dir)
+    default = gs.workflow_default(hub or hub_dir.name)
     if default:
-        return normalize(default), "setup"
+        default = normalize(default)
+        if default == LOCAL_OWNER and local_quickstart(hub_dir):
+            # Another hub sharing this store recorded the local owner first:
+            # this hub is the local owner's too, before its bridge starts.
+            from ..access.store import USE_HUB
+
+            if not gs.can(LOCAL_OWNER, hub or hub_dir.name, USE_HUB):
+                _provision_local_owner(hub_dir)
+        return default, "setup"
     if local_quickstart(hub_dir):
         # Sign-in off: the local owner owns the hub from the first start. A run
         # started before any bridge did (`hubzoid schedule run` on a new hub)
         # gives it that access first, as the bridge's start would; every tool
         # call is checked against it.
-        from ..auth.users import ensure_local_owner, provision_owner
-
-        try:
-            ensure_local_owner(hub_dir)  # the account its answers are delivered to
-            provision_owner(hub_dir, LOCAL_OWNER)
-        except Exception:  # noqa: BLE001 — access checks still fail closed
-            log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
+        _provision_local_owner(hub_dir)
         return LOCAL_OWNER, "local"
     return None, "none"
+
+
+def _provision_local_owner(hub_dir: Path) -> None:
+    from ..access.session import LOCAL_OWNER
+    from ..auth.users import ensure_local_owner, provision_owner
+
+    try:
+        ensure_local_owner(hub_dir)  # the account its answers are delivered to
+        provision_owner(hub_dir, LOCAL_OWNER)
+    except Exception:  # noqa: BLE001 — access checks still fail closed
+        log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
 
 
 def _missing_default_message(hub_dir: Path, hub: str, what: str) -> str:

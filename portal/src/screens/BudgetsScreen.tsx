@@ -145,7 +145,7 @@ export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
                   { title: "Since", dataIndex: "created", render: (v) => when(v) },
                   { title: "", render: (_, r) => r.unknown
                     ? <Space><Tag color="gold">Never reported</Tag><Button size="small" onClick={() => setReleasing(r)}>Release</Button></Space>
-                    : <Tag color="processing">Running</Tag> },
+                    : <Tag className="hz-tag-accent">Running</Tag> },
                 ]} />
             </Card>
           )}

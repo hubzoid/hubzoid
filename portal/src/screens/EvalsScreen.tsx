@@ -391,7 +391,7 @@ function CasesTable({ hub, cases, embedded }: { hub: Hub; cases: EvalCaseRow[]; 
                   .join(" · ") || undefined
               }
             >
-              {c.judged ? <Tag color="blue">Judged</Tag> : <Text type="secondary">Checks only</Text>}
+              {c.judged ? <Tag className="hz-tag-accent">Judged</Tag> : <Text type="secondary">Checks only</Text>}
             </Tooltip>
           ),
         },

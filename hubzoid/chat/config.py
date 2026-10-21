@@ -409,15 +409,12 @@ class ChatConfigService:
     """Chat configuration for one deployment (any bridge of it)."""
 
     def __init__(self, hub_dir: Path, engine=None):
-        from .. import db, migrations
-
         self.hub_dir = Path(hub_dir)
         self.root = deploy.root(self.hub_dir)
-        self.deployment_id = deploy.deployment_id(self.hub_dir)
-        if engine is None:
-            engine = db.operational_engine(self.hub_dir)
-            migrations.upgrade(engine, "operational")
-        self.engine = engine
+        # Only preferences need the database: reading the chat defaults (the
+        # file) must not create it, e.g. while `hubzoid doctor` builds tools.
+        self._engine = engine
+        self._deployment_id: str | None = None
         self._pref_writes: dict[str, list[float]] = {}
         from ..control.filesettings import FileSection
 
@@ -429,6 +426,22 @@ class ChatConfigService:
         # release when there is none). No copy in the database.
         self._file = FileSection(self.hub_dir, "chat", FILE, parse=parse, default=defaults,
                                  error=lambda m: ConfigError(503, "chat_config_invalid", m))
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            from .. import db, migrations
+
+            engine = db.operational_engine(self.hub_dir)
+            migrations.upgrade(engine, "operational")
+            self._engine = engine
+        return self._engine
+
+    @property
+    def deployment_id(self) -> str:
+        if self._deployment_id is None:
+            self._deployment_id = deploy.deployment_id(self.hub_dir)
+        return self._deployment_id
 
     # -- read ---------------------------------------------------------------------
     def active(self) -> Active:

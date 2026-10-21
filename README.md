@@ -83,10 +83,11 @@ For Windows, uv, troubleshooting and source installation, see the
 [quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md).
 
 **Python 3.12 workflows need SQLite 3.42+ or PostgreSQL.** `hubzoid doctor my-hub`
-checks the environment. This checkout targets **1.3.2**; until it is published,
-`pip install hubzoid` installs the earlier release. Use the
+checks the environment. This checkout is **2.0.0**; until it is published,
+`pip install hubzoid` installs the earlier 1.x release. Use the
 [source-install steps](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
-to try this revision. 1.3.0 was skipped.
+to try this revision. Deployments that still need Open WebUI stay on 1.x
+(`pip install "hubzoid<2"`).
 
 ## Make it work your way
 
@@ -164,7 +165,7 @@ For a public deployment, configure HTTPS and persistent storage, then restart.
 [Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) ·
 [Backup and restore](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md)
 
-**Optional Claude failover (1.3.2):** add up to two backup credentials to keep
+**Optional Claude failover (1.3.2 and later):** add up to two backup credentials to keep
 answering when a Claude credential reaches a confirmed usage limit or its login
 is rejected. Switching keeps the same model and permissions and never replays
 work that has started. Existing single-credential setups are unchanged.

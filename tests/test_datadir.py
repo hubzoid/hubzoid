@@ -78,7 +78,9 @@ def test_a_hosted_hubs_files_are_read_only_in_settings(tmp_path, monkeypatch):
     with TestClient(build_app()) as client:
         listed = client.get("/api/chat/authoring/files", headers=ORIGIN)
         assert listed.status_code == 200 and listed.json()["read_only"] is True
-        r = client.post("/api/chat/authoring/drafts", headers=ORIGIN, json={"path": "AGENTS.md"})
+        # Workspace edits are hub changes: refused for a hosted hub.
+        r = client.post("/api/hub-changes", headers=ORIGIN, json={
+            "title": "Edit", "edits": [{"path": "AGENTS.md", "content": "changed"}]})
         assert r.status_code == 409 and r.json()["detail"]["code"] == "hub_read_only"
         r = client.put("/api/hitl/config", headers=ORIGIN, json={"text": "version: 1\n", "expected_revision": "absent"})
         assert r.status_code == 409 and r.json()["detail"]["code"] == "hub_read_only"

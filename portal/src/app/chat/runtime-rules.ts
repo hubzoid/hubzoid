@@ -38,3 +38,30 @@ export function deleteGate<T>(confirmed: Map<string, T>, messageId: string): T {
   confirmed.delete(messageId);
   return preview;
 }
+
+/** The composer keeps unsent text per page in this tab (Thread.tsx), keyed
+ *  `hz.draft:<person>:<path>`. A conversation started on a new-chat page
+ *  records that page's draft key (`hz.draft-origin:<id>`, ChatPage.tsx). Once
+ *  the server accepts a message there, that draft and the conversation's own
+ *  draft (same person) are forgotten when they hold the sent text, and the
+ *  record is consumed. Every other draft stays (other pages, other people in
+ *  this tab), and a refused send keeps its draft. A conversation without a
+ *  record is left to the composer's own clean-up. */
+export function forgetSentDrafts(
+  storage: Pick<Storage, "getItem" | "removeItem"> & { [key: string]: unknown },
+  text: string,
+  conversationId: string,
+): void {
+  const originKey = `hz.draft-origin:${conversationId}`;
+  const origin = storage.getItem(originKey);
+  if (origin === null || !origin.startsWith("hz.draft:")) return;
+  storage.removeItem(originKey);
+  const sent = text.trim();
+  if (!sent) return;
+  const person = origin.slice(0, origin.indexOf(":", "hz.draft:".length) + 1); // "hz.draft:<person>:"
+  const own = `${person}/c/${encodeURIComponent(conversationId)}`;
+  for (const key of Object.keys(storage)) {
+    const mine = key === origin || key === own || key.startsWith(own + "?");
+    if (mine && storage.getItem(key)?.trim() === sent) storage.removeItem(key);
+  }
+}

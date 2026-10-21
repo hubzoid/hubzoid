@@ -6,13 +6,10 @@ secrets (`.github/workflows/secrets.yml`). The broader validation and image
 builds run before publication on a pull request labeled `release-candidate`,
 or through a manual run of the release workflow. These validation runs cannot
 publish packages or images. Publishing requires a GitHub release event
-(`.github/workflows/ci.yml`). Its checks (the tests on two machines without the
-`heavy` ones, the Console journeys, packaging and both images) run side by side
-on hosted runners, and publishing waits for all of them. A focused step also
-runs report recovery and PostgreSQL claim/upgrade tests regardless of their
-`heavy` classification. A second step restores duration-excluded workflow,
-PostgreSQL, report-sample and schedule-control checks. Excluded or skipped
-critical checks are not passes.
+(`.github/workflows/ci.yml`). Its checks (every test, on two machines in
+parallel, the Console journeys, packaging and both images) run side by side
+on hosted runners, and publishing waits for all of them. No test is left out
+for its duration. Skipped critical checks are not passes.
 
 Before tagging, validate the exact candidate commit on a draft pull request
 with the `release-candidate` label. Inspect skips, test failures, both native
@@ -68,18 +65,19 @@ is closed, or accepted by the founder, before the 2.0 release.
 
 ### Current automation coverage
 
-The release workflow runs the suite with heavy-test exclusions and selected
-explicit regressions. Its live smoke check starts the web app through the
+The release workflow runs the whole suite (`-m ""`, heavy tests included) with
+no duration-based exclusions, plus the focused Codex and GitZoid-scanner checks
+that need their own binaries. Its live smoke check starts the web app through the
 public edge, verifies sign-in and refused credentials, serves JavaScript,
 Settings and the old `/portal/` address, streams a scripted reply and verifies
 the saved chat after restart. The browser job runs the chat journeys and stream
 contracts alongside the Settings journeys.
 
-The same two Python lanes remain: critical workflow checks run in lane 1,
-the live interface check in lane 2, and the general shards exclude checks
-already run explicitly. Compare candidate timings with the successful 1.3.1
-run 38347956989 (longest validation job: 14m34s); unchanged limits alone do not
-prove unchanged elapsed time.
+Two Python lanes run the suite in parallel (`pytest-xdist`): the Codex and
+scanner checks in lane 1, the live interface check in lane 2, and the shards
+skip only those checks already run explicitly. Locally on 4 workers the whole
+suite took 9.5 minutes for 2.0 (30 minutes serially); unchanged limits alone do
+not prove unchanged elapsed time.
 
 The clean-wheel and container jobs validate the default install; the two
 image jobs are CPU architectures. The live smoke uses a scripted model and

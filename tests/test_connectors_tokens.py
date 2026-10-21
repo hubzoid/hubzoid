@@ -78,7 +78,12 @@ def hub(tmp_path, monkeypatch):
 def fake(monkeypatch):
     server = FakeAS()
     monkeypatch.setattr(net, "_transport", httpx.MockTransport(server))
-    return server
+    yield server
+    # A background revocation finishes against this test's server, never the
+    # next test's (under load it can outlive the test that started it).
+    for thread in threading.enumerate():
+        if thread.name == "hubzoid-connector-revoke":
+            thread.join(timeout=5)
 
 
 def record(**extra) -> dict:

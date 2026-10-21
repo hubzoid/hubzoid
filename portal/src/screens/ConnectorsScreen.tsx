@@ -1,16 +1,40 @@
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Alert,
+  App,
+  Button,
+  Checkbox,
+  Descriptions,
+  Drawer,
+  Dropdown,
+  Empty,
+  Input,
+  Segmented,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import { ArrowLeft, FlaskConical, Info, MinusCircle, MoreHorizontal, Pencil, Plug, Plus, Search, Trash2 } from "lucide-react";
 import {
   ApiError,
   connectorsRequest,
   type Connector,
+  type ConnectorInput,
+  type ConnectorTest,
+  type ConnectorTool,
   type Hub,
   type HubMcpServer,
   type Me,
 } from "../api";
 import { InfoHelp, LoadState } from "../components/common";
 import { useData } from "../hooks/useData";
-import { CATALOG } from "./connectorCatalog";
+import { useNavigationGuard } from "../hooks/useRoute";
+import { CATALOG, catalogAuthLabel, type CatalogEntry } from "./connectorCatalog";
 import { LOGOS } from "./connectorLogos";
 
 const { Text, Title, Paragraph } = Typography;
@@ -58,7 +82,7 @@ function SignInTag({ c }: { c: Connector }) {
       : "Hubzoid registers itself with the provider the first time someone connects.";
   return (
     <Tooltip title={how}>
-      <Tag color="blue">OAuth{c.client_id ? " · own client" : ""}</Tag>
+      <Tag className="hz-tag-accent">OAuth{c.client_id ? " · own client" : ""}</Tag>
     </Tooltip>
   );
 }
@@ -75,7 +99,7 @@ export function AgentConnectors({ hub, me, embedded = false }: { hub: Hub; me: M
       <div className="panel">
         <Title level={2}>
           Connectors
-          <InfoHelp text="Connectors are defined in connectors/<id>.yaml in the deployment folder. Who may use each one is in this agent’s Access." />
+          <InfoHelp text="Organization administrators add connectors. Who may use each one is in this agent’s Access." />
         </Title>
         <HubFolderServers hub={hub} />
       </div>
@@ -131,64 +155,857 @@ function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean })
   );
 }
 
-
-/**
- * The deployment's connectors, read-only. Each is defined in
- * connectors/<id>.yaml in the deployment folder (the hub folder for a
- * deployment of one): change the file, or ask Claude Code or Codex to. People
- * connect their own accounts on their Connections page.
- */
 function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
-  const { data, error, reload } = useConnectors();
-  if (!data) return <LoadState error={error} retry={reload} />;
-  const here = data.filter((c) => (c.agents ?? []).includes(hub.key));
-  const other = data.filter((c) => !(c.agents ?? []).includes(hub.key));
-  const columns = [
-    {
-      title: "Connector",
-      key: "name",
-      render: (_: unknown, c: Connector) => (
-        <Space>
-          <ConnectorLogo id={c.id} url={c.url} name={c.name} />
-          <span>
-            <Text strong>{c.name}</Text>
-            <br />
-            <Text type="secondary" code>connectors/{c.id}.yaml</Text>
-          </span>
-        </Space>
-      ),
-    },
-    { title: "Sign-in", key: "auth", render: (_: unknown, c: Connector) => <SignInTag c={c} /> },
-    { title: "Server", key: "url", render: (_: unknown, c: Connector) => <Text type="secondary">{c.url}</Text> },
-    {
-      title: "State",
-      key: "state",
-      render: (_: unknown, c: Connector) => (c.enabled ? <Tag color="green">On</Tag> : <Tag>Switched off</Tag>),
-    },
-  ];
-  return (
-    <div className={embedded ? undefined : "panel"} data-testid="connectors-read-only">
-      <Title level={embedded ? 4 : 2}>Connectors</Title>
-      <Alert
-        type="info"
-        showIcon
-        title="Connectors are defined in files"
-        description="Each one is connectors/<id>.yaml in the deployment folder: its server, how people sign in, its tools and the agents that offer it. Change the file (or ask Claude Code or Codex to); secrets stay in .env. Who may use a connector is in this agent's Access."
-        style={{ marginBottom: 12 }}
-      />
-      <Table<Connector> rowKey="id" size="small" pagination={false} dataSource={here} columns={columns}
-        locale={{ emptyText: "No connector is offered in this agent." }} />
-      {other.length > 0 && (
+  const { message, modal } = App.useApp();
+  const data = useConnectors();
+  const [offering, setOffering] = useState(false);
+  const [editing, setEditing] = useState<Connector | "new" | null>(null);
+  const [test, setTest] = useState<TestRun | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
+
+  async function runTest(c: Connector) {
+    setTest({ connector: c, busy: true });
+    try {
+      const result = await connectorsRequest<ConnectorTest>(`/${encodeURIComponent(c.id)}/test`, "POST");
+      setTest((t) => (t?.connector.id === c.id ? { connector: c, busy: false, result } : t));
+    } catch (e) {
+      setTest((t) => (t?.connector.id === c.id ? { connector: c, busy: false, error: errorText(e) } : t));
+    }
+  }
+
+  async function setEnabled(c: Connector, enabled: boolean) {
+    setSwitching(c.id);
+    try {
+      await connectorsRequest(`/${encodeURIComponent(c.id)}`, "PATCH", { enabled, expected_revision: c.revision });
+      message.success(enabled ? `${c.name} is switched on.` : `${c.name} is switched off.`);
+    } catch (e) {
+      message.error(errorText(e));
+    } finally {
+      setSwitching(null);
+      data.reload();
+    }
+  }
+
+  async function offer(id: string) {
+    setOffering(true);
+    try {
+      await connectorsRequest(`/${encodeURIComponent(id)}/agents/${encodeURIComponent(hub.key)}`, "PUT");
+      message.success(`${hub.name} now offers it. Grant it to people in Access.`);
+    } catch (e) {
+      message.error(errorText(e));
+    } finally {
+      setOffering(false);
+      data.reload();
+    }
+  }
+
+  function withdraw(c: Connector) {
+    modal.confirm({
+      title: `Stop offering ${c.name} in ${hub.name}?`,
+      content: `People stop using it in ${hub.name}, and grants for this connector here are removed. Their connections stay, and other agents that offer it are not affected.`,
+      okText: "Stop offering",
+      okButtonProps: { danger: true },
+      cancelText: "Keep it",
+      onOk: async () => {
+        try {
+          await connectorsRequest(`/${encodeURIComponent(c.id)}/agents/${encodeURIComponent(hub.key)}`, "DELETE");
+          message.success(`${hub.name} no longer offers ${c.name}.`);
+        } catch (e) {
+          message.error(errorText(e));
+        } finally {
+          data.reload();
+        }
+      },
+    });
+  }
+
+  function remove(c: Connector) {
+    const elsewhere = c.agents.filter((a) => a !== hub.key);
+    modal.confirm({
+      title: `Delete ${c.name}?`,
+      content: (
         <>
-          <Paragraph type="secondary" style={{ marginTop: 16 }}>Offered in other agents:</Paragraph>
-          <Table<Connector> rowKey="id" size="small" pagination={false} dataSource={other} columns={columns} />
+          <Paragraph>
+            {c.connections
+              ? `${c.connections} ${c.connections === 1 ? "person loses their connection" : "people lose their connections"}. Hubzoid asks the provider to revoke that access where it supports revocation.`
+              : "Nobody is connected to it."}
+          </Paragraph>
+          {elsewhere.length > 0 && (
+            <Paragraph>
+              {elsewhere.length === 1 ? "1 other agent offers" : `${elsewhere.length} other agents offer`} it too
+              and lose it. To take it out of {hub.name} only, use Stop offering instead.
+            </Paragraph>
+          )}
+          <Paragraph style={{ marginBottom: 0 }}>
+            Grants of “Connect {c.name}” stay listed as no longer available, so you can remove them.
+          </Paragraph>
         </>
+      ),
+      okText: "Delete connector",
+      okButtonProps: { danger: true },
+      cancelText: "Keep it",
+      onOk: async () => {
+        try {
+          await connectorsRequest(`/${encodeURIComponent(c.id)}${c.revision ? `?expected_revision=${encodeURIComponent(c.revision)}` : ""}`, "DELETE");
+          message.success(`${c.name} was removed.`);
+        } catch (e) {
+          message.error(errorText(e));
+        } finally {
+          data.reload();
+        }
+      },
+    });
+  }
+
+  const list = data.data?.filter((c) => c.agents.includes(hub.key));
+  const others = data.data?.filter((c) => !c.agents.includes(hub.key)) ?? [];
+  return (
+    <>
+      <div className={embedded ? undefined : "panel"}>
+        <div className="panel-heading">
+          <div>
+            <Title level={2}>
+              Connectors
+              <InfoHelp text={`Remote MCP servers ${hub.name} can use. People also need “Connect …” or “Use …” in this agent’s Access.`} />
+            </Title>
+          </div>
+          <Space wrap>
+            {others.length > 0 && (
+              <Select
+                aria-label="Offer a connector another agent offers"
+                placeholder="Offer an existing connector"
+                value={null}
+                loading={offering}
+                style={{ minWidth: 240 }}
+                options={others.map((c) => ({ value: c.id, label: c.name }))}
+                onChange={(id) => id && void offer(id)}
+              />
+            )}
+            <Button type="primary" icon={<Plug size={16} />} onClick={() => setEditing("new")}>
+              Add connector
+            </Button>
+          </Space>
+        </div>
+        <Paragraph type="secondary">Add or edit connectors here, or edit their YAML files in the deployment folder. Both use the same settings.</Paragraph>
+        {!list ? (
+          <LoadState error={data.error} retry={data.reload} />
+        ) : (
+          <>
+            {data.error && (
+              <Alert type="warning" showIcon title="Couldn’t refresh the list" description={data.error} style={{ marginBottom: 12 }} />
+            )}
+            <Table<Connector>
+              rowKey="id"
+              size="middle"
+              dataSource={list}
+              pagination={false}
+              scroll={{ x: embedded ? 600 : 900 }}
+              locale={{
+                emptyText: (
+                  <Empty description="No connectors yet. Add one to give agents access to an app.">
+                    <Button onClick={() => setEditing("new")}>Add connector</Button>
+                  </Empty>
+                ),
+              }}
+              columns={[
+                {
+                  title: "Connector",
+                  key: "name",
+                  render: (_, c) => (
+                    <div className="connector-cell with-logo">
+                      <ConnectorLogo id={c.id} url={c.url} name={c.name} />
+                      <div className="connector-cell-text">
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setEditing(c);
+                        }}
+                      >
+                        {c.name}
+                      </a>
+                      <Text type="secondary" className="identity" style={{ display: "block" }}>
+                        {embedded ? `${c.connections} connected · ${c.tool_allowlist?.length ? `${c.tool_allowlist.length} tools` : "All tools"}` : `${c.id} · ${c.url}`}
+                      </Text>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  title: "Sign-in",
+                  key: "auth",
+                  width: embedded ? 110 : 150,
+                  render: (_, c) => <SignInTag c={c} />,
+                },
+                {
+                  title: "Tools",
+                  key: "tools",
+                  hidden: embedded,
+                  width: 130,
+                  render: (_, c) =>
+                    c.tool_allowlist?.length ? (
+                      <Tooltip title={c.tool_allowlist.join(", ")}>
+                        <Tag>
+                          {c.tool_allowlist.length} allowed
+                        </Tag>
+                      </Tooltip>
+                    ) : (
+                      <Text type="secondary">All tools</Text>
+                    ),
+                },
+                {
+                  title: "Connected",
+                  key: "connections",
+                  hidden: embedded,
+                  width: 110,
+                  render: (_, c) => (
+                    <Text>
+                      {c.connections} {c.connections === 1 ? "person" : "people"}
+                    </Text>
+                  ),
+                },
+                {
+                  title: "On",
+                  key: "enabled",
+                  width: embedded ? 60 : 80,
+                  render: (_, c) => (
+                    <Switch
+                      size="small"
+                      checked={c.enabled}
+                      loading={switching === c.id}
+                      aria-label={`${c.name} switched ${c.enabled ? "on" : "off"}`}
+                      onChange={(v) => void setEnabled(c, v)}
+                    />
+                  ),
+                },
+                {
+                  title: "",
+                  key: "actions",
+                  width: embedded ? 130 : 150,
+                  align: "right",
+                  render: (_, c) => (
+                    <Space size={4}>
+                      <Button icon={<FlaskConical size={14} />} onClick={() => void runTest(c)}>
+                        Test
+                      </Button>
+                      <Dropdown
+                        trigger={["click"]}
+                        menu={{
+                          items: [
+                            { key: "edit", icon: <Pencil size={14} />, label: "Edit" },
+                            { key: "withdraw", icon: <MinusCircle size={14} />, label: `Stop offering in ${hub.name}` },
+                            { key: "delete", icon: <Trash2 size={14} />, label: "Delete connector", danger: true },
+                          ],
+                          onClick: ({ key }) =>
+                            key === "edit" ? setEditing(c) : key === "withdraw" ? withdraw(c) : remove(c),
+                        }}
+                      >
+                        <Button icon={<MoreHorizontal size={16} />} aria-label={`More actions for ${c.name}`} />
+                      </Dropdown>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </>
+        )}
+      </div>
+      <ConnectorDrawer
+        key={editing === "new" ? "new" : (editing?.id ?? "closed")}
+        hubKey={hub.key}
+        target={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(c, created) => {
+          data.reload();
+          if (created) void runTest(c);
+        }}
+      />
+      <TestDrawer run={test} onRetry={(c) => void runTest(c)} onClose={() => setTest(null)} />
+      <HubFolderServers hub={hub} panel />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Add and edit
+// ---------------------------------------------------------------------------
+
+type Draft = {
+  id: string;
+  name: string;
+  url: string;
+  auth: "oauth" | "none" | "shared";
+  clientId: string;
+  secret: string;
+  dropSecret: boolean;
+  scopes: string;
+  tools: string[];
+  enabled: boolean;
+  header: string;
+  key: string;
+};
+
+const EMPTY: Draft = {
+  id: "",
+  name: "",
+  url: "",
+  auth: "oauth",
+  clientId: "",
+  secret: "",
+  dropSecret: false,
+  scopes: "",
+  tools: [],
+  enabled: true,
+  header: "",
+  key: "",
+};
+
+function draftOf(c: Connector): Draft {
+  return {
+    id: c.id,
+    name: c.name,
+    url: c.url,
+    auth: c.auth_type,
+    clientId: c.client_id ?? "",
+    secret: "",
+    dropSecret: false,
+    scopes: c.scopes ?? "",
+    tools: c.tool_allowlist ?? [],
+    enabled: c.enabled,
+    header: c.shared_header ?? "",
+    key: "",
+  };
+}
+
+const slug = (name: string) => {
+  let s = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (s && !/^[a-z]/.test(s)) s = "c_" + s;
+  return s.slice(0, 40).replace(/_+$/, "");
+};
+
+function urlProblem(url: string): string | null {
+  const v = url.trim();
+  if (!v) return "Enter the server’s URL.";
+  let parsed: URL;
+  try {
+    parsed = new URL(v);
+  } catch {
+    return "Enter a full URL, for example https://mcp.example.com/mcp.";
+  }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && local))
+    return "Use https:// (plain http only on this computer, for development).";
+  if (parsed.hash) return "Remove the fragment (#…).";
+  if (parsed.username || parsed.password) return "Remove the user name and password.";
+  return null;
+}
+
+function ConnectorDrawer({
+  hubKey,
+  target,
+  onClose,
+  onSaved,
+}: {
+  hubKey: string;
+  target: Connector | "new" | null;
+  onClose: () => void;
+  onSaved: (c: Connector, created: boolean) => void;
+}) {
+  const { message, modal } = App.useApp();
+  const creating = target === "new";
+  const existing = target && target !== "new" ? target : null;
+  // The parent keys this drawer by its target, so each opening starts fresh.
+  const [draft, setDraft] = useState<Draft>(() => (existing ? draftOf(existing) : EMPTY));
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  // Adding starts from the catalog of popular servers, or a custom one.
+  const [picking, setPicking] = useState(creating);
+  const [preset, setPreset] = useState<CatalogEntry | null>(null);
+  const [serverTools, setServerTools] = useState<ConnectorTool[] | null>(null);
+  const [toolsBusy, setToolsBusy] = useState(false);
+
+  function pick(entry: CatalogEntry | null) {
+    setPreset(entry);
+    setDraft(entry ? { ...EMPTY, name: entry.name, id: entry.id, url: entry.url, auth: entry.auth, scopes: entry.scopes ?? "", tools: entry.tools ?? [] } : EMPTY);
+    setTouched(false);
+    setPicking(false);
+  }
+
+  async function loadTools() {
+    if (!existing) return;
+    setToolsBusy(true);
+    try {
+      const r = await connectorsRequest<ConnectorTest>(`/${encodeURIComponent(existing.id)}/test`, "POST");
+      if (r.tools) setServerTools(r.tools);
+      else message.info(r.tools_note ?? r.error?.message ?? "The server listed no tools.");
+    } catch (e) {
+      message.error(errorText(e));
+    } finally {
+      setToolsBusy(false);
+    }
+  }
+
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  const initial = existing ? draftOf(existing) : EMPTY;
+  const dirty = !!target && JSON.stringify(draft) !== JSON.stringify(initial);
+  const reset = useCallback(() => {
+    setDraft(EMPTY);
+    setTouched(false);
+  }, []);
+  const guard = useMemo(() => (target ? { dirty, busy, discard: reset } : null), [target, dirty, busy, reset]);
+  useNavigationGuard(guard);
+
+  const id = creating ? draft.id.trim() || slug(draft.name) : draft.id;
+  // The stored key is never sent to another address: a new URL needs the key again.
+  const keyNeeded = !!existing && existing.auth_type === "shared" && draft.url.trim() !== existing.url;
+  // Nor is a stored client secret: a new server needs it entered again, or removed.
+  const secretNeeded =
+    !!existing && existing.auth_type === "oauth" && draft.auth === "oauth" && existing.has_client_secret &&
+    draft.url.trim() !== existing.url && draft.clientId.trim() === (existing.client_id ?? "") &&
+    !draft.secret && !draft.dropSecret;
+  const problems = {
+    name: draft.name.trim() ? null : "Enter a name people will recognise, for example Gmail.",
+    id: creating && !/^[a-z][a-z0-9_]{1,39}$/.test(id) ? "Use 2 to 40 lowercase letters, digits or _, starting with a letter." : null,
+    url: urlProblem(draft.url),
+    secret:
+      draft.auth === "oauth" && draft.secret && !draft.clientId.trim()
+        ? "A client secret needs its client ID."
+        : secretNeeded
+          ? "A new server needs its client secret again. Enter it, or remove the stored secret."
+          : null,
+    key:
+      draft.auth === "shared" && !draft.key
+        ? keyNeeded
+          ? "A new server needs its own key. Enter the key again."
+          : !(existing?.auth_type === "shared" && existing.has_shared_secret)
+            ? "Enter the key."
+            : null
+        : null,
+    header:
+      draft.auth === "shared" && draft.header.trim() && !/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(draft.header.trim())
+        ? "Use a header name such as Authorization or X-API-Key."
+        : null,
+  };
+  const invalid = Object.values(problems).some(Boolean);
+  // Tools are listed from the saved server; a different URL or sign-in is another server.
+  const serverChanged = !!existing && (draft.url.trim() !== existing.url || draft.auth !== existing.auth_type);
+  const toolsFrom = serverChanged ? null : serverTools;
+  const redirect = `${location.origin}/oauth/connectors/${id || "<id>"}/callback`;
+
+  function close() {
+    if (busy) return;
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    modal.confirm({
+      title: "Discard your changes?",
+      content: "What you entered will be lost.",
+      okText: "Discard",
+      okButtonProps: { danger: true },
+      cancelText: "Keep editing",
+      onOk: onClose,
+    });
+  }
+
+  async function save() {
+    setTouched(true);
+    if (invalid) return;
+    const oauth = draft.auth === "oauth";
+    const body: ConnectorInput = {
+      name: draft.name.trim(),
+      url: draft.url.trim(),
+      auth_type: draft.auth,
+      scopes: oauth ? draft.scopes.trim() || null : null,
+      tool_allowlist: draft.tools.length ? draft.tools : null,
+      enabled: draft.enabled,
+    };
+    if (oauth) {
+      body.client_id = draft.clientId.trim() || null;
+      if (draft.secret) body.client_secret = draft.secret;
+      else if (draft.dropSecret || !body.client_id) body.client_secret = null;
+    }
+    if (draft.auth === "shared") {
+      body.shared_header = draft.header.trim() || null;
+      if (draft.key) body.shared_secret = draft.key;
+    }
+    if (creating) body.id = id;
+    else body.expected_revision = existing?.revision;
+    setBusy(true);
+    setFailure(null);
+    try {
+      const r = creating
+        ? await connectorsRequest<{ connector: Connector }>(`?hub=${encodeURIComponent(hubKey)}`, "POST", body)
+        : await connectorsRequest<{ connector: Connector }>(`/${encodeURIComponent(existing!.id)}`, "PATCH", body);
+      const moved = existing && (existing.url !== body.url || existing.auth_type !== body.auth_type);
+      message.success(
+        creating
+          ? `${r.connector.name} was added.`
+          : moved && existing.connections
+            ? `${r.connector.name} was saved. People connected to the old server need to connect again.`
+            : `${r.connector.name} was saved.`,
+      );
+      setDraft(EMPTY);
+      onSaved(r.connector, creating);
+      onClose();
+    } catch (e) {
+      setFailure(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title = creating ? "Add connector" : `Edit ${existing?.name ?? "connector"}`;
+  const movesPeople =
+    existing && existing.connections > 0 && (draft.url.trim() !== existing.url || draft.auth !== existing.auth_type);
+  return (
+    <Drawer
+      title={title}
+      aria-label={title}
+      open={!!target}
+      onClose={close}
+      size={560}
+      closable={!busy}
+      mask={{ closable: !busy }}
+      keyboard={!busy}
+      destroyOnHidden
+      footer={
+        <Space className="drawer-actions">
+          <Button onClick={close} disabled={busy}>
+            Cancel
+          </Button>
+          {!picking && (
+            <Button type="primary" loading={busy} disabled={touched && invalid} onClick={() => void save()}>
+              {creating ? "Add connector" : "Save"}
+            </Button>
+          )}
+        </Space>
+      }
+    >
+      {picking ? (
+        <CatalogPicker onPick={pick} />
+      ) : (
+      <div className="drawer-body">
+        <Paragraph type="secondary">Saved to <Text code>connectors/{id || "<id>"}.yaml</Text> in the deployment folder. Secrets are stored in <Text code>.env</Text>. Saving may reformat YAML and remove comments.</Paragraph>
+        {creating && (
+          <div>
+            <Button type="link" size="small" icon={<ArrowLeft size={14} />} className="catalog-back" onClick={() => setPicking(true)}>
+              All servers
+            </Button>
+          </div>
+        )}
+        {failure && <Alert type="error" showIcon title="Not saved" description={failure} />}
+        <FormSection title="Server">
+          <Field id="connector-name" label="Name" problem={touched ? problems.name : null} help="What people see, for example Gmail.">
+            <Input id="connector-name" value={draft.name} maxLength={80} onChange={(e) => set("name", e.target.value)} />
+          </Field>
+          <Field
+            id="connector-id"
+            label="ID"
+            problem={touched ? problems.id : null}
+            help={
+              creating
+                ? `Also the capability connector_${id || "<id>"}. It can’t be changed later.`
+                : `The capability is ${existing?.capability}.`
+            }
+          >
+            <Input
+              id="connector-id"
+              className="identity"
+              value={draft.id}
+              placeholder={creating ? slug(draft.name) || "gmail" : undefined}
+              disabled={!creating}
+              maxLength={40}
+              onChange={(e) => set("id", e.target.value.toLowerCase())}
+            />
+          </Field>
+          <Field id="connector-url" label="Server URL" problem={touched ? problems.url : null}>
+            <Input
+              id="connector-url"
+              className="identity"
+              value={draft.url}
+              placeholder="https://mcp.example.com/mcp"
+              onChange={(e) => set("url", e.target.value)}
+            />
+          </Field>
+          {movesPeople && (
+            <Alert
+              type="warning"
+              showIcon
+              title="People will need to connect again"
+              description={`${existing!.connections} ${existing!.connections === 1 ? "person is" : "people are"} connected to the current server. A different server or sign-in method removes those connections.`}
+            />
+          )}
+        </FormSection>
+        <FormSection title="Sign-in">
+          <div className="field">
+            <span className="field-label" id="connector-auth-label">
+              How people sign in
+              <InfoHelp text="Each person signs in: everyone uses their own account. Shared key: one company account for everyone. No sign-in: the server needs no account." />
+            </span>
+            <Segmented<"oauth" | "shared" | "none">
+              aria-labelledby="connector-auth-label"
+              value={draft.auth}
+              onChange={(v) => set("auth", v)}
+              options={[
+                { value: "oauth", label: "Each person signs in" },
+                { value: "shared", label: "Shared key" },
+                { value: "none", label: "No sign-in" },
+              ]}
+            />
+          </div>
+          {draft.auth === "shared" && (
+            <>
+              <Field
+                id="connector-key"
+                label="Key"
+                problem={touched ? problems.key : null}
+                help={
+                  existing?.has_shared_secret && !keyNeeded
+                    ? "A key is stored. Leave empty to keep it."
+                    : "Saved in the deployment .env and never shown again."
+                }
+              >
+                <Input.Password
+                  id="connector-key"
+                  autoComplete="new-password"
+                  value={draft.key}
+                  placeholder={existing?.has_shared_secret && !keyNeeded ? "••••••••" : undefined}
+                  onChange={(e) => set("key", e.target.value)}
+                />
+              </Field>
+              <Field
+                id="connector-header"
+                label="Header (optional)"
+                problem={touched ? problems.header : null}
+                help="Leave empty to send a plain key as Authorization: Bearer <key>."
+              >
+                <Input
+                  id="connector-header"
+                  className="identity"
+                  value={draft.header}
+                  placeholder="Authorization"
+                  maxLength={64}
+                  onChange={(e) => set("header", e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {draft.auth === "oauth" && (
+            <>
+              {preset?.needsClient && (
+                <Note title={`${preset.name} needs an OAuth app`}>
+                  {preset.setup ??
+                    `It doesn’t let Hubzoid register itself. Create an OAuth app in ${preset.name} with the redirect URI below, then paste its client ID and client secret.`}
+                </Note>
+              )}
+              <div className="field">
+                <span className="field-label">Redirect URI</span>
+                <Text className="identity redirect-uri" copyable={{ text: existing?.redirect_uri ?? redirect }}>
+                  {existing?.redirect_uri ?? redirect}
+                </Text>
+              </div>
+              <Field
+                id="connector-client-id"
+                label={preset?.needsClient ? "Client ID" : "Client ID (optional)"}
+                help={preset?.needsClient ? "From the OAuth app above." : "Leave empty when the provider lets Hubzoid register itself."}
+              >
+                <Input
+                  id="connector-client-id"
+                  className="identity"
+                  value={draft.clientId}
+                  maxLength={512}
+                  onChange={(e) => set("clientId", e.target.value)}
+                />
+              </Field>
+              {draft.clientId.trim() && (
+                <Field
+                  id="connector-secret"
+                  label="Client secret (optional)"
+                  problem={touched ? problems.secret : null}
+                  help={
+                    existing?.has_client_secret && !draft.dropSecret
+                      ? "A secret is stored. Leave empty to keep it. It is never shown again."
+                      : "Saved in the deployment .env and never shown again."
+                  }
+                >
+                  <Input.Password
+                    id="connector-secret"
+                    autoComplete="new-password"
+                    value={draft.secret}
+                    disabled={draft.dropSecret}
+                    placeholder={existing?.has_client_secret && !draft.dropSecret ? "••••••••" : undefined}
+                    onChange={(e) => set("secret", e.target.value)}
+                  />
+                  {existing?.has_client_secret && (
+                    <Checkbox checked={draft.dropSecret} onChange={(e) => { set("dropSecret", e.target.checked); set("secret", ""); }}>
+                      Remove the stored secret
+                    </Checkbox>
+                  )}
+                </Field>
+              )}
+              <Field id="connector-scopes" label="Scopes (optional)" help="Separated by spaces. Leave empty to ask for every scope the server lists.">
+                <Input
+                  id="connector-scopes"
+                  className="identity"
+                  value={draft.scopes}
+                  onChange={(e) => set("scopes", e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+        </FormSection>
+        <FormSection title="Tools">
+          <div className="field">
+            <div className="field-label-row">
+              <label className="field-label" htmlFor="connector-tools">
+                Allowed tools (optional)
+              </label>
+              {existing && !toolsFrom && !serverChanged && (
+                <Button type="link" size="small" loading={toolsBusy} onClick={() => void loadTools()}>
+                  Load from server
+                </Button>
+              )}
+            </div>
+            <Select
+              id="connector-tools"
+              mode="tags"
+              value={draft.tools}
+              tokenSeparators={[",", " "]}
+              {...(toolsFrom ? {} : { open: false, suffixIcon: null })}
+              options={toolsFrom?.map((t) => ({ value: t.name, label: t.name, title: t.description ?? t.name }))}
+              optionRender={(o) => (
+                <div className="tool-option">
+                  <span className="identity">{o.value}</span>
+                  {o.data.title && o.data.title !== o.value && <Text type="secondary">{o.data.title}</Text>}
+                </div>
+              )}
+              placeholder={toolsFrom ? `Choose from ${toolsFrom.length} ${toolsFrom.length === 1 ? "tool" : "tools"}` : "search_threads, get_thread"}
+              onChange={(v: string[]) => set("tools", v)}
+              style={{ width: "100%" }}
+            />
+            <Text type="secondary" className="field-help">
+              {serverChanged && existing
+                ? "Save, then reopen Edit to load the new server’s tools."
+                : "Only these tools reach agents. Leave empty to allow every tool the server offers."}
+            </Text>
+          </div>
+          <div className="field">
+            <Space>
+              <Switch id="connector-enabled" checked={draft.enabled} onChange={(v) => set("enabled", v)} />
+              <label htmlFor="connector-enabled">Switched on</label>
+            </Space>
+            <Text type="secondary" className="field-help">
+              Switched off, people can’t connect it and agents don’t use it. Existing connections are kept.
+            </Text>
+          </div>
+        </FormSection>
+      </div>
       )}
-      <HubFolderServers hub={hub} />
+    </Drawer>
+  );
+}
+
+/** Popular servers to start from, searchable, each with how people sign in. */
+function CatalogPicker({ onPick }: { onPick: (entry: CatalogEntry | null) => void }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  // The address too, so "google" finds Gmail and "jira" finds Atlassian.
+  const shown = CATALOG.filter((e) => !q || `${e.name} ${e.about} ${new URL(e.url).host}`.toLowerCase().includes(q));
+  return (
+    <div className="drawer-body">
+      <Input
+        autoFocus
+        allowClear
+        aria-label="Search servers"
+        placeholder="Search servers"
+        prefix={<Search size={14} aria-hidden />}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <ul className="catalog-grid" aria-label="Servers">
+        <li>
+          <button type="button" className="catalog-card" onClick={() => onPick(null)}>
+            <span className="catalog-tile" aria-hidden>
+              <Plus size={16} />
+            </span>
+            <span className="catalog-text">
+              <span className="catalog-name">Custom server</span>
+              <span className="catalog-about">Any remote MCP server, by URL</span>
+            </span>
+          </button>
+        </li>
+        {shown.map((e) => (
+          <li key={e.id}>
+            <button type="button" className="catalog-card" onClick={() => onPick(e)} aria-label={`${e.name}: ${catalogAuthLabel(e)}`}>
+              <ConnectorLogo id={e.id} url={e.url} name={e.name} />
+              <span className="catalog-text">
+                <span className="catalog-name">{e.name}</span>
+                <span className="catalog-about">{e.about}</span>
+              </span>
+              <span className={`catalog-auth${e.auth === "none" ? " none" : e.needsClient ? " client" : ""}`}>{catalogAuthLabel(e)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {shown.length === 0 && <Text type="secondary">No match. Choose Custom server and enter its URL.</Text>}
     </div>
   );
 }
 
+function Field({
+  id,
+  label,
+  help,
+  problem,
+  children,
+}: {
+  id: string;
+  label: string;
+  help?: string;
+  problem?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      {children}
+      {(problem || help) && (
+        <Text type={problem ? "danger" : "secondary"} className="field-help">
+          {problem ?? help}
+        </Text>
+      )}
+    </div>
+  );
+}
+
+/** One titled group of the connector form, set apart by a rule. */
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="form-section" aria-label={title}>
+      <h3 className="form-section-title">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/** A quiet note: neutral colours, for something to know rather than a status. */
+function Note({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <div className="note" role="note">
+      <Info size={16} aria-hidden className="note-icon" />
+      <div>
+        {title && <div className="note-title">{title}</div>}
+        <div className="note-text">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** The server's brand mark when it is a known one (by ID or address), else its initial. */
 export function ConnectorLogo({ id, url, name }: { id: string; url: string; name: string }) {
   const host = (() => {
     try {
@@ -214,3 +1031,147 @@ export function ConnectorLogo({ id, url, name }: { id: string; url: string; name
 // ---------------------------------------------------------------------------
 // Test discovery
 // ---------------------------------------------------------------------------
+
+type TestRun = { connector: Connector; busy: boolean; result?: ConnectorTest; error?: string };
+
+function TestDrawer({
+  run,
+  onRetry,
+  onClose,
+}: {
+  run: TestRun | null;
+  onRetry: (c: Connector) => void;
+  onClose: () => void;
+}) {
+  const connector = run?.connector ?? null;
+  const busy = !!run?.busy;
+  const result = run?.result ?? null;
+  const failure = run?.error ?? null;
+  const title = connector ? `Test ${connector.name}` : "Test";
+  const yesNo = (v: boolean | null | undefined) => (v ? "Yes" : "No");
+  const items = result
+    ? result.auth_type !== "oauth"
+      ? [
+          { key: "status", label: "Server answered", children: result.status ?? "No answer" },
+          { key: "auth", label: "Asks for sign-in", children: yesNo(result.requires_auth) },
+        ]
+      : [
+          { key: "issuer", label: "Authorization server", children: <Text className="identity">{result.issuer}</Text> },
+          {
+            key: "registration",
+            label: "Client",
+            children:
+              result.registration === "pre-registered"
+                ? "Client ID entered"
+                : result.registration === "dynamic"
+                  ? "Hubzoid can register itself (dynamic registration)"
+                  : "Needs a pre-registered client",
+          },
+          { key: "resource", label: "Resource", children: <Text className="identity">{result.resource ?? "Not sent"}</Text> },
+          { key: "scope", label: "Scopes requested", children: <Text className="identity">{result.scope || "The server’s default"}</Text> },
+          { key: "pkce", label: "PKCE", children: result.pkce === "S256" ? "S256" : "S256 (not advertised)" },
+          { key: "revocation", label: "Revocation on disconnect", children: yesNo(!!result.revocation_endpoint) },
+          { key: "iss", label: "Issuer in the response (RFC 9207)", children: yesNo(result.iss_parameter_supported) },
+          {
+            key: "redirect",
+            label: "Redirect URI",
+            children: (
+              <Text className="identity" copyable>
+                {result.redirect_uri}
+              </Text>
+            ),
+          },
+        ]
+    : [];
+
+  return (
+    <Drawer title={title} aria-label={title} open={!!connector} onClose={onClose} size={560} destroyOnHidden>
+      <div className="drawer-body" aria-live="polite">
+        {busy && (
+          <div role="status" aria-label="Testing" style={{ padding: 24, textAlign: "center" }}>
+            <Spin />
+          </div>
+        )}
+        {failure && <Alert type="error" showIcon title="The test could not run" description={failure} />}
+        {result && (
+          <>
+            {result.ok ? (
+              <Alert
+                type="success"
+                showIcon
+                title="Test passed"
+                description={
+                  result.auth_type === "none"
+                    ? "The server works without sign-in. People with access can turn it on."
+                    : result.auth_type === "shared"
+                      ? "The server accepts the key. People with access can use it."
+                      : "Sign-in setup found. People with access can connect their own account."
+                }
+              />
+            ) : (
+              <Alert type="error" showIcon title="Test failed" description={result.error?.message ?? "The server did not answer as expected."} />
+            )}
+            {items.length > 0 && <Descriptions column={1} size="small" bordered items={items} />}
+            {result.ok && <ServerTools result={result} allowed={connector?.tool_allowlist ?? null} />}
+            {result.notes?.map((n) => (
+              <Text key={n} type="secondary" className="field-help">
+                {n}
+              </Text>
+            ))}
+            <Text type="secondary" className="field-help">
+              A test only reads what the server offers. It registers nothing and changes no settings.
+            </Text>
+          </>
+        )}
+        {connector && !busy && (
+          <div>
+            <Button onClick={() => onRetry(connector)}>Test again</Button>
+          </div>
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
+/** The tools the server lists (as Mastra Studio and Sim show a server's
+ * tools), marking which reach agents when an allow-list is set. */
+function ServerTools({ result, allowed }: { result: ConnectorTest; allowed: string[] | null }) {
+  const [all, setAll] = useState(false);
+  if (!result.tools)
+    return result.tools_note ? (
+      <div className="server-tools">
+        <Title level={5} style={{ margin: 0 }}>
+          Tools
+        </Title>
+        <Text type="secondary">{result.tools_note}</Text>
+      </div>
+    ) : null;
+  const tools = result.tools;
+  const shown = all ? tools : tools.slice(0, 8);
+  return (
+    <div className="server-tools">
+      <Title level={5} style={{ margin: 0 }}>
+        Tools <Text type="secondary">· {tools.length}</Text>
+        <InfoHelp text="What the server offers. Agents get all of them unless you choose Allowed tools in Edit." />
+      </Title>
+      {tools.length === 0 ? (
+        <Text type="secondary">The server lists no tools.</Text>
+      ) : (
+        <ul className="server-tools-list">
+          {shown.map((t) => (
+            <li key={t.name}>
+              <span className="identity">{t.name}</span>
+              {allowed && (allowed.includes(t.name) ? <Tag color="green">Allowed</Tag> : <Tag>Not allowed</Tag>)}
+              {t.description && <Text type="secondary" className="server-tool-about">{t.description}</Text>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {tools.length > 8 && (
+        <Button type="link" size="small" onClick={() => setAll((v) => !v)} style={{ paddingInline: 0 }}>
+          {all ? "Show fewer" : `Show all ${tools.length}`}
+        </Button>
+      )}
+    </div>
+  );
+}
