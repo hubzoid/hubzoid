@@ -181,6 +181,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     seen_ports: dict[int, Path] = {}
     seen_inbound_ports: dict[int, Path] = {}
     seen_labels: dict[str, Path] = {}
+    # Ports hubs pin in their own .env; the others take the next free one.
+    pinned_ports = {int(p) for p in (_own_env_value(Path(h), "BRIDGE_PORT") for h in hub_dirs) if p.isdigit()}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
         # Loading a hub's dotenv is local to that hub. Do not carry its secrets
@@ -199,13 +201,20 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             raise ValueError(f"gateway: hub {hub_dir.name} sets {datadir.ENV}={data}. A gateway keeps each "
                              f"hub's state in that hub's folder and its own in --data-dir. Unset "
                              f"{datadir.ENV}, or run this hub on its own with `hubzoid run`.")
-        if s.bridge_port in seen_ports:
+        bridge_port = s.bridge_port
+        pinned = bool(_own_env_value(hub_dir, "BRIDGE_PORT") or inherited_env.get("BRIDGE_PORT"))
+        if not pinned:
+            # No port of its own (`hubzoid init` leaves it unset): the next one
+            # no other hub uses or pins.
+            while bridge_port in seen_ports or bridge_port in pinned_ports:
+                bridge_port += 1
+        if bridge_port in seen_ports:
             raise ValueError(
-                f"gateway: hubs {seen_ports[s.bridge_port].name} and "
-                f"{hub_dir.name} both use BRIDGE_PORT={s.bridge_port}; give "
-                f"each hub a unique BRIDGE_PORT in its .env."
+                f"gateway: hubs {seen_ports[bridge_port].name} and "
+                f"{hub_dir.name} both use BRIDGE_PORT={bridge_port}; give "
+                f"each hub a unique BRIDGE_PORT in its .env, or remove the line."
             )
-        seen_ports[s.bridge_port] = hub_dir
+        seen_ports[bridge_port] = hub_dir
 
         base_slug = _slugify(hub_dir.name)
         n = seen_slugs.get(base_slug, 0)
@@ -256,7 +265,7 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         backends.append(GatewayBackend(
             hub_dir=hub_dir,
             slug=slug,
-            bridge_port=s.bridge_port,
+            bridge_port=bridge_port,
             api_key=s.first_api_key,
             model_label=label,
             mcp_public_url=mcp_public_url,

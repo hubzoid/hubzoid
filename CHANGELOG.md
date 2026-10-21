@@ -74,6 +74,8 @@ One chat interface, the Hubzoid web app, with Settings in the same app. See
   a class name).
 - A message sent from the new-chat page no longer comes back as the draft of
   the next new chat in that tab.
+- `hubzoid run` with several hubs from `hubzoid init` starts: a hub that sets
+  no `BRIDGE_PORT` gets the next free port instead of every hub claiming 8000.
 - An unknown or not-permitted Settings address opened an empty pane; it now
   opens the first section (a person's own Schedules for the team's schedules).
 - Shared snapshots and their copies no longer carry signed download links; the
