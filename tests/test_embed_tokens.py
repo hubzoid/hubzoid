@@ -273,6 +273,12 @@ def test_the_app_token_is_scrubbed_deep_and_from_logs(caplog):
     try:
         with caplog.at_level(logging.INFO, logger="hubzoid.test"):
             logging.getLogger("hubzoid.test").info("calling with %s", tok)
+            try:
+                raise RuntimeError(f"auth failed for {tok}")
+            except RuntimeError:
+                logging.getLogger("hubzoid.test").exception("tool failed")
     finally:
         scope._live.reset(reset)
-    assert tok not in caplog.text and "[redacted]" in caplog.text
+    # Formatted after the reply ended (a queued handler would): still clean.
+    formatted = "\n".join(logging.Formatter().format(r) for r in caplog.records)
+    assert tok not in formatted and "[redacted]" in formatted

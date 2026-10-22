@@ -344,8 +344,16 @@ class OpenAIAgentsRuntime:
                 agent = agent.clone(model=modellib.build(slot.model))
             from . import budgets
             hooks = budgets.cost_hooks(getattr(agent, "model", None))
-            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
-                                         **({"hooks": hooks} if hooks is not None else {}))
+            extra = {"hooks": hooks} if hooks is not None else {}
+            from .embed import scope as app_scope
+
+            if app_scope.live_token():
+                # A person's app token is live: no OpenAI trace, which would
+                # keep tool errors before Hubzoid can clean them.
+                from agents import RunConfig
+
+                extra["run_config"] = RunConfig(tracing_disabled=True)
+            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns), **extra)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:

@@ -170,17 +170,10 @@ def scrub(value: Any, token: str | None = None) -> Any:
     return value
 
 
-class _ScrubbingRecord(logging.LogRecord):
-    """A log record with the reply's app token removed from its message and
-    arguments (a tool's exception text logged by a runtime, for example)."""
-
-    def getMessage(self) -> str:  # noqa: N802 - logging's name
-        message = super().getMessage()
-        token = live_token()
-        return message.replace(token, "[redacted]") if token and token in message else message
-
-
 def _install_log_scrub() -> None:
+    """While a reply holds a person's app token, every log record made is
+    cleaned when it is made (not when a handler formats it later): the token
+    is removed from its message, and a traceback that names it is dropped."""
     factory = logging.getLogRecordFactory()
     if getattr(factory, "hubzoid_scrubs", False):
         return
@@ -188,11 +181,17 @@ def _install_log_scrub() -> None:
     def make(*args, **kwargs):
         record = factory(*args, **kwargs)
         token = live_token()
-        if token:
-            record.__class__ = _ScrubbingRecord
-            if record.exc_info and record.exc_info[1] is not None and token in str(record.exc_info[1]):
-                record.exc_text = "[a tool error that included the person's app token]"
-                record.exc_info = None
+        if not token:
+            return record
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a bad format string stays logging's to report
+            return record
+        if token in message:
+            record.msg, record.args = message.replace(token, "[redacted]"), None
+        if record.exc_info and record.exc_info[1] is not None and token in str(record.exc_info[1]):
+            record.exc_text = "[a tool error that included the person's app token]"
+            record.exc_info = None
         return record
 
     make.hubzoid_scrubs = True

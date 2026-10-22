@@ -370,6 +370,8 @@ class Orchestrator:
             self._release_app(request, app_caller)
             return False
         run = await self.launch(plan)
+        if run is None and app_caller is not None:
+            self._release_app(request, app_caller)
         if on_run is not None and run is not None:
             on_run(run)
         return plan is not None

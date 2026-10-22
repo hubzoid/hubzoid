@@ -25,9 +25,11 @@ def hub(tmp_path, monkeypatch):
     access: {{agents: [finance], tools: ["*"]}}
 """)
     (hub / "hitl.yaml").write_text("version: 1\ntools:\n  reserve_stock: {ask: always}\n")
-    from hubzoid.embed import config
+    from hubzoid.embed import agui, config
 
     config.reset()
+    agui._runs.clear()      # the per-person limit is per minute, not per test
+    agui._fails.clear()
     return hub
 
 
@@ -181,6 +183,29 @@ def test_a_saved_answer_whose_reply_did_not_continue_continues_on_retry(client):
     assert service.get(state.hub_dir, state.hub, req["id"])["continued"] is True
     again = _resume(client, interrupt["id"], {"status": "resolved", "payload": {"approved": True}})
     assert again.status_code == 409
+
+
+def test_an_answer_whose_reply_could_not_start_says_so(client, monkeypatch):
+    from hubzoid.hitl import service
+
+    _, evs = run(client, "please reserve stock", thread="orders")
+    interrupt = evs[-1]["outcome"]["interrupts"][0]
+    runs = client.app.state.chat.runs
+    real = runs.start
+
+    def fails(**kw):
+        raise RuntimeError("could not start")
+
+    monkeypatch.setattr(runs, "start", fails)
+    first = _resume(client, interrupt["id"], {"status": "resolved", "payload": {"approved": True}})
+    assert first.status_code == 200 and "could_not_start" in first.text
+    state = client.app.state.chat
+    assert service.get(state.hub_dir, state.hub, interrupt["id"])["status"] == "approved"
+    monkeypatch.setattr(runs, "start", real)
+    # The answer stands in the chat; the person carries on with a new message.
+    assert _resume(client, interrupt["id"], {"status": "resolved", "payload": {"approved": True}}).status_code == 409
+    resp, evs = run(client, "carry on please", thread="orders")
+    assert resp.status_code == 200 and evs[-1]["type"] == "RUN_FINISHED"
 
 
 def test_a_cancelled_question_is_cancelled_not_rejected(client):

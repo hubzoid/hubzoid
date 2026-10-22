@@ -262,7 +262,11 @@ in its private config file for the reply's length.)
 **Naming tools in the app's limit** (`access.tools`): a hub tool by its name, a
 connector as `connector:<id>`, every tool of an MCP server in the hub as
 `mcp:<server>`, a hand-over to another agent by its tool name, or `*`. A tool
-from a server the reply doesn't know is never within a limit.
+from a server the reply doesn't know is never within a limit. Give MCP servers
+names that aren't prefixes of each other joined by `__` (`erp` and
+`erp__admin`): on the Claude runtime, a tool name two servers could own is
+refused for app replies. While a reply holds a person's app token, the OpenAI
+runtime sends no trace for it.
 
 ## 5. Endpoints
 
@@ -289,9 +293,11 @@ agent's address (`/b/<agent>`).
   `{approved: true | false}` (or `{decision}`, one of the interrupt's
   `allowedActions`) for an approval and `{answer}` for a question; anything
   else answers 422. `cancelled` rejects an approval and cancels a question.
-  The reply continues in that response. If it couldn't continue (the response
-  says so), send the same answer again: the saved decision is kept and the
-  reply continues with your fresh token.
+  The reply continues in that response. If it couldn't continue
+  (`not_continued`: the chat was busy or restarting), send the same answer
+  again: the saved decision is kept and the reply continues with your fresh
+  token. If the reply failed to start (`could_not_start`), the answer stands in
+  the chat; send a new message to carry on.
 - **Page context**: AG-UI `context`, or `forwardedProps.hubzoid.page`, is passed
   to the agent marked "data, not instructions" (4,000 characters at most) and is
   never used to decide access.

@@ -799,8 +799,14 @@ def _identity_checked(options, hub_dir, ident):
     from .access.guard import server_source
     from .embed import scope as app_scope
 
-    own = f"mcp__{_MCP_NAMESPACE}__"
-    servers = sorted((str(k) for k in (getattr(options, "mcp_servers", None) or {})), key=len, reverse=True)
+    servers = sorted({str(k) for k in (getattr(options, "mcp_servers", None) or {})} | {_MCP_NAMESPACE},
+                     key=len, reverse=True)
+    for_app = getattr(ident, "app", None) is not None
+
+    def owners(full: str) -> list[str]:
+        """The servers whose ``mcp__<server>__`` prefix ``full`` has, longest first."""
+        rest = full[len("mcp__"):]
+        return [key for key in servers if rest.startswith(key + "__")]
 
     def named(hook_input) -> dict:
         full = str((hook_input or {}).get("tool_name") or "")
@@ -811,17 +817,24 @@ def _identity_checked(options, hub_dir, ident):
             return {"tool": handover.tool_name(kind) if kind else full}
         if not full.startswith("mcp__"):
             return {"tool": full}
-        rest = full[len("mcp__"):]
-        for key in servers:
-            if rest.startswith(key + "__"):
-                hub_server, connector = server_source(Path(hub_dir), key)
-                return {"tool": rest[len(key) + 2:], "server": hub_server, "connector": connector}
-        return {"tool": full, "server": "?unknown"}   # a server this turn doesn't know: never within a limit
+        found = owners(full)
+        if not found:
+            return {"tool": full, "server": "?unknown"}   # a server this turn doesn't know: never within a limit
+        key = found[0]
+        hub_server, connector = server_source(Path(hub_dir), key)
+        return {"tool": full[len("mcp__") + len(key) + 2:], "server": hub_server, "connector": connector}
 
     async def admit(tool_input, _tool_use_id, _context):
         full = str((tool_input or {}).get("tool_name") or "")
-        if full.startswith(own):
-            return {}
+        found = owners(full) if full.startswith("mcp__") else []
+        if for_app and len(found) > 1:
+            # "erp" and "erp__admin" both fit "mcp__erp__admin__x": which server
+            # owns the tool can't be told from its name, so an app may not use it.
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": "This tool's server can't be told apart "
+                                           "from another server's, so this app may not use it."}}
+        if found and found[-1] == _MCP_NAMESPACE and (len(found) == 1 or not for_app):
+            return {}   # Hubzoid's own tools check inside their own wrapper
         try:
             decision = await asyncio.to_thread(check_run, Path(hub_dir), ident, **named(tool_input))
         except Exception:  # noqa: BLE001 - fail closed

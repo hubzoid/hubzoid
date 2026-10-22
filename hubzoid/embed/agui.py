@@ -433,10 +433,17 @@ async def _resume(ctx, caller: AppCaller, conv: dict, entries: list, thread_id: 
         return StreamingResponse(done(), media_type="text/event-stream", headers=_SSE_HEADERS)
     _ensure_watch(ctx)
     runs: list = []
+    planned = False
     for req in to_continue:
-        ok = await ctx.orchestrator.continue_request(req, app_caller=caller, on_run=runs.append)
-        if ok and runs:
+        planned = await ctx.orchestrator.continue_request(req, app_caller=caller, on_run=runs.append)
+        if planned:
             break
+    if planned and not runs:
+        # The answer is in the chat but its reply failed to start (shown as
+        # an error reply): the person carries on with a new message.
+        return StreamingResponse(_error_stream(thread_id, run_id, "Your answer was saved, but the reply could "
+                                               "not start. Send a new message to carry on.", "could_not_start"),
+                                 media_type="text/event-stream", headers=_SSE_HEADERS)
     if not runs:
         return StreamingResponse(_error_stream(thread_id, run_id, "Your answer was saved, but the reply couldn't "
                                                "continue just now. Send the same answer again to continue.",

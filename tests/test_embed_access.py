@@ -169,7 +169,7 @@ def test_the_claude_hook_names_server_and_connector(hub):
     original = evaluator.check_run
     evaluator.check_run = fake_check
     try:
-        servers = {"my_erp": {}, "odoo": {}, "odoo__admin": {}}
+        servers = {"my_erp": {}, "odoo": {}, "odoo__admin": {}, "hubzoid__admin": {}}
         patched = factory_claude._identity_checked(Opts(hooks={}, mcp_servers=servers), hub, ident())
         hook = patched.hooks["PreToolUse"][0].hooks[0]
         asyncio.run(hook({"tool_name": "mcp__my_erp__list_orders"}, "id", None))
@@ -178,9 +178,12 @@ def test_the_claude_hook_names_server_and_connector(hub):
         asyncio.run(hook({"tool_name": "mcp__odoo__search"}, "id", None))
         assert seen == {"tool": "search", "server": "odoo", "connector": None}
         seen.clear()
-        asyncio.run(hook({"tool_name": "mcp__odoo__admin__drop"}, "id", None))   # the longer server wins
-        assert seen == {"tool": "drop", "server": "odoo__admin", "connector": None}
-        seen.clear()
+        assert asyncio.run(hook({"tool_name": "mcp__hubzoid__read_knowledge"}, "id", None)) == {}  # own tools
+        # Names two servers could own are refused for an app, whichever way round.
+        for name in ("mcp__odoo__admin__drop", "mcp__hubzoid__admin__drop"):
+            out = asyncio.run(hook({"tool_name": name}, "id", None))
+            assert out["hookSpecificOutput"]["permissionDecision"] == "deny", name
+        assert seen == {}
         asyncio.run(hook({"tool_name": "mcp__stranger__x"}, "id", None))          # unknown: never in a limit
         assert seen["server"] == "?unknown"
     finally:
