@@ -65,7 +65,8 @@ def secret_cmd(app_id: str = typer.Argument(..., help="The app's client id, e.g.
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(5)
     console.print(f"Client id: [bold]{app_id}[/bold]")
-    console.print(f"Client secret (shown once, put it in the app's server settings): [bold]{value}[/bold]")
+    console.print("Client secret (shown once; put it in the app's server settings):")
+    print(value)
     console.print("\nAdd the app to hubzoid.yaml:\n")
     console.print(escape(f"""apps:
   {app_id}:

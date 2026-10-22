@@ -424,25 +424,43 @@ def agui_messages(path: list[dict]) -> list[dict]:
             text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
             out.append({"id": mid, "role": "user", "content": strip_context(text)})
         elif role == "assistant":
-            calls, results, texts = [], [], []
-            for p in parts:
-                if p.get("type") == "text":
-                    texts.append(p.get("text") or "")
-                elif p.get("type") == "reasoning" and p.get("text"):
-                    out.append({"id": f"{mid}.reasoning", "role": "reasoning", "content": p["text"]})
-                elif p.get("type") == "tool-call":
-                    calls.append({"id": p["toolCallId"], "type": "function",
-                                  "function": {"name": p.get("toolName") or "tool",
-                                               "arguments": json.dumps(p.get("args") or {}, ensure_ascii=False)}})
-                    if p.get("result") is not None:
-                        results.append({"id": f"{mid}.r.{p['toolCallId']}", "role": "tool",
-                                        "toolCallId": p["toolCallId"],
-                                        "content": json.dumps(p["result"], ensure_ascii=False, default=str)})
-            message = {"id": mid, "role": "assistant", "content": "".join(texts)}
-            if calls:
-                message["toolCalls"] = calls
-            out.append(message)
-            out += results
+            out += _assistant_segments(mid, parts)
+    return out
+
+
+def _assistant_segments(mid: str, parts: list[dict]) -> list[dict]:
+    """One reply in the order it was written: text, then the calls it made and
+    their results; text after a call starts the next segment."""
+    out: list[dict] = []
+    seg = {"n": 0, "texts": [], "calls": [], "results": []}
+
+    def flush():
+        if not seg["texts"] and not seg["calls"]:
+            return
+        message = {"id": mid if seg["n"] == 0 else f"{mid}.{seg['n']}", "role": "assistant",
+                   "content": "".join(seg["texts"])}
+        if seg["calls"]:
+            message["toolCalls"] = seg["calls"]
+        out.append(message)
+        out.extend(seg["results"])
+        seg.update(n=seg["n"] + 1, texts=[], calls=[], results=[])
+
+    for p in parts:
+        if p.get("type") == "text":
+            if seg["calls"]:
+                flush()
+            seg["texts"].append(p.get("text") or "")
+        elif p.get("type") == "reasoning" and p.get("text"):
+            out.append({"id": f"{mid}.reasoning{seg['n']}", "role": "reasoning", "content": p["text"]})
+        elif p.get("type") == "tool-call":
+            seg["calls"].append({"id": p["toolCallId"], "type": "function",
+                                 "function": {"name": p.get("toolName") or "tool",
+                                              "arguments": json.dumps(p.get("args") or {}, ensure_ascii=False)}})
+            if p.get("result") is not None:
+                seg["results"].append({"id": f"{mid}.r.{p['toolCallId']}", "role": "tool",
+                                       "toolCallId": p["toolCallId"],
+                                       "content": json.dumps(p["result"], ensure_ascii=False, default=str)})
+    flush()
     return out
 
 
@@ -566,7 +584,8 @@ def mount(app: FastAPI, ctx) -> None:
         live = ctx.runs.active_in(conv["id"])
         pending = await asyncio.to_thread(_pending, ctx, caller, conv["id"])
         return {"threadId": conv["id"], "title": conv.get("title"), "messages": agui_messages(path),
-                "running": live is not None, "interrupts": [interrupt_of(r) for r in pending]}
+                "running": live is not None, "runningMessageId": live.message_id if live is not None else None,
+                "interrupts": [interrupt_of(r) for r in pending]}
 
     @app.get(PREFIX + "/threads/{thread_id}/run")
     async def rejoin(thread_id: str, request: Request):

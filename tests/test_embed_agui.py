@@ -350,3 +350,18 @@ def test_deleting_a_chat(client):
     assert client.delete(f"/api/agui/threads/{conv}", headers=auth("ben")).status_code == 404
     assert client.delete(f"/api/agui/threads/{conv}", headers=auth()).status_code == 204
     assert client.get("/api/agui/threads", headers=auth()).json()["threads"] == []
+
+
+def test_history_keeps_the_order_a_reply_was_written_in():
+    from hubzoid.embed.agui import agui_messages
+
+    path = [{"id": "u1", "role": "user", "content": [{"type": "text", "text": "hi\n\n<page-context app=\"x\">\n[]\n</page-context>"}]},
+            {"id": "a1", "role": "assistant", "content": [
+                {"type": "text", "text": "Looking. "},
+                {"type": "tool-call", "toolCallId": "c1", "toolName": "t", "args": {"q": 1}, "result": {"status": "ok"}},
+                {"type": "text", "text": "Done."}]}]
+    out = agui_messages(path)
+    assert [m["role"] for m in out] == ["user", "assistant", "tool", "assistant"]
+    assert out[0]["content"] == "hi"
+    assert out[1]["content"] == "Looking. " and out[1]["toolCalls"][0]["id"] == "c1"
+    assert out[2]["toolCallId"] == "c1" and out[3] == {"id": "a1.1", "role": "assistant", "content": "Done."}
