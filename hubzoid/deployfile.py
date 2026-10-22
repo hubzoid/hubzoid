@@ -13,6 +13,7 @@ hub folder for a deployment of one) and is versioned with them::
     brand: {...}          # the brand (docs/branding.md); brand.identity.name names the deployment
     chat: {...}           # chat defaults (docs/chat-config.md)
     diagnostics: {...}    # diagnostic limits (docs/diagnostics.md)
+    apps: {...}           # apps that embed the chat (docs/embedding.md)
 
 Secrets and process settings go in `.env` next to it. `HUBZOID_PUBLIC_URL`,
 `HUBZOID_AUTH` and `HUBZOID_ADMIN_EMAIL` fill a key the file leaves out (a
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 FILE = "hubzoid.yaml"
-_KEYS = {"version", "public_url", "sign_in", "owner", "hubs", "brand", "chat", "diagnostics"}
+_KEYS = {"version", "public_url", "sign_in", "owner", "hubs", "brand", "chat", "diagnostics", "apps"}
 
 
 class DeployFileError(ValueError):
@@ -48,6 +49,7 @@ class DeployFile:
     brand: dict | None = None
     chat: dict | None = None
     diagnostics: dict | None = None
+    apps: dict | None = None
     raw: dict = field(default_factory=dict)
 
     @property
@@ -135,7 +137,7 @@ def load(path: Path) -> DeployFile:
     for i, folder in enumerate(out.hub_dirs()):
         if not (folder / "AGENTS.md").is_file():
             raise _fail(loaded, f"/hubs/{i}", f"{out.hubs[i]} is not a hub folder (no AGENTS.md).")
-    for key in ("brand", "chat", "diagnostics"):
+    for key in ("brand", "chat", "diagnostics", "apps"):
         value = data.get(key)
         if value is not None and not isinstance(value, dict):
             raise _fail(loaded, f"/{key}", f"{key} is a mapping of settings.")
