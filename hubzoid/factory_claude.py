@@ -794,16 +794,25 @@ def _identity_checked(options, hub_dir, ident):
     own = f"mcp__{_MCP_NAMESPACE}__"
 
     async def admit(tool_input, _tool_use_id, _context):
-        if str((tool_input or {}).get("tool_name") or "").startswith(own):
+        full = str((tool_input or {}).get("tool_name") or "")
+        if full.startswith(own):
             return {}
+        # mcp__<server>__<tool>: a person an embedding app vouched for may use
+        # only the servers and tools within their access.
+        server, _, tool = full[len("mcp__"):].partition("__") if full.startswith("mcp__") else ("", "", full)
+        connector = server[len("my_"):] if server.startswith("my_") else None
         try:
-            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident)
+            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident, tool=tool or full,
+                                               server=None if connector else (server or None),
+                                               connector=connector)
         except Exception:  # noqa: BLE001 - fail closed
             decision = None
         if decision is not None and decision.allowed:
             return {}
+        reason = ("This tool is not one of the tools this app allows."
+                  if decision is not None and decision.reason == "app_tool" else "This account no longer has access.")
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                       "permissionDecisionReason": "This account no longer has access."}}
+                                       "permissionDecisionReason": reason}}
 
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]

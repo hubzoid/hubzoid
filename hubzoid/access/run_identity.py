@@ -196,7 +196,7 @@ def describe(record: dict | None, names: dict | None = None) -> str:
     where = {"chat": "in chat", "api": "through the API", "mcp": "from an assistant (MCP)",
              "workflow": "as a workflow", "schedule": "on a schedule",
              "webhook": "from " + _CHANNELS.get(record.get("credential_kind") or "", "a channel"),
-             "eval": "as an eval"}.get(record.get("started_from") or "", "")
+             "eval": "as an eval", "app": "in an app's own chat"}.get(record.get("started_from") or "", "")
     if record.get("started_from") == "schedule":
         lead = f"Scheduled run for {asked}, no one watching"
     elif asked == actor:

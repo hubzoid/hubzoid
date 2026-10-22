@@ -100,12 +100,52 @@ def _grant_allowed(gs, email: str, hub: str | None, permission: str) -> bool:
     return gs.can(email, normalize(hub), permission)
 
 
+def app_access(hub_dir: Path, app, permission: str | None = None, *, hub: str | None = None,
+               tool: str | None = None, server: str | None = None, connector: str | None = None) -> Decision:
+    """The decision for a person an embedding app vouched for
+    (``identity.AppScope``): the app is still registered and on, the agent is
+    within the token's access and the app's current maximum, and so is the
+    tool or permission asked about. Grants are never read: such a caller has
+    no account and no grants. Platform capabilities are never theirs."""
+    from ..control.authz import CAPABILITIES
+    from ..embed import config as apps_config
+    from ..embed.caller import effective, tool_allowed
+    from .store import USE_HUB
+
+    try:
+        reg = apps_config.service_for(Path(hub_dir)).get(app.app_id)
+    except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
+        log.exception("access: apps settings unavailable; denying")
+        return Decision(False, "store_error")
+    if reg is None or not reg.enabled:
+        return Decision(False, "credential_ended")
+    access = effective(reg, apps_config.Access(agents=frozenset(app.agents), tools=frozenset(app.tools)))
+    agent = normalize(hub or Path(hub_dir).name)
+    if agent not in access.agents:
+        return Decision(False, "missing_grant")
+    if tool is not None or server is not None or connector is not None:
+        allowed = tool_allowed(access, tool or "", server=server, connector=connector) or (
+            bool(permission) and permission != USE_HUB and permission in access.tools)
+        return ALLOW if allowed else Decision(False, "app_tool")
+    if not permission or permission == USE_HUB:
+        return ALLOW
+    if permission in CAPABILITIES:
+        return Decision(False, "missing_grant")
+    if permission.startswith("connector_"):
+        return ALLOW if tool_allowed(access, "", connector=permission[len("connector_"):]) else \
+            Decision(False, "missing_grant")
+    return ALLOW if access.all_tools() or permission in access.tools else Decision(False, "missing_grant")
+
+
 def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
               account_id: str | None = None, epoch: int | None = None,
               key_hubs: "tuple[str, ...] | None" = None) -> Decision:
     """May ``who`` (an email, an ``AuthUser`` or an ``Identity``) do
     ``permission`` in ``hub``? ``epoch``: the credential counter the run or
     key started under (checked when given)."""
+    app = getattr(who, "app", None)
+    if app is not None:
+        return app_access(hub_dir, app, permission, hub=hub)
     email = normalize(getattr(who, "email", None) or getattr(who, "user", None) or
                       (who if isinstance(who, str) else ""))
     account_id = account_id or getattr(who, "account_id", None) or (
@@ -191,13 +231,23 @@ def still_valid(hub_dir: Path, account_id: str, credential: dict | None, *,
     return not (kind and cid) or credential_live(hub_dir, kind, cid, expired_ok=expired_ok)
 
 
-def check_run(hub_dir: Path, ident) -> Decision:
+def check_run(hub_dir: Path, ident, *, tool: str | None = None, server: str | None = None,
+              connector: str | None = None) -> Decision:
     """Before a tool call: may the run's account still use this hub, and does
     the session or key that started it still work? An anonymous caller (an
     unverified channel, a test) is left to the tool's own permission, as
-    before. Tools never ask a person: allowed means it runs."""
+    before. Tools never ask a person: allowed means it runs.
+
+    For a person an embedding app vouched for, the tool itself must be within
+    their access too (``tool``, or the MCP ``server`` or ``connector`` it
+    comes from)."""
     if ident is None or getattr(ident, "user", None) is None:
         return ALLOW
+    app = getattr(ident, "app", None)
+    if app is not None:
+        if tool is None and server is None and connector is None:
+            return app_access(hub_dir, app)
+        return app_access(hub_dir, app, hub=None, tool=tool, server=server, connector=connector)
     from .store import USE_HUB
 
     decision = authorize(hub_dir, ident, USE_HUB, hub=Path(hub_dir).name)
