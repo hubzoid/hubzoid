@@ -24,6 +24,9 @@ message. Keywords combine; the parts run in this order:
             gate (``hubzoid.hitl``): it runs when allowed, otherwise it waits for
             a person and the reply says so
   askme     the agent asks one question with two options (``ask_question``)
+  apptool   one real call of the hub tool ``HUBZOID_TEST_APP_TOOL`` (default
+            ``app_lookup``) through the gated registry, so access checks and an
+            embedding app's token (``hubzoid.embed``) run for real
   feedback  one ``record_feedback`` call, when the deployment offers that tool:
             ``negative`` in the request makes the rating negative, the first
             sentence is the person's quote and the rest their comment
@@ -53,7 +56,7 @@ log = logging.getLogger("hubzoid.testing_runtime")
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
 KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme",
-            "feedback")
+            "feedback", "apptool")
 
 _WORD = re.compile(r"[A-Za-z]+")
 _NOTE = re.compile(r"^\[(?:Image|User attached file): ([^\](]+?)\s*(?:\(|\])", re.MULTILINE)
@@ -260,6 +263,37 @@ class ScriptedRuntime:
                     "ask": "I'd like to reserve 4 units of SKU-12. Waiting for your approval.",
                     "refuse": verdict.message}[verdict.action]
             for piece in _chunks(body):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "apptool" in words:
+            # A real call of a hub tool (HUBZOID_TEST_APP_TOOL, default app_lookup)
+            # through the same gated registry the agent uses: its access
+            # checks and the embedding app's token run for real.
+            from .factory import hub_tool_registry
+
+            name = os.environ.get("HUBZOID_TEST_APP_TOOL", "app_lookup")
+            args = {"query": "orders"}
+            yield ToolCall(id="call_app", name=name, args=args,
+                           legacy=tool_events.format_call(name, args, mode=self._tool_mode))
+            tool = (await asyncio.to_thread(hub_tool_registry, self.hub_dir)).get(name)
+            if tool is None:
+                out = f"[no tool named {name}]"
+            else:
+                from agents import RunConfig
+                from agents.tool_context import ToolContext
+
+                ctx = ToolContext(context=None, tool_name=name, tool_call_id="call_app",
+                                  tool_arguments=json.dumps(args), run_config=RunConfig())
+                out = await tool.on_invoke_tool(ctx, json.dumps(args))
+            out = out if isinstance(out, str) else json.dumps(out, default=str)
+            _request_ctx.record_tool_result("call_app", out)
+            refused = out.startswith("[access") or out.startswith("[no tool")
+            yield ToolResult(id="call_app", name=name, ok=not refused,
+                             message=out if refused else None)
+            for piece in _chunks(f"The {name} tool answered: {out}"):
                 yield text(piece)
             _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
                                     model=self.model_id, cost_usd=0.0, status="ok")

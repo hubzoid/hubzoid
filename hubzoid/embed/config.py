@@ -187,7 +187,7 @@ def _one(app_id: str, raw: Any) -> App:
     sources = [s for s in (secret_ref, jwks_url, public_key) if s]
     if mode == "pass":
         if not secret_ref or jwks_url or public_key:
-            raise ValueError(f"{where}: a pass-mode app has secret_ref (made by hubzoid apps secret {app_id}).")
+            raise ValueError(f"{where}: a pass-mode app has secret_ref (made by hubzoid embed secret {app_id}).")
         issuer = raw.get("issuer") or app_id
         if issuer != app_id:
             raise ValueError(f"{where}.issuer: a pass is issued by the app itself, so its issuer is {app_id!r}.")

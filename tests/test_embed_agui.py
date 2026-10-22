@@ -206,3 +206,147 @@ def test_app_runs_have_no_hubzoid_account(client):
             run_identity.records.c.started_from == "app")).all()
     assert rows and rows[-1]._mapping["acts_as"] is None
     assert rows[-1]._mapping["credential_kind"] == "app" and rows[-1]._mapping["credential_id"] == "erpnext"
+
+
+APP_TOOL = '''"""app_lookup: calls the embedding app's API as the person (test fixture)."""
+import hashlib
+
+from agents import function_tool
+
+from hubzoid.embed import app_token
+
+
+@function_tool
+def app_lookup(query: str) -> str:
+    """Look up records in the app."""
+    token = app_token()
+    if token is None:
+        return "no token"
+    if query == "echo":
+        return "raw " + token
+    return "got " + hashlib.sha256(token.encode()).hexdigest()[:12]
+'''
+
+
+def _app_tool_hub(hub, tools: str, token_to: str):
+    (hub / "tools_local").mkdir(exist_ok=True)
+    (hub / "tools_local" / "app_lookup.py").write_text(APP_TOOL)
+    (hub / "apps.yaml").write_text(f"""apps:
+  erpnext:
+    secret_ref: env:ERP_APP_SECRET
+    origins: [{ORIGIN}]
+    access: {{agents: [finance], tools: {tools}}}
+    token_to: {token_to}
+""")
+    import os
+
+    os.utime(hub / "apps.yaml", ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+
+
+def _app_token_run(client, **pass_claims):
+    body = {"threadId": "tools-" + str(time.time_ns()), "runId": "r", "tools": [], "context": [],
+            "messages": [{"id": f"msg-{time.time_ns()}", "role": "user", "content": "run the apptool"}]}
+    resp = client.post("/api/agui", json=body, headers={"Authorization": f"Bearer {token(**pass_claims)}",
+                                                        "Origin": ORIGIN})
+    assert resp.status_code == 200, resp.text
+    return text_of([e for e in events(resp.text) if isinstance(e, dict)])
+
+
+def test_the_persons_app_token_reaches_only_the_named_tool(client, hub):
+    import hashlib
+
+    _app_tool_hub(hub, '["*"]', "[app_lookup]")
+    said = _app_token_run(client, app_token="erp-secret-token-of-alice")
+    assert "got " + hashlib.sha256(b"erp-secret-token-of-alice").hexdigest()[:12] in said
+    _app_tool_hub(hub, '["*"]', "[]")
+    assert "no token" in _app_token_run(client, app_token="erp-secret-token-of-alice")
+
+
+def test_a_tool_outside_the_apps_limit_is_refused(client, hub):
+    _app_tool_hub(hub, "[read_knowledge]", "[app_lookup]")
+    said = _app_token_run(client, app_token="t-0123456789")
+    assert "is not one of the tools this app allows" in said
+    # The pass can narrow the limit further, never widen it.
+    _app_tool_hub(hub, "[app_lookup, read_knowledge]", "[app_lookup]")
+    said = _app_token_run(client, app_token="t-0123456789", access={"tools": ["read_knowledge"]})
+    assert "is not one of the tools this app allows" in said
+
+
+def _start_slow(client, thread: str):
+    import threading
+
+    box = {}
+
+    def go():
+        box["resp"] = client.post("/api/agui", headers=auth(), json={
+            "threadId": thread, "runId": "slow", "tools": [], "context": [],
+            "messages": [{"id": f"msg-{time.time_ns()}", "role": "user", "content": "go slow please"}]})
+
+    t = threading.Thread(target=go)
+    t.start()
+    conv = None
+    for _ in range(100):
+        listed = client.get("/api/agui/threads", headers=auth()).json()["threads"]
+        if listed:
+            conv = listed[0]["threadId"]
+            state = client.get(f"/api/agui/threads/{conv}", headers=auth()).json()
+            if state["running"]:
+                break
+        time.sleep(0.05)
+    return t, box, conv
+
+
+def test_rejoin_stop_and_one_reply_at_a_time(client, monkeypatch):
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "4")
+    t, box, conv = _start_slow(client, "slow-thread")
+    assert conv is not None
+    busy, _ = run(client, "another one", thread=conv)
+    assert busy.status_code == 409
+    other = client.get(f"/api/agui/threads/{conv}/run", headers=auth("ben"))
+    assert other.status_code == 404          # not Ben's chat
+    stopped = client.post(f"/api/agui/threads/{conv}/stop", headers=auth())
+    assert stopped.status_code == 202 and stopped.json()["status"] == "stopping"
+    t.join(timeout=30)
+    first = [e for e in events(box["resp"].text) if isinstance(e, dict)]
+    assert first[-1]["type"] == "RUN_FINISHED" and first[-1]["outcome"] == {"type": "cancelled"}
+    # Nothing running now: rejoin answers 204.
+    assert client.get(f"/api/agui/threads/{conv}/run", headers=auth()).status_code == 204
+
+
+def test_rejoin_replays_the_running_reply(client, monkeypatch):
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "2")
+    t, box, conv = _start_slow(client, "rejoin-thread")
+    joined = client.get(f"/api/agui/threads/{conv}/run", headers=auth())
+    t.join(timeout=30)
+    assert joined.status_code == 200
+    evs = [e for e in events(joined.text) if isinstance(e, dict)]
+    assert kinds(evs)[0] == "RUN_STARTED" and kinds(evs)[-1] == "RUN_FINISHED"
+    original = [e for e in events(box["resp"].text) if isinstance(e, dict)]
+    assert text_of(evs) == text_of(original) and text_of(evs)
+
+
+def test_turning_the_app_off_stops_its_replies(client, hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "8")
+    t, box, conv = _start_slow(client, "off-thread")
+    (hub / "apps.yaml").write_text(f"""apps:
+  erpnext:
+    enabled: false
+    secret_ref: env:ERP_APP_SECRET
+    origins: [{ORIGIN}]
+    access: {{agents: [finance], tools: ["*"]}}
+""")
+    import os
+
+    os.utime(hub / "apps.yaml", ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+    t.join(timeout=30)
+    evs = [e for e in events(box["resp"].text) if isinstance(e, dict)]
+    assert evs[-1]["outcome"] == {"type": "cancelled"}
+    assert client.get("/api/agui/threads", headers=auth()).status_code == 403   # app_disabled
+
+
+def test_deleting_a_chat(client):
+    run(client, "keep this short", thread="to-delete")
+    conv = client.get("/api/agui/threads", headers=auth()).json()["threads"][0]["threadId"]
+    assert client.delete(f"/api/agui/threads/{conv}", headers=auth("ben")).status_code == 404
+    assert client.delete(f"/api/agui/threads/{conv}", headers=auth()).status_code == 204
+    assert client.get("/api/agui/threads", headers=auth()).json()["threads"] == []

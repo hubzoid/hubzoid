@@ -22,3 +22,7 @@ Modules:
   scope     the caller's access during a reply (tools, the person's app token)
   agui      the AG-UI endpoint, history, rejoin and approvals
 """
+
+from .scope import app_token  # noqa: E402 - for hub tools that call the app's API
+
+__all__ = ["app_token"]
