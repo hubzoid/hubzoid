@@ -209,6 +209,8 @@ class Translator:
         self.status = "complete"
         self.started = False
         self.waiting: list[dict] = []
+        self._text_parent: str | None = None   # the text message the next tool calls belong to
+        self._round = 0
 
     def _mid(self, part_id: str) -> str:
         return f"{self.message_id}.{part_id}"
@@ -224,7 +226,8 @@ class Translator:
         if kind == "start":
             return self.start()
         if kind == "text-start":
-            return [{"type": "TEXT_MESSAGE_START", "messageId": self._mid(chunk["id"]), "role": "assistant"}]
+            self._text_parent = self._mid(chunk["id"])
+            return [{"type": "TEXT_MESSAGE_START", "messageId": self._text_parent, "role": "assistant"}]
         if kind == "text-delta":
             return [{"type": "TEXT_MESSAGE_CONTENT", "messageId": self._mid(chunk["id"]), "delta": chunk["delta"]}] \
                 if chunk.get("delta") else []
@@ -242,8 +245,12 @@ class Translator:
             return [{"type": "REASONING_MESSAGE_END", "messageId": mid}, {"type": "REASONING_END", "messageId": mid}]
         if kind == "tool-input-available":
             call = chunk["toolCallId"]
+            if self._text_parent is None:
+                self._round += 1
+                self._text_parent = self._mid(f"calls{self._round}")
+            parent = self._text_parent
             return [{"type": "TOOL_CALL_START", "toolCallId": call, "toolCallName": chunk.get("toolName") or "tool",
-                     "parentMessageId": self.message_id},
+                     "parentMessageId": parent},
                     {"type": "TOOL_CALL_ARGS", "toolCallId": call,
                      "delta": json.dumps(chunk.get("input") or {}, ensure_ascii=False)},
                     {"type": "TOOL_CALL_END", "toolCallId": call}]
@@ -362,51 +369,78 @@ def _error_stream(thread_id: str, run_id: str, message: str, code: str) -> Async
 
 # -- approvals ---------------------------------------------------------------------------
 def _decision_of(req: dict, entry: dict) -> tuple[str, str | None, str | None]:
-    """(decision, answer, note) from an AG-UI resume entry."""
+    """(decision, answer, note) from an AG-UI resume entry. Anything unclear is
+    refused: an approval needs an explicit yes or no."""
+    status = entry.get("status")
+    if status not in ("resolved", "cancelled"):
+        raise _error(422, "invalid_resume", "A resume entry's status is resolved or cancelled.")
+    question = req.get("kind") == "question"
+    if status == "cancelled":
+        return ("cancel" if question else "reject"), None, None
     payload = entry.get("payload")
-    if entry.get("status") == "cancelled":
-        return "reject", None, None
-    if req.get("kind") == "question":
+    if question:
         answer = payload.get("answer") if isinstance(payload, dict) else payload
         if not isinstance(answer, str) or not answer.strip():
             raise _error(422, "answer_required", "Answer the question (payload.answer).")
         return "answer", answer.strip(), None
-    note = payload.get("note") if isinstance(payload, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("decision"), str):
-        return payload["decision"], None, note
-    approved = payload.get("approved") if isinstance(payload, dict) else payload
-    if approved is False:
+    if not isinstance(payload, dict):
+        raise _error(422, "decision_required", "An approval's payload is {approved: true} or {approved: false}.")
+    note = payload.get("note") if isinstance(payload.get("note"), str) else None
+    if isinstance(payload.get("decision"), str):
+        return payload["decision"], None, note       # one of the request's allowed actions (checked when decided)
+    if payload.get("approved") is True:
+        return "approve", None, note
+    if payload.get("approved") is False:
         return "reject", None, note
-    return "approve", None, note
+    raise _error(422, "decision_required", "An approval's payload is {approved: true} or {approved: false}.")
 
 
 async def _resume(ctx, caller: AppCaller, conv: dict, entries: list, thread_id: str, run_id: str):
-    """Decide each answered request, then continue the reply with the fresh token."""
+    """Decide each answered request, then continue the reply with the fresh
+    token. A request already decided whose reply didn't continue (busy, a
+    restart) continues now; answering it again is the retry."""
     from ..hitl import service
 
-    decided = []
+    to_continue: list[dict] = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("interruptId"), str):
             raise _error(400, "invalid_resume", "Each resume entry names an interruptId.")
         req = await asyncio.to_thread(service.get, ctx.hub_dir, ctx.hub, entry["interruptId"])
         if req is None or req.get("conversation_id") != conv["id"] or req.get("requester_id") != caller.subject:
             raise _error(404, "not_found", "No such approval in this chat.")
+        if req["status"] != "pending":
+            if req["status"] in ("approved", "rejected", "answered") and not req.get("continued"):
+                to_continue.append(req)
+                continue
+            raise _error(409, "already_decided", f"This request was already {req['status']}.")
         decision, answer, note = _decision_of(req, entry)
         try:
+            if decision == "cancel":
+                await asyncio.to_thread(service.cancel, ctx.hub_dir, ctx.hub, req["id"], account_id=caller.subject,
+                                        email=caller.subject, reason="The person cancelled the question.")
+                continue
             out = await asyncio.to_thread(service.decide, ctx.hub_dir, ctx.hub, req["id"], account_id=caller.subject,
                                           email=caller.subject, decision=decision, answer=answer, note=note,
                                           via="app")
         except service.RequestError as exc:
             raise _error(exc.status, exc.code, exc.message) from None
-        decided.append(out)
+        to_continue.append(out)
+    if not to_continue:
+        async def done():
+            yield _event({"type": "RUN_STARTED", "threadId": thread_id, "runId": run_id})
+            yield _event({"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id,
+                          "outcome": {"type": "success"}})
+        return StreamingResponse(done(), media_type="text/event-stream", headers=_SSE_HEADERS)
+    _ensure_watch(ctx)
     runs: list = []
-    for req in decided:
+    for req in to_continue:
         ok = await ctx.orchestrator.continue_request(req, app_caller=caller, on_run=runs.append)
         if ok and runs:
             break
     if not runs:
-        return StreamingResponse(_error_stream(thread_id, run_id, "Your answer was saved. The reply continues when "
-                                               "the agent is free; reload the chat.", "not_continued"),
+        return StreamingResponse(_error_stream(thread_id, run_id, "Your answer was saved, but the reply couldn't "
+                                               "continue just now. Send the same answer again to continue.",
+                                               "not_continued"),
                                  media_type="text/event-stream", headers=_SSE_HEADERS)
     run = runs[0]
     queue = ctx.runs.subscribe(run)
@@ -500,8 +534,7 @@ def mount(app: FastAPI, ctx) -> None:
     @app.post(PREFIX)
     async def run(request: Request):
         from ..chat import engine_routes
-        from ..chat.routes import _legacy_turn
-        from ..chat.store import new_id, valid_message_id
+        from ..chat.store import new_id
 
         caller = await caller_of(request)
         body = await engine_routes.read_json(request, MAX_BODY)
@@ -518,6 +551,13 @@ def mount(app: FastAPI, ctx) -> None:
         conv = await _owned_conversation(ctx, caller, thread_id, create=True)
         if conv is None:
             raise _error(404, "not_found", "That chat was not found.")
+        async with _conversation_lock(conv["id"]):
+            return await _start(conv, caller, body, thread_id, run_id)
+
+    async def _start(conv, caller, body, thread_id, run_id):
+        from ..chat.routes import _legacy_turn
+        from ..chat.store import new_id, valid_message_id
+
         if ctx.runs.active_in(conv["id"]) is not None:
             raise _error(409, "run_in_progress", "A reply is still being written. Stop it or wait for it to finish.")
         resume = body.get("resume")
@@ -553,13 +593,14 @@ def mount(app: FastAPI, ctx) -> None:
                 parent_id = parent.get("parent_id")
         actor = _actor(ctx, caller)
         _ensure_watch(ctx)
-        app_scope.hand_over(conv["id"], caller)
+        if not app_scope.hand_over(conv["id"], caller):
+            raise _error(409, "run_in_progress", "A reply is starting in this chat. Wait for it to finish.")
         try:
             launched = await _legacy_turn(ctx, conv, actor, {}, parent_id,
                                           {"id": message_id, "content": [{"type": "text", "text": text}]},
                                           new_id("m_"))
-        except HTTPException:
-            app_scope.release(conv["id"])
+        except BaseException:
+            app_scope.release(conv["id"], caller)
             raise
         queue = ctx.runs.subscribe(launched)
         return StreamingResponse(_stream_run(ctx, launched, thread_id, run_id, caller, queue),
@@ -633,6 +674,20 @@ def mount(app: FastAPI, ctx) -> None:
         await asyncio.to_thread(_remove_chat_dir, hub_dir, chat_key(conv))
         return Response(status_code=204)
 
+
+
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def _conversation_lock(conversation_id: str) -> asyncio.Lock:
+    """One start or resume at a time per conversation (on this bridge)."""
+    lock = _locks.get(conversation_id)
+    if lock is None:
+        if len(_locks) > 10_000:
+            for key in [k for k, v in _locks.items() if not v.locked()]:
+                _locks.pop(key, None)
+        lock = _locks[conversation_id] = asyncio.Lock()
+    return lock
 
 
 def _ensure_watch(ctx) -> None:

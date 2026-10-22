@@ -50,11 +50,22 @@ async function* rejoin(base, threadId, abortSignal) {
       else if (e.type === "TOOL_CALL_START") { const p = { type: "tool-call", toolCallId: e.toolCallId, toolName: e.toolCallName, argsText: "", args: {} }; calls.set(e.toolCallId, p); parts.push(p); }
       else if (e.type === "TOOL_CALL_ARGS") { const p = calls.get(e.toolCallId); p.argsText += e.delta; try { p.args = JSON.parse(p.argsText); } catch { /* partial */ } }
       else if (e.type === "TOOL_CALL_RESULT") { const p = calls.get(e.toolCallId); if (p) p.result = JSON.parse(e.content); }
+      else if (e.type === "RUN_FINISHED" && e.outcome?.type === "interrupt") {
+        // The rejoined reply stopped to ask: keep its approvals answerable.
+        yield { content: parts.map((p) => ({ ...p })), ...waiting(e.outcome.interrupts) };
+        return;
+      }
       else continue;
       yield { content: parts.map((p) => ({ ...p })) };
     }
   }
 }
+
+// Where assistant-ui keeps a message's open AG-UI interrupts.
+const waiting = (interrupts) => ({
+  status: { type: "requires-action", reason: "interrupt" },
+  metadata: { custom: { agui: { interrupts } } },
+});
 
 function ToolCall({ toolName, args, result }) {
   return (
@@ -76,12 +87,24 @@ function Message() {
 function Approvals() {
   const interrupts = useAgUiInterrupts();
   const submit = useAgUiSubmitInterruptResponses();
+  const [answer, setAnswer] = useState("");
   if (!interrupts.length) return null;
-  return interrupts.map((i) => (
+  const answerWith = (i, payload) => submit([{ interruptId: i.id, status: "resolved", payload }]);
+  return interrupts.map((i) => i.reason === "question" ? (
+    <div key={i.id} className="approval" data-testid="question">
+      <div>{i.message}</div>
+      {(i.metadata?.hubzoid?.options || []).map((o) => (
+        <button key={o.label} onClick={() => answerWith(i, { answer: o.label })}>{o.label}</button>
+      ))}
+      <input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Or type an answer" />
+      <button disabled={!answer.trim()} onClick={() => answerWith(i, { answer })}>Answer</button>
+      <button onClick={() => submit([{ interruptId: i.id, status: "cancelled" }])}>Skip</button>
+    </div>
+  ) : (
     <div key={i.id} className="approval" data-testid="approval">
       <div>{i.message || "The agent asks first."}</div>
-      <button onClick={() => submit([{ interruptId: i.id, status: "resolved", payload: { approved: true } }])}>Approve</button>
-      <button onClick={() => submit([{ interruptId: i.id, status: "resolved", payload: { approved: false } }])}>Reject</button>
+      <button onClick={() => answerWith(i, { approved: true })}>Approve</button>
+      <button onClick={() => answerWith(i, { approved: false })}>Reject</button>
     </div>
   ));
 }
@@ -119,6 +142,13 @@ function App({ base }) {
             ? t.messages.filter((m) => !String(m.id).startsWith(t.runningMessageId)) : t.messages;
           const messages = fromAgUiMessages(kept).map((m) =>
             fromThreadMessageLike(m, generateId(), { type: "complete", reason: "unknown" }));
+          // Approvals still open in this chat stay answerable after a reload.
+          const last = messages.at(-1);
+          if (!t.running && t.interrupts.length && last?.role === "assistant") {
+            const w = waiting(t.interrupts);
+            messages[messages.length - 1] = { ...last, status: w.status,
+              metadata: { ...last.metadata, custom: { ...last.metadata.custom, ...w.metadata.custom } } };
+          }
           return { messages, unstable_resume: t.running };
         },
       },

@@ -240,3 +240,39 @@ def test_an_invalid_apps_section_names_the_problem(tmp_path, bad, message):
     with pytest.raises(AppsError) as exc:
         config.service_for(tmp_path / "finance").all()
     assert message in exc.value.message
+
+
+def test_a_hand_over_is_never_replaced_and_only_its_own_is_released():
+    from hubzoid.embed import scope
+    from hubzoid.embed.caller import AppCaller
+    from hubzoid.embed.config import Access
+
+    def caller(user):
+        return AppCaller(app_id="erp", user_id=user, subject=f"app_{user}", name="", email="",
+                         access=Access(agents=frozenset({"finance"}), tools=frozenset({"*"})),
+                         issued_at=0, expires_at=0, app_token=None)
+
+    a, b = caller("a"), caller("a")
+    assert scope.hand_over("c-1", a) is True
+    assert scope.hand_over("c-1", b) is False
+    scope.release("c-1", b)                      # not b's: a's stays
+    assert scope.take("c-1", "app_a") is a
+    assert scope.take("c-1", "app_a") is None
+
+
+def test_the_app_token_is_scrubbed_deep_and_from_logs(caplog):
+    import logging
+
+    from hubzoid.embed import scope
+
+    tok = "secret-app-token-123"
+    value = {"text": f"got {tok}", "rows": [{tok: (1, f"x{tok}")}]}
+    assert tok not in repr(scope.scrub(value, tok))
+    live = scope._Live("erp", tok, ("app_lookup",), "Authorization")
+    reset = scope._live.set(live)
+    try:
+        with caplog.at_level(logging.INFO, logger="hubzoid.test"):
+            logging.getLogger("hubzoid.test").info("calling with %s", tok)
+    finally:
+        scope._live.reset(reset)
+    assert tok not in caplog.text and "[redacted]" in caplog.text

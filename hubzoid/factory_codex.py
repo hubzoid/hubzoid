@@ -165,7 +165,8 @@ class CodexRuntime:
                         # hitl.equip and the other runtimes): a stopped or revoked run
                         # never raises an approval card.
                         tool = run_checked(hitl_gate.wrap(tool, self.hub_dir, connector=getattr(server, "name", None),
-                                                          read_only=read_only.get(tool.name)), self.hub_dir)
+                                                          read_only=read_only.get(tool.name)), self.hub_dir,
+                                           server=getattr(server, "name", None))
                     self.registry[tool.name] = tool
         except BaseException:
             await self.aclose()
@@ -629,9 +630,13 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
             if child.last_error:
                 raise child.last_error
             return result
-        registry[handover.tool_name(delegate.spec.name)] = FunctionTool(
+        from .access.guard import run_checked
+
+        # A delegate is a tool like any other: the per-call check (and an
+        # embedding app's tool limit) applies to calling it.
+        registry[handover.tool_name(delegate.spec.name)] = run_checked(FunctionTool(
             name=handover.tool_name(delegate.spec.name), description=delegate.spec.description,
-            params_json_schema={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"], "additionalProperties": False}, on_invoke_tool=invoke)
+            params_json_schema={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"], "additionalProperties": False}, on_invoke_tool=invoke), hub_dir)
     return CodexRuntime(name=main.spec.name, instructions=_compose_instructions(main.instructions, ctx, backend="codex-local"),
                         registry=registry, model_setting=model, hub_dir=hub_dir,
                         max_turns=max_turns, tool_mode=config.show_tools,

@@ -180,6 +180,10 @@ function Chat({ threadId }) {
 - **Rejoin after a reload**: when `GET /api/agui/threads/{id}` says
   `running: true`, return `unstable_resume: true` and give a `history.resume()`
   that reads `GET /api/agui/threads/{id}/run` and yields the growing message.
+- **Approvals still open after a reload**: put the thread's `interrupts` on the
+  last assistant message, with status `{type: "requires-action", reason:
+  "interrupt"}` and `metadata.custom.agui.interrupts`; `useAgUiInterrupts()`
+  then shows them again.
 
 The example's [`assistant-ui.jsx`](../examples/embed-agui/src/assistant-ui.jsx)
 has all three, about 60 lines.
@@ -251,8 +255,14 @@ The MCP server must use that per-request token, not one fixed key, and must not
 share cached results between people.
 
 The token is sent only to the tools in `token_to`, kept in memory for the
-reply, and replaced with `[redacted]` in tool output. (The Claude runtime keeps
-it in its private config file for the reply's length.)
+reply, and replaced with `[redacted]` in tool output (text and structured
+results, on every runtime) and in Hubzoid's logs. (The Claude runtime keeps it
+in its private config file for the reply's length.)
+
+**Naming tools in the app's limit** (`access.tools`): a hub tool by its name, a
+connector as `connector:<id>`, every tool of an MCP server in the hub as
+`mcp:<server>`, a hand-over to another agent by its tool name, or `*`. A tool
+from a server the reply doesn't know is never within a limit.
 
 ## 5. Endpoints
 
@@ -276,8 +286,12 @@ agent's address (`/b/<agent>`).
 - **Approvals** come as `RUN_FINISHED` with `outcome: {type: "interrupt",
   interrupts: [...]}`. Answer with a new run whose `resume` is
   `[{interruptId, status: "resolved" | "cancelled", payload}]`; the payload is
-  `{approved: true | false}` (or `{decision}`) for an approval and
-  `{answer}` for a question. The reply continues in that response.
+  `{approved: true | false}` (or `{decision}`, one of the interrupt's
+  `allowedActions`) for an approval and `{answer}` for a question; anything
+  else answers 422. `cancelled` rejects an approval and cancels a question.
+  The reply continues in that response. If it couldn't continue (the response
+  says so), send the same answer again: the saved decision is kept and the
+  reply continues with your fresh token.
 - **Page context**: AG-UI `context`, or `forwardedProps.hubzoid.page`, is passed
   to the agent marked "data, not instructions" (4,000 characters at most) and is
   never used to decide access.
@@ -317,3 +331,5 @@ agent's address (`/b/<agent>`).
 | 403 `app_disabled` | `enabled: false` |
 | 503 `app_unavailable` | The secret isn't set (`hubzoid embed list`), or the JWKS URL can't be fetched |
 | The tool says "no person's token" | The tool isn't in `token_to`, or the pass has no `app_token` |
+| 409 `run_in_progress` | A reply is being written or starting in this chat; rejoin or stop it |
+| 422 `decision_required` | A resume without a clear `{approved: true/false}` |

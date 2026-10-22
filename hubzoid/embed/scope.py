@@ -25,6 +25,7 @@ auth (``credentialOwner: "user"``).
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from contextlib import contextmanager
@@ -52,13 +53,17 @@ _live: ContextVar[_Live | None] = ContextVar("hubzoid_app_token", default=None)
 _tool: ContextVar[str | None] = ContextVar("hubzoid_app_tool", default=None)
 
 
-def hand_over(conversation_id: str, caller: AppCaller) -> None:
-    """Keep ``caller`` for the next reply in ``conversation_id``."""
+def hand_over(conversation_id: str, caller: AppCaller) -> bool:
+    """Keep ``caller`` for the next reply in ``conversation_id``. False when
+    another request's caller is already waiting there: it is never replaced."""
     now = time.monotonic()
     with _lock:
         for key in [k for k, (t, _) in _pending.items() if now - t > _HOLD_SECONDS]:
             _pending.pop(key, None)
+        if conversation_id in _pending:
+            return False
         _pending[conversation_id] = (now, caller)
+        return True
 
 
 def take(conversation_id: str, owner: str) -> AppCaller | None:
@@ -72,9 +77,12 @@ def take(conversation_id: str, owner: str) -> AppCaller | None:
     return caller if caller.subject == owner else None
 
 
-def release(conversation_id: str) -> None:
+def release(conversation_id: str, caller: AppCaller) -> None:
+    """Forget ``caller``'s hand-over when its reply never started (only its own)."""
     with _lock:
-        _pending.pop(conversation_id, None)
+        held = _pending.get(conversation_id)
+        if held is not None and held[1] is caller:
+            _pending.pop(conversation_id, None)
 
 
 def run_identity(caller: AppCaller | None, owner: str, *, record_id: str | None = None):
@@ -140,11 +148,55 @@ def connector_headers(connector_id: str) -> dict | None:
     return {live.header: value}
 
 
-def scrub(value: Any) -> Any:
-    """``value`` with the person's exact app token replaced, wherever it shows."""
+def live_token() -> str | None:
     live = _live.get()
-    if live is None or not live.token:
+    return live.token if live is not None else None
+
+
+def scrub(value: Any, token: str | None = None) -> Any:
+    """``value`` with the person's exact app token replaced, wherever it shows:
+    in text, and inside lists and mappings (keys and values)."""
+    token = token or live_token()
+    if not token:
         return value
     if isinstance(value, str):
-        return value.replace(live.token, "[redacted]")
+        return value.replace(token, "[redacted]") if token in value else value
+    if isinstance(value, dict):
+        return {scrub(k, token): scrub(v, token) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(v, token) for v in value]
+    if isinstance(value, tuple):
+        return tuple(scrub(v, token) for v in value)
     return value
+
+
+class _ScrubbingRecord(logging.LogRecord):
+    """A log record with the reply's app token removed from its message and
+    arguments (a tool's exception text logged by a runtime, for example)."""
+
+    def getMessage(self) -> str:  # noqa: N802 - logging's name
+        message = super().getMessage()
+        token = live_token()
+        return message.replace(token, "[redacted]") if token and token in message else message
+
+
+def _install_log_scrub() -> None:
+    factory = logging.getLogRecordFactory()
+    if getattr(factory, "hubzoid_scrubs", False):
+        return
+
+    def make(*args, **kwargs):
+        record = factory(*args, **kwargs)
+        token = live_token()
+        if token:
+            record.__class__ = _ScrubbingRecord
+            if record.exc_info and record.exc_info[1] is not None and token in str(record.exc_info[1]):
+                record.exc_text = "[a tool error that included the person's app token]"
+                record.exc_info = None
+        return record
+
+    make.hubzoid_scrubs = True
+    logging.setLogRecordFactory(make)
+
+
+_install_log_scrub()

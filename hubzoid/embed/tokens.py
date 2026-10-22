@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import logging
 import threading
 import time
@@ -177,7 +178,7 @@ def _key_and_algs(hub_dir: Path, app: App, header: dict):
 
 def _number(claims: dict, name: str) -> float:
     value = claims.get(name)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise refused("invalid_token", f"The token has no valid {name} claim.")
     return float(value)
 
@@ -258,6 +259,7 @@ def verify(hub_dir: Path, token: str, *, now: float | None = None) -> AppCaller:
     if exp - iat > app.max_lifetime or exp <= iat:
         raise refused("invalid_token", f"The token may last at most {app.max_lifetime} seconds.")
     user_id = claims.get(app.user_claim)
+    # The id exactly as signed: "alice" and " alice " are different people.
     if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 256:
         raise refused("invalid_token", f"The token has no {app.user_claim} claim naming the person.")
     if app.mode == "pass":
@@ -277,7 +279,7 @@ def verify(hub_dir: Path, token: str, *, now: float | None = None) -> AppCaller:
         value = claims.get(name)
         return value.strip()[:320] if isinstance(value, str) else ""
 
-    return AppCaller(app_id=app.id, user_id=user_id.strip(), subject=subject(app.id, user_id.strip()),
+    return AppCaller(app_id=app.id, user_id=user_id, subject=subject(app.id, user_id),
                      name=label(app.name_claim), email=label(app.email_claim), access=access,
                      issued_at=iat, expires_at=exp, app_token=app_token or None)
 

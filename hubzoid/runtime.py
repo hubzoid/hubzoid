@@ -508,6 +508,8 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
             # The call still goes to the server's own tool name (bound when the
             # tool was built); only the name the model sees changes.
             tools = [dataclasses.replace(t, name=connector_tool_name(srv.key, t.name)) for t in tools]
+            for t in tools:  # the connector it comes from, for an embedding app's tool limit
+                t.hubzoid_connector = srv.server_id
             seen: set[str] = set()
             unique = [t for t in tools if not (t.name in seen or seen.add(t.name))]
             if len(unique) != len(tools):

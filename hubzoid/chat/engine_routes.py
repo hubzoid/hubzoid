@@ -332,10 +332,12 @@ class Orchestrator:
                 return False
             from ..embed import scope as app_scope
 
-            app_scope.hand_over(request["conversation_id"], app_caller)
+            if not app_scope.hand_over(request["conversation_id"], app_caller):
+                return False
         from .. import drain
 
         if drain.active():  # continued by the recovery loop after the restart
+            self._release_app(request, app_caller)
             return False
         # The reply resumes for the person who asked, on the session or key
         # that reply ran with: if that one was revoked (or they were signed
@@ -377,7 +379,7 @@ class Orchestrator:
         if app_caller is not None:
             from ..embed import scope as app_scope
 
-            app_scope.release(request["conversation_id"])
+            app_scope.release(request["conversation_id"], app_caller)
 
     async def continue_settled(self, message_id: str) -> None:
         from ..hitl import service

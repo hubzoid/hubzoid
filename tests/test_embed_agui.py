@@ -83,6 +83,9 @@ def test_tool_calls_show_as_agui_tool_events(client):
         assert name in k
     start = next(e for e in evs if e["type"] == "TOOL_CALL_START")
     assert start["toolCallName"] == "read_knowledge"
+    # A call belongs to the text it follows, or to its own round of calls.
+    texts = {e["messageId"] for e in evs if e["type"] == "TEXT_MESSAGE_START"}
+    assert start["parentMessageId"] in texts or ".calls" in start["parentMessageId"]
 
 
 def test_history_is_kept_per_person_and_never_shared(client):
@@ -139,6 +142,58 @@ def test_an_approval_is_an_interrupt_and_resume_continues(client):
     hub_dir = client.app.state.chat.hub_dir
     req = service.get(hub_dir, client.app.state.chat.hub, interrupt["id"])
     assert req["status"] == "approved" and req["decided_via"] == "app"
+
+
+def _resume(client, interrupt_id: str, entry: dict, *, thread: str = "orders"):
+    return client.post("/api/agui", headers=auth(), json={
+        "threadId": thread, "runId": "r-" + str(time.time_ns()), "messages": [], "tools": [], "context": [],
+        "resume": [{"interruptId": interrupt_id, **entry}]})
+
+
+def test_an_unclear_answer_to_an_approval_is_refused(client):
+    from hubzoid.hitl import service
+
+    _, evs = run(client, "please reserve stock", thread="orders")
+    interrupt = evs[-1]["outcome"]["interrupts"][0]
+    for entry in ({"status": "resolved", "payload": {}},
+                  {"status": "resolved", "payload": "yes"},
+                  {"status": "resolved", "payload": {"approved": "true"}},
+                  {"status": "maybe", "payload": {"approved": True}}):
+        assert _resume(client, interrupt["id"], entry).status_code == 422, entry
+    state = client.app.state.chat
+    assert service.get(state.hub_dir, state.hub, interrupt["id"])["status"] == "pending"
+
+
+def test_a_saved_answer_whose_reply_did_not_continue_continues_on_retry(client):
+    from hubzoid.hitl import service
+
+    _, evs = run(client, "please reserve stock", thread="orders")
+    interrupt = evs[-1]["outcome"]["interrupts"][0]
+    state = client.app.state.chat
+    req = service.get(state.hub_dir, state.hub, interrupt["id"])
+    # Decided elsewhere with no fresh token: an app reply never continues on its own.
+    service.decide(state.hub_dir, state.hub, req["id"], account_id=req["requester_id"],
+                   email=req["requester_id"], decision="approve")
+    assert service.get(state.hub_dir, state.hub, req["id"])["continued"] is False
+    resp = _resume(client, interrupt["id"], {"status": "resolved", "payload": {"approved": True}})
+    assert resp.status_code == 200, resp.text
+    assert kinds([e for e in events(resp.text) if isinstance(e, dict)])[-1] == "RUN_FINISHED"
+    assert service.get(state.hub_dir, state.hub, req["id"])["continued"] is True
+    again = _resume(client, interrupt["id"], {"status": "resolved", "payload": {"approved": True}})
+    assert again.status_code == 409
+
+
+def test_a_cancelled_question_is_cancelled_not_rejected(client):
+    from hubzoid.hitl import service
+
+    _, evs = run(client, "askme which warehouse", thread="q")
+    interrupt = evs[-1]["outcome"]["interrupts"][0]
+    blank = _resume(client, interrupt["id"], {"status": "resolved", "payload": {"answer": "  "}}, thread="q")
+    assert blank.status_code == 422
+    resp = _resume(client, interrupt["id"], {"status": "cancelled"}, thread="q")
+    assert resp.status_code == 200, resp.text
+    state = client.app.state.chat
+    assert service.get(state.hub_dir, state.hub, interrupt["id"])["status"] == "cancelled"
 
 
 @pytest.mark.parametrize("headers,code", [

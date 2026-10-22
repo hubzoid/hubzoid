@@ -782,7 +782,13 @@ def _identity_checked(options, hub_dir, ident):
     """A PreToolUse hook for the tools Hubzoid does not wrap itself (outside
     MCP servers, Claude's own tools): the same per-call check as every hub
     tool (``access.evaluator.check_run``). Hub tools check inside their own
-    wrapper, so they are skipped here."""
+    wrapper, so they are skipped here.
+
+    For a person an embedding app vouched for, the tool must also be within
+    their access: ``mcp__<server>__<tool>`` is read against the servers this
+    turn knows, longest name first (``erp__admin`` is never taken for
+    ``erp``), and a delegate by its own tool name. A PostToolUse hook then
+    removes their app token from any tool output before the model sees it."""
     import asyncio
     import dataclasses
     from pathlib import Path
@@ -790,21 +796,34 @@ def _identity_checked(options, hub_dir, ident):
     from claude_agent_sdk import HookMatcher
 
     from .access.evaluator import check_run
+    from .access.guard import server_source
+    from .embed import scope as app_scope
 
     own = f"mcp__{_MCP_NAMESPACE}__"
+    servers = sorted((str(k) for k in (getattr(options, "mcp_servers", None) or {})), key=len, reverse=True)
+
+    def named(hook_input) -> dict:
+        full = str((hook_input or {}).get("tool_name") or "")
+        if full == SUBAGENT_SPAWN_TOOL:
+            from . import handover
+
+            kind = str(((hook_input or {}).get("tool_input") or {}).get("subagent_type") or "")
+            return {"tool": handover.tool_name(kind) if kind else full}
+        if not full.startswith("mcp__"):
+            return {"tool": full}
+        rest = full[len("mcp__"):]
+        for key in servers:
+            if rest.startswith(key + "__"):
+                hub_server, connector = server_source(Path(hub_dir), key)
+                return {"tool": rest[len(key) + 2:], "server": hub_server, "connector": connector}
+        return {"tool": full, "server": "?unknown"}   # a server this turn doesn't know: never within a limit
 
     async def admit(tool_input, _tool_use_id, _context):
         full = str((tool_input or {}).get("tool_name") or "")
         if full.startswith(own):
             return {}
-        # mcp__<server>__<tool>: a person an embedding app vouched for may use
-        # only the servers and tools within their access.
-        server, _, tool = full[len("mcp__"):].partition("__") if full.startswith("mcp__") else ("", "", full)
-        connector = server[len("my_"):] if server.startswith("my_") else None
         try:
-            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident, tool=tool or full,
-                                               server=None if connector else (server or None),
-                                               connector=connector)
+            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident, **named(tool_input))
         except Exception:  # noqa: BLE001 - fail closed
             decision = None
         if decision is not None and decision.allowed:
@@ -816,6 +835,18 @@ def _identity_checked(options, hub_dir, ident):
 
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    token = app_scope.live_token()
+    if token:
+        async def scrubbed(hook_input, _tool_use_id, _context):
+            name = str((hook_input or {}).get("tool_name") or "")
+            response = (hook_input or {}).get("tool_response")
+            clean = app_scope.scrub(response, token)
+            if clean == response:
+                return {}
+            key = "updatedMCPToolOutput" if name.startswith("mcp__") else "updatedToolOutput"
+            return {"hookSpecificOutput": {"hookEventName": "PostToolUse", key: clean}}
+
+        hooks["PostToolUse"] = [HookMatcher(hooks=[scrubbed]), *hooks.get("PostToolUse", [])]
     return dataclasses.replace(options, hooks=hooks)
 
 

@@ -164,15 +164,24 @@ def test_the_claude_hook_names_server_and_connector(hub):
     @dataclasses.dataclass
     class Opts:
         hooks: dict
+        mcp_servers: dict
 
     original = evaluator.check_run
     evaluator.check_run = fake_check
     try:
-        patched = factory_claude._identity_checked(Opts(hooks={}), hub, ident())
+        servers = {"my_erp": {}, "odoo": {}, "odoo__admin": {}}
+        patched = factory_claude._identity_checked(Opts(hooks={}, mcp_servers=servers), hub, ident())
         hook = patched.hooks["PreToolUse"][0].hooks[0]
         asyncio.run(hook({"tool_name": "mcp__my_erp__list_orders"}, "id", None))
         assert seen == {"tool": "list_orders", "server": None, "connector": "erp"}
+        seen.clear()
         asyncio.run(hook({"tool_name": "mcp__odoo__search"}, "id", None))
         assert seen == {"tool": "search", "server": "odoo", "connector": None}
+        seen.clear()
+        asyncio.run(hook({"tool_name": "mcp__odoo__admin__drop"}, "id", None))   # the longer server wins
+        assert seen == {"tool": "drop", "server": "odoo__admin", "connector": None}
+        seen.clear()
+        asyncio.run(hook({"tool_name": "mcp__stranger__x"}, "id", None))          # unknown: never in a limit
+        assert seen["server"] == "?unknown"
     finally:
         evaluator.check_run = original
