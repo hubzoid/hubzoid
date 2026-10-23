@@ -12,6 +12,20 @@ import { kindOf, type Kind } from "../lib/connections";
 import { toast } from "../components/toast";
 import { Button, ConfirmDialog, Notice, Spinner, cx } from "../components/ui";
 import { SettingsFrame } from "./SettingsFrame";
+import { LOGOS } from "../../screens/connectorLogos";
+
+/** A known service's mark (by its connector id or name), else its initial:
+ *  the same logos as the agent's Connectors tab (founder review, HUB-140). */
+function ConnectionLogo({ c }: { c: Connection }) {
+  const key = c.connector_id.toLowerCase().replace(/-/g, "_");
+  const known = LOGOS[key] ?? LOGOS[c.name.toLowerCase().replace(/\s+/g, "_")];
+  if (!known) return <>{c.name.slice(0, 1).toUpperCase()}</>;
+  return (
+    <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden className={known.ink ? `logo ink-${known.ink}` : "logo"} style={{ color: known.hex }}>
+      <path d={known.path} fill="currentColor" />
+    </svg>
+  );
+}
 
 
 const badge: Record<Kind, { text: string; className: string }> = {
@@ -140,7 +154,7 @@ export default function ConnectionsPage({
             return (
               <li key={c.connector_id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 sm:px-5" data-testid={`connection-${c.connector_id}`}>
                 <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-line bg-sunken font-mono text-sm font-semibold text-ink">
-                  {c.name.slice(0, 1).toUpperCase()}
+                  <ConnectionLogo c={c} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">

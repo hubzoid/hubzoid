@@ -3501,3 +3501,9 @@
 .console-embed .hz-config-page > .panel + .panel,
 .hz-config-page > * + * { margin-top: 32px !important; padding-top: 24px !important; border-top: 1px solid var(--hz-line) !important; }
 .hz-config-page h4.ant-typography { margin-top: 28px !important; padding-top: 20px; border-top: 1px solid var(--hz-line-soft); }
+
+/* Connected accounts: a brand mark too dark (Notion) or too light for the
+   theme takes the text colour, as on the Connectors tab. */
+:root[data-theme="light"] .hz-connection-list .logo.ink-light,
+:root[data-theme="dark"] .hz-connection-list .logo.ink-dark,
+:root[data-theme="oled"] .hz-connection-list .logo.ink-dark { color: var(--hz-ink) !important; }
