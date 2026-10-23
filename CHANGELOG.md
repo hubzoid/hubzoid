@@ -112,6 +112,10 @@ See [upgrading to 2.0.2](docs/UPGRADING.md#upgrading-to-202).
 - A sandbox profile may set `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`,
   `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (they were refused as
   credentials), so a coding agent can commit.
+- The message box is empty after sending a first message with an attachment;
+  it used to keep the text, ready to send twice ([#120](https://github.com/hubzoid/hubzoid/issues/120)).
+- Account shows no password form to someone who signs in with Google or a
+  company sign-in.
 - Docs: MCP does not offer `remember` ([#56](https://github.com/hubzoid/hubzoid/issues/56)); five settings no doc
   named are documented ([#45](https://github.com/hubzoid/hubzoid/issues/45)); Inbox and Settings replace "Waiting for
   you" and "the Console".
