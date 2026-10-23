@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { Lock, Plus } from "lucide-react";
+import { Lock } from "lucide-react";
 import { ApiError, secretsRequest } from "../api";
 import type { Hub, SecretList, SecretLevel, SecretRow } from "../api";
 import { InfoHelp, LoadState } from "../components/common";
@@ -73,8 +73,8 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
         <InfoHelp text="API keys and tokens this agent uses. The same list as hubzoid secrets list." />
       </Title>
       <Text type="secondary" className="hint">
-        Nobody can read a value back once saved. It applies after the agent restarts.
-        <InfoHelp text="A value set in the environment, a .env file or an AWS secret wins and shows as locked." />
+        Set keys in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent. Values are never shown here.
+        <InfoHelp text="Hubzoid stores only keys it obtains itself, such as a connection's sign-in. A value set in the environment, a .env file or an AWS secret shows as locked." />
       </Text>
       {restricted_hidden > 0 && (
         <Text type="secondary" className="hint">
@@ -85,19 +85,12 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
         <Alert type={notice.type} showIcon closable onClose={() => setNotice(null)} style={{ marginBottom: 16 }}
           title={notice.text} />
       )}
-      {can_manage && (
-        <Space style={{ marginBottom: 12 }}>
-          <Button type="primary" icon={<Plus size={15} />} onClick={() => setEditing({ mode: "add" })}>
-            Add secret
-          </Button>
-        </Space>
-      )}
       <Table<SecretRow>
         rowKey={(r) => `${r.level}:${r.name}`}
         size="small"
         pagination={false}
         dataSource={secrets}
-        locale={{ emptyText: "No secrets are set or expected for this agent. Add one, or list the names it needs in .env.example." }}
+        locale={{ emptyText: "No secrets are set or expected for this agent. List the names it needs in .env.example." }}
         columns={[
           {
             title: "Name",
@@ -164,10 +157,8 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
                         <Button size="small" disabled>Locked</Button>
                       </Tooltip>
                     ) : (
+                      // Typed keys live in .env (HUB-140 S5): only a stored value can be removed here.
                       <Space size={4}>
-                        <Button size="small" onClick={() => setEditing({ mode: "set", row: r })}>
-                          {r.stored ? "Replace" : "Set"}
-                        </Button>
                         {r.stored && (
                           <Popconfirm
                             title={`Remove ${r.name}?`}

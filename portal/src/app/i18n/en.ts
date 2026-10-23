@@ -1065,6 +1065,7 @@ export const en = {
     waitingFor: (who: string) => (who ? `Waiting for ${who}` : "Waiting for the person who asked"),
     unknownOutcome: "We could not confirm your answer. The card shows its current state.",
     openPlan: (name: string, version?: number) => (version ? `Open ${name}, version ${version}` : `Open ${name}`),
+    viewPlan: (version?: number) => (version ? `View plan (version ${version})` : "View plan"),
     inboxTitle: "Waiting for you",
     inboxEmpty: "Nothing needs your answer.",
     inboxAsked: "You asked",

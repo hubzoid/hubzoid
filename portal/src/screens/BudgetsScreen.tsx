@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEditing } from "../app/lib/editing";
 import { Alert, App, Button, Card, Descriptions, Empty, Input, Modal, Select, Space, Spin, Table, Tag, Typography } from "antd";
 import { ApiError, request } from "../api";
 import { useData } from "../hooks/useData";
@@ -43,6 +44,8 @@ const errorMessage = (e: unknown) => {
 export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
   const { message } = App.useApp();
   const [hub, setHub] = useState<string | undefined>(hubs[0]?.key);
+  // Saving writes budgets.yaml: Beta, off by default (HUB-140 D9, Codex review).
+  const files = useEditing(hub);
   const base = hub ? `/hubs/${encodeURIComponent(hub)}/budgets` : null;
   const data = useData<Status>(base, { keepStale: true });
   const [draft, setDraft] = useState<string>("");
@@ -152,13 +155,17 @@ export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
           <Card size="small" title="budgets.yaml">
             <Space direction="vertical" style={{ width: "100%" }}>
               <Input.TextArea rows={10} value={draft} onChange={(e) => setDraft(e.target.value)}
-                className="mono" aria-label="budgets.yaml" spellCheck={false} />
+                className="mono" aria-label="budgets.yaml" spellCheck={false} readOnly={!files.editable} />
               {problem && <Alert type="error" showIcon title={problem} />}
-              <Space>
-                <Button onClick={check}>Check</Button>
-                <Button type="primary" loading={busy} disabled={!!data.error || data.refreshing} onClick={save}>Save</Button>
-                <Text type="secondary">Revision {s.revision}</Text>
-              </Space>
+              {files.editable ? (
+                <Space>
+                  <Button onClick={check}>Check</Button>
+                  <Button type="primary" loading={busy} disabled={!!data.error || data.refreshing} onClick={save}>Save</Button>
+                  <Text type="secondary">Revision {s.revision}</Text>
+                </Space>
+              ) : (
+                <Text type="secondary">{files.message}</Text>
+              )}
             </Space>
           </Card>
         </Space>

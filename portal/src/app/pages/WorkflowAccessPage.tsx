@@ -43,7 +43,9 @@ export default function WorkflowAccessPage({ hub }: { hub?: string } = {}) {
   const agents = hub ? all.filter((a) => a.hub === hub) : all;
   const [agentId, setAgentId] = useState<string | null>(agents[0]?.id ?? null);
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  const base = agent?.api_base ?? "";
+  // An administrator may manage an agent they don't chat with (it isn't in
+  // the chat list): address it directly, never another agent's policy.
+  const base = agent?.api_base ?? (hub ? `/b/${encodeURIComponent(hub)}` : "");
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [resources, setResources] = useState<Resource[]>([]);
   const [people, setPeople] = useState<string[]>([]);

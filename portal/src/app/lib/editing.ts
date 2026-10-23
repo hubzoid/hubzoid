@@ -1,7 +1,7 @@
 // Whether this agent's files may be changed from the browser (Beta, off by
 // default: hubzoid/editing.py). Off, Settings shows the files read-only with
 // where to change them instead.
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { get, hubUrl } from "./api";
 import { useApp } from "./app-context";
 
@@ -24,4 +24,13 @@ export function useEditing(hub?: string): Editing {
     };
   }, [base]);
   return state;
+}
+
+/** The agent page's answer, for its tabs: a screen hides controls that would
+ *  write the agent's files when it is false (Codex review of 2.0.2). Outside
+ *  an agent page nothing is known, so nothing is hidden. */
+export const AgentEditing = createContext<Editing | null>(null);
+
+export function useAgentEditing(): Editing {
+  return useContext(AgentEditing) ?? { ...OFF, editable: true };
 }

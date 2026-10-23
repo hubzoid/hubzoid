@@ -16,7 +16,7 @@ import { AgentChannels } from "./ChannelsScreen";
 import { AgentIntake } from "./IntakeScreen";
 import { AgentFeedback } from "./FeedbackScreen";
 import { AgentSetup } from "./SetupScreen";
-import { useEditing } from "../app/lib/editing";
+import { AgentEditing, useEditing } from "../app/lib/editing";
 import { UnderTabs } from "../lib/underTabs";
 import { WorkItemsScreen } from "./WorkItemsScreen";
 import { agentName } from "../lib/agentName";
@@ -112,6 +112,7 @@ export function AgentDetail({
           ))}
         </nav>
       )}
+      <AgentEditing.Provider value={editing}>
       <UnderTabs.Provider value={tab !== "config"}>
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} embedded={embedded} />}
@@ -148,6 +149,7 @@ export function AgentDetail({
         {tab === "feedback" && <AgentFeedback hub={hub} />}
       </div>
       </UnderTabs.Provider>
+      </AgentEditing.Provider>
     </>
   );
 }

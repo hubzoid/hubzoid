@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useAgentEditing } from "../app/lib/editing";
 import {
   Alert,
   App,
@@ -160,6 +161,8 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   const data = useConnectors();
   const [offering, setOffering] = useState(false);
   const [editing, setEditing] = useState<Connector | "new" | null>(null);
+  // Off (the default), connectors are read here and changed in their files.
+  const files = useAgentEditing();
   const [test, setTest] = useState<TestRun | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
 
@@ -269,7 +272,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               <InfoHelp text={`Remote MCP servers ${hub.name} can use. People also need “Connect …” or “Use …” in this agent’s Access.`} />
             </Title>
           </div>
-          <Space wrap>
+          {files.editable && <Space wrap>
             {others.length > 0 && (
               <Select
                 aria-label="Offer a connector another agent offers"
@@ -284,9 +287,11 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
             <Button type="primary" icon={<Plug size={16} />} onClick={() => setEditing("new")}>
               Add connector
             </Button>
-          </Space>
+          </Space>}
         </div>
-        <Paragraph type="secondary">Add or edit connectors here, or edit their YAML files in the deployment folder. Both use the same settings.</Paragraph>
+        <Paragraph type="secondary">{files.editable
+          ? "Add or edit connectors here, or edit their YAML files in the deployment folder. Both use the same settings."
+          : files.message ?? "Connectors are files under connectors/ in the deployment folder."}</Paragraph>
         {!list ? (
           <LoadState error={data.error} retry={data.reload} />
         ) : (
@@ -303,7 +308,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               locale={{
                 emptyText: (
                   <Empty description="No connectors yet. Add one to give agents access to an app.">
-                    <Button onClick={() => setEditing("new")}>Add connector</Button>
+                    {files.editable && <Button onClick={() => setEditing("new")}>Add connector</Button>}
                   </Empty>
                 ),
               }}
@@ -388,7 +393,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
                       <Button icon={<FlaskConical size={14} />} onClick={() => void runTest(c)}>
                         Test
                       </Button>
-                      <Dropdown
+                      {files.editable && <Dropdown
                         trigger={["click"]}
                         menu={{
                           items: [
@@ -401,7 +406,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
                         }}
                       >
                         <Button icon={<MoreHorizontal size={16} />} aria-label={`More actions for ${c.name}`} />
-                      </Dropdown>
+                      </Dropdown>}
                     </Space>
                   ),
                 },

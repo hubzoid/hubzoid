@@ -237,8 +237,11 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const [query, setQuery] = useState("");
   // An old address (a bookmark, a link in an email) opens where the page lives now.
   useEffect(() => {
-    const to = movedTo(location.hash);
+    let to = movedTo(location.hash);
     if (!to) return;
+    // An old review link without its agent: someone who reviews on the agents
+    // (and has no My proposals) goes to the agents list, not their profile.
+    if (to.startsWith("/me/proposals") && !items.some((i) => i.key === "proposals") && team) to = "/agents";
     if (to.startsWith("inbox:")) navigate(`/inbox${to.slice("inbox:".length)}`, { replace: true });
     else {
       history.replaceState(null, "", `/settings#${to}`);

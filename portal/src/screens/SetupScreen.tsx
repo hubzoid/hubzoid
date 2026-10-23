@@ -4,7 +4,7 @@ import { ApiError, hubRequest } from "../api";
 import type { Hub, HubCheck, HubSetting, HubSettings, SettingProblem } from "../api";
 import { InfoHelp, LoadState } from "../components/common";
 import { errorText } from "../hooks/useData";
-import { agentHref } from "../hooks/useRoute";
+import { useAgentEditing } from "../app/lib/editing";
 
 const { Title, Text } = Typography;
 
@@ -23,6 +23,7 @@ function control(s: HubSetting) {
 
 /** Agents → agent → Setup: the settings the agent declares, and its own checks. */
 export function AgentSetup({ hub }: { hub: Hub }) {
+  const editing = useAgentEditing();
   const base = `/api/hubs/${encodeURIComponent(hub.key)}`;
   const [state, setState] = useState<{ data?: HubSettings; error?: string }>({});
   const [revision, setRevision] = useState(0);
@@ -125,7 +126,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
               description={<ul style={{ margin: 0, paddingLeft: 18 }}>{problems.map((p, i) => <li key={i}>{p.message}</li>)}</ul>} />
           )}
           {plain.length > 0 && (
-            <Form form={form} layout="vertical" requiredMark style={{ maxWidth: 640 }}>
+            <Form form={form} layout="vertical" requiredMark style={{ maxWidth: 640 }} disabled={!editing.editable}>
               {plain.map((s) => (
                 <Form.Item
                   key={s.name}
@@ -140,14 +141,20 @@ export function AgentSetup({ hub }: { hub: Hub }) {
                   {control(s)}
                 </Form.Item>
               ))}
-              <Button type="primary" loading={saving} onClick={save}>Save settings</Button>
-              <Text type="secondary" style={{ marginLeft: 12 }}>Applies after the agent restarts.</Text>
+              {editing.editable ? (
+                <>
+                  <Button type="primary" loading={saving} onClick={save}>Save settings</Button>
+                  <Text type="secondary" style={{ marginLeft: 12 }}>Applies after the agent restarts.</Text>
+                </>
+              ) : (
+                <Text type="secondary">{editing.message ?? "Change these in the agent's settings.yaml."}</Text>
+              )}
             </Form>
           )}
           {secrets.length > 0 && (
             <>
               <Title level={4} style={{ marginTop: 24 }}>Secret settings</Title>
-              <Text type="secondary">Values are never shown. Set them in the <a href={agentHref(hub.key, "secrets")}>Secrets</a> tab or with hubzoid secrets set.</Text>
+              <Text type="secondary">Values are never shown. Set them in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent.</Text>
               <Table<HubSetting>
                 rowKey="name" size="small" pagination={false} style={{ marginTop: 8 }} dataSource={secrets}
                 columns={[
