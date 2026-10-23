@@ -1,9 +1,10 @@
 # The Hubzoid API
 
 What another program can call on a Hubzoid agent: a script, a CI job, your own
-app's server, or a page that embeds the chat. Every agent serves a reference
-of these routes at `/docs` (and the schema at `/openapi.json`), titled
-**Hubzoid API** with the installed version. It lists only the public API;
+app's server, or a page that embeds the chat. The deployment serves a
+reference of these routes at `/docs` (and the schema at `/openapi.json`),
+titled **Hubzoid API** with the installed version. Every agent has the same
+routes under its own address (below). The reference lists only the public API;
 the web app's own routes are left out.
 
 ## Where to send requests

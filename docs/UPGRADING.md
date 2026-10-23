@@ -46,7 +46,7 @@ No database or file changes. What behaves differently:
 - **API reference** (`/docs`, `/openapi.json`) is titled Hubzoid API with the
   real version and lists only the public API. See [the API guide](api.md).
 - **Embedded chat** (AG-UI) is new. See [embedding](embedding.md).
-- `typer` from 0.26.8, so `hubzoid[parsing]` (docling) installs alongside.
+- `typer` from 0.26.8, so docling (2.60 and later) installs alongside Hubzoid in the same environment.
 
 ## One run mode
 

@@ -3385,6 +3385,7 @@ app.add_typer(
     name="parity",
     help="The chat parity ledger: validate, coverage, candidate, review, freeze.",
     rich_help_panel="Commands",
+    hidden=True,  # a maintainers' release check, not a builder command (HUB-140 F24)
 )
 app.add_typer(
     branding_app,
