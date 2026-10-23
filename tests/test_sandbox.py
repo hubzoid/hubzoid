@@ -70,6 +70,12 @@ def test_files_refuse_what_cannot_be_enforced(hub_dir):
     assert bad(hub_dir, "x", PROFILE.replace("deny_all", "allow_all")).code == "network_mode_unsupported"
     assert bad(hub_dir, "x", PROFILE + "env:\n  GITHUB_TOKEN: abc\n").code == "secret_in_profile"
     assert bad(hub_dir, "x", PROFILE + "env:\n  NOTE: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n").code == "secret_in_profile"
+    # A commit identity is not a credential (HUB-140, session B); other GIT_ names still are.
+    ident = ("env:\n  GIT_AUTHOR_NAME: Factory Bot\n  GIT_AUTHOR_EMAIL: bot@users.noreply.github.com\n"
+             "  GIT_COMMITTER_NAME: Factory Bot\n  GIT_COMMITTER_EMAIL: bot@users.noreply.github.com\n")
+    (hub_dir / "sandboxes" / "ident.yaml").write_text(PROFILE + ident)
+    assert config.load_profile(hub_dir, "ident").env["GIT_AUTHOR_NAME"] == "Factory Bot"
+    assert bad(hub_dir, "x", PROFILE + "env:\n  GIT_ASKPASS: /bin/echo\n").code == "secret_in_profile"
     assert "digest" in bad(hub_dir, "x", PROFILE.replace("base: hubzoid-default", "ref: python:3.12")).message
     assert "not supported" in bad(hub_dir, "x", PROFILE.replace("base: hubzoid-default", "dockerfile: D")).message
     assert "inside /workspace" in bad(hub_dir, "x", PROFILE + "setup:\n  command: make\n  cwd: ../etc\n").message

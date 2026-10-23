@@ -65,6 +65,9 @@ PRESETS = {
 _SECRET_PREFIXES = ("HUBZOID_", "GIT_", "GH_", "AWS_", "OPENAI_", "ANTHROPIC_")
 _SECRET_WORDS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL")
 _PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "FTP_PROXY"}
+# A commit's author and committer are identity, not credentials (HUB-140,
+# session B): allowed by name, their values still checked like any other.
+_GIT_IDENTITY = {"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"}
 #: Keys the specification names that this version cannot enforce yet. They
 #: are refused rather than accepted with no effect.
 _LATER = {
@@ -379,8 +382,8 @@ def load_profile(hub_dir, profile_id: str) -> Profile:
     env = {}
     for name, value in env_r.data.items():
         upper = str(name).upper()
-        if (not ENV_RE.match(str(name)) or upper.startswith(_SECRET_PREFIXES) or upper in _PROXY_VARS
-                or any(w in upper for w in _SECRET_WORDS)):
+        if not ENV_RE.match(str(name)) or (upper not in _GIT_IDENTITY and (
+                upper.startswith(_SECRET_PREFIXES) or upper in _PROXY_VARS or any(w in upper for w in _SECRET_WORDS))):
             env_r.fail(name, f"{name} looks like a credential or a proxy setting. Secrets never go into a "
                        "sandbox", code="secret_in_profile")
         if not isinstance(value, (str, int, float)) or isinstance(value, bool) or len(str(value)) > 4096:
