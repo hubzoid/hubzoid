@@ -3510,7 +3510,8 @@
 
 /* A row that opens something: its name turns orange on hover (founder review). */
 .hz-agent-row:not(.is-head):hover .hz-agent-name,
-.people-table tr.clickable:hover .person-cell strong,
-.people-table tr.clickable:hover .person-name,
+.people-table tr.clickable:hover .person-cell > strong,
+.people-table tr.clickable:hover .person-cell > a,
+.people-table tr.clickable:hover .person-cell > .ant-typography strong,
 .hz-workflow-table .hz-workflow-name:hover { color: var(--hz-accent-text); }
 .hz-agent-name, .hz-workflow-table .hz-workflow-name { transition: color 120ms ease; }
