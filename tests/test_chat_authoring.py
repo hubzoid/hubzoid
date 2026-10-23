@@ -60,7 +60,8 @@ def test_prompts_render_with_checked_variables(client, hub):
     assert undeclared.status_code == 422
 
 
-def test_openapi_import_converts_only_selected_operations(client):
+def test_openapi_import_converts_only_selected_operations(client, monkeypatch):
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")   # Beta only (HUB-140 F30)
     spec = {"openapi": "3.0.3", "info": {"title": "Stock", "version": "1"},
             "servers": [{"url": "https://stock.example/api"}],
             "paths": {"/items/{sku}": {

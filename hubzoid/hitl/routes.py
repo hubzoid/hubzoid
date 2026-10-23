@@ -137,6 +137,9 @@ def mount(app: FastAPI, ctx) -> None:
 
         if datadir.hub_read_only(hub_dir):
             raise error(409, "hub_read_only", datadir.READ_ONLY)
+        from .. import editing
+
+        editing.check(hub_dir, "the approval rules (hitl.yaml)")
         body = await read_json(request)
         try:
             cfg = await db(cfglib.apply, hub_dir, str(body.get("text") or ""),

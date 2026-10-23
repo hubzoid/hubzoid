@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request
 
-from .. import personal_memory
+from .. import editing, personal_memory
 from ..chat.common import db
 from ..chat.engine_routes import read_json
 from ..control.http import error
@@ -72,6 +72,7 @@ def mount(app: FastAPI, ctx) -> None:
     @app.post("/api/hub-changes")
     async def propose(request: Request):
         _uid, email = await who(request, mutation=True)
+        editing.check(hub_dir, "the agent's instructions and knowledge")
         body = await read_json(request)
         try:
             ch = await db(service.propose, hub_dir, title=body.get("title"), edits=body.get("edits"),
@@ -87,6 +88,9 @@ def mount(app: FastAPI, ctx) -> None:
         human_only(request, user)
         email = (getattr(user, "email", "") or "").lower()
         body = await read_json(request)
+        if str(body.get("decision") or "") != "reject":
+            # Rejecting a waiting change is always allowed; applying writes files.
+            editing.check(hub_dir, "the agent's instructions and knowledge")
         try:
             ch = await db(service.decide, hub_dir, cid, actor=email, decision=str(body.get("decision") or ""),
                           expected_revision=body.get("expected_revision"), note=body.get("note"))
@@ -97,12 +101,19 @@ def mount(app: FastAPI, ctx) -> None:
     @app.post("/api/hub-changes/{cid}/undo")
     async def undo(cid: int, request: Request):
         _uid, email = await who(request, mutation=True)
+        editing.check(hub_dir, "the agent's instructions and knowledge")
         await reader(request)
         try:
             ch = await db(service.undo, hub_dir, cid, actor=email)
         except service.ChangeError as exc:
             raise _err(exc)
         return service.public(ch)
+
+    @app.get("/api/editing")
+    async def editing_status(request: Request):
+        """Whether the web app offers editors for this agent's files (Beta)."""
+        await reader(request)
+        return editing.status(hub_dir)
 
     # -- personal memory ----------------------------------------------------------------
     @app.get("/api/memory")

@@ -32,7 +32,8 @@ from pathlib import Path
 from typing import Any
 
 FILE = "hubzoid.yaml"
-_KEYS = {"version", "public_url", "sign_in", "owner", "hubs", "brand", "chat", "diagnostics", "apps"}
+_KEYS = {"version", "public_url", "sign_in", "owner", "hubs", "brand", "chat", "diagnostics", "apps",
+         "in_app_editing"}
 
 
 class DeployFileError(ValueError):
@@ -44,6 +45,8 @@ class DeployFile:
     path: Path
     public_url: str | None = None
     sign_in: bool | None = None
+    #: Beta: change agent files from the browser (see hubzoid.editing). Off by default.
+    in_app_editing: bool | None = None
     owner: str | None = None
     hubs: list[str] = field(default_factory=list)
     brand: dict | None = None
@@ -125,6 +128,10 @@ def load(path: Path) -> DeployFile:
         if not isinstance(data["sign_in"], bool):
             raise _fail(loaded, "/sign_in", "sign_in is true or false.")
         out.sign_in = data["sign_in"]
+    if "in_app_editing" in data:
+        if not isinstance(data["in_app_editing"], bool):
+            raise _fail(loaded, "/in_app_editing", "in_app_editing is true or false.")
+        out.in_app_editing = data["in_app_editing"]
     owner = data.get("owner")
     if owner is not None:
         if not isinstance(owner, str) or "@" not in owner:
@@ -146,7 +153,8 @@ def load(path: Path) -> DeployFile:
 
 
 #: deployment-file key -> the environment name that can fill it
-ENV_NAMES = {"public_url": "HUBZOID_PUBLIC_URL", "sign_in": "HUBZOID_AUTH", "owner": "HUBZOID_ADMIN_EMAIL"}
+ENV_NAMES = {"public_url": "HUBZOID_PUBLIC_URL", "sign_in": "HUBZOID_AUTH", "owner": "HUBZOID_ADMIN_EMAIL",
+             "in_app_editing": "HUBZOID_IN_APP_EDITING"}
 
 
 def environment(df: DeployFile, env=None) -> tuple[dict[str, str], list[str]]:
@@ -163,10 +171,10 @@ def environment(df: DeployFile, env=None) -> tuple[dict[str, str], list[str]]:
         if mine is None:
             continue
         theirs = (env.get(name) or "").strip()
-        if key == "sign_in":
+        if key in ("sign_in", "in_app_editing"):
             text = "true" if mine else "false"
             if theirs and settingslib.truthy(theirs) != mine:
-                problems.append(f"{df.path} sets sign_in: {text}, but {name}={theirs}. Set it in one place.")
+                problems.append(f"{df.path} sets {key}: {text}, but {name}={theirs}. Set it in one place.")
         else:
             text = str(mine)
             if theirs and theirs.rstrip("/").lower() != text.rstrip("/").lower():
