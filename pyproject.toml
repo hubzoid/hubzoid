@@ -53,7 +53,7 @@ dependencies = [
   "python-dotenv>=1.2,<2",
   "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42 (connected_accounts / auth_configs / link)
   "opentelemetry-proto>=1.44,<2",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
-  "typer>=0.27,<1",
+  "typer>=0.26.8,<1",  # 0.26.8: the newest docling (2.140) allows (HUB-140 F26)
   "jinja2>=3.1.6,<4",
   "slack-bolt>=1.30,<2",
   "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
