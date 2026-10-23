@@ -82,3 +82,28 @@ def test_a_hub_command_gets_the_deployments_public_url(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://other.example.com")   # the environment wins
     _hubarg.deployment_environment(root / "hubs" / "ops")
     assert os.environ["HUBZOID_PUBLIC_URL"] == "https://other.example.com"
+
+
+def test_a_hub_option_resolves_too_and_embed_spans_the_deployment(tmp_path, monkeypatch):
+    """Found in the HUB-140 proof: `hubzoid embed secret` (a --hub option) said
+    ". is not a hub folder" in a deployment folder."""
+    root = _deployment(tmp_path, ["ops", "desk"])
+    app = typer.Typer(cls=_hubarg.HubArgGroup)
+    seen = {}
+    embed = typer.Typer()
+    app.add_typer(embed, name="embed")
+
+    @embed.command("list")
+    def embed_list(hub: Path = typer.Option(Path("."), "--hub")):
+        seen["embed"] = hub
+
+    @app.command("chat")
+    def chat(hub: Path = typer.Option(Path("."), "--hub")):
+        seen["chat"] = hub
+
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    assert runner.invoke(app, ["embed", "list"]).exit_code == 0
+    assert seen["embed"] == (root / "ops").resolve()
+    out = runner.invoke(app, ["chat"])
+    assert out.exit_code == 2 and "hubzoid chat --hub ops" in out.output

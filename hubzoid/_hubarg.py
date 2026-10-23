@@ -5,8 +5,9 @@ holds ``hubzoid.yaml`` (several hubs, no ``AGENTS.md``) that used to reach code
 that expects a hub and fail with a traceback. Here, once for the whole CLI:
 
 - a deployment of one hub means that hub;
-- account and backup commands (``admin``, ``backup``) work on the whole
-  deployment, so they take its first hub (they read the shared store);
+- account, backup, brand and embedded-app commands (``admin``, ``backup``,
+  ``branding``, ``embed``) work on the whole deployment, so they take its
+  first hub (they read the shared store and ``hubzoid.yaml``);
 - any other command asks which hub, naming them.
 """
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 import typer
 
 #: Commands whose work spans the deployment: any hub of it gives the same result.
-DEPLOYMENT_WIDE = frozenset({"admin", "backup"})
+DEPLOYMENT_WIDE = frozenset({"admin", "backup", "embed", "branding"})
 _NAMES = ("hub", "hub_dir")
 
 
@@ -35,7 +36,7 @@ def _hubs(folder: Path) -> list[Path] | None:
         return None
 
 
-def resolve(value: Path, *, command: str = "", deployment_wide: bool = False) -> Path:
+def resolve(value: Path, *, command: str = "", deployment_wide: bool = False, flag: str = "") -> Path:
     """The hub ``value`` stands for (see the module docstring)."""
     folder = Path(value)
     hubs = _hubs(folder.resolve()) if folder.is_dir() else None
@@ -44,7 +45,8 @@ def resolve(value: Path, *, command: str = "", deployment_wide: bool = False) ->
     if len(hubs) == 1 or deployment_wide:
         return hubs[0]
     names = ", ".join(h.name for h in hubs)
-    example = f"hubzoid {command} {hubs[0].name}".replace("  ", " ") if command else f"... {hubs[0].name}"
+    named = f"{flag} {hubs[0].name}" if flag else hubs[0].name
+    example = f"hubzoid {command} {named}".replace("  ", " ") if command else f"... {named}"
     raise typer.BadParameter(f"This folder runs {len(hubs)} hubs ({names}). Name one, for example: {example}")
 
 
@@ -67,7 +69,7 @@ def deployment_environment(hub: Path) -> None:
         os.environ.setdefault(name, value)
 
 
-def _callback(path: tuple[str, ...], previous):
+def _callback(path: tuple[str, ...], previous, flag: str = ""):
     wide = bool(path) and path[0] in DEPLOYMENT_WIDE
     command = " ".join(path)
 
@@ -76,7 +78,7 @@ def _callback(path: tuple[str, ...], previous):
             value = previous(ctx, param, value)
         if value is None:
             return value
-        hub = resolve(Path(value), command=command, deployment_wide=wide)
+        hub = resolve(Path(value), command=command, deployment_wide=wide, flag=flag)
         deployment_environment(hub)   # e.g. public_url for links and webhooks
         return hub
 
@@ -86,10 +88,12 @@ def _callback(path: tuple[str, ...], previous):
 def _patch(cmd, path: tuple[str, ...]) -> None:
     # Typer ships its own copy of Click, so match by shape, not by class.
     for param in cmd.params:
-        if getattr(param, "param_type_name", "") == "argument" and param.name in _NAMES and str(param.default) == ".":
+        kind = getattr(param, "param_type_name", "")
+        if kind in ("argument", "option") and param.name in _NAMES and str(param.default) == ".":
             if getattr(param, "_hz_hubarg", False):
                 continue
-            param.callback = _callback(path, param.callback)
+            flag = (param.opts[0] if param.opts else "") if kind == "option" else ""
+            param.callback = _callback(path, param.callback, flag)
             param._hz_hubarg = True  # noqa: SLF001 - our own marker
     for name, sub in (getattr(cmd, "commands", None) or {}).items():
         _patch(sub, path + (name,))
