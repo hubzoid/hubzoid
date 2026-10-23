@@ -1,5 +1,6 @@
-"""The Watchtower sample with a REAL model (claude-local), through the CLI a
-builder uses: init, run once, read the report, run again.
+"""The Watchtower sample (tests/fixtures/watchtower_hub) with a REAL model
+(claude-local), through the CLI a builder uses: run once, read the report,
+run again.
 
     pytest tests/e2e/test_watchtower_e2e.py -m e2e -v
 
@@ -11,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -22,9 +24,8 @@ def test_watchtower_explains_the_checkout_breach(tmp_path):
     env = {k: v for k, v in os.environ.items()
            if k not in ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT")}
     hz = [sys.executable, "-m", "hubzoid"]
-    subprocess.run(hz + ["init", "wt", "--template", "watchtower"], cwd=tmp_path, env=env,
-                   check=True, capture_output=True)
     hub = tmp_path / "wt"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "fixtures" / "watchtower_hub", hub)
     with (hub / ".env").open("a") as f:
         f.write("\nMODEL=claude-local/haiku\n")
     run = subprocess.run(hz + ["schedule", "run", str(hub), "watchtower"], env=env,

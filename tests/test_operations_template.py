@@ -1,5 +1,5 @@
-"""The default `hubzoid init` template: Kestrel & Oak, a fictional shop's
-operations assistant. Its first answers come from the stock_check tool, so the
+"""The operations hub that `hubzoid init` copied up to 2.0.1 (now a test
+fixture): Kestrel & Oak, a fictional shop's operations assistant. Its first answers come from the stock_check tool, so the
 tool's numbers are pinned here, along with the files the agent is told to use.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from hubzoid.loaders import agents as agents_loader
 from hubzoid.loaders import knowledge as knowledge_loader
 from hubzoid.loaders import tools_local
 
-HUB = Path(__file__).resolve().parents[1] / "hubzoid" / "templates" / "operations"
+HUB = Path(__file__).resolve().parent / "fixtures" / "operations_hub"  # the 2.0.1 default template
 
 
 @pytest.fixture(scope="module")

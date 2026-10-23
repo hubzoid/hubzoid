@@ -2,7 +2,7 @@
 
 Covers:
   - Default hub name (`demo-hub`).
-  - Hub-folder scaffolding (template files copied).
+  - The starter: every folder, a small sample, and the retired --template flag.
   - Agents-repo wrapper: parent files written only when parent is fresh.
   - Idempotency: re-running does not overwrite, does not error.
   - The fresh-parent heuristic.
@@ -74,65 +74,59 @@ def test_fresh_when_only_the_target_hub_exists(tmp_path):
 # ---------------------------------------------------------------------------
 # Init: default name + hub folder content
 # ---------------------------------------------------------------------------
-def test_init_default_creates_the_operations_hub(tmp_path):
-    """Default `hubzoid init` ships the operations example: a fictional shop's
-    assistant with knowledge, a stock export, a tool and suggested prompts."""
+def test_init_writes_the_starter_with_every_folder(tmp_path):
+    """Default `hubzoid init`: a small starter (a rule to edit, a check that the
+    edit worked) and every folder Hubzoid reads, empty ones kept with .gitkeep."""
     res = _run_init(tmp_path)
     assert res.exit_code == 0, res.output
     hub = tmp_path / "demo-hub"
-    for rel in ("AGENTS.md", ".env", "README.md", "knowledge/suppliers.md",
-                "knowledge/returns-policy.md", "raw_data/inventory.csv",
-                "tools_local/inventory.py", "skills/reorder-plan.md", "evals/reorder-uses-the-data.md",
-                "schedule/monday-reorder.md", "connectors/.mcp.json", "branding/logo.svg"):
+    for rel in ("AGENTS.md", ".env", "README.md", ".gitignore", "knowledge/house-rules.md",
+                "evals/refund-window.md", "connectors/.mcp.json"):
         assert (hub / rel).is_file(), rel
+    for folder in ("skills", "agents", "tools_local", "workflows", "schedule", "raw_data"):
+        assert [p.name for p in (hub / folder).iterdir()] == [".gitkeep"], folder
     assert "fictional" in (hub / "AGENTS.md").read_text()
-    # The minimal template's examples are not part of it.
-    assert not (hub / "skills" / "hello.md").exists()
-    assert "Try a suggested prompt" in res.output
+    assert (hub / "AGENTS.md").read_text().startswith("---\n")  # frontmatter, no fixed name
+    assert "name:" not in (hub / "AGENTS.md").read_text().split("---")[1]
+    assert "30 days" in (hub / "knowledge" / "house-rules.md").read_text()
+    assert "$500" in (hub / "knowledge" / "house-rules.md").read_text()  # USD, as product defaults say
+    assert "refund 40 days" in res.output
+    for repo in ("software-factory-hub", "order-desk-hub", "customer-desk-hub", "gitzoid-hub"):
+        assert f"github.com/hubzoid/{repo}" in res.output
 
 
-def test_init_template_minimal_is_one_example_per_file_type(tmp_path):
-    """`--template minimal` keeps the 1.0 default: one worked example per surface."""
-    res = _run_init(tmp_path, "demo-hub", "--template", "minimal")
-    assert res.exit_code == 0, res.output
-    hub = tmp_path / "demo-hub"
-    assert (hub / "AGENTS.md").is_file()
-    assert (hub / ".env").is_file()
-    # Each surface has exactly one flat-layout example.
-    assert (hub / "skills" / "hello.md").is_file()
-    assert (hub / "knowledge" / "about.md").is_file()
-    assert (hub / "agents" / "helper.md").is_file()
-    assert (hub / "tools_local" / "hello.py").is_file()
-    assert (hub / "connectors" / ".mcp.json").is_file()
-    assert (hub / "raw_data" / "README.md").is_file()
-    # Demo-only content must NOT be present.
-    assert not (hub / "knowledge" / "welcome.md").exists()
-    assert not (hub / "skills" / "explain-skills.md").exists()
+def test_the_starter_loads_as_a_hub(tmp_path):
+    from hubzoid.evals import cases
+    from hubzoid.loaders import agents as agents_loader
+    from hubzoid.loaders import knowledge as knowledge_loader
+
+    assert _run_init(tmp_path, "hub").exit_code == 0
+    hub = tmp_path / "hub"
+    main = agents_loader.load_main(hub)
+    assert main.spec.description and len(main.spec.suggestions) == 3
+    assert {k.name for k in knowledge_loader.load_all(hub)} == {"house-rules"}
+    assert [c.name for c in cases.discover(hub)] == ["refund-window"]
 
 
-def test_init_template_demo_creates_guided_tour(tmp_path):
-    """`--template demo` ships the full Hubzoid Guide hub with teaching content."""
-    res = _run_init(tmp_path, "guide-hub", "--template", "demo")
-    assert res.exit_code == 0, res.output
-    hub = tmp_path / "guide-hub"
-    assert (hub / "AGENTS.md").is_file()
-    # Flattened skill layout (one .md per skill, no SKILL.md subfolders).
-    assert (hub / "skills" / "explain-skills.md").is_file()
-    assert (hub / "skills" / "build-first-agent.md").is_file()
-    assert (hub / "skills" / "inspect-this-hub.md").is_file()
-    assert (hub / "skills" / "find-the-docs.md").is_file()
-    assert (hub / "agents" / "builder.md").is_file()
-    assert (hub / "knowledge" / "welcome.md").is_file()
-    assert (hub / "tools_local" / "word_count.py").is_file()
-    # The old folder layout is gone.
-    assert not (hub / "skills" / "explain-skills").exists()
-    assert not (hub / "agents" / "builder").exists()
+@pytest.mark.parametrize("name", ["operations", "minimal", "demo", "watchtower", "gitzoid", "no-such-template"])
+def test_a_template_flag_says_where_it_went_and_creates_nothing(tmp_path, name):
+    res = _run_init(tmp_path, "x", "--template", name)
+    assert res.exit_code == 2
+    assert "no longer bundles templates" in res.output and "Nothing was created" in res.output
+    assert not (tmp_path / "x").exists() and not (tmp_path / "requirements.txt").exists()
+    if name == "gitzoid":
+        assert "github.com/hubzoid/gitzoid-hub" in res.output
+    elif name != "no-such-template":
+        assert "tree/v2.0.1/hubzoid/templates/" + name in res.output
+    short = _run_init(tmp_path, "y", "-t", name)
+    assert short.exit_code == 2 and not (tmp_path / "y").exists()
 
 
-def test_init_unknown_template_fails(tmp_path):
-    res = _run_init(tmp_path, "x", "--template", "no-such-template")
-    assert res.exit_code != 0
-    assert "no-such-template" in res.output
+def test_help_lists_no_templates(tmp_path):
+    res = runner.invoke(app, ["init", "--help"])
+    assert res.exit_code == 0
+    for name in ("operations", "minimal", "watchtower", "gitzoid", "--template"):
+        assert name not in res.output
 
 
 # ---------------------------------------------------------------------------
@@ -230,22 +224,6 @@ def test_new_hub_gets_a_random_bridge_key(tmp_path):
     assert key("one") and key("one") != "dev"
     assert key("one") != key("two")
     assert ((tmp_path / "one" / ".env").stat().st_mode & 0o777) == 0o600
-
-
-def test_init_never_copies_template_runtime_state(tmp_path, monkeypatch):
-    import hubzoid.cli as cli
-
-    template = tmp_path / "tpl"
-    (template / ".hubzoid").mkdir(parents=True)
-    (template / ".hubzoid" / "artifact_secret").write_text("leaked")
-    (template / "AGENTS.md").write_text("---\nname: t\ndescription: d\n---\n")
-    monkeypatch.setattr(cli, "_template_root", lambda name: template)
-    (tmp_path / "work").mkdir()
-    result = _run_init(tmp_path / "work", "hub", "--template", "tpl")
-    assert result.exit_code == 0, result.output
-    assert (tmp_path / "work" / "hub" / "AGENTS.md").is_file()
-    assert not (tmp_path / "work" / "hub" / ".hubzoid").exists()   # no setup state is copied
-    assert not (tmp_path / "work" / "hub" / ".hubzoid" / "artifact_secret").exists()
 
 
 def test_init_explicit_codex_model_and_existing_model_preserved(tmp_path):

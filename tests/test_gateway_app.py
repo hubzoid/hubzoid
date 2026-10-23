@@ -315,14 +315,13 @@ def test_single_hub_keeps_its_own_agent_and_branding(tmp_path, monkeypatch):
 
 
 def test_the_stock_init_marks_are_not_a_custom_logo(tmp_path, monkeypatch):
-    """`hubzoid init` copies the Hubzoid wordmark into branding/. The app draws
+    """Templates up to 2.0.1 copied the Hubzoid wordmark into branding/. The app draws
     that mark itself (readable in dark mode), so an unchanged copy is no logo
     and no avatar; the browser tab still uses the icon."""
     import shutil
 
     hub = _hub(tmp_path, "solo", 3611)
-    shutil.copytree(Path(webapp_gateway.__file__).parent / "templates" / "minimal" / "branding",
-                    hub / "branding")
+    shutil.copytree(Path(__file__).resolve().parent / "fixtures" / "stock_branding_2_0_1", hub / "branding")
     eng = create_engine(f"sqlite:///{tmp_path / 'op.db'}")
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     from hubzoid.access import store_for

@@ -1,4 +1,6 @@
-"""The Watchtower sample (`hubzoid init <name> --template watchtower`).
+"""The Watchtower sample, a template up to 2.0.1 and now a test fixture
+(tests/fixtures/watchtower_hub): workflow persistence, report inputs, artifacts
+and a controlled failure.
 
 Acceptance without a model: detection is plain code, and the model call is
 replaced by a fixed Finding through the same `call_llm` seam, so the checks
@@ -8,14 +10,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from hubzoid import cli
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "watchtower_hub"
 
 _RUN = textwrap.dedent('''
     import json, sys
@@ -45,10 +48,8 @@ _RUN = textwrap.dedent('''
 
 @pytest.fixture
 def sample(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    r = CliRunner().invoke(cli.app, ["init", "wt", "--template", "watchtower"])
-    assert r.exit_code == 0, r.output
     hub = tmp_path / "wt"
+    shutil.copytree(FIXTURE, hub)
     env = {k: v for k, v in os.environ.items()
            if k not in ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT")}
     return hub, env
