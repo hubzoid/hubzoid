@@ -316,3 +316,69 @@ def short_name(raw: str) -> str:
         if raw.startswith(p):
             return raw[len(p):]
     return raw
+
+
+# -- answer text for API clients ----------------------------------------------
+# The blocks above are display markup for Hubzoid's own surfaces. A client of
+# the OpenAI-compatible API (a personal key, another company's web app) wants
+# the answer alone: tool progress reaches it as status events instead.
+_STRIP_OPENERS = ('<details type="tool_calls"', "<details>\n<summary>↳ ", "<think>")
+_STRIP_CLOSERS = {'<details type="tool_calls"': "</details>", "<details>\n<summary>↳ ": "</details>",
+                  "<think>": "</think>"}
+
+
+class AnswerText:
+    """Removes Hubzoid's tool and thinking blocks from a streamed answer.
+
+    ``feed`` returns the text that is safe to send now. A block (or a partial
+    opening tag at the end of a chunk) is held until it closes, then dropped.
+    Any other ``<details>`` an answer contains is left as it is."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._closer: str | None = None
+        self._started = False
+
+    def feed(self, text: str) -> str:
+        self._buf += text
+        out = []
+        while self._buf:
+            if self._closer is not None:
+                end = self._buf.find(self._closer)
+                if end < 0:
+                    return self._emit(out)
+                self._buf = self._buf[end + len(self._closer):].lstrip("\n")
+                self._closer = None
+                continue
+            starts = [(self._buf.find(o), o) for o in _STRIP_OPENERS if o in self._buf]
+            if starts:
+                at, opener = min(starts)
+                out.append(self._buf[:at])
+                self._buf = self._buf[at:]
+                self._closer = _STRIP_CLOSERS[opener]
+                continue
+            hold = max((n for o in _STRIP_OPENERS for n in range(1, len(o))
+                        if self._buf.endswith(o[:n])), default=0)
+            out.append(self._buf[:len(self._buf) - hold])
+            self._buf = self._buf[len(self._buf) - hold:]
+            break
+        return self._emit(out)
+
+    def flush(self) -> str:
+        """The rest at the end of the answer. An unclosed block is dropped."""
+        rest = "" if self._closer is not None else self._buf
+        self._buf, self._closer = "", None
+        return self._emit([rest])
+
+    def _emit(self, parts: list[str]) -> str:
+        text = "".join(parts)
+        if not self._started:
+            text = text.lstrip()       # the blank lines a dropped block leaves first
+            self._started = bool(text)
+        return text
+
+
+def answer_text(text: str) -> str:
+    """``text`` without Hubzoid's tool and thinking blocks (see ``AnswerText``)."""
+    f = AnswerText()
+    return (f.feed(text) + f.flush()).strip()

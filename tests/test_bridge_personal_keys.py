@@ -61,3 +61,70 @@ def test_a_malformed_key_never_falls_back_to_another_sign_in(bridge):
     client, _ = bridge
     bad = {"authorization": "Bearer hzp_" + "a" * 300}
     assert client.get("/v1/models", headers=bad).status_code == 401
+
+
+@pytest.fixture
+def scripted(monkeypatch, tmp_path):
+    """The bridge on the scripted test runtime: "tool" in a message makes one
+    real tool call, so its display block would appear in the text."""
+    hub = tmp_path / "hub"
+    shutil.copytree(MINIMAL, hub, ignore=shutil.ignore_patterns(".hubzoid"))
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setenv("HUBZOID_HUB_DIR", str(hub))
+    monkeypatch.setenv("MODEL", "hubzoid-test/scripted")
+    monkeypatch.setenv("HUBZOID_TEST_RUNTIME", "1")
+    monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    from hubzoid.auth import AuthUser, api_keys, users
+    from hubzoid.server import build_app
+
+    from hubzoid.access import store_for
+
+    ana = users.create(hub, email="ana@example.com", name="Ana", password="pw-Very-long-1")
+    store_for(hub).grant("ana@example.com", hub.name, "use_hub")
+    _, key = api_keys.create(hub, AuthUser(id=ana["id"], email=ana["email"], name="Ana",
+                                           role="user"), name="s", operations=["chat"])
+    return TestClient(build_app()), key
+
+
+def _ask(client, key, *, stream):
+    return client.post("/v1/chat/completions", headers={"authorization": f"Bearer {key}"},
+                       json={"stream": stream, "messages": [{"role": "user", "content": "use a tool please"}]})
+
+
+def test_an_api_client_gets_the_answer_without_tool_markup(scripted):
+    """HUB-140 F3: no <details type="tool_calls"> in /v1 text for a personal key."""
+    import json
+
+    client, key = scripted
+    plain = _ask(client, key, stream=False).json()["choices"][0]["message"]["content"]
+    assert plain and "<details" not in plain and not plain.startswith("\n")
+    r = _ask(client, key, stream=True)
+    chunks = [json.loads(line[6:]) for line in r.text.splitlines()
+              if line.startswith("data: {")]
+    text = "".join(c["choices"][0]["delta"].get("content") or "" for c in chunks if c["choices"])
+    assert text.strip() == plain.strip()
+    # HUB-140 F27: one id and created time for every chunk of the answer,
+    # status and usage chunks included.
+    assert len({c["id"] for c in chunks}) == 1 and len({c["created"] for c in chunks}) == 1
+
+
+def test_internal_surfaces_keep_the_tool_markup():
+    """Slack, WhatsApp and Telegram call with the bridge key and strip the
+    markup themselves (Slack also reads the thinking marker)."""
+    import asyncio
+    import json
+
+    from hubzoid.server import _stream
+
+    class Rt:
+        async def stream(self, prompt):
+            yield '<details type="tool_calls" name="x">\n</details>\n'
+            yield "Answer."
+
+    async def collect(plain):
+        out = [c async for c in _stream(Rt(), "p", "m", "c1", plain=plain)]
+        chunks = [json.loads(b.decode()[6:]) for b in out if b.startswith(b"data: {")]
+        return "".join(c["choices"][0]["delta"].get("content") or "" for c in chunks if c["choices"])
+
+    assert "<details" in asyncio.run(collect(False))
+    assert asyncio.run(collect(True)) == "Answer."

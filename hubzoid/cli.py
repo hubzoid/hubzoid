@@ -2425,7 +2425,9 @@ def test_hub(
     # No MODEL in .env is fine — runtime.build() defaults to claude-local
     # (Claude Agent SDK on Sonnet via the bundled `claude` login).
     rt = runtime_lib.build(hub)
-    console.print(f"[cyan]→[/cyan] {prompt}")
+    if not as_json:
+        # With --json the whole output is one JSON document.
+        console.print(f"[cyan]→[/cyan] {prompt}")
 
     async def _go() -> str:
         # Open/use/close MCP in one task — see runtime.aopen() for why.
@@ -2474,7 +2476,10 @@ def test_hub(
         return
     with scope:
         text = asyncio.run(_go())
-    console.print(f"[green]←[/green] {text}")
+    from .tool_events import answer_text
+
+    # The answer, without the chat app's tool markup. --json lists the calls.
+    console.print(f"[green]←[/green] {escape(answer_text(text))}")
 
 
 # ---------------------------------------------------------------------------

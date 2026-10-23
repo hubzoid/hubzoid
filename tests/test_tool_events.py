@@ -216,3 +216,18 @@ def test_blocks_in_a_run_touch_and_text_starts_a_new_run():
     act.started("c", "three", {})
     assert act.finished("c")[0].startswith("\n\n<details")  # a new paragraph after text
     assert act.text("") == ""  # empty text changes nothing
+
+
+def test_answer_text_drops_only_hubzoids_own_blocks():
+    from hubzoid.tool_events import AnswerText, answer_text
+
+    s = ('\n\n<details type="tool_calls" done="true" name="x" arguments="{&quot;a&quot;: 1}">\n'
+         '<summary>Tool Executed</summary>\n</details>\n<think>hmm</think>The answer '
+         '<details><summary>keep</summary>me</details> ends.')
+    assert answer_text(s) == "The answer <details><summary>keep</summary>me</details> ends."
+    f = AnswerText()                         # split anywhere, even inside a tag
+    out = "".join(f.feed(s[i:i + 3]) for i in range(0, len(s), 3)) + f.flush()
+    assert out.strip() == answer_text(s)
+    f = AnswerText()
+    assert f.feed('Hi <details type="tool_calls" name="x">') == "Hi "
+    assert f.flush() == ""                   # an unclosed block is dropped

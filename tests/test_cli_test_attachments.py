@@ -232,3 +232,26 @@ def test_attachments_are_staged_as_data_urls(hub: Path, tmp_path: Path):
     url = blocks[0]["data"]
     assert url.startswith("data:text/csv;base64,")
     assert base64.b64decode(url.split(",", 1)[1]) == payload
+
+
+def test_test_json_is_one_json_document(tmp_path, monkeypatch):
+    """HUB-140 F28: `hubzoid test --json` printed the prompt line first."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    hub = tmp_path / "hub"
+    shutil.copytree(Path(__file__).parent / "fixtures" / "minimal_hub", hub,
+                    ignore=shutil.ignore_patterns(".hubzoid"))
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setenv("MODEL", "hubzoid-test/scripted")
+    monkeypatch.setenv("HUBZOID_TEST_RUNTIME", "1")
+    out = CliRunner().invoke(app, ["test", str(hub), "--prompt", "use a tool please", "--json"])
+    data = json.loads(out.stdout)
+    assert data["tool_calls"] and "<details" not in data["reply"]
+    plain = CliRunner().invoke(app, ["test", str(hub), "--prompt", "use a tool please"])
+    assert "<details" not in plain.stdout
