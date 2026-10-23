@@ -267,7 +267,7 @@ function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "wa
     case "schedules_off":
       return { text: <>Schedules are off on this machine (<Text code>HUBZOID_SCHEDULES</Text>), so it won't run {when}.</>, tone: "warning" };
     case "disabled":
-      return { text: "Schedules are off for this deployment.", tone: "warning" };
+      return { text: <>Schedules are off here. Set <Text code>HUBZOID_SCHEDULES=1</Text> to run it {when}.</>, tone: "warning" };
     case "paused":
       return { text: <>Paused. Resume it with <Text code>hubzoid schedule resume</Text>.</>, tone: "warning" };
     case "stale":
