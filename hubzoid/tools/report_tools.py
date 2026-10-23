@@ -88,16 +88,24 @@ def _ago(ts: float | None, tz: str = "UTC") -> str:
 
 
 
-def _person_timezone(hub_dir, email: str) -> str:
-    """The person's own time zone (Settings, Preferences), else the deployment's, else UTC."""
+def _person_timezone(hub_dir, email: str) -> str | None:
+    """The zone for a schedule the person didn't give one for (HUB-140 D4):
+    their own setting, then a deployment setting (locked or changed from the
+    default), then their browser's. None when none is known: the caller falls back."""
+    from .. import _request_ctx
+
+    account = email
     try:
         from ..chat.config import service_for
         from ..workflows.personal import current_account
 
         account = current_account(hub_dir, email) or email
-        return service_for(Path(hub_dir)).get_preferences(account)["effective"]["timezone"]["value"] or "UTC"
-    except Exception:  # noqa: BLE001 - unknown: UTC, shown in the proposal for the person to correct
-        return "UTC"
+        zone = service_for(Path(hub_dir)).get_preferences(account)["effective"]["timezone"]
+        if zone.get("value") and (zone.get("source") in ("account", "deployment") or zone.get("locked")):
+            return zone["value"]
+    except Exception:  # noqa: BLE001 - unknown: the browser's, shown in the proposal to correct
+        log.debug("schedule time zone: preferences unreadable", exc_info=True)
+    return _request_ctx.browser_zone(account) or _request_ctx.browser_zone((email or "").lower())
 
 def make(ctx) -> list:
     from ..workflows import runtime
@@ -478,7 +486,8 @@ def _schedule_tools(hub_dir: Path) -> list:
             wf = _wf(name)
             if wf is not None and wf.surfaces and surface not in wf.surfaces:
                 return f"{wf.title} isn't available here. Use the web chat or your assistant."
-            tz = (args.get("timezone") or "").strip() or (wf.timezone if wf else None) or "UTC"
+            tz = ((args.get("timezone") or "").strip() or _person_timezone(hub_dir, actor)
+                  or (wf.timezone if wf else None) or "UTC")
             out = await asyncio.to_thread(
                 personal.propose_create, hub_dir, hub, actor, workflow=name,
                 inputs=args.get("inputs") or None, cadence=(args.get("cadence") or "").strip(),
@@ -621,7 +630,7 @@ def _schedule_tools(hub_dir: Path) -> list:
             out = await asyncio.to_thread(
                 personal.propose_create, hub_dir, hub, actor, workflow="repeated_request",
                 inputs={"prompt": prompt}, cadence=(args.get("cadence") or "").strip(),
-                timezone_name=(args.get("timezone") or "").strip() or _person_timezone(hub_dir, actor),
+                timezone_name=(args.get("timezone") or "").strip() or _person_timezone(hub_dir, actor) or "UTC",
                 name=args.get("name"))
         except personal.ScheduleError as exc:
             return str(exc)

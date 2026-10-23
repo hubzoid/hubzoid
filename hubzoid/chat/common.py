@@ -8,6 +8,8 @@ another hub is 409 ``wrong_hub``.
 """
 from __future__ import annotations
 
+from .. import _request_ctx
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -108,7 +110,13 @@ class ChatContext:
     async def mutation(self, request: Request):
         """A signed-in person's state-changing request from our own origin."""
         self.same_origin(request)
-        return await self.user(request)
+        user = await self.user(request)
+        # The browser's time zone, the fallback for schedules made in chat
+        # (HUB-140 D4). It comes from the page, never from the model.
+        zone = request.headers.get("x-client-timezone")
+        _request_ctx.remember_browser_zone(user.id, zone)
+        _request_ctx.remember_browser_zone((getattr(user, "email", "") or "").lower(), zone)
+        return user
 
     async def owned(self, user, conv_id: str) -> dict:
         conv = await db(self.store.owned_conversation, conv_id, user.id)

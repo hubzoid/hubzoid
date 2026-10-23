@@ -18,6 +18,7 @@ asyncio task.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import secrets
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -361,6 +362,31 @@ class SessionSlot:
 
 
 _current_session_slot: ContextVar = ContextVar("hubzoid_session_slot", default=None)
+
+# The time zone each person's browser last reported (account id -> IANA name),
+# the third choice for a schedule made in chat: after the person's own setting
+# and the deployment's, before UTC (HUB-140 D4). Kept in this process only.
+_BROWSER_ZONES: "OrderedDict[str, str]" = OrderedDict()
+_BROWSER_ZONES_MAX = 2000
+
+
+def remember_browser_zone(account_id: str | None, zone: str | None) -> None:
+    if not account_id or not zone or len(zone) > 64:
+        return
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(zone)
+    except Exception:  # noqa: BLE001 - not a zone: ignored
+        return
+    _BROWSER_ZONES[account_id] = zone
+    _BROWSER_ZONES.move_to_end(account_id)
+    while len(_BROWSER_ZONES) > _BROWSER_ZONES_MAX:
+        _BROWSER_ZONES.popitem(last=False)
+
+
+def browser_zone(account_id: str | None) -> str | None:
+    return _BROWSER_ZONES.get(account_id or "")
 
 
 def native_session() -> SessionSlot | None:

@@ -866,3 +866,39 @@ def test_repeat_a_request_is_a_personal_workflow_with_its_own_access(hub, engine
     assert name == "repeated_request" and env["acts_as"] == MEERA
     assert env["inputs"] == {"prompt": "Summarise low stock items"}
     assert "repeated_request" in {r["key"] for r in wf_access.resources(hub)}
+
+
+def test_a_schedule_without_a_zone_takes_the_account_then_the_browser(hub, engine, monkeypatch):
+    """HUB-140 D4: the person's own setting, then the deployment's, then the
+    zone their browser sent with the request, then UTC. Never the model's."""
+    from hubzoid import _request_ctx
+    from hubzoid.tools import report_tools
+
+    from collections import OrderedDict
+
+    monkeypatch.setattr(_request_ctx, "_BROWSER_ZONES", OrderedDict())
+    tools = _tools(hub)
+    ask = {"prompt": "Summarise low stock items", "cadence": "every monday at 09:00"}
+    assert "Mondays at 09:00 (UTC)" in _call(tools["repeat_request"], ask)
+    _request_ctx.remember_browser_zone(MEERA, "America/Chicago")
+    _request_ctx.remember_browser_zone(MEERA, "Not/AZone")          # ignored
+    assert "Mondays at 09:00 (America/Chicago)" in _call(tools["repeat_request"], ask)
+    monkeypatch.setattr(report_tools, "_person_timezone", lambda *a: "Asia/Tokyo")
+    assert "Mondays at 09:00 (Asia/Tokyo)" in _call(tools["repeat_request"], ask)
+
+
+def test_a_repeated_requests_chat_is_titled_with_its_schedule(hub, engine):
+    """HUB-140 F18: "Low stock · Mon 26 Oct 09:00" in the schedule's zone, not the raw prompt in UTC."""
+    from hubzoid.workflows.builtin import deliver
+
+    tools = _tools(hub)
+    proposal = _call(tools["repeat_request"], {"prompt": "Summarise low stock items\nas a table",
+                                               "cadence": "every monday at 09:00",
+                                               "timezone": "Asia/Tokyo", "name": "Low stock"})
+    _call(tools["repeat_request"], {"confirm": proposal.split('confirm: "')[1].split('"')[0]})
+    from hubzoid.workflows import personal
+
+    s = personal.find(hub, hub.name.lower(), MEERA, "Low stock")
+    title, stamp = deliver._title(hub, s.id, "Summarise low stock items\nas a table")
+    assert title == "Low stock" and len(stamp.split()) == 4
+    assert deliver._title(hub, None, "Summarise low stock items\nas a table")[0] == "Summarise low stock items"
