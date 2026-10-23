@@ -51,10 +51,10 @@ def _hub_checks(hub: Path) -> list[Check]:
         rt = runtime_lib.build(hub)
         out.append(Check("runtime.build", "ok", f"Agent builds: {rt.name!r} via {type(rt).__name__}"))
         if type(rt).__name__ == "CodexRuntime":
-            from .factory_codex import codex_available, SUPPORTED_CODEX_VERSION
+            from .factory_codex import codex_available, REVIEWED_CODEX_VERSIONS
             ready = codex_available()
             out.append(Check("runtime.codex_login", "ok" if ready else "fail",
-                             "Codex CLI login available" if ready else f"Install Codex CLI {SUPPORTED_CODEX_VERSION} and complete file-backed codex login as the service user"))
+                             "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
 

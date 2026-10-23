@@ -225,10 +225,17 @@ def check_model_auth(hub: Path) -> Result:
                       "Run `claude` once and sign in, or set CLAUDE_CODE_OAUTH_TOKEN in the hub's .env.",
                       "model_signin")
     if low.startswith("codex-local"):
-        if shutil.which("codex"):
-            return Result("ok", "The Codex CLI is installed for the codex-local runtime.", {"runtime": "codex-local"})
-        return Result("fail", "Model provider credential is not configured.", {"runtime": "codex-local"},
-                      "Install Codex and run `codex login`.", "model_signin")
+        # The same check the runtime makes: a reviewed Codex version and a
+        # file-backed login, not merely some `codex` on PATH (HUB-140 F4).
+        from ..factory_codex import REVIEWED_CODEX_VERSIONS, codex_available
+
+        if codex_available():
+            return Result("ok", "A reviewed Codex CLI with a file-backed login is ready for codex-local.",
+                          {"runtime": "codex-local"})
+        return Result("fail", "Codex isn't ready: it needs a reviewed Codex CLI version and a file-backed login.",
+                      {"runtime": "codex-local"},
+                      f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one), "
+                      "then run `codex -c 'cli_auth_credentials_store=\"file\"' login`.", "model_signin")
     provider = low.split("/", 1)[0]
     names = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY",
              "azure": "AZURE_API_KEY", "gemini": "GEMINI_API_KEY"}

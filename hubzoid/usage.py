@@ -37,6 +37,9 @@ def estimate_cost(model: str | None, input_tokens: int | None,
         import litellm
     except ImportError:
         return None
+    # An unknown model (codex-local's, say) makes LiteLLM print its provider
+    # list to the terminal; a missing price is not worth a message.
+    litellm.suppress_debug_info = True
     candidates = [model]
     if "/" in model:
         candidates.append(model.split("/", 1)[1])  # openrouter/anthropic/x -> anthropic/x
