@@ -406,7 +406,7 @@ def init(
             f"  hubzoid schedule run {target} repo_profiles\n"
             f"  hubzoid schedule run {target} pr_sweep\n"
             f"Connect your repos: python {escape(shlex.quote(str(hub_dir / 'setup.py')))} --help\n"
-            "Enable GitZoid tools for your own account in Console → Access (or use hubzoid grant).\n"
+            "Enable GitZoid tools for your own account in Settings, on the agent's Access tab (or use hubzoid grant).\n"
             "All eligible open PRs are queued by default; drafts and bot PRs can be included. See the Hub README."
         )
     if template == DEFAULT_TEMPLATE:
@@ -558,7 +558,9 @@ def run(
             console.print(f"[red]{escape(problem)}[/red]")
         raise typer.Exit(2)
 
-    _warn_retired(hub)
+    if not no_ui:
+        # Under a supervisor the bridge itself logs them: once per hub is enough.
+        _warn_retired(hub)
     auth_on = appmode.auth_enabled(hub)
     if not no_ui:
         _refuse_unauthenticated_network(hub, host, auth_on)
@@ -648,6 +650,7 @@ def run(
                           "program using it? Choose another with --port.[/red]")
             raise typer.Exit(1)
         url = appmode.public_url() or _local_url(host, ui_port)
+        _record_listener(_local_url(host, ui_port), [state])
         mode = "sign-in on" if auth_on else "local mode, sign-in off"
         # One line each, never wrapped, so the URL and the command copy cleanly
         # from any terminal or log viewer.
@@ -1608,10 +1611,27 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     finally:
         procs.extend(edge.procs)
     if not edge_ok:
-        console.print(f"[red]→ gateway[/red]  failed to start. Check logs. URL: {display_url}")
+        console.print(f"[red]→ web app[/red]  failed to start. Check logs. URL: {display_url}")
         raise typer.Exit(1)
-    console.print(f"[green]→ gateway[/green]  ready    {display_url}")
+    _record_listener(_local_url(host, ui_port), [gw_data, *sup.pointers])
+    from . import appmode
+
+    mode = "sign-in on" if appmode.auth_enabled(gp.backends[0].hub_dir) else "local mode, sign-in off"
+    console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(appmode.public_url() or display_url)}  "
+                  f"[dim]({mode})[/dim]", soft_wrap=True)
     _wait_any(procs, supervisor=sup)
+
+
+def _record_listener(url: str, folders) -> None:
+    """Remember the address this deployment's web app answers on, so links the
+    CLI prints later (sign-in links) point at it, not at the default port."""
+    data = json.dumps({"url": url}) + "\n"
+    for folder in folders:
+        try:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            (Path(folder) / "listener.json").write_text(data)
+        except OSError:
+            pass
 
 
 def _supervisor(units, state_dir: Path, *, table: dict):
@@ -1690,7 +1710,8 @@ def _channel_specs(hub_dir: Path, env: dict, *, inbound_port: int | None = None)
             inbound_env["HUBZOID_INBOUND_PORT"] = str(inbound_port)
         specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "inbound", "run", str(hub_dir)], inbound_env,
                                   role="channel"))
-        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>")
+        where = f" (127.0.0.1:{inbound_port})" if inbound_port else ""
+        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>{where}")
     return specs
 
 
@@ -2852,7 +2873,7 @@ def schedule_run(
                     result = handle.get_result()
                 except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
                     console.print(f"[red]✗ workflow {match} failed: {type(run_exc).__name__}: {run_exc}[/red]")
-                    console.print("[dim]The failed run is in `hubzoid schedule status` and the Console's Runs page.[/dim]")
+                    console.print("[dim]The failed run is in `hubzoid schedule status` and Settings, Activity, Runs.[/dim]")
                     raise typer.Exit(1)
                 finally:
                     _wf.shutdown()
@@ -3023,7 +3044,7 @@ def schedule_resume(
 @schedule_app.command("cancel")
 def schedule_cancel(
     hub: Path = typer.Argument(..., help="Hub directory."),
-    run_id: str = typer.Argument(..., help="The run id (from `hubzoid schedule status` or the Console)."),
+    run_id: str = typer.Argument(..., help="The run id (from `hubzoid schedule status` or Settings)."),
 ) -> None:
     """Cancel a queued or running run. Best effort: a run stops at its next
     step boundary, and work already done (a sent message, a git push, a script's
@@ -3438,7 +3459,7 @@ app.add_typer(
 app.add_typer(
     secrets_app,
     name="secrets",
-    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
+    help="Secrets stored in Hubzoid's database: list, set and delete. Values are never shown.",
     rich_help_panel="Commands",
 )
 

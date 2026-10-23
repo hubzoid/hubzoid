@@ -59,7 +59,7 @@ def status_for(hub_dir, hub: str, env: Mapping[str, str] | None = None) -> tuple
 
     if store_for(hub_dir).everyone_can_use(hub):
         return False, ("Company links are off for this agent: everyone signed in can use it. "
-                       "Give people access by name in the Console first.")
+                       "Give people access by name in Settings first.")
     return True, ""
 
 

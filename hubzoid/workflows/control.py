@@ -183,7 +183,7 @@ def _check_startable(hub_dir: Path, target: Target) -> None:
     definition = next((d for d in observe.definitions(hub_dir) if d["name"] == target.name), None)
     if definition and definition["error"]:
         raise ControlError(f"{target.name} has a problem in its code and can't run until it is "
-                           "fixed. The Console's Workflows page shows the error.", "broken")
+                           "fixed. The agent's Workflows tab in Settings shows the error.", "broken")
     if target.name not in runtime._REGISTRY:
         if schedules_enabled():
             raise ControlError(f"{target.name} was not loaded when this agent started. Check "

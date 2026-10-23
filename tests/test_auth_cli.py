@@ -194,3 +194,15 @@ def test_an_open_webui_deployment_is_refused_until_it_is_moved(hub, monkeypatch)
     code, out = run("create", "ana@example.com", str(hub))
     assert code == 2 and "HUBZOID_UI" in out and "UPGRADING" in out
     assert users.find_by_email(hub, "ana@example.com") is None
+
+
+def test_links_use_the_address_hubzoid_run_served(hub, monkeypatch):
+    """HUB-140 F6: run on --port 3801 without a public URL, the link said 3080."""
+    from hubzoid import datadir
+
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
+    state = datadir.state(hub)
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "listener.json").write_text('{"url": "http://127.0.0.1:3801"}')
+    assert "http://127.0.0.1:3801/auth/set-password?token=" in run("create", "d@example.com", str(hub))[1]

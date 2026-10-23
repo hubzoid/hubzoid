@@ -188,5 +188,5 @@ def check_use_hub(hub_dir: Path, email: str) -> None:
     if not allowed:
         raise error(403, "no_access", (
             f"You do not have access to the '{hub_dir.name}' hub. Signed in as {email}. "
-            + ("Open Console → Agents → Access to review your chat permission." if manages else
+            + ("Ask an administrator to give you this agent." if manages else
                "Ask your hub administrator for chat access, then start a new chat.")))

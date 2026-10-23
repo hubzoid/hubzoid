@@ -19,7 +19,7 @@ from . import theme as theme_mod
 
 chat_app = typer.Typer(help="Chat settings, theme and personal preferences.", no_args_is_help=True)
 config_app = typer.Typer(help="The deployment's chat/config.yaml.", no_args_is_help=True)
-theme_app = typer.Typer(help="The theme tokens chat and Console share.", no_args_is_help=True)
+theme_app = typer.Typer(help="The theme tokens chat and Settings share.", no_args_is_help=True)
 prefs_app = typer.Typer(help="One person's appearance preferences.", no_args_is_help=True)
 chat_app.add_typer(config_app, name="config")
 chat_app.add_typer(theme_app, name="theme")

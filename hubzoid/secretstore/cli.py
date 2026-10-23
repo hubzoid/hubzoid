@@ -36,7 +36,7 @@ def hub_key(hub_dir: Path) -> str:
     return key(hub_dir)
 
 secrets_app = typer.Typer(
-    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
+    help="Secrets stored in Hubzoid's database: list, set and delete. Values are never shown.",
     no_args_is_help=True,
 )
 

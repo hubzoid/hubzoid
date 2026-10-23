@@ -783,7 +783,7 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
             detail=(
                 f"You do not have access to the '{hub_dir.name}' hub. "
                 f"Signed in as {verified}. "
-                + ("Open Console → Agents → Access to review your chat permission."
+                + ("Ask an administrator to give you this agent."
                    if gs.can(verified, hub_dir.name, "manage_access") else
                    "Ask your hub administrator for chat access, then start a new chat.")
             ),
