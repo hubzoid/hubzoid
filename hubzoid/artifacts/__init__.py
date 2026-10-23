@@ -846,6 +846,16 @@ def preview(hub_dir, art: Artifact) -> dict | None:
         return {"kind": "csv", "rows": rows, "truncated": i >= PREVIEW_ROWS if rows else False}
     if art.kind == "text":
         raw = content_path(hub_dir, art).read_bytes()
-        return {"kind": "text", "text": raw[:PREVIEW_TEXT_BYTES].decode("utf-8", errors="replace"),
-                "truncated": len(raw) > PREVIEW_TEXT_BYTES}
+        text = raw[:PREVIEW_TEXT_BYTES].decode("utf-8", errors="replace")
+        if art.filename.lower().endswith((".md", ".markdown")):
+            # A plan or report written in Markdown reads as a document, not its
+            # source (HUB-140, session B). Only safe structure survives.
+            import markdown
+
+            from ..email_delivery import _safe_html
+
+            body = markdown.markdown(text, extensions=["tables", "fenced_code", "sane_lists"])
+            return {"kind": "markdown", "html": _safe_html(body), "text": text,
+                    "truncated": len(raw) > PREVIEW_TEXT_BYTES}
+        return {"kind": "text", "text": text, "truncated": len(raw) > PREVIEW_TEXT_BYTES}
     return None
