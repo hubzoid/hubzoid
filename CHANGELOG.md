@@ -89,6 +89,23 @@ See [upgrading to 2.0.2](docs/UPGRADING.md#upgrading-to-202).
 - Person drawer labels, wide tables and the People list on a phone fit; the
   Inbox says which agent it could not check; an empty key name says "Give the
   key a name."; Health counts read as words.
+- `hubzoid secrets set --ref secret:channel/<hub>/<channel>/<name>` fills a
+  channel's secret (there was no working way), and channel errors name the
+  real command.
+- A person without a channel's grant is told an administrator gives them
+  "Start work from" that channel in Settings. `hubzoid channels doctor` reads
+  the hub's and deployment's settings instead of the shell's, and warns when
+  nobody holds the channel's grant.
+- After GitHub's App setup the browser returns to the agent's channel in
+  Settings (it answered Not Found); the setup pages look like Hubzoid and the
+  link lasts an hour.
+- Markdown artifacts, such as a plan to approve, read as documents; the plan
+  approval card has a View plan button.
+- With browser editing off, Settings shows settings, connectors, channels and
+  budgets read-only with where to change them, instead of forms that refuse on
+  save. The Secrets tab no longer offers to store keys that belong in `.env`.
+- Workflow permissions for an agent its administrator doesn't chat with show
+  that agent's policy, and review links open the agent's Changes tab.
 - Docs: MCP does not offer `remember` ([#56](https://github.com/hubzoid/hubzoid/issues/56)); five settings no doc
   named are documented ([#45](https://github.com/hubzoid/hubzoid/issues/45)); Inbox and Settings replace "Waiting for
   you" and "the Console".
