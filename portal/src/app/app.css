@@ -3438,3 +3438,6 @@
   .people-table .ant-table-tbody > tr { display: block; padding: 12px 0; border-bottom: 1px solid var(--hz-line-soft); }
   .people-table .ant-table-tbody > tr > td { display: block; width: auto !important; padding: 2px 0 !important; border: 0 !important; }
 }
+
+/* D9, D10: browser editing of agent files is Beta, said in small text. */
+.hz-beta { margin-left: 6px; padding: 0 5px; border: 1px solid var(--hz-line); border-radius: 4px; font-size: 10.5px; line-height: 16px; letter-spacing: .02em; color: var(--hz-secondary); vertical-align: 1px; }

@@ -30,7 +30,8 @@ No database or file changes. What behaves differently:
   approval rules and budgets in Settings now answer that it is off. People can
   still read everything there; the CLI and your editor work as before. To keep
   the 2.0.1 behaviour, set `in_app_editing: true` in `hubzoid.yaml` (or
-  `HUBZOID_IN_APP_EDITING=true`). See [DEPLOYING](DEPLOYING.md#in-app-editing).
+  `HUBZOID_IN_APP_EDITING=true`) and restart `hubzoid run`. See
+  [DEPLOYING](DEPLOYING.md#in-app-editing).
 - **Settings is reorganised** into Personal and Manage. Old addresses and
   bookmarks open the new place: Health is under Organization, Runs and the audit
   log under Activity, My work items in the Inbox.

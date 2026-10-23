@@ -770,6 +770,8 @@ still read all of it there, and the CLI and your editor work as before.
 in_app_editing: true      # in hubzoid.yaml, or HUBZOID_IN_APP_EDITING=true
 ```
 
+Restart `hubzoid run` (not just one hub) after changing it.
+
 Turn it on where the agent folders are a working copy someone looks after,
 such as a laptop or a server checkout you commit from. Settings then marks
 these controls Beta. Files that come from an image (`HUBZOID_DATA_DIR` set)

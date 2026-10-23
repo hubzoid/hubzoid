@@ -106,7 +106,9 @@ export function AgentDetail({
       {section.parts && (
         <nav className="hz-subtabs" aria-label={section.label}>
           {section.parts.map(([key, label]) => (
-            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? "page" : undefined}>{label}</a>
+            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? "page" : undefined}>
+              {label}{key === "changes" && <span className="hz-beta">Beta</span>}
+            </a>
           ))}
         </nav>
       )}

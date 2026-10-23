@@ -184,6 +184,7 @@ function Editor({ path, readOnly = false, onChanged }: {
           <Button variant="primary" loading={busy} disabled={!changed} onClick={() => void propose()}
             data-testid="workspace-propose"><ListChecks size={14} aria-hidden /> {t.workspace.propose}</Button>
           {!changed && <span className="text-[12px] text-mute">{t.workspace.unchanged}</span>}
+          <span className="hz-beta" title="Changing agent files from the browser is in Beta">Beta</span>
         </div>
       )}
       <Versions versions={versions} />
