@@ -148,7 +148,7 @@ Every command takes `--json`. Exit codes: 0 done, 1 failed, 2 invalid input,
 `start --as EMAIL` records who asked for the work (default: the hub's workflow
 account). Approve, deny and resolve belong to that person, so the CLI makes
 them only in local mode with sign-in off, as the machine's single account
-(`admin@localhost`). Elsewhere, use the Console or the API signed in as that
+(`admin@localhost`). Elsewhere, use Settings or the API signed in as that
 person.
 
 The same actions are HTTP routes under `/portal/api/hubs/{hub}/`:
@@ -157,7 +157,7 @@ The same actions are HTTP routes under `/portal/api/hubs/{hub}/`:
 `operations/{id}`, `operations/{id}/approve`, `deny` and `resolve`. Changes
 accept `expected_revision`. Errors are `{"detail": {"code", "message"}}`.
 
-The Console's **Work items** page shows the same thing: state, saved stages,
+The agent's **Work** tab in Settings shows the same thing: state, saved stages,
 operations, the exact content waiting for approval, and the decision form.
 
 ## Who may do what

@@ -238,6 +238,18 @@ Connector tokens are encrypted, and identity assertions signed, with the
 deployment key (`HUBZOID_SECRET_KEY` or the key file). Rotating or losing it
 means people connect their tools again. Keep it stable.
 
+### Smaller switches
+
+Set in a hub's `.env` (or the deployment's, for every hub):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `HUBZOID_DISABLE_WEB_SEARCH=true` | off | Removes the `web_search` tool from the agent |
+| `HUBZOID_DISABLE_HTTP_GET=true` | off | Removes the `http_get` tool from the agent |
+| `HUBZOID_DISABLE_PROMPT_CACHE=true` | off | Stops marking the agent's instructions for the provider's prompt cache |
+| `HUBZOID_CACHE_TTL` | `1h` | How long the provider keeps the prompt cache; `5m` is cheaper per write |
+| `HUBZOID_PASSWORD_HASH_CONCURRENCY` | `4` | How many password checks run at once; lower it on a small machine |
+
 ## Checking a deployment
 
 `hubzoid doctor <hub>` checks a hub and its deployment without changing
@@ -699,7 +711,14 @@ On a fresh deployment, sign in with the configured owner. Add people and grant
 **Use this agent** and restricted capabilities in Settings. Administration alone
 does not grant every agent or every tool. Hub folder names and model ids must be
 unique; collisions stop startup with an explanation. Bridge ports are assigned
-for you (a `BRIDGE_PORT` in a hub's `.env` is still honoured).
+for you from 8000 up, skipping ports another program already uses (a
+`BRIDGE_PORT` in a hub's `.env` is still honoured). `--bridge-port` is for
+`hubzoid run` on a single hub folder only.
+
+**Hub commands in this folder** (`hubzoid audit`, `hubzoid secrets list`,
+`hubzoid channels …`) use the deployment's `public_url`, `sign_in`, `owner` and
+`in_app_editing`. In a deployment of one hub they act on that hub. With
+several hubs, name one: `hubzoid audit sales-agent`.
 
 **Each hub is its own process.** A hub that exits is started again, waiting
 1 s, then doubling to 60 s; after 5 failed starts in 10 minutes it is marked
@@ -738,6 +757,24 @@ SIGTERM or Ctrl-C stops every hub (each with its grace period), then the
 edge. If `hubzoid run` itself is killed, its children notice and stop, so no
 process keeps a port; systemd (`KillMode=mixed` in the unit above) or the
 container platform restarts the deployment.
+
+### In-app editing
+
+Changing an agent's files from the browser is **Beta and off by default**.
+That covers proposing and approving hub changes (instructions, knowledge,
+skills), the agent's `remember` and `propose_hub_change` tools, and saving
+connectors, channels, settings, approval rules and budgets in Settings. People
+still read all of it there, and the CLI and your editor work as before.
+
+```yaml
+in_app_editing: true      # in hubzoid.yaml, or HUBZOID_IN_APP_EDITING=true
+```
+
+Turn it on where the agent folders are a working copy someone looks after,
+such as a laptop or a server checkout you commit from. Settings then marks
+these controls Beta. Files that come from an image (`HUBZOID_DATA_DIR` set)
+are never written, whatever the switch says. Change them in the repository and
+deploy again.
 
 ### Branding
 
@@ -837,7 +874,9 @@ see [Administration](ADMINISTRATION.md).
 
 ## Local Codex runtime
 
-`MODEL=codex-local` is available with the audited Codex CLI 0.147.0. Follow the
+`MODEL=codex-local` works with the reviewed Codex CLI versions 0.147.0 and
+0.163.0; another version is refused with the versions to install. Set
+`HUBZOID_CODEX_BIN` to use a Codex binary that is not first on `PATH`. Follow the
 [provider setup](providers.md#local-codex) for file-backed login as the service
 account, model pinning and isolation details. The standard Docker image does not
 include Codex; use a custom image with the pinned CLI and persistent private

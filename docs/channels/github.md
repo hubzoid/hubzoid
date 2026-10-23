@@ -135,7 +135,7 @@ pull request). An agent lists the ones it uses in its frontmatter. Rules:
 - Updating a pull request (title, body, base, closing it, or marking it ready
   with `draft: false`) is the action `github.pr_update`. It is off until the
   hub's `work-items.yaml` sets it to `approve`. Then the work waits until the
-  person who asked approves that exact change, in the Console's Work items
+  person who asked approves that exact change, in the agent's Work tab in Settings
   page or with `hubzoid operations approve`. The approval covers the pull
   request at its current head commit: a push after it needs a fresh approval.
   This includes `updateIssue` and `closeIssue` on a number that is a pull

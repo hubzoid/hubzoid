@@ -590,7 +590,7 @@ writes private `.hubzoid/alert-preview/` files. `@workflow(alert_to=...)` or a
 markdown task's `alert_to:` overrides the hub destinations. `HUBZOID_ALERT_URL`
 is the deployment fallback. With no destination at all, nothing is recorded or
 sent. `alerts: {to: []}` (or `alert_to=[]`) turns alerts off for a hub or
-workflow even when the fallback is set. Failed runs always show in the Console.
+workflow even when the fallback is set. Failed runs always show in Settings, Activity.
 Exhausted deliveries are visible in `schedule deliveries`. They do not disappear
 as successful sends.
 

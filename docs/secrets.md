@@ -23,7 +23,7 @@ the empty line.
 
 ## Write-only
 
-A stored value is never shown or returned, by the Console, the CLI or the
+A stored value is never shown or returned, by Settings, the CLI or the
 API. Listings show the name, where it is used, its status, its source, and who
 saved it and when. The audit log records the name, scope and actor of each
 change, never the value.
@@ -32,7 +32,7 @@ change, never the value.
 
 A bridge reads stored secrets once, when it starts, and never changes them
 while it serves. After changing a secret, restart the hub
-(`hubzoid restart <hub>`, or redeploy). Until then the Console marks the row
+(`hubzoid restart <hub>`, or redeploy). Until then Settings marks the row
 **Restart to apply**.
 
 ## Levels
@@ -70,9 +70,9 @@ is never taken from an argument. Every command takes `--json`. `set` and
 only). Exit codes: 0 done, 1 failed, 2 invalid input, 4 conflict (a changed
 revision, or a name an operator source sets), 5 the store is unavailable.
 
-## What the Console offers
+## What Settings offers
 
-The Secrets tab lists:
+The agent's **Configuration** tab, **Secrets**, lists:
 
 - every secret a source sets;
 - every stored secret;

@@ -53,7 +53,7 @@ Writing a new message instead of deciding cancels the wait.
 
 Questions work the same way: pick an option or type an answer.
 
-**Waiting for you.** The sidebar's Waiting for you page lists every open request across your agents, with a count. Slack shows approvals as buttons in a private message. WhatsApp uses numbered replies. Email has a link to the page.
+**Inbox.** The sidebar's Inbox lists every open request across your agents, with a count. Slack shows approvals as buttons in a private message. WhatsApp uses numbered replies. Email has a link to the page.
 
 **CLI and API.**
 
@@ -92,7 +92,7 @@ def launch_plan_review():
   - A revised plan is a new version that needs its own approval.
   - Named approvers can open the plan.
 
-**When you start a workflow from chat** ("Run Launch plan review for me"), its questions and approvals appear in that chat as cards, and also under Waiting for you. When the run ends after the chat stopped waiting, its result comes back to the same chat as a message. A run that nobody started from chat, such as a scheduled one, emails the person a link to Waiting for you.
+**When you start a workflow from chat** ("Run Launch plan review for me"), its questions and approvals appear in that chat as cards, and also in the Inbox. When the run ends after the chat stopped waiting, its result comes back to the same chat as a message. A run that nobody started from chat, such as a scheduled one, emails the person a link to the Inbox.
 
 ## Who may run, schedule and change each workflow
 

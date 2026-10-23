@@ -28,7 +28,7 @@ authentication or available usage.
 ## Local Codex
 
 ```bash
-npm install -g @openai/codex@0.147.0
+npm install -g @openai/codex@0.163.0      # or 0.147.0
 codex -c 'cli_auth_credentials_store="file"' login
 hubzoid init my-hub --model codex-local
 ```
@@ -41,11 +41,15 @@ MODEL=codex-local
 Run login as the account that runs Hubzoid. This backend currently requires
 macOS/Linux and file-backed authentication in `$CODEX_HOME/auth.json` (by default
 `~/.codex/auth.json`). OS-keychain-only logins are not supported. `hubzoid doctor`
-checks the pinned CLI and login. Account availability, model access and usage
+checks the CLI version and login. Account availability, model access and usage
 limits still apply; login detection makes no paid model call.
 
-The experimental app-server protocol is pinned to CLI **0.147.0**. Other versions
-fail closed pending a tool-isolation review. Each request has an ephemeral thread,
+The experimental app-server protocol is reviewed for CLI **0.147.0** and
+**0.163.0**. Other versions fail closed with the versions to install, pending a
+tool-isolation review. For 0.163.0 Hubzoid turns off the features that review
+found could reach outside the hub (plugins, browser and computer use, worktrees,
+background terminals, MCP apps and similar) on every request. Set
+`HUBZOID_CODEX_BIN` to use a Codex binary that is not first on `PATH`. Each request has an ephemeral thread,
 an isolated configuration directory, and the hub's guarded tools. Personal MCP
 servers, skills, hooks and settings are not inherited. Native shell, filesystem,
 browser and web-search tools are disabled. Models requiring code mode use an
