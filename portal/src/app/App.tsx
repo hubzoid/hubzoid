@@ -47,6 +47,7 @@ function normalizeSession(raw: Partial<Session> | null | undefined): Session {
     signup: !!raw?.signup,
     branding_name: raw?.branding_name,
     unsafe_network: !!raw?.unsafe_network,
+    ended: typeof raw?.ended === "string" ? raw.ended : undefined,
   };
 }
 
