@@ -42,11 +42,14 @@ from . import __version__
 from . import settings as settingslib
 from . import uploads as uploadslib
 
+from ._hubarg import HubArgGroup  # noqa: E402
+
 app = typer.Typer(
     name="hubzoid",
+    cls=HubArgGroup,
     add_completion=False,
     no_args_is_help=True,
-    help="An open-source framework for production AI agents.",
+    help="One brain for your internal agents.",
 )
 console = Console()
 
