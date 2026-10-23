@@ -38,7 +38,6 @@ export function SettingsScreen({ tab, embedded }: { tab?: string; embedded?: boo
             {EMBEDDED_TITLES[active]}
           </Typography.Title>
         )}
-        {active === "appearance" && <p className="hz-settings-help">What teammates see is the published brand. Edit a draft, then review and activate it.</p>}
         <Suspense fallback={<Spin />}>{TABS.find((t) => t.key === active)!.node}</Suspense>
       </div>
     );

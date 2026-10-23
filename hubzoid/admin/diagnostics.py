@@ -298,7 +298,7 @@ def check_chat_config(hub: Path) -> Result:
 
     state = chat_cfg.service_for(hub).file_state()
     if not state.get("exists"):
-        return Result("ok", "No chat/config.yaml yet, so Hubzoid's defaults apply.")
+        return Result("ok", "No chat settings yet, so the defaults apply.")
     if state.get("valid") is False:
         return Result("fail", f"chat/config.yaml is invalid: {state['error']['message']}",
                       {"line": state["error"].get("line")},

@@ -3452,3 +3452,20 @@
 
 /* D9, D10: browser editing of agent files is Beta, said in small text. */
 .hz-beta { margin-left: 6px; padding: 0 5px; border: 1px solid var(--hz-line); border-radius: 4px; font-size: 10.5px; line-height: 16px; letter-spacing: .02em; color: var(--hz-secondary); vertical-align: 1px; }
+
+/* An explanation is plain text, never a coloured box (founder review, HUB-140):
+   antd's info alerts read as quiet notes. Warnings and errors keep their colour. */
+.hz-set-main .ant-alert-info,
+.console-embed .ant-alert-info {
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+}
+.hz-set-main .ant-alert-info .ant-alert-icon,
+.console-embed .ant-alert-info .ant-alert-icon { color: var(--hz-mute); }
+.hz-set-main .ant-alert-info .ant-alert-message,
+.console-embed .ant-alert-info .ant-alert-message,
+.hz-set-main .ant-alert-info .ant-alert-title,
+.console-embed .ant-alert-info .ant-alert-title { color: var(--hz-secondary); font-weight: 500; }
+.hz-set-main .ant-alert-info .ant-alert-description,
+.console-embed .ant-alert-info .ant-alert-description { color: var(--hz-mute); }

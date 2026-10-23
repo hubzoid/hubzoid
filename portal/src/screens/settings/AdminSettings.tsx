@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Card, Descriptions, Space, Table, Tag, Typography } from "antd";
 import { control, ControlError } from "../../lib/controlApi";
+import { InfoHelp } from "../../components/common";
 
 const { Text, Paragraph } = Typography;
 
@@ -56,17 +57,17 @@ export function AdminSettings() {
   const d = shown.values.diagnostics;
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Alert
-        type="info"
-        showIcon
-        title="These settings live in files"
-        description="Change them in hubzoid.yaml (or ask Claude Code or Codex to); every agent picks it up within a few seconds."
-        action={<Button onClick={() => void load()}>Reload</Button>}
-      />
+      <Space size={6} align="center" style={{ width: "100%", justifyContent: "space-between" }}>
+        <Text type="secondary">
+          Set in <Text code>hubzoid.yaml</Text>.{" "}
+          <InfoHelp text="Change them in hubzoid.yaml, or ask Claude Code or Codex to. Every agent picks up the change within a few seconds." />
+        </Text>
+        <Button size="small" onClick={() => void load()}>Reload</Button>
+      </Space>
       {shown.file_state.valid === false && (
         <Alert type="warning" showIcon title="The settings file has a problem" description={shown.file_state.error?.message} />
       )}
-      <Card title={`Diagnostics (${shown.file})`} size="small">
+      <Card title={shown.file && shown.file !== "default" ? `Diagnostics (${shown.file})` : "Diagnostics"} size="small">
         <Descriptions size="small" column={1}>
           <Descriptions.Item label="Check timeout">{d.check_timeout_seconds} seconds</Descriptions.Item>
           <Descriptions.Item label="Checks at once">{d.max_parallel_checks}</Descriptions.Item>

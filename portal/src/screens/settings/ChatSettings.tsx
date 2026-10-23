@@ -90,7 +90,7 @@ export function ChatSettings() {
       <Text type="secondary" data-testid="chat-defaults-read-only">
         {active.file.exists
           ? <>Set in <Text code>{active.file.path}</Text>. Edit that file to change them. People can still change what it allows for themselves.</>
-          : <>No <Text code>chat/config.yaml</Text> yet, so Hubzoid's defaults apply. Add that file to change them.</>}
+          : <>No chat settings yet, so the defaults apply. Add a <Text code>chat:</Text> section to <Text code>hubzoid.yaml</Text> to change them.</>}
       </Text>
       {active.file.valid === false && (
         <Alert type="warning" showIcon title="The settings file has a problem" description={(active.file as any).error?.message} />
