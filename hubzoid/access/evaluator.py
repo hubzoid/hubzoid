@@ -245,9 +245,7 @@ def check_run(hub_dir: Path, ident, *, tool: str | None = None, server: str | No
         return ALLOW
     app = getattr(ident, "app", None)
     if app is not None:
-        if tool is None and server is None and connector is None:
-            return app_access(hub_dir, app)
-        return app_access(hub_dir, app, hub=None, tool=tool, server=server, connector=connector)
+        return app_access(hub_dir, app, tool=tool, server=server, connector=connector)
     from .store import USE_HUB
 
     decision = authorize(hub_dir, ident, USE_HUB, hub=Path(hub_dir).name)

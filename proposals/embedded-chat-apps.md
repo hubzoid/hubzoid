@@ -1,5 +1,8 @@
 # Hubzoid chat inside any app
 
+Status: implemented in PR #119 (feat/embedded-chat), 23 October 2026, as
+agreed with the owner; Codex reviewed twice, end-to-end tested with screenshots.
+
 ## Problem
 A team wants the Hubzoid agent inside its own app (an ERP such as ERPNext or
 Odoo, or an admin dashboard) with a chat it designs itself. Today the only ways
@@ -42,9 +45,12 @@ The full plan, with how Agno, Mastra, eve, Sim and LangChain do each part, is
   spend scope.
 - The ERPNext MCP server's per-person change lives in that project, not here.
 
-## Open questions
-- How long a pass may last by default (1 hour proposed).
-- Whether a later release adds a Settings screen to register apps.
+## Decisions
+- A pass lasts at most `max_lifetime` (default 1 hour, 60 s to 24 h per app);
+  the examples fetch a fresh one for each request.
+- No Settings screen for apps in this release: `hubzoid embed secret` prints
+  the entry to paste, and hosted deployments can keep the secret in an
+  environment variable (`secret_ref: env:...`). Revisit if people ask for it.
 
 ## Definition of done
 - An app registered in `hubzoid.yaml` signs a person in with each mode; wrong,

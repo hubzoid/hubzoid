@@ -1,11 +1,14 @@
 """``hubzoid embed``: apps that embed the chat (``apps:`` in hubzoid.yaml).
 
-  hubzoid embed secret erpnext     make the app's client secret (stored, shown once)
+  hubzoid embed secret erpnext --origin https://erp.acme.com
+                                   make the app's client secret (stored, shown once),
+                                   with the hubzoid.yaml entry and server settings
   hubzoid embed list               the registered apps and whether they are ready
   hubzoid embed pass erpnext alice a short test pass, to try the chat by hand
 
 The apps themselves live in hubzoid.yaml, like the other file-owned settings:
-edit the file, and every agent picks it up within a few seconds.
+the command prints the entry, you (or Claude Code or Codex) add it to the file,
+and every agent picks it up within a few seconds. The CLI never edits the file.
 """
 from __future__ import annotations
 
@@ -43,8 +46,14 @@ def _actor() -> str:
 @embed_app.command("secret")
 def secret_cmd(app_id: str = typer.Argument(..., help="The app's client id, e.g. erpnext."),
                hub: Path = _HUB,
+               origins: list[str] = typer.Option(None, "--origin", help="The app's web address (repeat)."),
+               agents: list[str] = typer.Option(None, "--agent", help="An agent the app may use (repeat)."),
+               tools: list[str] = typer.Option(None, "--tool", help="A tool the app may use (repeat; default all)."),
+               token_to: list[str] = typer.Option(None, "--token-to",
+                                                  help="A tool that gets the person's app token (repeat)."),
                rotate: bool = typer.Option(False, "--rotate", help="Replace an existing secret.")) -> None:
-    """Make the app's client secret, store it (write-only) and show it once."""
+    """Make the app's client secret, store it (write-only) and show it once, with
+    the hubzoid.yaml entry to paste and the settings for the app's server."""
     from ..secretstore import store
     from .config import ID_RE
 
@@ -64,18 +73,43 @@ def secret_cmd(app_id: str = typer.Argument(..., help="The app's client id, e.g.
             raise typer.Exit(4)
         console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(5)
+    agent_list = [a.strip().lower() for a in (agents or [hub_dir.name])]
+
+    def flow(items: list[str]) -> str:
+        return "[" + ", ".join(json.dumps(i) if not i.replace("_", "").isalnum() else i for i in items) + "]"
+
+    entry = [f"  {app_id}:", f"    secret_ref: secret:deployment/{name}",
+             f"    origins: {flow(origins or ['https://your-app.example.com'])}",
+             "    access:", f"      agents: {flow(agent_list)}", f"      tools: {flow(tools or ['*'])}"]
+    if token_to:
+        entry.append(f"    token_to: {flow(token_to)}")
     console.print(f"Client id: [bold]{app_id}[/bold]")
-    console.print("Client secret (shown once; put it in the app's server settings):")
+    console.print("Client secret (shown once):")
     print(value)
-    console.print("\nAdd the app to hubzoid.yaml:\n")
-    console.print(escape(f"""apps:
-  {app_id}:
-    secret_ref: secret:deployment/{name}
-    origins: [https://your-app.example.com]
-    access:
-      agents: [{hub_dir.name.lower()}]
-      tools: ["*"]
-"""), soft_wrap=True)
+    if rotate:
+        console.print("\nThe old secret stops working now: put the new one in the app's server.")
+        return
+    console.print("\n1. Add this under apps: in hubzoid.yaml (the agents pick it up within seconds):\n")
+    print("\n".join(entry))
+    console.print("\n2. Give the app's server these settings:\n")
+    print(f"HUBZOID_URL={_agent_url(hub_dir, agent_list[0])}")
+    print(f"HUBZOID_CLIENT_ID={app_id}")
+    print("HUBZOID_CLIENT_SECRET=<the secret above>")
+    console.print("\n3. Check it: hubzoid embed list. The rest is in docs/embedding.md.")
+
+
+def _agent_url(hub_dir: Path, agent: str) -> str:
+    """Where the app reaches this agent: the public address, then /b/<agent>
+    behind a gateway of several agents."""
+    from .. import deployfile
+
+    try:
+        found = deployfile.owning(hub_dir)
+        df = deployfile.load(found) if found else None
+    except Exception:  # noqa: BLE001 - only a hint for the person setting it up
+        df = None
+    base = ((df.public_url if df else None) or "https://<your Hubzoid address>").rstrip("/")
+    return f"{base}/b/{agent}" if df is not None and df.hubs else base
 
 
 @embed_app.command("list")

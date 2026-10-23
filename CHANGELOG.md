@@ -13,8 +13,12 @@ All notable changes to Hubzoid. Versions follow the package version in
   talks AG-UI at `/api/agui`, so assistant-ui and CopilotKit work with their own
   packages; approvals are AG-UI interrupts, and each person can list, reopen and
   rejoin their chats. No Hubzoid account is created for them. Tools named in
-  `token_to` receive the person's own app token. `hubzoid embed secret|list|pass`
-  and a working example in `examples/embed-agui`.
+  `token_to` receive the person's own app token: a hub tool through
+  `hubzoid.embed.app_token()`, or the app's MCP server added as a connector.
+  `hubzoid embed secret` prints the `hubzoid.yaml` entry and the app server's
+  settings; `hubzoid embed list|pass` check and try it. A working example with
+  its own orders API and MCP server is in `examples/embed-agui`, and the
+  `hubzoid-embed` skill (`skills/embed/`) walks Claude Code or Codex through it.
 
 ## [2.0.1]
 

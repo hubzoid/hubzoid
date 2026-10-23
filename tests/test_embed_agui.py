@@ -1,7 +1,6 @@
 """Chat inside an app over AG-UI (hubzoid.embed.agui), on the scripted runtime."""
 from __future__ import annotations
 
-import json
 import time
 
 import pytest
@@ -348,11 +347,11 @@ def test_the_persons_app_token_reaches_only_the_named_tool(client, hub):
 
 def test_a_tool_outside_the_apps_limit_is_refused(client, hub):
     _app_tool_hub(hub, "[read_knowledge]", "[app_lookup]")
-    said = _app_token_run(client, app_token="t-0123456789")
+    said = _app_token_run(client, app_token="alice-app-token")
     assert "is not one of the tools this app allows" in said
     # The pass can narrow the limit further, never widen it.
     _app_tool_hub(hub, "[app_lookup, read_knowledge]", "[app_lookup]")
-    said = _app_token_run(client, app_token="t-0123456789", access={"tools": ["read_knowledge"]})
+    said = _app_token_run(client, app_token="alice-app-token", access={"tools": ["read_knowledge"]})
     assert "is not one of the tools this app allows" in said
 
 
