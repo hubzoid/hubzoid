@@ -266,7 +266,15 @@ export default function SettingsPage({ section }: { section: string | null }) {
     .map((tab) => ({ ...tab, item: items.find((i) => i.key === tab.key)! }));
   const activeTab = tabs.find((tab) => tab.key === active);
   const q = query.trim().toLowerCase();
-  const matches = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
+  // Search finds a group by its own name (Account, Organization) as well as
+  // the pages in it; a page inside a group says which (founder review).
+  const groupMatches = q ? groups.filter((g) => g.label.toLowerCase().includes(q)) : [];
+  const matches = q ? items.filter((i) => !groupMatches.some((g) => g.members[0] === i.key)
+    && `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
+  const shownLabel = (i: Item) => {
+    const g = groupOf(i.key);
+    return g && g.members.length > 1 && g.label !== i.label ? `${g.label} › ${i.label}` : i.label;
+  };
   const link = (target: string, label: ReactNode, current: boolean, className = "hz-nav", icon?: ReactNode, extra?: ReactNode) => (
     <a
       href={`/settings#${target}`}
@@ -310,8 +318,12 @@ export default function SettingsPage({ section }: { section: string | null }) {
               </label>
               {q ? (
                 <>
-                  {matches.map((i) => link(i.hash, i.label, active === i.key, "hz-nav", i.icon))}
-                  {matches.length === 0 && <p className="text-mute px-2">{S.noMatches(query)}</p>}
+                  {groupMatches.map((g) => {
+                    const first = items.find((i) => i.key === g.members[0])!;
+                    return link(first.hash, g.label, activeGroup?.id === g.id, "hz-nav", g.icon);
+                  })}
+                  {matches.map((i) => link(i.hash, shownLabel(i), active === i.key, "hz-nav", i.icon))}
+                  {matches.length === 0 && groupMatches.length === 0 && <p className="text-mute px-2">{S.noMatches(query)}</p>}
                 </>
               ) : (
                 <>

@@ -25,8 +25,11 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByRole("navigation", { name: "Account" }).getByRole("link", { name: "Appearance", exact: true }).click();
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    // A group is found by its own name; a page in a group says which.
+    await page.getByLabel("Search settings").fill("account");
+    await sections.getByRole("link", { name: "Account", exact: true }).waitFor();
     await page.getByLabel("Search settings").fill("name");
-    await sections.getByRole("link", { name: "Profile", exact: true }).click();
+    await sections.getByRole("link", { name: "Account › Profile", exact: true }).click();
     await page.getByLabel("Display name").fill("Ada Review");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByText("Name saved.").waitFor();
