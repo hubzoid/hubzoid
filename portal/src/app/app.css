@@ -2475,8 +2475,7 @@
   outline-offset: 0;
   border-color: var(--hz-mute);
 }
-.hz-search-input:has(input:focus-visible),
-.hz-set-find:has(input:focus-visible) {
+.hz-search-input:has(input:focus-visible) {
   outline: 2px solid var(--hz-mute);
   outline-offset: -2px;
   border-radius: 8px;
@@ -2604,18 +2603,21 @@
     text-decoration: none;
     transition: background-color 120ms var(--hz-ease);
   }
+  /* Like the app's other inputs (.hz-input): filled, a solid border, one focus ring. */
   .hz-set-find {
     display: flex;
     align-items: center;
-    gap: 7px;
-    height: 30px;
-    margin-bottom: 10px;
-    padding: 0 9px;
+    gap: 8px;
+    min-height: 34px;
+    margin-bottom: 12px;
+    padding: 0 10px;
     border-radius: 8px;
-    border: 1px solid var(--hz-line);
+    border: 1px solid color-mix(in srgb, var(--hz-input) 55%, var(--hz-line));
+    background: var(--hz-raised);
+    transition: border-color 120ms ease;
   }
   .hz-set-find:focus-within {
-    border-color: var(--hz-input);
+    border-color: var(--hz-mute);
   }
   .hz-set-find input {
     flex: 1;
