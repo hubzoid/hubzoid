@@ -1,7 +1,6 @@
 """Chat inside an app over AG-UI (hubzoid.embed.agui), on the scripted runtime."""
 from __future__ import annotations
 
-import json
 import time
 
 import pytest

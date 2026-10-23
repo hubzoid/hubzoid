@@ -70,7 +70,7 @@ def decide(hub_dir: Path, ident, permission: str,
     if app is not None:
         from .evaluator import app_access
 
-        decision = app_access(hub_dir, app, permission, tool=tool) if tool else app_access(hub_dir, app, permission)
+        decision = app_access(hub_dir, app, permission, tool=tool)
         return (True, "app") if decision.allowed else (False, decision.reason)
     hub_name = hub_dir.name
     subject = getattr(ident, "user", None) or ""

@@ -10,6 +10,10 @@ Plain-markdown skills for coding agents. Any tool (Claude Code, Cursor, Codex,
   with files and the CLI only: knowledge, a skill, a workflow, `hitl.yaml`,
   usage limits, MCP, evals, a teammate's access and `hubzoid doctor`.
 
+- **[`embed/SKILL.md`](embed/SKILL.md)** (`hubzoid-embed`). Puts a hub's chat
+  inside another app (ERP, dashboard, portal), signed in by that app, with
+  assistant-ui or CopilotKit, and lets tools reach the app as the person.
+
 Put it where your assistant finds project skills, or ask it to read the file:
 
 ```bash

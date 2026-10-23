@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from . import scope as app_scope
 from .caller import AppCaller
@@ -71,6 +71,9 @@ def _error(status: int, code: str, message: str) -> HTTPException:
 
 def _limited(bucket: dict, key: str, limit: int) -> bool:
     now = time.monotonic()
+    if len(bucket) > 10_000:  # forget addresses and people idle for a minute
+        for k in [k for k, q in bucket.items() if not q or now - q[-1] > 60]:
+            bucket.pop(k, None)
     q = bucket[key]
     while q and now - q[0] > 60:
         q.popleft()
@@ -682,7 +685,7 @@ def mount(app: FastAPI, ctx) -> None:
         return Response(status_code=204)
 
 
-
+# -- one start at a time, and replies of turned-off apps stopped ---------------------------
 _locks: dict[str, asyncio.Lock] = {}
 
 

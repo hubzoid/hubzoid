@@ -15,8 +15,9 @@ uses mode 2 (needs `IDP_PRIVATE_KEY_FILE` and `IDP_PUBLIC_KEY_FILE`).
 
 ## Run it
 
-1. Register the app in your `hubzoid.yaml` (`hubzoid embed secret erpnext`), with
-   `origins: [http://127.0.0.1:5180]`.
+1. Register the app: `hubzoid embed secret erpnext --hub <your hub> --origin
+   http://127.0.0.1:5180 --token-to app_lookup`, and paste the entry it prints
+   under `apps:` in `hubzoid.yaml`.
 2. Build and start:
 
    ```bash
@@ -27,8 +28,16 @@ uses mode 2 (needs `IDP_PRIVATE_KEY_FILE` and `IDP_PUBLIC_KEY_FILE`).
    HUBZOID_AGENT=finance PORT=5180 COPILOTKIT_TELEMETRY_DISABLED=true npm start
    ```
 
+   Optional: `IDP_PRIVATE_KEY_FILE` and `IDP_PUBLIC_KEY_FILE` (an RSA key pair)
+   make this server stand in for your identity provider, for mode 2;
+   `OTHER_SITE_PORT=5190` serves a page on another address that tries a copied
+   pass and is refused.
 3. Open `http://127.0.0.1:5180/login?user=alice` (the demo sign-in stands in for
-   your app's own), then try the assistant-ui page and `/copilotkit.html`.
+   your app's own; add `&mode=jwt` for mode 2), then try the assistant-ui page,
+   `/copilotkit.html` and `/source`.
+4. For the connector route, add `http://127.0.0.1:5180/mcp` in Settings ›
+   Agents › Connectors › Custom server with "No sign-in", and list
+   `connector:<its id>` in the app's `access.tools` and `token_to`.
 
 ## Files
 

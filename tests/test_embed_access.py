@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hubzoid.access.evaluator import app_access, authorize, check_run
+from hubzoid.access.evaluator import authorize, check_run
 from hubzoid.access.identity import AppScope, Identity, identity_scope
 from hubzoid.embed import config, scope
 from hubzoid.embed.caller import AppCaller

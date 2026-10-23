@@ -27,16 +27,35 @@ No Hubzoid account is created for people who come from your app. Their chats
 are kept under a private id made from your app and their user id, which never
 matches a Hubzoid account or anyone's access. Name and email are labels only.
 
+## Setup at a glance
+
+| Step | Where | What |
+|---|---|---|
+| 1 | Hubzoid | `hubzoid embed secret <id> --origin <your app's address>`: makes the secret and prints the `hubzoid.yaml` entry and your server's settings |
+| 2 | Hubzoid | Paste the entry under `apps:` in `hubzoid.yaml`; `hubzoid embed list` says "ready" |
+| 3 | Your server | Set `HUBZOID_URL`, `HUBZOID_CLIENT_ID`, `HUBZOID_CLIENT_SECRET`; add the `/hubzoid/pass` route ([Mode 1](#2-mode-1-give-the-person-a-pass-your-server)) |
+| 4 | Your page | Add the chat with assistant-ui or CopilotKit ([section 3](#3-the-chat-your-page)) |
+| 5 | Optional | Give tools the person's access: a hub tool with `app_token()`, or your app's MCP server as a connector ([section 4](#4-your-apps-tools)) |
+
+If your app already signs people in with JWTs, skip the secret and the pass
+route: [Mode 2](#mode-2-your-apps-own-jwt) is one `hubzoid.yaml` entry.
+
+With Claude Code or Codex, the [`hubzoid-embed` skill](../skills/embed/SKILL.md)
+walks through these steps in your two codebases.
+
 ## 1. Register the app
 
-Make the client secret (it is stored write-only and shown once):
+Make the client secret. It is stored write-only and shown once, with the entry
+to add to `hubzoid.yaml` and the settings for your app's server:
 
 ```bash
-hubzoid embed secret erpnext --hub ./finance
+hubzoid embed secret erpnext --hub ./finance --origin https://erp.acme.com \
+  --agent finance --token-to app_lookup
 ```
 
-Then add the app to `hubzoid.yaml` (every agent picks up the change within a
-few seconds; `hubzoid embed list` shows whether each app is ready):
+The command never edits `hubzoid.yaml`: add the entry yourself (or ask Claude
+Code or Codex to). Every agent picks up the change within a few seconds, and
+`hubzoid embed list` shows whether each app is ready. A full entry:
 
 ```yaml
 apps:
@@ -58,6 +77,17 @@ deployment folder.
 
 Turning an app off (`enabled: false`) or removing it refuses its passes at once
 and stops replies it started.
+
+**Rotating the secret**: `hubzoid embed secret erpnext --rotate` makes a new one
+and the old one stops working at once, so update your app's server right away.
+
+**Hosted (Railway, Maritime, Docker)**: `hubzoid.yaml` is in your repository, so
+add the entry there and deploy. For the secret, either run the command in the
+container (`docker compose exec hubzoid hubzoid embed secret erpnext --hub /hub`),
+or skip the shell: put any random value of 32 or more characters in a variable
+(Railway **Variables**, for example `ERPNEXT_CLIENT_SECRET`) and point the app
+at it with `secret_ref: env:ERPNEXT_CLIENT_SECRET`. A stored secret can also be
+set in Settings or with `hubzoid secrets set` ([secrets](secrets.md)).
 
 ## 2. Mode 1: give the person a pass (your server)
 
@@ -171,9 +201,12 @@ function Chat({ threadId }) {
 }
 ```
 
-- **Approvals**: `useAgUiInterrupts()` lists them and
+- **Approvals and questions**: `useAgUiInterrupts()` lists them and
   `useAgUiSubmitInterruptResponses()` answers:
   `submit([{ interruptId, status: "resolved", payload: { approved: true } }])`.
+  A question (`reason: "question"`) is answered with `payload: { answer }`
+  (its choices are in `metadata.hubzoid.options`), or skipped with
+  `status: "cancelled"`.
 - **History**: give the runtime a `threadList` adapter backed by
   `GET /api/agui/threads` and `GET /api/agui/threads/{id}`, converting with
   `fromAgUiMessages(...).map(m => fromThreadMessageLike(m, generateId(), { type: "complete", reason: "unknown" }))`.
@@ -186,7 +219,7 @@ function Chat({ threadId }) {
   then shows them again.
 
 The example's [`assistant-ui.jsx`](../examples/embed-agui/src/assistant-ui.jsx)
-has all three, about 60 lines.
+has all of these, and the options below.
 
 ### CopilotKit
 
@@ -228,6 +261,29 @@ Two things to do on your server, both in the example's
 
 CopilotKit's direct-from-browser mode (`selfManagedAgents`) is part of its paid
 tier, so it isn't the path documented here.
+
+### Which one
+
+assistant-ui is headless: you build the chat from its parts, and the browser
+talks to Hubzoid directly. CopilotKit gives a ready chat and goes through its
+runtime on your server. Both are free on the paths above, and both were tested
+with chat, tools, approvals and history.
+
+### Options for your page
+
+- **What the person is looking at**: send it with each message as
+  `forwardedProps: { hubzoid: { page: { doctype: "Sales Order", name: "SO-1001" } } }`
+  (or AG-UI `context`). The agent gets it as labelled data, never as
+  instructions, at most 4,000 characters, and it never changes access. The
+  person's message in the history is shown without it.
+- **Stop a reply**: `POST /api/agui/threads/{id}/stop`.
+- **Delete a chat**: `DELETE /api/agui/threads/{id}`.
+- **Show refusals**: a refused request answers with
+  `{"detail": {"code", "message"}}` (see [Troubleshooting](#troubleshooting));
+  show the message to the person.
+- **Which agent**: one address per agent (`/b/<agent>`); the pass's
+  `access.agent` must be one of the app's agents.
+- **Look and feel** is your page's: Hubzoid sends only AG-UI events.
 
 ## 4. Your app's tools
 
@@ -354,7 +410,12 @@ the secret store (`hubzoid embed secret`).
 | 403 `no_access` | The pass (or the token's scopes) allow no agent here |
 | 403 `wrong_origin` | The page's address isn't in the app's `origins` |
 | 403 `app_disabled` | `enabled: false` |
+| 400 `ambiguous_credentials` | The request carried a Hubzoid sign-in cookie as well as the pass; send `credentials: "omit"` |
 | 503 `app_unavailable` | The secret isn't set (`hubzoid embed list`), or the JWKS URL can't be fetched |
-| The tool says "no person's token" | The tool isn't in `token_to`, or the pass has no `app_token` |
+| 401 `token_expired` | Get a fresh pass for each request (the examples do) |
+| 429 `too_many` | Too many messages from one person in a minute, or too many refused tokens from one address |
+| `app_token()` returns None | The tool isn't in `token_to`, or the pass has no `app_token` |
+| A connector's tools are missing | `connector:<id>` isn't in `token_to` (and the connector has no shared key), or isn't in the app's `access.tools` |
+| "not one of the tools this app allows" | The tool is outside the app's limit, the pass's `access.tools`, or (mode 2) the token's mapped scopes |
 | 409 `run_in_progress` | A reply is being written or starting in this chat; rejoin or stop it |
 | 422 `decision_required` | A resume without a clear `{approved: true/false}` |
