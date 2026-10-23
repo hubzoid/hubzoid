@@ -408,10 +408,11 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   const hasContent = useAuiState((s) => s.message.content.length > 0);
-  // A running tool row already shows progress: one indicator, not two (F17).
+  // After a tool step the parts show "Working on it…" (Empty, shown when the
+  // last part is not text): one indicator, not two (F17).
   const toolRunning = useAuiState((s) => {
-    const last = s.message.content[s.message.content.length - 1] as { type?: string; result?: unknown } | undefined;
-    return last?.type === "tool-call" && last.result === undefined;
+    const last = s.message.content[s.message.content.length - 1] as { type?: string } | undefined;
+    return last?.type === "tool-call";
   });
   const speaking = useAuiState((s) => s.message.speech != null);
   const value = useFeed();
