@@ -432,9 +432,17 @@ function SectionBody({ item }: { item: Item }) {
               <Section title={t.account.profile} description={t.account.profileHelp}>
                 <ProfileForm />
               </Section>
-              <Section title={t.account.password} description={t.account.passwordHelp}>
-                <PasswordForm />
-              </Section>
+              {/* Only someone who signs in with a Hubzoid password has one to change:
+                  a Google or company sign-in has none (founder review, HUB-140). */}
+              {app.user?.has_password && app.user?.password_enabled !== false ? (
+                <Section title={t.account.password} description={t.account.passwordHelp}>
+                  <PasswordForm />
+                </Section>
+              ) : (
+                <Section title={t.account.password}>
+                  <p className="m-0 text-[0.9286rem] text-mute">{t.account.noPassword(app.user?.method)}</p>
+                </Section>
+              )}
             </>
           )}
           <Section title={t.myAccess.title} description={t.myAccess.help}>

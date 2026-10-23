@@ -481,6 +481,9 @@ export const en = {
     nameRequired: "Enter a name.",
     password: "Password",
     passwordHelp: "Changing your password signs you out on your other devices.",
+    noPassword: (method?: string) =>
+      method === "google" ? "You sign in with Google, so there's no Hubzoid password to change."
+        : "You sign in with your company's sign-in, so there's no Hubzoid password to change.",
     currentPassword: "Current password",
     newPassword: "New password",
     confirmPassword: "Confirm new password",
