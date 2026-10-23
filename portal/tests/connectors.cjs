@@ -417,6 +417,14 @@ const step = (name) => {
       await drawer().getByText("Saved to", { exact: false }).waitFor();
       await page.screenshot({ path: path.join(process.env.PORTAL_SHOTS, "connector-yaml-editor.png"), fullPage: true });
     }
+    step("With browser editing off (the default), connectors are shown without Add, Edit or Delete");
+    host.app.state.flags.editing = false;
+    await page.reload();
+    await page.getByText("Changing this agent's files from the browser is off", { exact: false }).first().waitFor();
+    assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0, "no Add connector");
+    assert.equal(await page.getByRole("button", { name: /^More actions for/ }).count(), 0, "no Edit or Delete menu");
+    host.app.state.flags.editing = true;
+
     assert.deepEqual(errors, [], "no page errors");
     console.log(`\nPASS: ${steps.length} connector checks`);
   } catch (e) {

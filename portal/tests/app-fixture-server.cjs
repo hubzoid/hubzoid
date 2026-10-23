@@ -112,7 +112,7 @@ const MORE_AGENTS = [
 function seed() {
   const s = {
     mode: process.env.HZ_FIXTURE_MODE === "local" ? "local" : "accounts",
-    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false, many_agents: false, branded: false },
+    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false, many_agents: false, branded: false, editing: true },
     users: [
       { id: "u_ada00001", email: "ada@example.com", name: "Ada Okafor", role: "admin", password: PASSWORD, status: "active" },
       { id: "u_sam00001", email: "sam@example.com", name: "Sam Rivera", role: "user", password: PASSWORD, status: "active" },
@@ -722,6 +722,13 @@ function createApp(options = {}) {
       const agents = visibleAgents(user);
       return send(res, 200, { agents, default_agent: agents[0]?.id ?? null });
     }
+    // Browser editing of agent files (Beta, off by default in Hubzoid): on in
+    // the fixture so the editors can be tested; flags.editing turns it off.
+    if (pathname === "/api/editing" && method === "GET")
+      return send(res, 200, state.flags.editing
+        ? { in_app_editing: true, editable: true, files_from: "local", message: null }
+        : { in_app_editing: false, editable: false, files_from: "local",
+            message: "Changing this agent's files from the browser is off. Edit the agent's files on this computer, or ask Claude Code or Codex." });
     if (pathname === "/api/branding" && method === "GET")
       return send(
         res,
