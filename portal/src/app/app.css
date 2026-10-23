@@ -3467,3 +3467,36 @@
 .console-embed .ant-alert-info .ant-alert-title { color: var(--hz-secondary); font-weight: 500; }
 .hz-set-main .ant-alert-info .ant-alert-description,
 .console-embed .ant-alert-info .ant-alert-description { color: var(--hz-mute); }
+
+/* ---- One table style across Settings (founder review, HUB-140) ------------
+   Every table: a quiet header row with a line under it, the same row height,
+   a separator between rows. Kept outside the layers so no screen's own rule
+   wins over it. */
+.console-embed .ant-table, .hz-set-main .ant-table { background: transparent !important; font-size: 0.9286rem; }
+.console-embed .ant-table-thead > tr > th, .hz-set-main .ant-table-thead > tr > th {
+  background: transparent !important;
+  padding: 10px 12px !important;
+  font-size: 0.8571rem;
+  font-weight: 500 !important;
+  color: var(--hz-mute) !important;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--hz-line) !important;
+}
+.console-embed .ant-table-thead > tr > th::before, .hz-set-main .ant-table-thead > tr > th::before { display: none; }
+.console-embed .ant-table-tbody > tr:not(.ant-table-measure-row) > td,
+.hz-set-main .ant-table-tbody > tr:not(.ant-table-measure-row) > td {
+  padding: 14px 12px !important;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--hz-line-soft) !important;
+}
+.console-embed .ant-table-tbody > tr:last-child > td, .hz-set-main .ant-table-tbody > tr:last-child > td {
+  border-bottom-color: var(--hz-line) !important;
+}
+/* Lists that aren't tables (Access, Agents) use the same separators. */
+.hz-access-list > li { border-bottom-color: var(--hz-line-soft); }
+.hz-access-list { border-top: 1px solid var(--hz-line); }
+
+/* Sections on one page (Setup, Checks, Secrets, Channels) are set apart by a line. */
+.console-embed .hz-config-page > .panel + .panel,
+.hz-config-page > * + * { margin-top: 32px !important; padding-top: 24px !important; border-top: 1px solid var(--hz-line) !important; }
+.hz-config-page h4.ant-typography { margin-top: 28px !important; padding-top: 20px; border-top: 1px solid var(--hz-line-soft); }
