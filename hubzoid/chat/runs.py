@@ -90,7 +90,14 @@ def web_identity(hub_dir, email: str):
 
 def _admit(hub_dir, run) -> dict | None:
     """The reply's run identity (``access.run_identity``): the signed-in person
-    in the chat window, or the owner of the API key that sent it."""
+    in the chat window, the owner of the API key that sent it, or a person an
+    embedding app vouched for (no account: ``acts_as`` is their app subject)."""
+    if run.credential == "app":
+        return run_identity.admit_or_refuse(
+            hub_dir, run_kind="chat", run_id=run.message_id, acts_as_email=run.email,
+            requested_by=run.email, requested_by_kind="app", started_from="app",
+            origin_id=run.conversation_id, person_present=True,
+            credential_kind="app", credential_id=run.credential_id)
     via_key = run.credential == "api_key"
     return run_identity.admit_or_refuse(
         hub_dir, run_kind="api" if via_key else "chat", run_id=run.message_id,
@@ -251,10 +258,21 @@ class RunManager:
         if ctx.inflight is not None:
             ctx.inflight.enter()
         try:
-            identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
-            record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
-            identity = run_identity.identity(record, "web", identity.groups)
+            from ..embed import scope as app_scope
+
+            caller = None
+            if run.credential == "app":
+                # A person an embedding app vouched for: access from the app's
+                # limit and their token, held only for this reply.
+                caller = app_scope.take(run.conversation_id, run.owner_id)
+                record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
+                identity = app_scope.run_identity(caller, run.email, record_id=record.get("id"))
+            else:
+                identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
+                record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
+                identity = run_identity.identity(record, "web", identity.groups)
             with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity), \
+                    app_scope.token_scope(ctx.hub_dir, caller), \
                     _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)
                 try:

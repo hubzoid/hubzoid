@@ -35,7 +35,9 @@ from .identity import Identity, normalize
 # `workflow` is a trusted surface: a scheduled workflow runs as its own service
 # identity (`workflow:<name>`, a per-workflow subject granted like a person), not
 # a shared/anonymous sender — so it may reach a restricted tool it was granted.
-DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp", "workflow"})
+# `app` is one person an embedding app vouched for (hubzoid.embed); what they
+# may use is the app's own limit, checked in place of grants.
+DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp", "workflow", "app"})
 
 
 def is_allowed(

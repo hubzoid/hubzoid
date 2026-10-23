@@ -313,17 +313,31 @@ class Orchestrator:
             await self.continue_settled(run.message_id)
 
     # -- approvals and questions ------------------------------------------------------
-    async def continue_request(self, request: dict) -> bool:
+    async def continue_request(self, request: dict, *, app_caller=None, on_run=None) -> bool:
         """A person answered a request this chat made: continue the branch with
-        their answer, once. Waits for the reply that asked to end first."""
+        their answer, once. Waits for the reply that asked to end first.
+
+        A request a person in an embedding app made continues only with that
+        person back, holding a fresh token (``app_caller``, from the AG-UI
+        resume): never from here alone, since nothing else holds their token."""
         from ..hitl import service
 
         if request.get("origin") != "chat" or not request.get("conversation_id") \
                 or request.get("status") not in ("approved", "rejected", "answered"):
             return False
+        from ..embed.caller import is_app_subject
+
+        if is_app_subject(request.get("requester_id")):
+            if app_caller is None or app_caller.subject != request.get("requester_id"):
+                return False
+            from ..embed import scope as app_scope
+
+            if not app_scope.hand_over(request["conversation_id"], app_caller):
+                return False
         from .. import drain
 
         if drain.active():  # continued by the recovery loop after the restart
+            self._release_app(request, app_caller)
             return False
         # The reply resumes for the person who asked, on the session or key
         # that reply ran with: if that one was revoked (or they were signed
@@ -334,8 +348,10 @@ class Orchestrator:
         if credential and not await db(lambda: still_valid(self.ctx.hub_dir, request["requester_id"],
                                                            credential, expired_ok=True)):
             log.info("chat: request %s not continued: its sign-in ended", request["id"])
+            self._release_app(request, app_caller)
             return False
         if not await db(service.mark_continued, self.ctx.hub_dir, request["id"]):
+            self._release_app(request, app_caller)
             return False
         parts = [{"type": "text", "text": service.visible_outcome(request) or "OK"},
                  {"type": "request_outcome", "request_id": request["id"],
@@ -346,13 +362,26 @@ class Orchestrator:
                             after_message_id=request["message_id"], parts=parts, credential=credential)
         except self.engine.Busy:
             await db(_unclaim, self.ctx.hub_dir, request["id"])  # retried when that reply ends
+            self._release_app(request, app_caller)
             return False
         except Exception:  # noqa: BLE001 - the decision stands; recovery tries again
             log.exception("chat: could not continue after request %s", request["id"])
             await db(_unclaim, self.ctx.hub_dir, request["id"])
+            self._release_app(request, app_caller)
             return False
-        await self.launch(plan)
+        run = await self.launch(plan)
+        if run is None and app_caller is not None:
+            self._release_app(request, app_caller)
+        if on_run is not None and run is not None:
+            on_run(run)
         return plan is not None
+
+    @staticmethod
+    def _release_app(request: dict, app_caller) -> None:
+        if app_caller is not None:
+            from ..embed import scope as app_scope
+
+            app_scope.release(request["conversation_id"], app_caller)
 
     async def continue_settled(self, message_id: str) -> None:
         from ..hitl import service

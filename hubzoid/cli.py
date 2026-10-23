@@ -3414,6 +3414,15 @@ app.add_typer(
     rich_help_panel="Commands",
 )
 
+from .embed.cli import embed_app  # noqa: E402
+
+app.add_typer(
+    embed_app,
+    name="embed",
+    help="Apps that embed the chat (apps: in hubzoid.yaml): secrets, status, test passes.",
+    rich_help_panel="Commands",
+)
+
 
 # ---------------------------------------------------------------------------
 # version

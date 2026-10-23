@@ -782,7 +782,13 @@ def _identity_checked(options, hub_dir, ident):
     """A PreToolUse hook for the tools Hubzoid does not wrap itself (outside
     MCP servers, Claude's own tools): the same per-call check as every hub
     tool (``access.evaluator.check_run``). Hub tools check inside their own
-    wrapper, so they are skipped here."""
+    wrapper, so they are skipped here.
+
+    For a person an embedding app vouched for, the tool must also be within
+    their access: ``mcp__<server>__<tool>`` is read against the servers this
+    turn knows, longest name first (``erp__admin`` is never taken for
+    ``erp``), and a delegate by its own tool name. A PostToolUse hook then
+    removes their app token from any tool output before the model sees it."""
     import asyncio
     import dataclasses
     from pathlib import Path
@@ -790,23 +796,70 @@ def _identity_checked(options, hub_dir, ident):
     from claude_agent_sdk import HookMatcher
 
     from .access.evaluator import check_run
+    from .access.guard import server_source
+    from .embed import scope as app_scope
 
-    own = f"mcp__{_MCP_NAMESPACE}__"
+    servers = sorted({str(k) for k in (getattr(options, "mcp_servers", None) or {})} | {_MCP_NAMESPACE},
+                     key=len, reverse=True)
+    for_app = getattr(ident, "app", None) is not None
+
+    def owners(full: str) -> list[str]:
+        """The servers whose ``mcp__<server>__`` prefix ``full`` has, longest first."""
+        rest = full[len("mcp__"):]
+        return [key for key in servers if rest.startswith(key + "__")]
+
+    def named(hook_input) -> dict:
+        full = str((hook_input or {}).get("tool_name") or "")
+        if full == SUBAGENT_SPAWN_TOOL:
+            from . import handover
+
+            kind = str(((hook_input or {}).get("tool_input") or {}).get("subagent_type") or "")
+            return {"tool": handover.tool_name(kind) if kind else full}
+        if not full.startswith("mcp__"):
+            return {"tool": full}
+        found = owners(full)
+        if not found:
+            return {"tool": full, "server": "?unknown"}   # a server this turn doesn't know: never within a limit
+        key = found[0]
+        hub_server, connector = server_source(Path(hub_dir), key)
+        return {"tool": full[len("mcp__") + len(key) + 2:], "server": hub_server, "connector": connector}
 
     async def admit(tool_input, _tool_use_id, _context):
-        if str((tool_input or {}).get("tool_name") or "").startswith(own):
-            return {}
+        full = str((tool_input or {}).get("tool_name") or "")
+        found = owners(full) if full.startswith("mcp__") else []
+        if for_app and len(found) > 1:
+            # "erp" and "erp__admin" both fit "mcp__erp__admin__x": which server
+            # owns the tool can't be told from its name, so an app may not use it.
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": "This tool's server can't be told apart "
+                                           "from another server's, so this app may not use it."}}
+        if found and found[-1] == _MCP_NAMESPACE and (len(found) == 1 or not for_app):
+            return {}   # Hubzoid's own tools check inside their own wrapper
         try:
-            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident)
+            decision = await asyncio.to_thread(check_run, Path(hub_dir), ident, **named(tool_input))
         except Exception:  # noqa: BLE001 - fail closed
             decision = None
         if decision is not None and decision.allowed:
             return {}
+        reason = ("This tool is not one of the tools this app allows."
+                  if decision is not None and decision.reason == "app_tool" else "This account no longer has access.")
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                       "permissionDecisionReason": "This account no longer has access."}}
+                                       "permissionDecisionReason": reason}}
 
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    token = app_scope.live_token()
+    if token:
+        async def scrubbed(hook_input, _tool_use_id, _context):
+            name = str((hook_input or {}).get("tool_name") or "")
+            response = (hook_input or {}).get("tool_response")
+            clean = app_scope.scrub(response, token)
+            if clean == response:
+                return {}
+            key = "updatedMCPToolOutput" if name.startswith("mcp__") else "updatedToolOutput"
+            return {"hookSpecificOutput": {"hookEventName": "PostToolUse", key: clean}}
+
+        hooks["PostToolUse"] = [HookMatcher(hooks=[scrubbed]), *hooks.get("PostToolUse", [])]
     return dataclasses.replace(options, hooks=hooks)
 
 

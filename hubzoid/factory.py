@@ -194,7 +194,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # Delegates run as within-turn subagents the main agent calls (as_tool),
     # each on its own model. Built from the gated registry so their tool scope
     # respects restricted/.
-    delegate_tools = _build_delegate_tools(kept, registry)
+    delegate_tools = [access.guard.run_checked(t, hub_dir) for t in _build_delegate_tools(kept, registry)]
 
     main_model = modellib.build(main_model_id)
 
