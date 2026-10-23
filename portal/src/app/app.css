@@ -3441,11 +3441,12 @@
 .hz-set-main .ant-table-wrapper { max-width: 100%; }
 .hz-set-main .ant-table-content { overflow-x: auto; }
 @media (max-width: 640px) {
-  .people-table .ant-table-content { overflow-x: visible !important; }
-  .people-table table { min-width: 0 !important; width: 100% !important; table-layout: auto !important; }
-  .people-table colgroup, .people-table .ant-table-thead { display: none; }
-  .people-table .ant-table-tbody > tr { display: block; padding: 12px 0; border-bottom: 1px solid var(--hz-line-soft); }
-  .people-table .ant-table-tbody > tr > td { display: block; width: auto !important; padding: 2px 0 !important; border: 0 !important; }
+  .people-table .ant-table-content, .hz-workflow-table .ant-table-content { overflow-x: visible !important; }
+  .people-table table, .hz-workflow-table table { min-width: 0 !important; width: 100% !important; table-layout: auto !important; }
+  .people-table colgroup, .people-table .ant-table-thead,
+  .hz-workflow-table colgroup, .hz-workflow-table .ant-table-thead { display: none; }
+  .people-table .ant-table-tbody > tr, .hz-workflow-table .ant-table-tbody > tr { display: block; padding: 12px 0; border-bottom: 1px solid var(--hz-line-soft); }
+  .people-table .ant-table-tbody > tr > td, .hz-workflow-table .ant-table-tbody > tr > td { display: block; width: auto !important; padding: 3px 0 !important; border: 0 !important; text-align: left !important; }
 }
 
 /* D9, D10: browser editing of agent files is Beta, said in small text. */

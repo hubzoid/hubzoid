@@ -89,7 +89,7 @@ function step(name) {
     const settingsTab = (tab) => page.locator(".hz-preference-tabs a[aria-current=page]")
       .filter({ hasText: new RegExp(`^${tab}$`) }).waitFor();
     // Settings lists access and workflows as items, and people as table rows.
-    const rows = () => page.locator("tr, .hz-access-list > li, .hz-workflow-list > li");
+    const rows = () => page.locator("tr, .hz-access-list > li");
     const drawer = () => page.locator(".ant-drawer-section[role=dialog]");
     const modal = () => page.locator(".ant-modal-confirm").filter({ visible: true });
     const modalTitle = (text) => modal().locator(".ant-modal-confirm-title").getByText(text);
