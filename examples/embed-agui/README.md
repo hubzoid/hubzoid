@@ -7,7 +7,11 @@ one with [CopilotKit](https://www.copilotkit.ai). It uses only their packages,
 
 What it shows: a person signed in to the app chats as themselves, sees tool
 calls, approves an action, reopens past chats and rejoins a reply after a
-reload; the app's tool receives that person's own app token.
+reload, stops or deletes a chat, and sends the page they are on. The agent's
+tools reach the app's own data as that person: `/api/orders` (a hub tool) and
+an MCP server at `/mcp` (a connector) each answer only with that person's
+orders, and `/source` lists every call they received. `&mode=jwt` at sign-in
+uses mode 2 (needs `IDP_PRIVATE_KEY_FILE` and `IDP_PUBLIC_KEY_FILE`).
 
 ## Run it
 
@@ -30,7 +34,7 @@ reload; the app's tool receives that person's own app token.
 
 | File | What |
 |---|---|
-| `server.mjs` | Your app's server: its sign-in, `/hubzoid/pass`, the CopilotKit runtime |
+| `server.mjs` | Your app's server: its sign-in, `/hubzoid/pass`, its orders API and MCP server, the CopilotKit runtime |
 | `src/assistant-ui.jsx` | assistant-ui page: AG-UI agent, thread list, approvals, rejoin |
 | `src/copilotkit.jsx` | CopilotKit page: its chat and approvals through the runtime |
 | `src/hubzoid.js` | Fetch a pass; call Hubzoid's history routes |

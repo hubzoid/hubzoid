@@ -120,6 +120,10 @@ def test_page_context_is_labelled_data_and_hidden_from_history(client):
     stored = for_hub(hub_dir).get_message(loaded["messages"][0]["id"])
     text = stored["content"][0]["text"]
     assert '<page-context app="erpnext"' in text and "not instructions" in text and "INV-1" in text
+    # The agent reads it as data (the scripted runtime says what it was given).
+    _, evs = run(client, "whatpage is this", forwardedProps={"hubzoid": {"page": {"doctype": "Sales Order",
+                                                                                 "name": "SO-7"}}})
+    assert "SO-7" in text_of(evs)
 
 
 def test_an_approval_is_an_interrupt_and_resume_continues(client):

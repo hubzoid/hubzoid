@@ -249,10 +249,20 @@ def app_lookup(query: str) -> str:
     return r.text
 ```
 
-**Your app's MCP server**, added in Settings as a connector, gets it as the
-`token_header` header (default `Authorization: Bearer <token>`) on every call.
-The MCP server must use that per-request token, not one fixed key, and must not
-share cached results between people.
+**Your app's MCP server**, added as a connector, gets it as the `token_header`
+header (default `Authorization: Bearer <token>`) on every call. Add it in
+Settings › Agents › (the agent) › Connectors › Add connector › Custom server:
+its URL, and "No sign-in" (the person's token comes from your app). It is saved
+as `connectors/<id>.yaml`. Then list `connector:<id>` in the app's
+`access.tools` and `token_to`. The MCP server must use that per-request token,
+not one fixed key, and must not share cached results between people.
+
+In mode 2 the token your tools receive is your app's own JWT, so your API
+checks it as it already does.
+
+The example app has both: `/api/orders` and an MCP server at `/mcp`, each
+answering only with the orders of the person the token belongs to, and a
+`/source` page listing every call it received.
 
 The token is sent only to the tools in `token_to`, kept in memory for the
 reply, and replaced with `[redacted]` in tool output (text and structured
@@ -325,6 +335,15 @@ agent's address (`/b/<agent>`).
 | eve | `jwtHmac`, `jwtEcdsa`, `oidc` | your code | per-caller connection auth | `useEveAgent` hooks |
 | LangChain | your `@auth.authenticate` function | `@auth.on` rules | your code | their SDK |
 | Hubzoid | a pass signed with the client secret, or your app's own JWT | the pass within the app's limit | the person's app token to `token_to` tools | AG-UI |
+
+Registering an app: Agno sets one JWT verifier for the whole AgentOS in code
+(`AgentOS(authorization=True, authorization_config=...)`) or with
+`JWT_VERIFICATION_KEY`/`JWT_JWKS_FILE`; its YAML config covers other settings,
+not sign-in. Its service accounts are made through an API. Mastra and eve set
+their auth in code (`new Mastra({ server: { auth } })`, eve's `auth: [...]`).
+Sim sets a deployed chat's sign-in in its UI. Hubzoid keeps one entry per app
+in `hubzoid.yaml`, beside the deployment's other settings, and the secret in
+the secret store (`hubzoid embed secret`).
 
 ## Troubleshooting
 

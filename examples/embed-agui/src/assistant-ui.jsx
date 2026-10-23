@@ -19,10 +19,26 @@ import {
 } from "@assistant-ui/react-ag-ui";
 import { getPass, hubzoid, me } from "./hubzoid.js";
 
+// The record the person is looking at in your app: sent with each message as
+// page context (data for the agent, never a source of access).
+const page = { current: { doctype: "Sales Order", name: "SO-1001" } };
+
 // Every request to Hubzoid carries a fresh pass from your app's server.
 async function withPass(url, init = {}) {
   const pass = await getPass();
-  return fetch(url, { ...init, credentials: "omit", headers: { ...(init.headers || {}), Authorization: `Bearer ${pass}` } });
+  let body = init.body;
+  if (typeof body === "string" && init.method === "POST" && String(url).endsWith("/api/agui")) {
+    const input = JSON.parse(body);
+    input.forwardedProps = { ...(input.forwardedProps || {}), hubzoid: { page: page.current } };
+    body = JSON.stringify(input);
+  }
+  const res = await fetch(url, { ...init, body, credentials: "omit", headers: { ...(init.headers || {}), Authorization: `Bearer ${pass}` } });
+  if (!res.ok && res.status !== 204) {
+    // Show Hubzoid's refusal (its code and message) instead of a silent failure.
+    const detail = await res.clone().json().then((j) => j.detail || j).catch(() => ({}));
+    window.dispatchEvent(new CustomEvent("hubzoid-error", { detail: { status: res.status, ...detail } }));
+  }
+  return res;
 }
 
 // Rejoin a reply that is still being written (after a reload): Hubzoid's
@@ -109,6 +125,34 @@ function Approvals() {
   ));
 }
 
+function Refusal() {
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    const on = (e) => setError(e.detail);
+    window.addEventListener("hubzoid-error", on);
+    return () => window.removeEventListener("hubzoid-error", on);
+  }, []);
+  if (!error) return null;
+  return (
+    <div className="refusal" data-testid="refusal">
+      Hubzoid refused ({error.status}{error.code ? `, ${error.code}` : ""}): {error.message || "see the server log"}
+      <button onClick={() => setError(null)}>×</button>
+    </div>
+  );
+}
+
+function PagePicker() {
+  const [value, setValue] = useState(page.current.name);
+  const pick = (name) => { page.current = { doctype: "Sales Order", name }; setValue(name); };
+  return (
+    <label className="page">Viewing in Acme ERP:{" "}
+      <select data-testid="page" value={value} onChange={(e) => pick(e.target.value)}>
+        {["SO-1001", "SO-1002", "SO-2001"].map((n) => <option key={n} value={n}>Sales Order {n}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function App({ base }) {
   const [threads, setThreads] = useState([]);
   const [threadId, setThreadId] = useState(() => crypto.randomUUID());
@@ -166,12 +210,22 @@ function App({ base }) {
         <aside>
           <button data-testid="new-chat" onClick={() => runtime.threads.switchToNewThread()}>New chat</button>
           <button data-testid="reload-threads" onClick={refresh}>Refresh</button>
+          <button data-testid="stop" onClick={() =>
+            hubzoid(base, `/api/agui/threads/${encodeURIComponent(current.current)}/stop`, { method: "POST" })}>Stop the reply</button>
+          <button data-testid="delete" onClick={async () => {
+            await hubzoid(base, `/api/agui/threads/${encodeURIComponent(current.current)}`, { method: "DELETE" });
+            await refresh();
+            runtime.threads.switchToNewThread();
+          }}>Delete this chat</button>
+          <hr />
           {threads.map((t) => (
             <button key={t.threadId} data-testid="thread" className={t.threadId === threadId ? "on" : ""}
               onClick={() => runtime.threads.switchToThread(t.threadId)}>{t.title}</button>
           ))}
         </aside>
         <ThreadPrimitive.Root className="thread">
+          <PagePicker />
+          <Refusal />
           <ThreadPrimitive.Viewport className="viewport">
             <ThreadPrimitive.Messages components={{ UserMessage: Message, AssistantMessage: Message }} />
             <Approvals />
@@ -186,7 +240,8 @@ function App({ base }) {
   );
 }
 
-me().then(({ user, hubzoid: base }) => {
-  document.getElementById("who").textContent = user ? `Signed in to the app as ${user}` : "Not signed in";
+me().then(({ user, hubzoid: base, mode }) => {
+  document.getElementById("who").textContent = user
+    ? `Signed in to the app as ${user} · ${mode === "jwt" ? "mode 2: the app's own JWT" : "mode 1: a pass"}` : "Not signed in";
   createRoot(document.getElementById("root")).render(<StrictMode><App base={base} /></StrictMode>);
 });

@@ -17,3 +17,7 @@ aside button.on, aside button:hover { background: #ececec; }
 .composer textarea { flex: 1; min-height: 40px; padding: 8px; border: 1px solid #ccc; border-radius: 8px; font: inherit; }
 .copilot-root { height: calc(100vh - 44px); }
 .copilot { height: 100%; }
+.refusal { margin: 8px 24px 0; padding: 8px 12px; border: 1px solid #f04438; border-radius: 8px; background: #fef3f2; color: #912018; max-width: 720px; }
+.refusal button { margin-left: 8px; border: 0; background: none; cursor: pointer; }
+.page { padding: 8px 24px; border-bottom: 1px solid #e4e4e4; background: #fff; font-size: 13px; color: #555; }
+aside hr { border: 0; border-top: 1px solid #e4e4e4; width: 100%; }

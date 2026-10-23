@@ -22,6 +22,11 @@ export async function hubzoid(base, path, init = {}) {
     headers: { ...(init.headers || {}), Authorization: `Bearer ${pass}` },
   });
   if (r.status === 204) return null;
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    // Show Hubzoid's refusal (its code and message) on the page.
+    const detail = await r.clone().json().then((j) => j.detail || j).catch(() => ({}));
+    window.dispatchEvent(new CustomEvent("hubzoid-error", { detail: { status: r.status, ...detail } }));
+    throw new Error(`${r.status} ${await r.text()}`);
+  }
   return r.json();
 }
