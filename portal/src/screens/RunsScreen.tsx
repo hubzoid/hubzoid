@@ -28,7 +28,7 @@ import {
   type Workflow,
 } from "../api";
 import { useData } from "../hooks/useData";
-import { agentHref, href, hrefWith } from "../hooks/useRoute";
+import { agentHref, href } from "../hooks/useRoute";
 import {
   LoadState,
   RecoveryScreen,
@@ -249,9 +249,6 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
         ]}
       />}
       <Webhooks hub={hub} />
-      <Text type="secondary">
-        People's own repeating requests on this agent are in <a href={hrefWith("/schedules", { hub: hub.key })}>Team schedules</a>.
-      </Text>
     </div>
   );
 }
@@ -302,30 +299,66 @@ function runsAs(w: Workflow): string | null {
 /** In Settings: each workflow by name, what it does, and one status line
  *  (HUB-140 F31). The run command sits in a small menu. */
 function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
-  return <ul className="hz-workflow-list" aria-label="Workflows">
-    {workflows.map((w) => {
-      const status = statusLine(w);
-      return <li key={w.name}>
-        <div className="hz-workflow-info">
-          <div className="hz-workflow-title"><a href={runsHref(hub, w.name)}>{w.title ?? w.name}</a></div>
-          {w.purpose && <Text type="secondary">{w.purpose}</Text>}
-          <Text type={status.tone}>{status.text}</Text>
-          {runsAs(w) && <Text type={w.runs_as?.error ? "danger" : "secondary"} className="hz-workflow-account">{runsAs(w)}</Text>}
-          {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
-        </div>
-        <div className="hz-workflow-actions">
-          {!w.webhook && !w.name.startsWith('md:') && !w.error && <RunNow hub={hub} workflow={w} />}
-          <Button href={runsHref(hub, w.name)}>View runs</Button>
-          {!w.webhook && (
-            <Dropdown trigger={["click"]} menu={{ items: [{ key: "copy", label: "Copy run command",
-              onClick: () => void navigator.clipboard.writeText(workflowCommand('run', w.name, hub.path || hub.key)).then(() => message.success("Copied")) }] }}>
-              <Button aria-label="More" icon={<MoreHorizontal size={16} />} />
-            </Dropdown>
-          )}
-        </div>
-      </li>;
-    })}
-  </ul>;
+  // A table like Connectors: a header, then one row per workflow (founder review).
+  return (
+    <Table<Workflow>
+      className="hz-workflow-table"
+      rowKey={(w) => w.name}
+      size="middle"
+      pagination={false}
+      dataSource={workflows}
+      scroll={{ x: 760 }}
+      columns={[
+        {
+          title: "Workflow",
+          key: "name",
+          render: (_, w) => (
+            <div className="hz-workflow-info">
+              <a className="hz-workflow-name" href={runsHref(hub, w.name)}>{w.title ?? w.name}</a>
+              {w.purpose && <Text type="secondary">{w.purpose}</Text>}
+              {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
+            </div>
+          ),
+        },
+        {
+          title: "Status",
+          key: "status",
+          render: (_, w) => {
+            const status = statusLine(w);
+            return <Text type={status.tone}>{status.text}</Text>;
+          },
+        },
+        {
+          title: "Runs as",
+          key: "runs_as",
+          width: 220,
+          render: (_, w) => {
+            const who = runsAs(w);
+            if (!who) return <Text type="secondary">—</Text>;
+            return <Text type={w.runs_as?.error ? "danger" : "secondary"}>{who.replace(/^Runs as you/, "You").replace(/^Runs as /, "")}</Text>;
+          },
+        },
+        {
+          title: "",
+          key: "actions",
+          align: "right",
+          width: 250,
+          render: (_, w) => (
+            <Space size={6}>
+              {!w.webhook && !w.name.startsWith("md:") && !w.error && <RunNow hub={hub} workflow={w} />}
+              <Button href={runsHref(hub, w.name)}>View runs</Button>
+              {!w.webhook && (
+                <Dropdown trigger={["click"]} menu={{ items: [{ key: "copy", label: "Copy run command",
+                  onClick: () => void navigator.clipboard.writeText(workflowCommand("run", w.name, hub.path || hub.key)).then(() => message.success("Copied")) }] }}>
+                  <Button aria-label="More" icon={<MoreHorizontal size={16} />} />
+                </Dropdown>
+              )}
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
 }
 
 function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {

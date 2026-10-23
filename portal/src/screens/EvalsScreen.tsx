@@ -79,12 +79,8 @@ function keyArgs(args: unknown): string {
 /** The latest score, the trend over the last 10 runs, and what needs a look. */
 function ScoreSummary({ hub, score }: { hub: Hub; score: NonNullable<EvalsOverview["score"]> }) {
   const latest = score.latest;
-  if (!latest)
-    return (
-      <div className="eval-score">
-        <Text type="secondary">No run yet. Run evals from the command line, CI or a schedule.</Text>
-      </div>
-    );
+  // No run yet: the Runs table below says so, once (founder review).
+  if (!latest) return null;
   const all = latest.passed === latest.total;
   return (
     <div className="eval-score" role="group" aria-label="Eval score">

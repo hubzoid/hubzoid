@@ -33,7 +33,6 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
   const app = useApp();
   const [hub, setHub] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[] | null>(null);
-  const elsewhere = !!agent && !!hub && agent.toLowerCase() !== hub;
   const [pending, setPending] = useState<Pending[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +64,6 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
   return (
     <>
     {hub && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
-    {elsewhere && <Notice tone="info" className="mb-4">{t.workspace.elsewhere}</Notice>}
     {readOnly && <p className="mb-4 text-[13px] text-mute">{note ?? t.workspace.readOnly}</p>}
     <div className="hz-workspace-files">
       <div className="space-y-4">

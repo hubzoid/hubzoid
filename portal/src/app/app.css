@@ -3318,11 +3318,9 @@
 .hz-access-person > .ant-space > .ant-space-item:first-child { flex: none; }
 .hz-access-status { margin: 5px 0 0 42px; }
 .hz-access-capabilities { min-width: 0; }
-/* One framed list, one row per workflow, like the Agents table (founder review). */
-.hz-workflow-list { border: 1px solid var(--hz-line); border-radius: 10px; overflow: hidden; }
-.hz-workflow-list > li { display: flex; justify-content: space-between; gap: 24px; padding: 16px 18px; border-bottom: 1px solid var(--hz-line-soft); }
-.hz-workflow-list > li:last-child { border-bottom: 0; }
-.hz-workflow-list > li:hover { background: var(--hz-hover); }
+.hz-workflow-list > li { display: flex; justify-content: space-between; gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--hz-line-soft); }
+.hz-workflow-table .hz-workflow-name { font-weight: 600; color: var(--hz-ink); }
+.hz-workflow-table .hz-workflow-info { gap: 2px; }
 .hz-workflow-info { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .hz-workflow-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .hz-workflow-title > a { font-weight: 600; color: var(--hz-ink); overflow-wrap: anywhere; }
