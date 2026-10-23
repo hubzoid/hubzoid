@@ -18,14 +18,12 @@ import {
   Database,
   FilePen,
   HeartPulse,
-  Box,
+  Building2,
   Gauge,
   LogOut,
   MessageSquare,
   Palette,
-  PencilRuler,
   Plug,
-  ListChecks,
   Search,
   SlidersHorizontal,
   ShieldCheck,
@@ -40,7 +38,7 @@ import { post } from "../lib/api";
 import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
-import { Button, Notice, PageSpinner, cx } from "../components/ui";
+import { Button, PageSpinner, cx } from "../components/ui";
 import { get } from "../lib/api";
 import { displayName } from "../lib/format";
 import { toast } from "../components/toast";
@@ -48,14 +46,14 @@ import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm 
 import { InSettings, Section } from "./SettingsFrame";
 import { PageErrorBoundary } from "../components/ErrorBoundary";
 import { MyAccess } from "../components/MyAccess";
+import { useEditing } from "../lib/editing";
+import { UnderTabs, useUnderTabs } from "../../lib/underTabs";
 
 const ConnectionsPage = lazyChunk(() => import("./ConnectionsPage"));
 const SourcesPage = lazyChunk(() => import("./SourcesPage"));
-const WorkspacePage = lazyChunk(() => import("./WorkspacePage"));
 const SecurityPage = lazyChunk(() => import("./SecurityPage"));
 const SignInSettings = lazyChunk(() => import("./SignInSettings"));
 const ConsoleEmbed = lazyChunk(() => import("../../ConsoleEmbed"));
-const WorkflowAccessPage = lazyChunk(() => import("./WorkflowAccessPage"));
 const HubChangesPage = lazyChunk(() => import("./HubChangesPage"));
 const MemoryPage = lazyChunk(() => import("./MemoryPage"));
 
@@ -67,87 +65,59 @@ type Key =
   | "connections"
   | "sources"
   | "data"
+  | "memory"
   | "my-schedules"
-  | "my-work"
-  | "work"
-  | "sandboxes"
-  | "budgets"
+  | "proposals"
   | "agents"
-  | "people"
+  | "runs"
   | "activity"
   | "schedules"
+  | "people"
+  | "budgets"
   | "chat"
-  | "signin"
-  | "instructions"
   | "brand"
+  | "signin"
   | "health"
-  | "advanced"
-  | "parity"
-  | "workflow-access"
-  | "hub-changes"
-  | "memory";
+  | "advanced";
 
-/** `team`: for people who manage the deployment; `admin`: administrators only
- *  (the chat app's own section rather than a management screen). */
-type Item = { key: Key; label: string; icon: ReactNode; hash: string; team?: boolean; admin?: boolean; keywords?: string };
+/** `team`: people who manage at least one agent; `admin`: organization
+ *  administrators only. `local`: also shown in local mode (sign-in off). */
+type Item = { key: Key; label: string; icon: ReactNode; hash: string; team?: boolean; admin?: boolean; local?: boolean; keywords?: string };
 
 const S = t.settingsPage;
 const ITEMS: Item[] = [
-  { key: "profile", label: S.profile, icon: <UserRound size={16} aria-hidden />, hash: "/me/profile", keywords: "name password sign out email" },
+  { key: "profile", label: S.profile, icon: <UserRound size={16} aria-hidden />, hash: "/me/profile", local: true, keywords: "name password sign out email" },
   { key: "security", label: S.security, icon: <ShieldCheck size={16} aria-hidden />, hash: "/me/security", keywords: "password two-step mfa authenticator devices sessions api keys sign out" },
-  { key: "appearance", label: S.appearance, icon: <Palette size={16} aria-hidden />, hash: "/me/appearance", keywords: "theme dark light text size spacing time zone" },
-  { key: "notifications", label: S.notifications, icon: <Bell size={16} aria-hidden />, hash: "/me/notifications", keywords: "alerts sound desktop" },
-  { key: "connections", label: S.connections, icon: <Plug size={16} aria-hidden />, hash: "/me/connections", keywords: "accounts github google sign in" },
-  { key: "sources", label: S.sources, icon: <BookOpen size={16} aria-hidden />, hash: "/me/sources", keywords: "collections documents knowledge files web pages citations" },
-  { key: "data", label: S.data, icon: <Database size={16} aria-hidden />, hash: "/me/data", keywords: "import export archive delete" },
-  { key: "memory", label: t.memory.title, icon: <Brain size={16} aria-hidden />, hash: "/me/memory", keywords: "remember notes personal forget" },
-  { key: "my-schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/me/schedules", keywords: "reports timetable" },
-  { key: "my-work", label: S.myWork, icon: <ListChecks size={16} aria-hidden />, hash: "/me/work", keywords: "approvals work items requests" },
-  { key: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, hash: "/agents", team: true, keywords: "usage cost tokens connectors evals runs" },
-  { key: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, hash: "/people", team: true, keywords: "invite access roles members" },
-  { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
-  { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
-  { key: "work", label: S.workItems, icon: <ListChecks size={16} aria-hidden />, hash: "/work", team: true, keywords: "approvals operations stations" },
-  { key: "sandboxes", label: S.sandboxes, icon: <Box size={16} aria-hidden />, hash: "/sandboxes", team: true, keywords: "docker workspace cleanup" },
-  { key: "budgets", label: "Usage", icon: <Gauge size={16} aria-hidden />, hash: "/usage", team: true, keywords: "budget tokens cost limits usage spending" },
-  { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
-  { key: "hub-changes", label: t.hubChanges.title, icon: <FilePen size={16} aria-hidden />, hash: "/hub-changes", team: true, keywords: "proposals review knowledge instructions agents.md remember diff commit undo" },
-  { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
+  { key: "appearance", label: S.appearance, icon: <Palette size={16} aria-hidden />, hash: "/me/appearance", local: true, keywords: "theme dark light text size spacing time zone" },
+  { key: "notifications", label: S.notifications, icon: <Bell size={16} aria-hidden />, hash: "/me/notifications", local: true, keywords: "alerts sound desktop" },
+  { key: "data", label: S.data, icon: <Database size={16} aria-hidden />, hash: "/me/data", local: true, keywords: "import export archive delete" },
+  { key: "connections", label: S.connectedAccounts, icon: <Plug size={16} aria-hidden />, hash: "/me/connections", local: true, keywords: "accounts github google sign in connections" },
+  { key: "sources", label: S.sources, icon: <BookOpen size={16} aria-hidden />, hash: "/me/sources", local: true, keywords: "collections documents knowledge files web pages citations" },
+  { key: "memory", label: t.memory.title, icon: <Brain size={16} aria-hidden />, hash: "/me/memory", local: true, keywords: "remember notes personal forget" },
+  { key: "my-schedules", label: S.mySchedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/me/schedules", local: true, keywords: "reports timetable repeat" },
+  { key: "proposals", label: S.myProposals, icon: <FilePen size={16} aria-hidden />, hash: "/me/proposals", local: true, keywords: "proposals review knowledge instructions changes beta" },
+  { key: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, hash: "/agents", team: true, local: true, keywords: "instructions access connectors workflows evals feedback configuration work" },
+  { key: "runs", label: S.runs, icon: <Activity size={16} aria-hidden />, hash: "/runs", team: true, local: true, keywords: "runs failed workflow history" },
+  { key: "activity", label: S.auditLog, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, local: true, keywords: "audit access changes tool decisions" },
+  { key: "schedules", label: S.teamSchedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "everyone reports timetable" },
+  { key: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, hash: "/people", team: true, admin: true, keywords: "invite access roles members" },
+  { key: "budgets", label: S.usage, icon: <Gauge size={16} aria-hidden />, hash: "/usage", team: true, admin: true, local: true, keywords: "budget tokens cost limits usage spending" },
+  { key: "chat", label: S.chatDefaults, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, admin: true, local: true, keywords: "defaults models web search theme" },
+  { key: "brand", label: S.brand, icon: <Sparkles size={16} aria-hidden />, hash: "/settings/appearance", team: true, admin: true, local: true, keywords: "logo colours colors name" },
   { key: "signin", label: S.signIn, icon: <ShieldCheck size={16} aria-hidden />, hash: "/settings/sign-in", team: true, admin: true, keywords: "two-step mfa saml scim okta entra company directory single sign-on sso" },
-  { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
-  { key: "brand", label: S.brand, icon: <Sparkles size={16} aria-hidden />, hash: "/settings/appearance", team: true, keywords: "logo colours colors name" },
-  { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, keywords: "diagnostics support checks" },
-  { key: "advanced", label: S.advanced, icon: <SlidersHorizontal size={16} aria-hidden />, hash: "/settings/admin", team: true, admin: true, keywords: "admin.yaml advanced deployment settings plan apply" },
-  { key: "parity", label: S.parity, icon: <ListChecks size={16} aria-hidden />, hash: "/settings/parity", team: true, admin: true, keywords: "parity compatibility open webui librechat checklist ledger" },
+  { key: "health", label: S.health, icon: <HeartPulse size={16} aria-hidden />, hash: "/diagnostics", team: true, admin: true, local: true, keywords: "diagnostics support checks" },
+  { key: "advanced", label: S.advanced, icon: <SlidersHorizontal size={16} aria-hidden />, hash: "/settings/admin", team: true, admin: true, local: true, keywords: "admin.yaml advanced deployment settings plan apply" },
 ];
 
-type Tab = { key: Key; label: string; also?: Key[]; sub?: { key: Key; label: string }[] };
-type Group = { id: string; label: string; lede: string; icon: ReactNode; members: Key[]; tabs?: Tab[]; team?: boolean; big?: boolean;
-  /** Only for people who don't manage the team (who reach it under Agents). */
-  notTeam?: boolean };
+type Tab = { key: Key; label: string };
+type Group = { id: string; label: string; icon: ReactNode; members: Key[]; tabs?: Tab[]; manage?: boolean };
 
-/** The Settings nav: four big destinations for running the team's agents, then
- *  a quieter personal group. Old section links still open inside their group. */
+/** The Settings nav (HUB-140 settings plan): Personal for everyone, then
+ *  Manage for people who manage an agent. Each page lives in one place; a
+ *  group with several pages shows them as tabs. */
 const GROUPS: Group[] = [
-  { id: "agents", label: S.agents, lede: "", icon: <Bot size={16} aria-hidden />, big: true, team: true,
-    members: ["agents", "work", "sandboxes", "hub-changes", "instructions"] },
-  { id: "schedules", label: S.schedules, lede: "", icon: <CalendarClock size={16} aria-hidden />, big: true,
-    members: ["schedules", "my-schedules"] },
-  { id: "usage", label: "Usage", lede: "", icon: <Gauge size={16} aria-hidden />, big: true, team: true, members: ["budgets"] },
-  { id: "team", label: "Team", lede: "People, what they can do, how they sign in, and the workspace they share.",
-    icon: <UsersRound size={16} aria-hidden />, big: true, team: true,
-    members: ["people", "activity", "workflow-access", "signin", "chat", "brand", "health", "advanced", "parity"],
-    tabs: [
-      { key: "people", label: "People" },
-      { key: "activity", label: "Activity" },
-      { key: "workflow-access", label: "Permissions" },
-      { key: "signin", label: "Sign-in" },
-      { key: "chat", label: "Workspace", also: ["brand", "advanced", "parity"],
-        sub: [{ key: "chat", label: "Chat defaults" }, { key: "brand", label: "Brand" }, { key: "advanced", label: "Advanced" }, { key: "parity", label: "Compatibility" }] },
-      { key: "health", label: "Health" },
-    ] },
-  { id: "preferences", label: S.preferences, lede: "How Hubzoid looks and behaves for you, and how you sign in.",
-    icon: <UserRound size={16} aria-hidden />, members: ["profile", "security", "appearance", "notifications", "data"],
+  { id: "account", label: S.account, icon: <UserRound size={16} aria-hidden />,
+    members: ["profile", "security", "appearance", "notifications", "data"],
     tabs: [
       { key: "profile", label: S.profile },
       { key: "security", label: S.security },
@@ -155,13 +125,49 @@ const GROUPS: Group[] = [
       { key: "notifications", label: S.notifications },
       { key: "data", label: S.data },
     ] },
-  { id: "connections", label: "Connections", lede: "Accounts your agents use for you, and the sources they can cite.",
-    icon: <Plug size={16} aria-hidden />, members: ["connections", "sources"],
-    tabs: [{ key: "connections", label: "Accounts" }, { key: "sources", label: S.sources }] },
-  { id: "memory", label: t.memory.title, lede: "", icon: <Brain size={16} aria-hidden />, members: ["memory"] },
-  { id: "my-work", label: S.myWork, lede: "", icon: <ListChecks size={16} aria-hidden />, members: ["my-work"] },
-  { id: "hub-changes", label: t.hubChanges.title, lede: "", icon: <FilePen size={16} aria-hidden />, members: ["hub-changes"], notTeam: true },
+  { id: "connections", label: S.connectedAccounts, icon: <Plug size={16} aria-hidden />, members: ["connections"] },
+  { id: "sources", label: S.sources, icon: <BookOpen size={16} aria-hidden />, members: ["sources"] },
+  { id: "memory", label: t.memory.title, icon: <Brain size={16} aria-hidden />, members: ["memory"] },
+  { id: "my-schedules", label: S.mySchedules, icon: <CalendarClock size={16} aria-hidden />, members: ["my-schedules"] },
+  { id: "proposals", label: S.myProposals, icon: <FilePen size={16} aria-hidden />, members: ["proposals"] },
+  { id: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, members: ["agents"], manage: true },
+  { id: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, members: ["runs", "activity"], manage: true,
+    tabs: [{ key: "runs", label: S.runs }, { key: "activity", label: S.auditLog }] },
+  { id: "schedules", label: S.teamSchedules, icon: <CalendarClock size={16} aria-hidden />, members: ["schedules"], manage: true },
+  { id: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, members: ["people"], manage: true },
+  { id: "usage", label: S.usage, icon: <Gauge size={16} aria-hidden />, members: ["budgets"], manage: true },
+  { id: "organization", label: S.organization, icon: <Building2 size={16} aria-hidden />, manage: true,
+    members: ["chat", "brand", "signin", "health", "advanced"],
+    tabs: [
+      { key: "chat", label: S.chatDefaults },
+      { key: "brand", label: S.brand },
+      { key: "signin", label: S.signIn },
+      { key: "health", label: S.health },
+      { key: "advanced", label: S.advanced },
+    ] },
 ];
+
+/** Old Settings addresses and where they live now (HUB-140 settings plan).
+ *  Each keeps what it pointed at: an agent, an item, a filter. */
+export function movedTo(hash: string): string | null {
+  const raw = hash.replace(/^#/, "");
+  const [path, query = ""] = raw.split("?");
+  const parts = path.split("/").filter(Boolean);
+  const q = new URLSearchParams(query);
+  const hub = q.get("hub") || q.get("agent");
+  const [a, b, c, d] = parts;
+  if (a === "work") return b && c ? `/agents/${b}/work/${c}` : "/agents";
+  if (a === "sandboxes") return hub ? `/agents/${encodeURIComponent(hub)}/sandboxes` : "/agents";
+  if (a === "workspace") return hub ? `/agents/${encodeURIComponent(hub)}/instructions` : "/agents";
+  if (a === "workflow-access") return hub ? `/agents/${encodeURIComponent(hub)}/permissions` : "/agents";
+  if (a === "hub-changes") return hub ? `/agents/${encodeURIComponent(hub)}/changes${query ? `?${query}` : ""}` : `/me/proposals${query ? `?${query}` : ""}`;
+  if (a === "me" && b === "work") return `inbox:${c && d ? `?tab=work&hub=${c}&item=${d}` : "?tab=work"}`;
+  if (a === "settings" && b === "parity") return "/settings/chat";
+  if (a === "home" || a === "connectors") return "/agents";
+  if (a === "budgets") return "/usage";
+  if (a === "schedules" && (q.get("view") === "mine" || q.get("view") === "reports")) return "/me/schedules";
+  return null;
+}
 
 type ManagedHub = { key: string; name: string; avatar?: string | null };
 
@@ -190,19 +196,15 @@ function keyFor(hash: string): Key | null {
   const path = hash.replace(/^#/, "").split("?")[0];
   const [a, b] = path.split("/").filter(Boolean);
   if (a === "me") return (ITEMS.find((i) => i.hash === `/me/${b}`)?.key as Key) ?? "profile";
-  if (a === "agents" || a === "home" || a === "connectors") return "agents";
+  if (a === "agents") return "agents";
   if (a === "people" || a === "confirm") return "people";
-  if (a === "activity" || a === "runs") return "activity";
+  if (a === "runs") return "runs";
+  if (a === "activity") return "activity";
   if (a === "schedules") return "schedules";
-  if (a === "work") return "work";
-  if (a === "sandboxes") return "sandboxes";
-  if (a === "budgets" || a === "usage") return "budgets";
-  if (a === "workflow-access") return "workflow-access";
-  if (a === "hub-changes") return "hub-changes";
+  if (a === "usage") return "budgets";
   if (a === "diagnostics") return "health";
-  if (a === "workspace") return "instructions";
   if (a === "settings")
-    return b === "appearance" ? "brand" : b === "sign-in" ? "signin" : b === "admin" ? "advanced" : b === "parity" ? "parity" : "chat";
+    return b === "appearance" ? "brand" : b === "sign-in" ? "signin" : b === "admin" ? "advanced" : "chat";
   return null;
 }
 
@@ -225,11 +227,24 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const app = useApp();
   const hash = useHash();
   const team = app.isAdmin || !!app.user?.console;
-  // Hub changes also opens for curators who may propose or review changes.
-  const visible = (i: Item) => (i.key === "parity" ? app.isAdmin && !!app.user?.parity
-    : i.admin ? app.isAdmin : i.key === "hub-changes" ? team || !!app.user?.hub_changes : i.team ? team : true);
-  const items = ITEMS.filter(visible).filter((i) => !(team && i.key === "my-schedules"));
+  const editing = useEditing();
+  // My proposals: someone who doesn't manage an agent but may propose shared
+  // changes, only while in-app editing (Beta) is on. Managers review on the agent.
+  const visible = (i: Item) => (i.key === "proposals" ? editing.editable && !team && !!app.user?.hub_changes
+    : i.admin ? app.isAdmin : i.team ? team : true);
+  // On a laptop (sign-in off) there are no accounts, people or sign-in rules.
+  const items = ITEMS.filter(visible).filter((i) => !app.isLocal || i.local);
   const [query, setQuery] = useState("");
+  // An old address (a bookmark, a link in an email) opens where the page lives now.
+  useEffect(() => {
+    const to = movedTo(location.hash);
+    if (!to) return;
+    if (to.startsWith("inbox:")) navigate(`/inbox${to.slice("inbox:".length)}`, { replace: true });
+    else {
+      history.replaceState(null, "", `/settings#${to}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
+  }, [hash]);
   // ?section= (from links elsewhere in the app) becomes the hash.
   useEffect(() => {
     const fromQuery = section && items.find((i) => i.key === section);
@@ -249,7 +264,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
   // first section on a wide screen rather than an empty pane. The team's
   // schedules, for someone who doesn't manage the deployment, are their own.
   useEffect(() => {
-    if (current || !hash) return;
+    if (current || !hash || movedTo(hash)) return;
     const own = active === "schedules" && items.some((i) => i.key === "my-schedules");
     if (!own && window.innerWidth < 768) return;
     history.replaceState(null, "", `/settings#${own ? "/me/schedules" : items[0].hash}`);
@@ -262,7 +277,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
 
   // The nav is a few big destinations; each holds its sections as tabs (a
   // nested view) instead of one page per section.
-  const groups = GROUPS.filter((g) => (!g.team || team) && (!g.notTeam || !team))
+  const groups = GROUPS
     .map((g) => ({ ...g, members: g.members.filter((k) => items.some((i) => i.key === k)) }))
     .filter((g) => g.members.length > 0);
   const groupOf = (key: Key | null) => (key ? groups.find((g) => g.members.includes(key)) : undefined);
@@ -270,10 +285,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const tabs = (activeGroup?.tabs ?? [])
     .filter((tab) => items.some((i) => i.key === tab.key))
     .map((tab) => ({ ...tab, item: items.find((i) => i.key === tab.key)! }));
-  const activeTab = tabs.find((tab) => tab.key === active || tab.also?.includes(active as Key));
-  const subTabs = (activeTab?.sub ?? [])
-    .filter((sub) => items.some((i) => i.key === sub.key))
-    .map((sub) => ({ ...sub, item: items.find((i) => i.key === sub.key)! }));
+  const activeTab = tabs.find((tab) => tab.key === active);
   const q = query.trim().toLowerCase();
   const matches = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
   const hubs = useManagedHubs(team);
@@ -297,7 +309,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
     const current = activeGroup?.id === g.id;
     return (
       <div key={g.id} className="hz-set-big-wrap">
-        {link(first.hash, g.label, current, cx("hz-nav", g.big && "hz-set-big"), g.icon,
+        {link(first.hash, g.label, current, cx("hz-nav", g.manage && "hz-set-big"), g.icon,
           g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count" aria-hidden>{hubs.length}</span> : undefined)}
       </div>
     );
@@ -325,9 +337,14 @@ export default function SettingsPage({ section }: { section: string | null }) {
                 </>
               ) : (
                 <>
-                  <div className="hz-set-bigs">{groups.filter((g) => g.big).map(groupLink)}</div>
                   <div className="hz-set-group">{S.personalGroup}</div>
-                  {groups.filter((g) => !g.big).map(groupLink)}
+                  {groups.filter((g) => !g.manage).map(groupLink)}
+                  {groups.some((g) => g.manage) && (
+                    <>
+                      <div className="hz-set-group">{S.manageGroup}</div>
+                      <div className="hz-set-bigs">{groups.filter((g) => g.manage).map(groupLink)}</div>
+                    </>
+                  )}
                 </>
               )}
               <About />
@@ -343,7 +360,6 @@ export default function SettingsPage({ section }: { section: string | null }) {
               {activeGroup && tabs.length > 1 && (
                 <div className="hz-set-grouphead">
                   <h1>{activeGroup.label}</h1>
-                  <p>{activeGroup.lede}</p>
                 </div>
               )}
               {tabs.length > 1 && (
@@ -354,16 +370,12 @@ export default function SettingsPage({ section }: { section: string | null }) {
                   ))}
                 </nav>
               )}
-              {subTabs.length > 1 && (
-                <nav className="hz-subtabs" aria-label={activeTab?.label}>
-                  {subTabs.map((sub) => (
-                    <a key={sub.key} href={`/settings#${sub.item.hash}`} aria-current={active === sub.key ? "page" : undefined}
-                      onClick={(e) => { e.preventDefault(); go(sub.item.hash); }}>{sub.label}</a>
-                  ))}
-                </nav>
-              )}
               {/* A section that fails shows its own error; another section works again. */}
-              {current && <PageErrorBoundary resetKey={current.key}><SectionBody item={current} /></PageErrorBoundary>}
+              {current && (
+                <UnderTabs.Provider value={tabs.length > 1}>
+                  <PageErrorBoundary resetKey={current.key}><SectionBody item={current} /></PageErrorBoundary>
+                </UnderTabs.Provider>
+              )}
             </main>
           </div>
         </div>
@@ -373,6 +385,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
 }
 
 function Heading({ title, lede }: { title: string; lede?: string }) {
+  if (useUnderTabs()) return null;   // the tab already names it
   return (
     <div className="hz-set-head">
       <h2>{title}</h2>
@@ -383,12 +396,6 @@ function Heading({ title, lede }: { title: string; lede?: string }) {
 
 function SectionBody({ item }: { item: Item }) {
   const app = useApp();
-  if (item.key === "instructions")
-    return (
-      <Suspense fallback={<PageSpinner />}>
-        <WorkspacePage agent={new URLSearchParams(location.hash.split("?")[1] ?? "").get("agent")} />
-      </Suspense>
-    );
   if (item.key === "signin")
     return (
       <>
@@ -398,13 +405,7 @@ function SectionBody({ item }: { item: Item }) {
         </Suspense>
       </>
     );
-  if (item.key === "workflow-access")
-    return (
-      <Suspense fallback={<PageSpinner />}>
-        <WorkflowAccessPage />
-      </Suspense>
-    );
-  if (item.key === "hub-changes")
+  if (item.key === "proposals")
     return (
       <Suspense fallback={<PageSpinner />}>
         <HubChangesPage />
@@ -422,7 +423,7 @@ function SectionBody({ item }: { item: Item }) {
         <>
           <Heading title={S.profile} lede={S.profileLede} />
           {app.isLocal ? (
-            <Notice tone="info">{t.account.localNote}</Notice>
+            <p className="m-0 max-w-[65ch] text-[0.9286rem] text-mute">{t.account.localNote}</p>
           ) : (
             <>
               <Section title={t.account.profile} description={t.account.profileHelp}>
@@ -469,7 +470,7 @@ function SectionBody({ item }: { item: Item }) {
     case "connections":
       return (
         <>
-          <Heading title={S.connections} lede={S.connectionsLede} />
+          <Heading title={S.connectedAccounts} lede={S.connectionsLede} />
           <Suspense fallback={<PageSpinner />}>
             <ConnectionsPage connected={null} connector={null} error={null} />
           </Suspense>
@@ -497,19 +498,10 @@ function SectionBody({ item }: { item: Item }) {
           </Suspense>
         </>
       );
-    case "my-work":
-      return (
-        <>
-          <Heading title={S.myWork} lede={S.myWorkLede} />
-          <Suspense fallback={<PageSpinner />}>
-            <ConsoleEmbed personal="work" />
-          </Suspense>
-        </>
-      );
     case "my-schedules":
       return (
         <>
-          <Heading title={S.schedules} lede={S.schedulesLede} />
+          <Heading title={S.mySchedules} lede={S.schedulesLede} />
           <Suspense fallback={<PageSpinner />}>
             <ConsoleEmbed personal="schedules" />
           </Suspense>

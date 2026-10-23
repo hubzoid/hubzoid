@@ -351,8 +351,8 @@ type AccountInfo = {
 };
 
 const MISMATCH: Record<string, string> = {
-  console_only: "Administrator in the Console, but a user in the chat app. Choose a role to fix it.",
-  chat_only: "Administrator in the chat app, but not in the Console. Choose a role to fix it.",
+  console_only: "Their administrator role is only partly set. Choose a role to fix it.",
+  chat_only: "Their administrator role is only partly set. Choose a role to fix it.",
 };
 
 /**
@@ -729,6 +729,7 @@ function PersonDrawer({
           <Descriptions
             size="small"
             column={1}
+            className="hz-person-facts"
             items={[
               { key: "email", label: "Email", children: <span className="identity">{person.subject}</span> },
               { key: "status", label: "Status", children: <AccountTag status={person.status} /> },

@@ -231,7 +231,7 @@ export function capabilityNotes(p: Permission): string[] {
           : `${p.status || "Not configured"}: it can be granted, but can’t run until an operator adds its settings.`,
     );
   else if (p.available === null)
-    notes.push("Its settings may be in a secret this Console doesn’t read, so they weren’t checked.");
+    notes.push("Its settings may be in a secret Settings can’t read, so they weren’t checked.");
   return notes;
 }
 
@@ -619,7 +619,7 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
       return {
         tone: "neutral",
         parts: [actor(who), text(" proposed a change for "), person(subjectName), ...inAgent(hubName)],
-        detail: "Nothing changes until it is confirmed in the Console.",
+        detail: "Nothing changes until it is confirmed.",
       };
     case "change_confirmed":
       return { tone: "positive", parts: [actor(who), text(" confirmed a change for "), person(subjectName), ...inAgent(hubName)] };
@@ -676,7 +676,7 @@ export function explainDecisionReason(reason: string | undefined) {
     case "no-grant":
       return "They do not have the permission this tool requires.";
     case "no-group":
-      return "They were not in the group the tool required (before access was managed in the Console).";
+      return "They were not in the group the tool required (before access was managed in Settings).";
     case "anonymous":
       return "The caller was not signed in.";
     case "blocked":

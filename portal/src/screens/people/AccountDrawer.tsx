@@ -64,7 +64,7 @@ export function PasswordField({
         </Button>
       </Space.Compact>
       <Text type={problem ? "danger" : "secondary"} className="field-help">
-        {problem ?? "Shown once after saving so you can share it. It is not stored in the Console."}
+        {problem ?? "Shown once after saving so you can share it. It isn't stored."}
       </Text>
     </div>
   );
@@ -173,7 +173,7 @@ export function NewUserSignIn({
     <div className="field">
       <div className="field-label-row">
         <label className="field-label" htmlFor={id}>
-          Password
+          {links && !google ? "Sign-in" : "Password"}
         </label>
         {available ? (
           choice
@@ -182,7 +182,7 @@ export function NewUserSignIn({
             title={
               links
                 ? "Needs Google sign-in set up here, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
-                : "Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
+                : "Needs Google sign-in set up for this deployment, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
             }
           >
             <span>{choice}</span>
@@ -194,8 +194,8 @@ export function NewUserSignIn({
           Use Google with this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No password to share.
         </Text>
       ) : links ? (
-        <Text type="secondary" className="field-help" id={id}>
-          <Link2 size={14} style={{ verticalAlign: "-2px" }} /> Copy a sign-in link after saving. They use it to set a password.
+        <Text type="secondary" className="field-help hz-inline-help" id={id}>
+          <Link2 size={14} aria-hidden /> <span>Copy a sign-in link after saving. They use it to set a password.</span>
         </Text>
       ) : (
         <>
@@ -212,7 +212,7 @@ export function NewUserSignIn({
             </Button>
           </Space.Compact>
           <Text type={problem ? "danger" : "secondary"} className="field-help">
-            {problem ?? "Shown once after saving so you can share it. It is not stored in the Console."}
+            {problem ?? "Shown once after saving so you can share it. It isn't stored."}
           </Text>
         </>
       )}
@@ -555,7 +555,7 @@ export function AccountDrawer({
             type="warning"
             showIcon
             title="Account management isn’t set up on this server"
-            description="The Console needs the chat app’s internal address and its service account (HUBZOID_GATEWAY_ADMIN_EMAIL and _PASSWORD). Until then, accounts can’t be created here."
+            description="Accounts can't be created here until sign-in is set up for this deployment."
           />
         )}
 

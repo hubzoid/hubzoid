@@ -20,9 +20,9 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.goto(`${base}/settings#/me/profile`);
     await page.getByLabel("Display name").waitFor();
     const sections = page.locator(".hz-set-nav");
-    assert.equal(await sections.getByRole("link", { name: "Preferences", exact: true }).count(), 1);
+    assert.equal(await sections.getByRole("link", { name: "Account", exact: true }).count(), 1);
     assert.equal(await sections.getByRole("link", { name: "Appearance", exact: true }).count(), 0);
-    await page.getByRole("navigation", { name: "Preferences" }).getByRole("link", { name: "Appearance", exact: true }).click();
+    await page.getByRole("navigation", { name: "Account" }).getByRole("link", { name: "Appearance", exact: true }).click();
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.getByLabel("Search settings").fill("name");
@@ -34,16 +34,15 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByLabel("Search settings").fill("no-such-preference");
     await page.getByText(/No settings match/).waitFor();
     await page.getByLabel("Search settings").fill("");
-    // Four big destinations; each holds its sections as tabs.
-    for (const name of ["Agents", "Schedules", "Usage", "Team"])
+    // Manage (HUB-140 settings plan): a few destinations; a group of pages shows them as tabs.
+    for (const name of ["Agents", "Activity", "Team schedules", "People", "Usage", "Organization"])
       assert.equal(await sections.getByRole("link", { name, exact: true }).count(), 1, `${name} is in the Settings nav`);
-    await sections.getByRole("link", { name: "Team", exact: true }).click();
+    await sections.getByRole("link", { name: "Organization", exact: true }).click();
     await page.locator(".console-embed").waitFor({timeout: 60000});
-    const team = page.getByRole("navigation", { name: "Team", exact: true });
-    await team.getByRole("link", { name: "Workspace", exact: true }).click();
-    await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("link", { name: "Brand", exact: true }).click();
+    const org = page.getByRole("navigation", { name: "Organization", exact: true });
+    await org.getByRole("link", { name: "Brand", exact: true }).click();
     await page.waitForURL(/#\/settings\/appearance$/);
-    await team.getByRole("link", { name: "Health", exact: true }).waitFor();
+    await org.getByRole("link", { name: "Health", exact: true }).waitFor();
     assert.equal(await sections.getByRole("link", { name: "Health", exact: true }).count(), 0);
     await sections.getByRole("link", { name: "Agents", exact: true }).click();
     await page.getByRole("table", { name: "Agents", exact: true }).waitFor();
@@ -51,8 +50,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await sections.getByRole("link", { name: "Usage", exact: true }).click();
     await page.getByRole("list", { name: "Totals", exact: true }).waitFor();
     await page.setViewportSize({ width: 1172, height: 740 });
-    await sections.getByRole("link", { name: "Team", exact: true }).click();
-    await page.getByRole("navigation", { name: "Team", exact: true }).getByRole("link", { name: "People", exact: true }).click();
+    await sections.getByRole("link", { name: "People", exact: true }).click();
     await page.locator(".person-cell").first().waitFor();
     const identities = await page.locator(".person-cell").evaluateAll((cells) => cells.map((cell) => ({
       width: cell.getBoundingClientRect().width,
@@ -63,7 +61,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.goto(`${base}/settings#/agents/finance/access`);
     await page.getByRole("list", { name: "Access to Finance Assistant", exact: true }).waitFor();
     const agentNav = page.getByRole("navigation", { name: "Agent sections" });
-    const runsLink = agentNav.getByRole("link", { name: "Runs & schedules", exact: true });
+    const runsLink = agentNav.getByRole("link", { name: "Workflows", exact: true });
     await runsLink.focus();
     await page.keyboard.press("Enter");
     await page.getByRole("list", { name: "Workflows", exact: true }).waitFor();
@@ -98,7 +96,7 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.ok((await page.getByLabel("Display name").boundingBox()).height >= 44);
     await page.locator(".hz-set-back").click();
-    await sections.getByRole("link", { name: "Preferences", exact: true }).waitFor();
+    await sections.getByRole("link", { name: "Account", exact: true }).waitFor();
 
     const guest = await browser.newContext({ serviceWorkers: "block" });
     const oauth = await guest.newPage();

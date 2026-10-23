@@ -32,7 +32,6 @@ import {
   type ScheduleRun,
   type ScheduleEdit,
   type PersonalRun,
-  type Workflow,
 } from "../api";
 import { inputField } from "../components/WorkflowInputs";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
@@ -64,31 +63,26 @@ const adminPaused = (s: Row) => s.state === "paused" && s.reason === "admin";
 const at = (seconds: number | null | undefined) => (seconds ? new Date(seconds * 1000).toISOString() : null);
 
 /**
- * Schedules: one page for everyone. "Yours" is the signed-in
- * person's own schedules and report links on every agent; admins also get
- * "Everyone", one agent at a time. The server decides what each view returns.
+ * Schedules (HUB-140 settings plan). `admin` (Settings, Team schedules):
+ * everyone's repeating requests, one agent at a time. Otherwise (My
+ * schedules): one page, your repeating requests, then the reports you can
+ * run. Agents' own workflow timetables are on each agent's Workflows tab.
  */
 export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: boolean; hubs?: Hub[]; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
-  const view = q.view === "reports" ? "reports" : admin && q.view === "workflows" ? "workflows"
-    : admin && (q.view === "everyone" || q.scope === "everyone") ? "everyone" : "mine";
-  const tabs: [string, string][] = [["mine", admin ? "Yours" : "Schedules"],
-    ...(admin ? [["everyone", "Everyone's"], ["workflows", "Agent workflows"]] as [string, string][] : []), ["reports", "Reports"]];
+  if (admin)
+    return (
+      <>
+        <PageHeader title="Team schedules" description={embedded ? undefined : "Everyone's repeating requests."} />
+        <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} />
+      </>
+    );
   return (
     <>
-      <PageHeader
-        title="Schedules"
-        description={embedded ? "Work your agents run on a timetable, as the person who set it up. Make one in chat, for example “every Monday at 9”." : undefined}
-      />
-      <nav className="hz-agent-tabs" aria-label="Schedules">
-        {tabs.map(([key, label]) => (
-          <a key={key} href={`#/schedules${key === "mine" ? "" : `?view=${key}`}`} aria-current={view === key ? "page" : undefined}
-            onClick={(e) => { e.preventDefault(); setQ({ view: key === "mine" ? undefined : key, scope: undefined }); }}>{label}</a>
-        ))}
-      </nav>
-      {view === "everyone" ? <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} />
-        : view === "workflows" ? <AgentWorkflows hubs={hubs ?? []} />
-        : view === "reports" ? <MineReports /> : <Mine />}
+      <h3 className="hz-set-subhead">Repeating requests</h3>
+      <Mine />
+      <h3 className="hz-set-subhead">Reports</h3>
+      <MineReports />
     </>
   );
 }
@@ -174,41 +168,6 @@ function MineReports() {
       {catalog.length === 0 && reports.length === 0 && (
         <Empty description="No reports yet. Agents that offer reports list them here, with the request to type in chat." />
       )}
-    </div>
-  );
-}
-
-/** Every agent's own scheduled workflows in one list. A row opens the
- *  workflow in its agent's Runs & schedules. */
-function AgentWorkflows({ hubs }: { hubs: Hub[] }) {
-  const data = useData<{ workflows: Workflow[] }>("/workflows", { keepStale: true });
-  useVisibleRefresh(data.reload, data.refreshing || data.loading);
-  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
-  const rows = data.data.workflows.filter((w) => w.schedule);
-  const hubName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
-  const state = (w: Workflow) => w.state === "error" ? <Dot tone="red" label="Error" />
-    : w.state === "stale" ? <Dot tone="red" label="Scheduler stopped" />
-    : w.state === "paused" ? <Dot tone="gold" label="Paused" /> : <Dot tone="green" label="Active" />;
-  return (
-    <div className="panel">
-      <Table<Workflow>
-        rowKey={(w) => `${w.hub}:${w.name}`}
-        size="middle"
-        dataSource={rows}
-        pagination={false}
-        scroll={{ x: 760 }}
-        rowClassName="clickable"
-        onRow={(w) => ({ onClick: () => { location.hash = `/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`; } })}
-        locale={{ emptyText: <Empty description="No agent has a scheduled workflow. A workflow gets a schedule in its folder's workflow file." /> }}
-        columns={[
-          { title: "Workflow", key: "name", render: (_, w) => <><a className="row-name" href={`#/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`}
-            onClick={(e) => e.stopPropagation()}>{w.name}</a><div style={{ marginTop: 2 }}>{state(w)}</div></> },
-          { title: "Agent", key: "hub", render: (_, w) => hubName(w.hub) },
-          { title: "When", key: "when", render: (_, w) => <><div>{w.schedule}</div><Text type="secondary">{w.timezone}</Text></> },
-          { title: "Next run", key: "next", render: (_, w) => w.next_run ? <When value={w.next_run} /> : <Text type="secondary">—</Text> },
-          { title: "Last started", key: "last", render: (_, w) => w.last_dispatch ? <When value={w.last_dispatch} /> : <Text type="secondary">Not yet</Text> },
-        ]}
-      />
     </div>
   );
 }

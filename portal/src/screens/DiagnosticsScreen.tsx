@@ -3,6 +3,7 @@
 // A report survives a restart as "interrupted" (never rerun on its own) and
 // can produce a support bundle of metadata only. Same API as
 // `hubzoid admin diagnostics ...`.
+import { useUnderTabs } from "../lib/underTabs";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, App, Button, Card, Checkbox, Col, Descriptions, Empty, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { Hub } from "../api";
@@ -47,6 +48,7 @@ function figure(card: Card_ | undefined, format?: (v: number) => string) {
 }
 
 export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; embedded?: boolean }) {
+  const underTabs = useUnderTabs();
   const { message } = App.useApp();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [reports, setReports] = useState<ReportRow[] | null>(null);
@@ -132,9 +134,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
   const c = overview?.cards;
   return (
     <div className="screen">
-      <Title level={2} style={{ marginTop: 0 }}>
-        Health &amp; support
-      </Title>
+      {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Health</Title>}
       <Paragraph type="secondary">
         Run read-only checks and review reports.
       </Paragraph>

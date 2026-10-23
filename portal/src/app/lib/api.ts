@@ -89,13 +89,26 @@ export function isAbort(error: unknown): boolean {
   );
 }
 
+/** The browser's time zone, sent with each request: schedules made in chat
+ *  use it when the person has none set (HUB-140 D4). */
+export const zoneHeader: Record<string, string> = (() => {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const out: Record<string, string> = {};
+    if (zone) out["x-client-timezone"] = zone;
+    return out;
+  } catch {
+    return {};
+  }
+})();
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, signal, quiet401, headers = {} } = options;
   const init: RequestInit = {
     method,
     signal,
     credentials: "same-origin",
-    headers: { accept: "application/json", ...headers },
+    headers: { accept: "application/json", ...zoneHeader, ...headers },
   };
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {

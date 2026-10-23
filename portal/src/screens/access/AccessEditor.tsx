@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUnderTabs } from "../../lib/underTabs";
 import {
   Alert,
   App,
@@ -38,6 +39,7 @@ const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
 
 export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: boolean }) {
+  const underTabs = useUnderTabs();
   const { modal, message } = App.useApp();
   const [input, setInput] = useState("");
   const [search, setSearch] = useState("");
@@ -217,7 +219,7 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={2}>Access to {hub.name}</Title>
+          {!underTabs && <Title level={2}>Access to {hub.name}</Title>}
           <Paragraph type="secondary">
             People with access, and what each is allowed to do.
           </Paragraph>

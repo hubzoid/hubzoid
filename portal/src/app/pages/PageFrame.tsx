@@ -7,6 +7,7 @@ import { useApp } from "../lib/app-context";
 import { IconButton } from "../components/ui";
 import { InSettings } from "./SettingsFrame";
 import { BarePage } from "./barePage";
+import { useUnderTabs } from "../../lib/underTabs";
 
 export function PageFrame({ title, description, actions, wide, children }: {
   title: string;
@@ -17,7 +18,8 @@ export function PageFrame({ title, description, actions, wide, children }: {
 }) {
   const app = useApp();
   const embedded = useContext(InSettings);
-  const bare = useContext(BarePage);
+  const underTabs = useUnderTabs();
+  const bare = useContext(BarePage) || underTabs;
   useEffect(() => {
     if (!embedded) document.title = `${title} · ${app.brandName}`;
   }, [title, app.brandName, embedded]);

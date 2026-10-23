@@ -36,9 +36,11 @@ export function toYaml(grants: Grant[], order: string[]): string {
   return lines.join("\n") + "\n";
 }
 
-export default function WorkflowAccessPage() {
+/** `hub`: shown inside that agent's Access tab, for that agent only. */
+export default function WorkflowAccessPage({ hub }: { hub?: string } = {}) {
   const app = useApp();
-  const agents = app.agents.list;
+  const all = app.agents.list;
+  const agents = hub ? all.filter((a) => a.hub === hub) : all;
   const [agentId, setAgentId] = useState<string | null>(agents[0]?.id ?? null);
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
   const base = agent?.api_base ?? "";

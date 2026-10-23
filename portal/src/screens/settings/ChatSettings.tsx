@@ -87,13 +87,11 @@ export function ChatSettings() {
   return (
     <ConfigProvider componentDisabled>
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Alert
-        type="info"
-        showIcon
-        title="Chat defaults live in the deployment folder"
-        description={`They come from ${active.file.path}. Edit the file (or ask Claude Code or Codex to); every agent picks it up within a few seconds. People can still change what the file allows for themselves.`}
-        data-testid="chat-defaults-read-only"
-      />
+      <Text type="secondary" data-testid="chat-defaults-read-only">
+        {active.file.exists
+          ? <>Set in <Text code>{active.file.path}</Text>. Edit that file to change them. People can still change what it allows for themselves.</>
+          : <>No <Text code>chat/config.yaml</Text> yet, so Hubzoid's defaults apply. Add that file to change them.</>}
+      </Text>
       {active.file.valid === false && (
         <Alert type="warning" showIcon title="The settings file has a problem" description={(active.file as any).error?.message} />
       )}
@@ -108,7 +106,7 @@ export function ChatSettings() {
       )}
       {done && <Alert type="success" showIcon title={done} />}
 
-      <Card title="Default appearance" size="small">
+      <Card title="Appearance" size="small">
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <div>
             <Text strong>Default appearance</Text>

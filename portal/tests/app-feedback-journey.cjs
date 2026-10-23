@@ -115,9 +115,14 @@ async function main() {
     };
     const composer = (page) => page.getByRole("textbox", { name: /^Message / });
     const ask = async (page, text) => {
+      const replies = await page.locator('[data-role="assistant"]').count();
       await composer(page).fill(text);
       await composer(page).press("Enter");
+      // Send shows again only once this reply has started and finished.
+      await page.waitForFunction((n) => document.querySelectorAll('[data-role="assistant"]').length > n, replies,
+                                 { timeout: 60_000 });
       await page.getByTestId("send").waitFor({ timeout: 60_000 });
+      await page.locator('[data-role="assistant"][aria-busy="true"]').waitFor({ state: "detached", timeout: 60_000 });
       await page.waitForURL(/\/c\//);
     };
     const last = (page) => page.locator('[data-role="assistant"]').last();

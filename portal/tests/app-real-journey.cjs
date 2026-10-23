@@ -121,6 +121,8 @@ class Server {
           HUBZOID_TEST_RUNTIME: "1",
           HUBZOID_TEST_SLOW_SECONDS: String(SLOW_SECONDS),
           HUBZOID_SCHEDULES: "false",
+          // These journeys add connectors and edit agent files from the browser (Beta, off by default).
+          HUBZOID_IN_APP_EDITING: "true",
           // As `hubzoid run --no-ui` tells its bridge: the port it serves on.
           BRIDGE_PORT: String(this.port),
           ...this.env,
@@ -1230,7 +1232,7 @@ journey("console", "Settings: team sections for administrators only; the old Con
   await sam.page.waitForURL(/\/settings/);
   const samNav = sam.page.getByRole("navigation", { name: "Settings sections" });
   await samNav.getByText("Personal").waitFor();
-  for (const name of ["Agents", "Usage", "Team"])
+  for (const name of ["Agents", "Usage", "People", "Organization"])
     assert.equal(await samNav.getByRole("link", { name, exact: true }).count(), 0, `a member has no ${name} in Settings`);
   await sam.page.goto(`${ctx.BASE}/portal/#/people`);
   await sam.page.waitForURL(/\/settings/);
@@ -1246,7 +1248,7 @@ journey("console", "Settings: team sections for administrators only; the old Con
   await page.getByRole("button", { name: /^Account menu: / }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
   const nav = page.getByRole("navigation", { name: "Settings sections" });
-  await nav.getByRole("link", { name: "Team", exact: true }).click();
+  await nav.getByRole("link", { name: "People", exact: true }).click();
   await page.locator(".person-cell").first().waitFor();
   await ctx.shot(page, "30-settings-people");
 

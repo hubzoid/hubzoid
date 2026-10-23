@@ -387,9 +387,9 @@ const step = (name) => {
     await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth, null, { timeout: 5000 });
     await page.setViewportSize({ width: 1440, height: 950 });
 
-    step("An old Connectors bookmark explains where connectors went");
+    step("An old Connectors bookmark opens the agents, where connectors are");
     await page.goto(`${ORIGIN}/settings?bookmark#/connectors`);
-    await page.getByText("Connectors are in each agent").waitFor();
+    await page.waitForFunction(() => location.hash === "#/agents");
     assert.equal(await page.getByRole("menuitem", { name: "Connectors" }).count(), 0);
 
     step("Agent administrators see where connectors come from but cannot change them");

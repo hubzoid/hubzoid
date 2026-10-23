@@ -276,7 +276,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!name.trim()) return setError(S.keyNameHint);
+    if (!name.trim()) return setError(S.keyNameMissing);
     setBusy(true);
     try {
       const body: Record<string, unknown> = { name: name.trim(), preset, expires_in_days: days };

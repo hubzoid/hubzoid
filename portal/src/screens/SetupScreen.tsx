@@ -116,8 +116,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
           title={notice.text} />
       )}
       {settings.length === 0 ? (
-        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="This agent declares no settings."
-          description="Declare them in settings.yaml in the agent's folder. They then appear here, in hubzoid hub settings and in doctor." />
+        <Text type="secondary" className="hint">No <Text code>settings.yaml</Text> in this agent's folder.</Text>
       ) : (
         <>
           {problems.length > 0 && (

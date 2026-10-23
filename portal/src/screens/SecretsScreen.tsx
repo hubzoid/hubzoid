@@ -72,21 +72,14 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
         Secrets
         <InfoHelp text="API keys and tokens this agent uses. The same list as hubzoid secrets list." />
       </Title>
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        title="Values are write-only. Once saved, nobody can read them back here."
-        description="A saved value applies after the agent restarts. A value set in the environment, a .env file or an AWS secret always wins and shows as locked."
-      />
+      <Text type="secondary" className="hint">
+        Nobody can read a value back once saved. It applies after the agent restarts.
+        <InfoHelp text="A value set in the environment, a .env file or an AWS secret wins and shows as locked." />
+      </Text>
       {restricted_hidden > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          title={`${restricted_hidden} restricted secret${restricted_hidden === 1 ? "" : "s"} not shown`}
-          description="Restricted tools use them. Organization administrators manage them."
-        />
+        <Text type="secondary" className="hint">
+          {restricted_hidden} restricted secret{restricted_hidden === 1 ? "" : "s"} not shown. Organization administrators manage them.
+        </Text>
       )}
       {notice && (
         <Alert type={notice.type} showIcon closable onClose={() => setNotice(null)} style={{ marginBottom: 16 }}

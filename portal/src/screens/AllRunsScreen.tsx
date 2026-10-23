@@ -9,10 +9,11 @@ import {
   Typography,
 } from "antd";
 import { RefreshCw } from "lucide-react";
+import { useUnderTabs } from "../lib/underTabs";
 import { query, type Hub, type Run } from "../api";
 import { useData } from "../hooks/useData";
 import { useHashQuery, href } from "../hooks/useRoute";
-import { LoadState, RunStatusTag, When, InfoHelp } from "../components/common";
+import { LoadState, RunStatusTag, When } from "../components/common";
 import { formatDuration, formatTime, relativeTime } from "../lib/format";
 import { resultSummary, shortRunId } from "../lib/results";
 
@@ -40,6 +41,7 @@ const detailHref = (r: Run) =>
 export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
   // Every filter + page lives in the URL: refresh, Back and shared links restore it.
   const [q, setQ] = useHashQuery();
+  const underTabs = useUnderTabs();
   const agent = q.agent || "";
   const status = q.status || "";
   const range = q.range || ""; // relative span token (for the Select + live sliding)
@@ -166,7 +168,8 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={1} style={{ fontSize: 28 }}>Runs <InfoHelp text="Workflow runs across the agents you manage, newest first. Filter to find a run. Each agent's workflows show scheduler health." /></Title>
+          {!underTabs && <Title level={1} style={{ fontSize: 28 }}>Runs</Title>}
+          <Text type="secondary">Workflow runs across the agents you manage, newest first.</Text>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload} loading={data.refreshing}>
           Refresh

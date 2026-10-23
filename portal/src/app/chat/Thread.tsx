@@ -91,6 +91,17 @@ export type ThreadProps = {
 // On touch screens focusing the composer on load would pop up the keyboard.
 const coarsePointer = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
+/** After a suggestion fills the message box, typing and Enter go there, not
+ *  to the chip again (HUB-140 F15). */
+function focusComposer() {
+  requestAnimationFrame(() => {
+    const box = document.querySelector<HTMLTextAreaElement>("textarea.hz-composer-input");
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  });
+}
+
 export function Thread(props: ThreadProps) {
   const { agent, readOnly } = props;
   const aui = useAui();
@@ -232,7 +243,7 @@ function EmptyThread(props: ThreadProps) {
         <section aria-label={t.agents.suggestions} className="hz-pills">
           {pills.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
-              <button type="button" className="hz-suggestion" title={s.label}>
+              <button type="button" className="hz-suggestion" title={s.label} onClick={focusComposer}>
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -300,9 +311,10 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
   const decision = useAuiState((s) => !!(s.message.metadata?.custom as { decision?: boolean } | undefined)?.decision);
   const del = useDelete();
   if (decision)
-    // The answer to a card: a quiet line under it, not a chat bubble.
+    // The answer to a card: the card itself shows it (HUB-140 F16), so this
+    // line is for screen readers only.
     return (
-      <MessagePrimitive.Root className="hz-message hz-decision" data-role="user" role="note" data-testid="decision-line">
+      <MessagePrimitive.Root className="hz-message hz-decision sr-only" data-role="user" role="note" data-testid="decision-line">
         <span className="hz-decision-line">
           <MessagePrimitive.Parts components={{ Text: UserText }} />
         </span>
@@ -396,6 +408,11 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   const hasContent = useAuiState((s) => s.message.content.length > 0);
+  // A running tool row already shows progress: one indicator, not two (F17).
+  const toolRunning = useAuiState((s) => {
+    const last = s.message.content[s.message.content.length - 1] as { type?: string; result?: unknown } | undefined;
+    return last?.type === "tool-call" && last.result === undefined;
+  });
   const speaking = useAuiState((s) => s.message.speech != null);
   const value = useFeed();
   const del = useDelete();
@@ -424,7 +441,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
             Empty: Working,
           }}
         />
-        {running && hasContent && (
+        {running && hasContent && !toolRunning && (
           <span className="hz-streaming" aria-hidden data-testid="streaming">
             <span className="hz-spin-dot" />
           </span>

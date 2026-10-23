@@ -65,7 +65,7 @@ export default function HubChangesPage({ hub }: { hub?: string } = {}) {
   if (unreachable)
     return (
       <PageFrame title={H.title} description={H.lede}>
-        <Notice tone="info">Changes to this agent are reviewed from chat access to it. Give yourself access to the agent to review its changes here.</Notice>
+        <p className="text-sm text-[var(--hz-secondary)]">Give yourself chat access to this agent to review its changes.</p>
       </PageFrame>
     );
   return (

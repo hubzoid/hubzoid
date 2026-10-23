@@ -15,8 +15,14 @@ export function resultSummary(raw: string): string {
     const row = value as Record<string, unknown>;
     for (const key of ["summary", "title", "message", "result", "status"])
       if (typeof row[key] === "string") return row[key] as string;
+    // A few plain values read as labelled pairs ("checked: 12 · low: 3"), not bare numbers (F21).
+    const pairs = Object.entries(row).filter(([, v]) => ["number", "boolean", "string"].includes(typeof v));
+    if (pairs.length && pairs.length <= 3 && pairs.length === Object.keys(row).length)
+      return pairs.map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(" · ");
     return `${Object.keys(row).length} result fields`;
   }
+  if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
+  if (typeof value === "number" || typeof value === "boolean") return `Returned ${value}`;
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 export function resultArtifacts(raw: string): ResultArtifact[] {

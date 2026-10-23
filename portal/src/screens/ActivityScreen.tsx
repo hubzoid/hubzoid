@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Button,
   Descriptions,
@@ -35,6 +36,7 @@ type Feed = "changes" | "decisions";
 const RANGES: Record<string, number> = { "1d": 86400, "7d": 604800, "30d": 2592000 };
 
 export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
+  const underTabs = useUnderTabs();
   // Every filter + page lives in the URL (shareable, restored on refresh/Back).
   const [q, setQ] = useHashQuery();
   const feed: Feed = q.feed === "decisions" ? "decisions" : "changes";
@@ -161,11 +163,11 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={hub ? 2 : 1} style={{ fontSize: 28 }}>{hub ? `Activity in ${hub.name}` : "Activity across your agents"}</Title>
+          {!underTabs && <Title level={hub ? 2 : 1} style={{ fontSize: 28 }}>{hub ? `Activity in ${hub.name}` : "Activity across your agents"}</Title>}
           <Paragraph type="secondary">
             {feed === "changes"
-              ? "Who changed access, for whom, and to what. Recorded every time access is granted, removed, blocked or migrated."
-              : "Every restricted tool call and whether it was allowed. Recorded by the agent runtime when the tool is invoked."}
+              ? "Who changed access, for whom, and to what."
+              : "Every restricted tool call, and whether it was allowed."}
           </Paragraph>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>

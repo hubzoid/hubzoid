@@ -31,6 +31,8 @@ export type Session = {
   branding_name?: string;
   /** Sign-in is off and the server listens beyond this computer (an explicit opt-out). */
   unsafe_network?: boolean;
+  /** Why the last session ended, when it says something to the person ("suspended"). */
+  ended?: string;
 };
 
 export type Agent = {

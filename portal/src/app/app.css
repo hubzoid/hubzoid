@@ -2318,19 +2318,22 @@
     color: var(--hz-ink);
     font-weight: 600;
   }
+  /* Up to two lines, then cut at the end with the full text on hover (F12). */
   .hz-suggestion {
-    display: inline-block;
-    height: 30px;
-    line-height: 28px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    min-height: 30px;
+    line-height: 1.35;
     max-width: 320px;
-    padding: 0 12px;
-    border-radius: 999px;
+    padding: 5px 12px;
+    border-radius: 15px;
     border: 1px solid var(--hz-line);
     font-size: 0.8929rem;
     color: var(--hz-secondary);
     overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    text-align: left;
+    overflow-wrap: break-word;
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
   .hz-suggestion:hover {
@@ -2653,6 +2656,21 @@
   }
   .hz-set-head {
     margin-bottom: 18px;
+  }
+  /* A section of a one-page Settings screen (My schedules, Configuration). */
+  .hz-set-subhead {
+    margin: 28px 0 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--hz-ink);
+  }
+  .hz-set-subhead:first-child {
+    margin-top: 0;
+  }
+  .hz-config-page > * + * {
+    margin-top: 36px;
+    padding-top: 24px;
+    border-top: 1px solid var(--hz-line-soft);
   }
   .hz-set-head h2 {
     margin: 0;
@@ -3299,7 +3317,7 @@
 .hz-workflow-title > a { font-weight: 500; color: var(--hz-ink); overflow-wrap: anywhere; }
 .hz-workflow-account { overflow-wrap: anywhere; }
 .hz-workflow-schedule { display: flex; flex-wrap: wrap; gap: 5px 16px; color: var(--hz-secondary); }
-.hz-workflow-actions { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; flex: none; }
+.hz-workflow-actions { display: flex; flex-direction: row; align-items: flex-start; gap: 6px; flex: none; }
 .console-embed .hz-scroll-table, .console-embed .hz-scroll-table .ant-table-content { overflow: visible !important; }
 .hz-table-scroll { max-width: 100%; overflow-x: auto; }
 .hz-workspace-context { color: var(--hz-secondary); font-size: .9286rem; margin: 0 0 16px; }
@@ -3407,3 +3425,16 @@
 }
 .hz-meter.is-warn > span { background: var(--hz-warning); }
 .hz-meter.is-bad > span { background: var(--hz-danger-solid); }
+
+/* HUB-140 F8: a wide table scrolls inside its frame instead of cutting off its
+   last column, and on a phone the People list reads as cards. */
+.hz-set-main, .hz-set-main .panel, .hz-set-main .console-embed { min-width: 0; }
+.hz-set-main .ant-table-wrapper { max-width: 100%; }
+.hz-set-main .ant-table-content { overflow-x: auto; }
+@media (max-width: 640px) {
+  .people-table .ant-table-content { overflow-x: visible !important; }
+  .people-table table { min-width: 0 !important; width: 100% !important; table-layout: auto !important; }
+  .people-table colgroup, .people-table .ant-table-thead { display: none; }
+  .people-table .ant-table-tbody > tr { display: block; padding: 12px 0; border-bottom: 1px solid var(--hz-line-soft); }
+  .people-table .ant-table-tbody > tr > td { display: block; width: auto !important; padding: 2px 0 !important; border: 0 !important; }
+}

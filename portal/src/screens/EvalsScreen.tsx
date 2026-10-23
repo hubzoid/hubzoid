@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert,
   Button,
@@ -28,7 +29,7 @@ import {
 } from "../api";
 import { useData } from "../hooks/useData";
 import { href, navigate } from "../hooks/useRoute";
-import { LoadState, When } from "../components/common";
+import { LoadState, When, InfoHelp } from "../components/common";
 import { describeCron, formatDuration, formatTime } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
@@ -42,7 +43,7 @@ const evalsPath = (hub: Hub, stamp?: string) =>
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 const TRIGGERS: Record<string, string> = {
-  console: "Console",
+  console: "Settings",
   schedule: "Schedule",
   cli: "Command line",
   ci: "CI",
@@ -156,6 +157,7 @@ function Verdict({ passed }: { passed: boolean }) {
 }
 
 export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: string; embedded?: boolean }) {
+  const underTabs = useUnderTabs();
   const [page, setPage] = useState(1);
   const overview = useData<EvalsOverview>("/evals" + query({ hub: hub.key }), { keepStale: true });
   const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*50, limit: 50 }), {
@@ -193,10 +195,10 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={2}>Evals in {hub.name}</Title>
+          {!underTabs && <Title level={2}>Evals in {hub.name}</Title>}
           <Paragraph type="secondary">
-            Checks that this agent still answers as it should. Each case is a markdown file in the agent’s{" "}
-            <Text code>evals</Text> folder.
+            Checks that this agent still answers as it should.
+            <InfoHelp text="Each case is a markdown file in the agent's evals folder. Run them with hubzoid eval run, in CI or on a schedule." />
           </Paragraph>
         </div>
         <Space wrap>

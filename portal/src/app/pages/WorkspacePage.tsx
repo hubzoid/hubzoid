@@ -1,8 +1,7 @@
-// Workspace: propose changes to the hub's own agent instructions, skills and
-// shared prompts as hub changes (checked, approved by someone who manages the
-// agent, committed to Git), see each file's Git history, and check which
-// OpenAPI operations would become tools. Claude Code and Codex edit the same
-// files; this is the reviewed path from the browser.
+// An agent's instructions, skills and shared prompts, readable by whoever
+// manages it, with each file's Git history. Changing them from the browser
+// (proposed, approved, committed) is Beta, off by default: Claude Code, Codex
+// or an editor change the same files.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileCode2, History, ListChecks, Plus } from "lucide-react";
 import { ApiError, get, post } from "../lib/api";
@@ -18,26 +17,19 @@ type FileItem = { path: string; kind: "agent" | "skill" | "prompt"; sha256: stri
 type Pending = { id: number; title: string; paths: string[] };
 type Version = { commit: string; author: string; at: number; subject: string };
 
-/** `agent`: open that agent's instructions when this hub holds them. */
-export default function WorkspacePage({ agent = null }: { agent?: string | null }) {
-  const [tab, setTab] = useState<"files" | "openapi">("files");
+/** `agent`: open that agent's instructions when this hub holds them.
+ *  `readOnly`: in-app editing is off; `note` says where to change them. */
+export default function WorkspacePage({ agent = null, readOnly = false, note = null }: {
+  agent?: string | null; readOnly?: boolean; note?: string | null;
+}) {
   return (
     <PageFrame title={t.settingsPage.instructions} description={t.settingsPage.instructionsLede} wide>
-      <nav className="hz-agent-tabs" aria-label={t.settingsPage.instructions}>
-        {(["files", "openapi"] as const).map((k) => (
-          <button key={k} type="button" onClick={() => setTab(k)} aria-current={tab === k ? "page" : undefined}
-            className={cx("-mb-px border-b-2 px-3 pb-2 pt-1 text-[13px] font-medium",
-              tab === k ? "border-accent text-ink" : "border-transparent text-mute hover:text-ink")}>
-            {k === "files" ? t.workspace.files : t.workspace.openapi}
-          </button>
-        ))}
-      </nav>
-      {tab === "files" ? <Files agent={agent} /> : <OpenApi />}
+      <Files agent={agent} forceReadOnly={readOnly} note={note} />
     </PageFrame>
   );
 }
 
-function Files({ agent }: { agent: string | null }) {
+function Files({ agent, forceReadOnly, note }: { agent: string | null; forceReadOnly: boolean; note: string | null }) {
   const app = useApp();
   const [hub, setHub] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[] | null>(null);
@@ -52,7 +44,7 @@ function Files({ agent }: { agent: string | null }) {
       const got = await get<{ items: FileItem[]; hub?: string; read_only?: boolean }>(`${A}/files`);
       setFiles(got.items);
       setHub(got.hub ?? null);
-      setReadOnly(!!got.read_only);
+      setReadOnly(!!got.read_only || forceReadOnly);
       setPending((await get<{ items: Pending[] }>("/api/hub-changes?status=pending")).items);
       // From an agent's page: its instructions, when this hub is that agent.
       if (agent && got.hub && agent.toLowerCase() === got.hub) {
@@ -62,7 +54,7 @@ function Files({ agent }: { agent: string | null }) {
       setError(e instanceof ApiError && e.status === 403 ? t.workspace.denied : describeError(e));
       setFiles([]);
     }
-  }, [agent]);
+  }, [agent, forceReadOnly]);
   useEffect(() => void load(), [load]);
   const groups = useMemo(() => ({
     agent: (files ?? []).filter((f) => f.kind === "agent"),
@@ -74,7 +66,7 @@ function Files({ agent }: { agent: string | null }) {
     <>
     {hub && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
     {elsewhere && <Notice tone="info" className="mb-4">{t.workspace.elsewhere}</Notice>}
-    {readOnly && <Notice tone="info" className="mb-4">{t.workspace.readOnly}</Notice>}
+    {readOnly && <p className="mb-4 text-[13px] text-mute">{note ?? t.workspace.readOnly}</p>}
     <div className="hz-workspace-files">
       <div className="space-y-4">
         {(["agent", "skill", "prompt"] as const).map((kind) => (
@@ -219,55 +211,3 @@ function Versions({ versions }: { versions: Version[] }) {
   );
 }
 
-type Op = { operation_id: string; method: string; path: string; summary: string; writes: boolean };
-
-function OpenApi() {
-  const [raw, setRaw] = useState("");
-  const [ops, setOps] = useState<Op[] | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [tools, setTools] = useState<{ name: string; description: string }[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const run = async (sel?: string[]) => {
-    setError(null);
-    try {
-      const spec = JSON.parse(raw);
-      const out = await post<{ operations: Op[]; tools: typeof tools }>(`${A}/openapi/preview`, { spec, ...(sel ? { selected: sel } : {}) });
-      setOps(out.operations);
-      setTools(out.tools);
-    } catch (e) {
-      setError(e instanceof SyntaxError ? t.workspace.badJson : describeError(e));
-    }
-  };
-  return (
-    <div className="space-y-3">
-      <p className="m-0 text-[12.5px] text-mute">{t.workspace.openapiBody}</p>
-      <textarea className="hz-artifact-editor min-h-[200px] w-full" value={raw} onChange={(e) => setRaw(e.target.value)}
-        aria-label={t.workspace.openapiLabel} placeholder='{"openapi": "3.0.3", ...}' spellCheck={false} />
-      <Button size="sm" variant="primary" disabled={!raw.trim()} onClick={() => void run()}>{t.workspace.validate}</Button>
-      {error && <Notice tone="error">{error}</Notice>}
-      {ops && (
-        <div className="hz-card space-y-2 p-4">
-          <div className="text-[12.5px] font-semibold text-ink">{t.workspace.operations(ops.length)}</div>
-          {ops.map((o) => (
-            <label key={o.operation_id} className="flex items-center gap-2 text-[12.5px]">
-              <input type="checkbox" checked={selected.includes(o.operation_id)}
-                onChange={(e) => setSelected(e.target.checked ? [...selected, o.operation_id] : selected.filter((s) => s !== o.operation_id))} />
-              <span className="font-mono text-[11.5px] text-mute">{o.method}</span>
-              <span className="font-mono text-[11.5px] text-ink">{o.path}</span>
-              <span className="truncate text-mute">{o.summary}</span>
-              {o.writes && <span className="hz-pill hz-pill-failed">{t.workspace.writes}</span>}
-            </label>
-          ))}
-          <Button size="sm" disabled={!selected.length} onClick={() => void run(selected)}>{t.workspace.previewTools}</Button>
-          {tools && (
-            <ul className="m-0 list-none space-y-1 p-0">
-              {tools.map((tool) => <li key={tool.name} className="hz-source-row"><span className="font-mono text-[12px] text-ink">{tool.name}</span>
-                <span className="truncate text-[11.5px] text-mute">{tool.description}</span></li>)}
-            </ul>
-          )}
-          {tools && <p className="m-0 text-[11.5px] text-mute">{t.workspace.activationLater}</p>}
-        </div>
-      )}
-    </div>
-  );
-}
