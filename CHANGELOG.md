@@ -106,6 +106,9 @@ See [upgrading to 2.0.2](docs/UPGRADING.md#upgrading-to-202).
   save. The Secrets tab no longer offers to store keys that belong in `.env`.
 - Workflow permissions for an agent its administrator doesn't chat with show
   that agent's policy, and review links open the agent's Changes tab.
+- A sandbox profile may set `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`,
+  `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (they were refused as
+  credentials), so a coding agent can commit.
 - Docs: MCP does not offer `remember` ([#56](https://github.com/hubzoid/hubzoid/issues/56)); five settings no doc
   named are documented ([#45](https://github.com/hubzoid/hubzoid/issues/45)); Inbox and Settings replace "Waiting for
   you" and "the Console".
