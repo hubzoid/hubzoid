@@ -426,7 +426,7 @@ def run(
     hubs: list[Path] = typer.Argument(None, help="Hub folders. Default: the deployment in hubzoid.yaml here, "
                                                  "else the hub in this folder."),
     port: int = typer.Option(None, "--port", help="Public port: the web app, downloads and MCP. Default: 3080 (or PORT env)."),
-    bridge_port: int = typer.Option(None, "--bridge-port", hidden=True, help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
+    bridge_port: int = typer.Option(None, "--bridge-port", help="One hub only: its bridge port on 127.0.0.1. Default: BRIDGE_PORT, else the first free port from 8000. In hubzoid.yaml, set BRIDGE_PORT in a hub's .env instead."),
     data_dir: Path = typer.Option(None, "--data-dir", help="Where a deployment of several hubs keeps its state "
                                                            "(manifest, shared database, keys, logs). Default: "
                                                            ".hubzoid next to hubzoid.yaml."),
@@ -492,6 +492,10 @@ def run(
         elif not targets:
             targets = [Path(".")]
     if len(targets) > 1 or (df is not None and targets[0].resolve() != df.root):
+        if bridge_port is not None:
+            console.print("[red]--bridge-port is for one hub. In a deployment, set BRIDGE_PORT in a hub's .env, "
+                          "or leave it out and each hub gets a free port.[/red]")
+            raise typer.Exit(2)
         if no_ui:
             console.print("[red]--no-ui runs one hub.[/red]")
             raise typer.Exit(2)
@@ -533,6 +537,16 @@ def run(
     settings = _load_settings(hub)
     ui_port = port or settings.ui_port
     br_port = bridge_port or settings.bridge_port
+    if bridge_port is None and not os.environ.get("BRIDGE_PORT") and not no_ui:
+        # No port chosen: like a deployment, take the first free one, so a
+        # program already on 8000 does not stop the start.
+        from .gateway import next_free
+
+        try:
+            br_port = next_free(br_port, {ui_port})
+        except ValueError as exc:
+            console.print(f"[red]{escape(str(exc))}[/red]")
+            raise typer.Exit(1)
     from . import appmode, config_secrets
 
     # Open WebUI settings that decide sign-in or the interface, and settings
