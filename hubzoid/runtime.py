@@ -344,8 +344,16 @@ class OpenAIAgentsRuntime:
                 agent = agent.clone(model=modellib.build(slot.model))
             from . import budgets
             hooks = budgets.cost_hooks(getattr(agent, "model", None))
-            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
-                                         **({"hooks": hooks} if hooks is not None else {}))
+            extra = {"hooks": hooks} if hooks is not None else {}
+            from .embed import scope as app_scope
+
+            if app_scope.live_token():
+                # A person's app token is live: no OpenAI trace, which would
+                # keep tool errors before Hubzoid can clean them.
+                from agents import RunConfig
+
+                extra["run_config"] = RunConfig(tracing_disabled=True)
+            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns), **extra)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
@@ -508,6 +516,8 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
             # The call still goes to the server's own tool name (bound when the
             # tool was built); only the name the model sees changes.
             tools = [dataclasses.replace(t, name=connector_tool_name(srv.key, t.name)) for t in tools]
+            for t in tools:  # the connector it comes from, for an embedding app's tool limit
+                t.hubzoid_connector = srv.server_id
             seen: set[str] = set()
             unique = [t for t in tools if not (t.name in seen or seen.add(t.name))]
             if len(unique) != len(tools):

@@ -411,6 +411,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
 
     files_mod.register(app, ctx)
     shares_mod.register(app, ctx)
+    from ..embed import agui
+
+    agui.mount(app, ctx)  # chat for apps that embed it (hubzoid.embed)
     _stop_replies_on_shutdown(app, ctx.runs)
     log.info("chat: mounted for hub %s (agent %s)", ctx.hub, ctx.model_label)
 

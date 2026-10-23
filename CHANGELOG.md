@@ -5,6 +5,21 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Added
+- Chat inside your own app ([docs/embedding.md](docs/embedding.md)). Register an
+  app under `apps:` in `hubzoid.yaml` (client id and secret, limited to a set of
+  agents and tools). Your server gives the signed-in person a short pass (a JWT
+  signed with the client secret), or Hubzoid checks your app's own JWTs. The chat
+  talks AG-UI at `/api/agui`, so assistant-ui and CopilotKit work with their own
+  packages; approvals are AG-UI interrupts, and each person can list, reopen and
+  rejoin their chats. No Hubzoid account is created for them. Tools named in
+  `token_to` receive the person's own app token: a hub tool through
+  `hubzoid.embed.app_token()`, or the app's MCP server added as a connector.
+  `hubzoid embed secret` prints the `hubzoid.yaml` entry and the app server's
+  settings; `hubzoid embed list|pass` check and try it. A working example with
+  its own orders API and MCP server is in `examples/embed-agui`, and the
+  `hubzoid-embed` skill (`skills/embed/`) walks Claude Code or Codex through it.
+
 ## [2.0.1]
 
 The first published 2.0 release: 2.0.0 was tagged, but its release checks

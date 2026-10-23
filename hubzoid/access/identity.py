@@ -29,6 +29,17 @@ def normalize(name: str) -> str:
 
 
 @dataclass(frozen=True)
+class AppScope:
+    """A person an embedding app vouched for (``hubzoid.embed``): which app,
+    and the agents and tools their token allows within the app's maximum.
+    Access for such a caller comes from this alone, never from grants."""
+
+    app_id: str
+    agents: frozenset[str] = frozenset()
+    tools: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class Identity:
     """An immutable snapshot of the caller for one request.
 
@@ -51,6 +62,8 @@ class Identity:
     # The browser session or API key that started the run, as ``(kind, id)``:
     # signing that device out or revoking that key stops the run's tools.
     credential: "tuple[str, str] | None" = None
+    # A person an embedding app vouched for (None: everyone else).
+    app: "AppScope | None" = None
 
     @property
     def is_anonymous(self) -> bool:
@@ -61,7 +74,8 @@ class Identity:
              surface: str = "system", *, account_id: str | None = None,
              auth_epoch: int | None = None, run_identity_id: str | None = None,
              hubs: "Iterable[str] | None" = None,
-             credential: "tuple[str, str] | None" = None) -> "Identity":
+             credential: "tuple[str, str] | None" = None,
+             app: "AppScope | None" = None) -> "Identity":
         norm = frozenset(
             g for g in (normalize(x) for x in (groups or [])) if g
         )
@@ -74,6 +88,7 @@ class Identity:
             run_identity_id=run_identity_id,
             hubs=tuple(hubs) if hubs is not None else None,
             credential=tuple(credential) if credential else None,
+            app=app,
         )
 
 

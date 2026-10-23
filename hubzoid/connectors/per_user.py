@@ -102,6 +102,8 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
     surface = getattr(identity, "surface", "")
     if surface in NEVER_SURFACES or surface not in allowed_surfaces():
         return []
+    if getattr(identity, "app", None) is not None:
+        return _app_servers(hub_dir, identity, reserved)
     try:
         # Only the connectors this agent offers, whatever the person holds elsewhere.
         offered = registry.offered_in(hub_dir, Path(hub_dir).name)
@@ -164,4 +166,40 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
         ))
     if out:
         log.info("connectors: %d connector server(s) for %s", len(out), identity.user)
+    return out
+
+
+def _app_servers(hub_dir, identity, reserved) -> list:
+    """Connectors for a person an embedding app vouched for (``hubzoid.embed``):
+    those within their access. The app's own connector carries the person's
+    app token (``token_to``); a shared-key connector its company key. They have
+    no account, so connectors each person connects themselves are not theirs."""
+    from ..access.evaluator import app_access
+    from ..embed import scope as app_scope
+    from ..personal_mcp import PerUserServer, _hub_server_keys
+
+    try:
+        offered = registry.offered_in(hub_dir, Path(hub_dir).name)
+        usable = [c for c in registry.list_all(hub_dir) if c.enabled and c.id in offered]
+    except Exception:  # noqa: BLE001 — a store problem must never break chat
+        log.warning("connectors: connectors unavailable this turn", exc_info=True)
+        return []
+    reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)
+    out: list = []
+    for connector in sorted(usable, key=lambda c: c.id):
+        if not app_access(hub_dir, identity.app, connector=connector.id).allowed:
+            continue
+        key = server_key(connector.id)
+        if key in reserved:
+            continue
+        headers = app_scope.connector_headers(connector.id)
+        if headers is None and connector.auth_type == "shared":
+            headers = registry.shared_headers(hub_dir, connector.id) or None
+        if not headers:
+            continue
+        out.append(PerUserServer(
+            key=key, url=connector.url, headers=headers,
+            allowed_tools=tuple(connector.tool_allowlist) if connector.tool_allowlist else None,
+            server_id=connector.id, app=connector.id,
+        ))
     return out

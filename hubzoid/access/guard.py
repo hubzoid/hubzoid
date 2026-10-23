@@ -52,9 +52,12 @@ _allowed_surfaces = allowed_surfaces
 
 
 def decide(hub_dir: Path, ident, permission: str,
-           surfaces: "frozenset[str] | None" = None) -> tuple[bool, str]:
+           surfaces: "frozenset[str] | None" = None, *, tool: str | None = None) -> tuple[bool, str]:
     """The ONE access decision, used by both the invocation guard and MCP tool
     discovery: the surface gate first, then the access store's `can()`.
+
+    A person an embedding app vouched for is judged on the app's limit instead
+    (``evaluator.app_access``): ``tool`` or ``permission`` must be within it.
 
     FAIL CLOSED: any error reading or evaluating the store denies."""
     if surfaces is None:
@@ -63,6 +66,12 @@ def decide(hub_dir: Path, ident, permission: str,
     if not pre_allowed:
         return False, reason
     hub_dir = Path(hub_dir)
+    app = getattr(ident, "app", None)
+    if app is not None:
+        from .evaluator import app_access
+
+        decision = app_access(hub_dir, app, permission, tool=tool)
+        return (True, "app") if decision.allowed else (False, decision.reason)
     hub_name = hub_dir.name
     subject = getattr(ident, "user", None) or ""
     from . import store_for
@@ -113,7 +122,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
 
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()
-        allowed, reason = decide(hub_dir, ident, permission, surfaces)
+        allowed, reason = decide(hub_dir, ident, permission, surfaces, tool=ft.name)
         recorded = await asyncio.to_thread(
             audit.record, hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
             decision=("allow" if allowed else "deny"), reason=reason,
@@ -137,7 +146,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     def _is_enabled(*_args, **_kwargs) -> bool:
         # The SDK calls this with (run_context, agent); we only need the
         # request-scoped identity, so accept anything and ignore it.
-        allowed, _ = decide(hub_dir, current_identity(), permission, surfaces)
+        allowed, _ = decide(hub_dir, current_identity(), permission, surfaces, tool=ft.name)
         return allowed
 
     _is_enabled.hubzoid_permission = permission
@@ -147,11 +156,30 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     return fakes.covered(copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled))
 
 
+def _app_hides(name: str, ft=None) -> bool:
+    """A person an embedding app vouched for sees only the tools within their
+    access (the token's tools; the app's current limit is checked again at
+    call time)."""
+    app = getattr(current_identity(), "app", None)
+    if app is None:
+        return False
+    from ..embed.caller import tool_allowed
+    from ..embed.config import Access
+
+    # An MCP tool is judged with the server or connector it comes from
+    # (``run_checked`` and ``runtime.open_personal_mcp`` record it on the tool).
+    return not tool_allowed(Access(agents=app.agents, tools=app.tools), name,
+                            server=getattr(ft, "hubzoid_server", None),
+                            connector=getattr(ft, "hubzoid_connector", None))
+
+
 def visible(ft) -> bool:
     """Whether the current caller may see `ft`. False only for a tool this
     guard wraps whose permission the caller lacks; any other tool is visible.
     The same decision as the invoke wall, for runtimes that list tools
     themselves (Claude, Codex)."""
+    if _app_hides(getattr(ft, "name", ""), ft):
+        return False
     check = getattr(ft, "is_enabled", True)
     if getattr(check, "hubzoid_permission", None) is None:
         return True
@@ -167,6 +195,9 @@ def visible_map(tools: dict) -> dict[str, bool]:
     decided: dict = {}
     out: dict[str, bool] = {}
     for name, ft in tools.items():
+        if _app_hides(name, ft):
+            out[name] = False
+            continue
         check = getattr(ft, "is_enabled", True)
         if getattr(check, "hubzoid_permission", None) is None:
             out[name] = True
@@ -189,6 +220,8 @@ DENIED_MESSAGE = ("[access denied: '{name}' needs access to this agent, which th
                   "user does not have.]")
 UNCHECKED_MESSAGE = ("[access denied: access could not be checked, so '{name}' was not run. "
                      "Try again shortly.]")
+APP_TOOL_MESSAGE = ("[access denied: '{name}' is not one of the tools this app allows, so it was "
+                    "not run.]")
 
 
 def refusal(decision, name: str, *, guarded: bool = False) -> str | None:
@@ -200,6 +233,8 @@ def refusal(decision, name: str, *, guarded: bool = False) -> str | None:
         return REVOKED_MESSAGE.format(name=name)
     if decision.reason == "store_error":
         return UNCHECKED_MESSAGE.format(name=name)
+    if decision.reason == "app_tool":
+        return APP_TOOL_MESSAGE.format(name=name)
     return None if guarded else DENIED_MESSAGE.format(name=name)
 
 
@@ -222,6 +257,23 @@ async def _stopped() -> bool:
         return True
 
 
+# A Settings connector's server key (``connectors.per_user.server_key``).
+_CONNECTOR_KEY = "my_"
+
+
+def server_source(hub_dir: Path, name: str) -> tuple[str | None, str | None]:
+    """(hub MCP server, Settings connector) a server name stands for. A hub
+    server keeps its own name even when it starts with ``my_``: only a name the
+    hub doesn't use itself is a connector's (``connectors.per_user``)."""
+    from ..personal_mcp import _hub_server_keys
+
+    if not name:
+        return None, None
+    if name.startswith(_CONNECTOR_KEY) and name not in _hub_server_keys(hub_dir):
+        return None, name[len(_CONNECTOR_KEY):]
+    return name, None
+
+
 def checked_server(server, hub_dir: Path):
     """``server`` (an Agents SDK MCP server) with the same per-call check as
     ``run_checked``. Every runtime's MCP tools end in ``server.call_tool``,
@@ -239,42 +291,75 @@ def checked_server(server, hub_dir: Path):
 
         if await _stopped():
             return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
-        decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
+        name = str(getattr(server, "name", "") or "")
+        hub_server, connector = await asyncio.to_thread(server_source, hub_dir, name)
+        decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=str(tool_name),
+                                           server=hub_server, connector=connector)
         refused = refusal(decision, tool_name)
         if refused is not None:
             return CallToolResult(content=[TextContent(type="text", text=refused)], isError=True)
-        return await original(tool_name, arguments, *args, **kwargs)
+        result = await original(tool_name, arguments, *args, **kwargs)
+        from ..embed import scope as app_scope
+
+        if app_scope.live_token():
+            for part in getattr(result, "content", None) or []:
+                if getattr(part, "type", None) == "text" and isinstance(getattr(part, "text", None), str):
+                    part.text = app_scope.scrub(part.text)
+            if getattr(result, "structuredContent", None) is not None:
+                result.structuredContent = app_scope.scrub(result.structuredContent)
+        return result
 
     call_tool.hubzoid_run_checked = True
     server.call_tool = call_tool
     return server
 
 
-def run_checked(ft: FunctionTool, hub_dir: Path) -> FunctionTool:
+def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -> FunctionTool:
     """A copy of ``ft`` that first checks the run's account may still use the
     hub (``evaluator.check_run``: active, same credential counter, not
-    blocked, ``use_hub``). Allowed means it runs at once; nothing asks a person."""
+    blocked, ``use_hub``). Allowed means it runs at once; nothing asks a person.
+
+    ``server``: the MCP server the tool comes from (a hub server, or a Settings
+    connector's ``my_<id>``), so an embedding app's limit can name it."""
     invoke = getattr(ft, "on_invoke_tool", None)
     if invoke is None or not dataclasses.is_dataclass(ft) or getattr(invoke, "hubzoid_run_checked", False):
         return ft
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
     guarded = getattr(getattr(ft, "is_enabled", None), "hubzoid_permission", None) is not None
+    hub_server, connector = server_source(hub_dir, server) if server else (None, None)
 
     async def _checked_invoke(ctx, input_str):
         from .evaluator import check_run
 
         if await _stopped():
             return STOPPED
-        decision = await asyncio.to_thread(check_run, hub_dir, current_identity())
+        decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=ft.name,
+                                           server=hub_server, connector=connector)
         refused = refusal(decision, ft.name, guarded=guarded)
         if refused is not None:
             return refused
         # Allowed, or a restricted tool that refuses (and logs) in its own words.
-        return await original_invoke(ctx, input_str)
+        from ..embed import scope as app_scope
+
+        with app_scope.tool_scope(ft.name):
+            return app_scope.scrub(await original_invoke(ctx, input_str))
 
     _checked_invoke.hubzoid_run_checked = True
-    return copy_tool(ft, on_invoke_tool=_checked_invoke)
+    changes = {"on_invoke_tool": _checked_invoke}
+    if getattr(ft, "is_enabled", True) is True:
+        # The Agents SDK lists tools itself: a person an app vouched for is
+        # shown only the tools within their access.
+        def _is_enabled(*_args, **_kwargs) -> bool:
+            return not _app_hides(ft.name, out)
+
+        changes["is_enabled"] = _is_enabled
+    out = copy_tool(ft, **changes)
+    if hub_server:
+        out.hubzoid_server = hub_server
+    if connector:
+        out.hubzoid_connector = connector
+    return out
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

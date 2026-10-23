@@ -24,6 +24,13 @@ message. Keywords combine; the parts run in this order:
             gate (``hubzoid.hitl``): it runs when allowed, otherwise it waits for
             a person and the reply says so
   askme     the agent asks one question with two options (``ask_question``)
+  apptool   one real call of the hub tool ``HUBZOID_TEST_APP_TOOL`` (default
+            ``app_lookup``) through the gated registry, so access checks and an
+            embedding app's token (``hubzoid.embed``) run for real
+  connectortool  one real call of a connector tool whose name ends with
+            ``HUBZOID_TEST_CONNECTOR_TOOL`` (default ``list_orders``), through
+            the same connectors, headers and checks a reply uses
+  whatpage  says what page context came with the message (``hubzoid.embed``)
   feedback  one ``record_feedback`` call, when the deployment offers that tool:
             ``negative`` in the request makes the rating negative, the first
             sentence is the person's quote and the rest their comment
@@ -53,7 +60,7 @@ log = logging.getLogger("hubzoid.testing_runtime")
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
 KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme",
-            "feedback")
+            "feedback", "apptool", "connectortool", "whatpage")
 
 _WORD = re.compile(r"[A-Za-z]+")
 _NOTE = re.compile(r"^\[(?:Image|User attached file): ([^\](]+?)\s*(?:\(|\])", re.MULTILINE)
@@ -259,6 +266,84 @@ class ScriptedRuntime:
             body = {"allow": "Reserved 4 units of SKU-12.",
                     "ask": "I'd like to reserve 4 units of SKU-12. Waiting for your approval.",
                     "refuse": verdict.message}[verdict.action]
+            for piece in _chunks(body):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "apptool" in words:
+            # A real call of a hub tool (HUBZOID_TEST_APP_TOOL, default app_lookup)
+            # through the same gated registry the agent uses: its access
+            # checks and the embedding app's token run for real.
+            from .factory import hub_tool_registry
+
+            name = os.environ.get("HUBZOID_TEST_APP_TOOL", "app_lookup")
+            args = {"query": "orders"}
+            yield ToolCall(id="call_app", name=name, args=args,
+                           legacy=tool_events.format_call(name, args, mode=self._tool_mode))
+            tool = (await asyncio.to_thread(hub_tool_registry, self.hub_dir)).get(name)
+            if tool is None:
+                out = f"[no tool named {name}]"
+            else:
+                from agents import RunConfig
+                from agents.tool_context import ToolContext
+
+                ctx = ToolContext(context=None, tool_name=name, tool_call_id="call_app",
+                                  tool_arguments=json.dumps(args), run_config=RunConfig())
+                out = await tool.on_invoke_tool(ctx, json.dumps(args))
+            out = out if isinstance(out, str) else json.dumps(out, default=str)
+            _request_ctx.record_tool_result("call_app", out)
+            refused = out.startswith("[access") or out.startswith("[no tool")
+            yield ToolResult(id="call_app", name=name, ok=not refused,
+                             message=out if refused else None)
+            for piece in _chunks(f"The {name} tool answered: {out}"):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "connectortool" in words:
+            # A real call of a connector's tool: the connectors this person may
+            # use this turn, connected with their headers, checked per call.
+            from contextlib import AsyncExitStack
+
+            from . import personal_mcp
+            from .access.identity import current_identity
+            from .runtime import open_personal_mcp
+
+            want = os.environ.get("HUBZOID_TEST_CONNECTOR_TOOL", "list_orders")
+            args = {"query": "open"}
+            async with AsyncExitStack() as stack:
+                servers = await asyncio.to_thread(personal_mcp.per_user_servers, self.hub_dir, current_identity())
+                kept = await open_personal_mcp(stack, servers, set(), hub_dir=self.hub_dir)
+                tool = next((t for _, tools in kept for t in tools if t.name.endswith(want)), None)
+                name = tool.name if tool is not None else want
+                yield ToolCall(id="call_connector", name=name, args=args,
+                               legacy=tool_events.format_call(name, args, mode=self._tool_mode))
+                if tool is None:
+                    out = f"[no connector tool named {want} for this person]"
+                else:
+                    from agents import RunConfig
+                    from agents.tool_context import ToolContext
+
+                    ctx = ToolContext(context=None, tool_name=name, tool_call_id="call_connector",
+                                      tool_arguments=json.dumps(args), run_config=RunConfig())
+                    out = await tool.on_invoke_tool(ctx, json.dumps(args))
+            out = out if isinstance(out, str) else json.dumps(out, default=str)
+            _request_ctx.record_tool_result("call_connector", out)
+            refused = out.startswith("[")
+            yield ToolResult(id="call_connector", name=name, ok=not refused, message=out if refused else None)
+            for piece in _chunks(f"The connector answered: {out}"):
+                yield text(piece)
+            _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
+                                    model=self.model_id, cost_usd=0.0, status="ok")
+            return
+
+        if "whatpage" in words:
+            found = re.findall(r"<page-context[^>]*>(.*?)</page-context>", prompt, flags=re.S)
+            body = (f"You are looking at: {found[-1].strip()}" if found
+                    else "No page context came with your message.")
             for piece in _chunks(body):
                 yield text(piece)
             _request_ctx.note_usage(input_tokens=len(prompt.split()), output_tokens=output_words,
