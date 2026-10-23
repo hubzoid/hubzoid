@@ -65,6 +65,29 @@ fall back to its open default. `PUT /api/chat/config` answers 409 `file_owned`.
 `GET /api/chat/config`, `GET /api/chat/config/schema` and
 `GET /api/chat/bootstrap` (public defaults before sign-in) are unchanged.
 
+## Models people may pick
+
+By default there is no model picker: every reply uses the agent's own model
+(`MODEL` in its `.env`), the one its builder tuned it on. To let people choose,
+list the models under `chat:` in `hubzoid.yaml`. Each entry is a label and the
+model id the agent's runtime accepts (Claude: `sonnet`, `opus`, `haiku` or a
+full id; Codex: its model ids):
+
+```yaml
+chat:
+  models:
+    allow_choice: true        # false hides the picker again
+    default_ref: sonnet       # optional: picked to start with
+    catalog:
+      sonnet: {label: Claude Sonnet, model: sonnet}
+      haiku:  {label: Claude Haiku, model: haiku}
+```
+
+The choice applies to the person's next messages in that chat; the server
+refuses a model that isn't on the list. A model runs on the agent's own runtime:
+a Claude agent can't answer with a Codex model, so list the models of the
+runtime the agent uses.
+
 ## Personal preferences
 
 People choose appearance (light, dark, black OLED or match system), text size

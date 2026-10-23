@@ -54,8 +54,9 @@ def spy(client, monkeypatch):
 
 
 def test_catalog_and_per_turn_model(client, hub, spy, claude):
-    # With no catalog configured, the Claude runtime offers its own aliases.
-    assert [c["ref"] for c in client.get("/api/chat/models").json()["catalog"]] == ["default", "sonnet", "opus", "haiku"]
+    # With no catalog configured there is no choice: the agent's own model (HUB-140).
+    bare = client.get("/api/chat/models").json()
+    assert [c["ref"] for c in bare["catalog"]] == ["default"] and not bare["can_choose"]
     catalog(hub)
     m = client.get("/api/chat/models").json()
     assert [c["ref"] for c in m["catalog"]] == ["default", "fast", "deep"] and m["can_choose"] and m["can_compare"]

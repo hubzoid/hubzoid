@@ -42,6 +42,9 @@ See [upgrading to 2.0.2](docs/UPGRADING.md#upgrading-to-202).
   deployment's, then the zone their browser sends, then UTC (not UTC straight
   away). A repeated request's answer chat is titled with the schedule's name
   and the time in its zone.
+- The chat's model picker shows only the agent's own model unless the
+  deployment lists models under `chat.models.catalog`. Claude agents offered
+  Sonnet, Opus and Haiku to everyone without being asked.
 - `typer` from 0.26.8, so docling (2.60 and later) installs alongside.
 - Top help says "One brain for your internal agents." and leaves out the
   maintainers' `parity` command.

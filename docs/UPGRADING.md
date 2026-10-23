@@ -46,6 +46,10 @@ No database or file changes. What behaves differently:
   Settings says the schedules are off instead of showing a next run.
 - **API reference** (`/docs`, `/openapi.json`) is titled Hubzoid API with the
   real version and lists only the public API. See [the API guide](api.md).
+- **Model picker:** Claude agents no longer offer Sonnet, Opus and Haiku unless
+  the deployment lists models under `chat.models.catalog`
+  ([chat-config](chat-config.md#models-people-may-pick)). Every reply uses the
+  agent's own model by default.
 - **Embedded chat** (AG-UI) is new. See [embedding](embedding.md).
 - `typer` from 0.26.8, so docling (2.60 and later) installs alongside Hubzoid in the same environment.
 
