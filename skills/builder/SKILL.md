@@ -75,14 +75,14 @@ none works, stop and ask the person to sign in. Don't work around it.
 ## 2. Create the hub
 
 ```bash
-hubzoid init <hub> --template minimal --model <claude-local|codex-local|provider model>
+hubzoid init <hub> --model <claude-local|codex-local|provider model>
 ```
 
 `init` asks nothing when it has no terminal, so pass `--model`. Read its output.
-Show the tree. Delete the example files the task doesn't use
-(`agents/helper.md`, `skills/hello.md`, `tools_local/hello.py`,
-`schedule/example.md`, `evals/example.md`, `knowledge/about.md`). Keep
-`branding/` and `.env`. The folder layout is in `docs/authoring-a-hub.md`.
+Show the tree: every folder exists, empty ones hold a `.gitkeep`. Replace the
+starter's sample (`knowledge/house-rules.md`, `evals/refund-window.md` and the
+Kestrel & Oak lines in `AGENTS.md`) with their material. Keep `.env`. The folder
+layout is in `docs/authoring-a-hub.md`.
 
 ## 3. Turn their material into files
 

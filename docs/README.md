@@ -14,8 +14,8 @@ testing an unreleased branch.
 | Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md) |
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |
 | People in the loop | [Approvals, questions, workflow access, hub changes and memory](approvals-and-hub-changes.md) |
-| Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131), [Watchtower walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131) |
-| Try PR reviews and engineering reports | [GitZoid sample and GitHub setup](../hubzoid/templates/gitzoid/README.md) |
+| Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131) |
+| Start from a ready-to-use hub | [Software Factory](https://github.com/hubzoid/software-factory-hub), [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub), [Customer Desk](https://github.com/hubzoid/customer-desk-hub), [GitZoid sample](https://github.com/hubzoid/gitzoid-hub) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Put the chat inside your own app (ERPNext, Odoo, a dashboard) | [Embedding the chat](embedding.md) |
 | Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |

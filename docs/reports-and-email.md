@@ -343,5 +343,5 @@ suggestion and a run reference to give the builder; raw exception data is not
 exposed in the personal list. Email is off by default and needs both the hub's
 opt-in and working delivery configuration.
 
-For a runnable example with your own data and an explicitly saved correction,
-see the [Watchtower Service snapshot walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131).
+For runnable report workflows, see the code, delivery and people reports in
+the [GitZoid hub](https://github.com/hubzoid/gitzoid-hub).

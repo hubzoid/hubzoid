@@ -6,6 +6,7 @@ switch and no account sync. A deployment that still needs Open WebUI stays on
 the 1.x line (`pip install "hubzoid<2"`). The sections for 1.x releases below
 describe those releases as they were.
 
+- [Templates moved out of the package](#templates-moved-out-of-the-package)
 - [One run mode: every hub supervised, every setting in one file](#one-run-mode)
 - [Upgrading to 2.0: Open WebUI removed](#upgrading-to-20-open-webui-removed)
 - [Upgrading to 1.3.2](#upgrading-to-132)
@@ -13,6 +14,42 @@ describe those releases as they were.
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Templates moved out of the package
+
+Hubzoid no longer bundles hub templates. `hubzoid init` writes a small starter
+instead: every folder Hubzoid reads, three house rules to try and one check.
+Complete agents are ready-to-use hubs in their own repos:
+[Software Factory](https://github.com/hubzoid/software-factory-hub),
+[Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub),
+[Customer Desk](https://github.com/hubzoid/customer-desk-hub) and the
+[GitZoid sample](https://github.com/hubzoid/gitzoid-hub).
+
+**Hubs you already made from a template keep working.** `init` copied the files
+into your hub folder, and upgrading Hubzoid never deletes, regenerates or
+updates them. The usual upgrade steps (back up, let running work finish, check
+settings) still apply. One thing the package still keeps from the templates:
+their logo files, so an unchanged copy in a hub's `branding/` is still shown as
+the Hubzoid mark.
+
+**Scripts that call `hubzoid init <name> --template <template>`** now stop with
+exit code 2, say where that template went, and create nothing. Remove the flag
+to get the starter, or clone a ready-to-use hub instead.
+
+| Template | Where it went |
+|---|---|
+| `gitzoid` | Its own hub: `git clone https://github.com/hubzoid/gitzoid-hub gitzoid`. Its [UPGRADING.md](https://github.com/hubzoid/gitzoid-hub/blob/main/UPGRADING.md) covers hubs made from the bundled copy |
+| `operations`, `minimal`, `demo`, `watchtower` | Retired. The files stay at the [v2.0.1 tag](https://github.com/hubzoid/hubzoid/tree/v2.0.1/hubzoid/templates) |
+
+To start a new hub from a retired template anyway, copy its folder from the
+v2.0.1 tag, including hidden files such as `connectors/.mcp.json`, then add
+your own `.env` (`MODEL=` and a random `BRIDGE_API_KEYS=`). This gets the files
+only. It does not downgrade Hubzoid. Do not use `hubzoid init --force` on an
+existing hub for this: it overwrites the starter's files in that folder.
+
+**Running the repo's `demo-hub/` or Docker Compose without `HUB_PATH`:**
+`demo-hub/` is gone, and `docker/docker-compose.yml` now needs `HUB_PATH` set to
+your hub folder. Its header shows how to make a starter with the image itself.
 
 ## One run mode
 
@@ -211,7 +248,7 @@ requested them; confirm in that same conversation within ten minutes.
 updates automatically. If you tried an earlier GitZoid checkout, back up its
 Hub and state, compare the new template, and preserve your settings, approved
 rules and secrets. Start in preview mode and run `setup_check` before enabling
-GitHub publishing. See the [sample guide](../hubzoid/templates/gitzoid/README.md).
+GitHub publishing. See the [sample guide](https://github.com/hubzoid/hubzoid/blob/v2.0.1/hubzoid/templates/gitzoid/README.md) (GitZoid is now [its own hub](https://github.com/hubzoid/gitzoid-hub)).
 
 No Hub-file migration is required. The report features are off until a workflow opts in
 (`inputs=`, `as_tool=`, `schedulable=`, and optionally `key=` or `audience="domain"`) and an
