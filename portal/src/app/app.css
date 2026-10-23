@@ -2527,7 +2527,10 @@
   /* Version and the GitHub star, at the foot of the section list. */
   .hz-set-about {
     margin-top: auto;
-    padding: 16px 8px 0;
+    /* A line sets the project links apart from the sections (founder review). */
+    margin-inline: -8px;
+    border-top: 1px solid var(--hz-line-soft);
+    padding: 14px 16px 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -3415,8 +3418,8 @@
    palette can't make the label unreadable. */
 .hz-subtabs a[aria-current="page"],
 .console-embed .hz-subtabs a[aria-current="page"] { background: var(--hz-info-soft); border-color: var(--hz-info-soft); color: var(--hz-info); }
-.hz-agents-filters button[aria-pressed="true"] { background: var(--hz-info-soft); color: var(--hz-info); }
-.hz-agents-filters button[aria-pressed="true"] span { color: var(--hz-info); }
+/* A selected filter is neutral and its count grey: a coloured number read as
+   a notification (founder review, HUB-140). */
 .hz-usage-edit, .hz-inbox-detail-foot a { color: var(--hz-accent-text); }
 .hz-meter > span { background: var(--hz-accent); }
 .hz-set-grouphead h1, .hz-agent-head h1, .hz-usage-head h2 { color: var(--hz-ink); }

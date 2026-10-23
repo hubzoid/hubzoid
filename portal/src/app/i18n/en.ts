@@ -453,7 +453,7 @@ export const en = {
     sourcesLede: "Files, notes and pages your agents can cite. You choose who can read each collection.",
     instructions: "Agent instructions",
     instructionsLede: "What this agent follows: its instructions, skills and shared prompts.",
-    version: (v: string) => `Hubzoid ${v}`,
+    version: (v: string) => `Hubzoid v${v}`,
     star: "Star on GitHub",
     hideStar: "Hide the GitHub link",
   },

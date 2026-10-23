@@ -39,8 +39,6 @@ import { clearDeviceCache } from "../lib/devices";
 import { useApp } from "../lib/app-context";
 import { navigate } from "../lib/router";
 import { Button, PageSpinner, cx } from "../components/ui";
-import { get } from "../lib/api";
-import { displayName } from "../lib/format";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
@@ -169,28 +167,6 @@ export function movedTo(hash: string): string | null {
   return null;
 }
 
-type ManagedHub = { key: string; name: string; avatar?: string | null };
-
-/** The agents this person manages, with the chat app's names and avatars. */
-function useManagedHubs(team: boolean): ManagedHub[] {
-  const app = useApp();
-  const [hubs, setHubs] = useState<ManagedHub[]>([]);
-  useEffect(() => {
-    if (!team) return;
-    let alive = true;
-    get<{ hubs: { key: string; name: string }[] }>("/portal/api/hubs", { quiet401: true })
-      .then((r) => alive && setHubs(r.hubs.map((h) => {
-        const agent = app.agents.list.find((a) => a.hub === h.key);
-        return { key: h.key, name: agent?.name && agent.name !== h.key ? agent.name : displayName(h.name) || h.key, avatar: agent?.avatar_url };
-      })))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [team, app.agents.list]);
-  return hubs;
-}
-
 /** Which section a hash shows. */
 function keyFor(hash: string): Key | null {
   const path = hash.replace(/^#/, "").split("?")[0];
@@ -291,7 +267,6 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const activeTab = tabs.find((tab) => tab.key === active);
   const q = query.trim().toLowerCase();
   const matches = q ? items.filter((i) => `${i.label} ${i.keywords ?? ""}`.toLowerCase().includes(q)) : [];
-  const hubs = useManagedHubs(team);
   const link = (target: string, label: ReactNode, current: boolean, className = "hz-nav", icon?: ReactNode, extra?: ReactNode) => (
     <a
       href={`/settings#${target}`}
@@ -313,7 +288,7 @@ export default function SettingsPage({ section }: { section: string | null }) {
     return (
       <div key={g.id} className="hz-set-big-wrap">
         {link(first.hash, g.label, current, cx("hz-nav", g.manage && "hz-set-big"), g.icon,
-          g.id === "agents" && hubs.length > 0 ? <span className="hz-set-count" aria-hidden>{hubs.length}</span> : undefined)}
+          undefined)}
       </div>
     );
   };
