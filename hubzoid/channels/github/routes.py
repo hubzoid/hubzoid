@@ -62,6 +62,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         conn = await github_conn(cid)
         return await run(setup.start, conn, owner=str(b.get("owner") or ""), owner_type=str(b.get("type") or ""),
@@ -124,6 +127,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.installed, await github_conn(cid), int(b.get("installation_id") or 0), None,
                          actor=p.email)
@@ -133,6 +139,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.import_app, await github_conn(cid), app_id=int(b.get("app_id") or 0),
                          installation_id=int(b.get("installation_id") or 0), owner_id=int(b.get("owner_id") or 0),
@@ -160,6 +169,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.configure, await github_conn(cid), expected_revision=int(b.get("expected_revision") or 0),
                          actor=p.email, repositories_=b.get("repositories"), sets=b.get("set") or {},

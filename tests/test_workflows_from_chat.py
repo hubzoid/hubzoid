@@ -883,6 +883,16 @@ def test_a_schedule_without_a_zone_takes_the_account_then_the_browser(hub, engin
     _request_ctx.remember_browser_zone(MEERA, "America/Chicago")
     _request_ctx.remember_browser_zone(MEERA, "Not/AZone")          # ignored
     assert "Mondays at 09:00 (America/Chicago)" in _call(tools["repeat_request"], ask)
+    # A deployment that names a zone wins over the browser, even UTC, which
+    # looks the same as the product default (Codex review of 2.0.2).
+    from hubzoid.chat.config import service_for
+
+    path = service_for(hub).file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("version: 1\npresentation:\n  timezone: UTC\n")
+    assert service_for(hub).sets_timezone()
+    assert "Mondays at 09:00 (UTC)" in _call(tools["repeat_request"], ask)
+    path.unlink()
     monkeypatch.setattr(report_tools, "_person_timezone", lambda *a: "Asia/Tokyo")
     assert "Mondays at 09:00 (Asia/Tokyo)" in _call(tools["repeat_request"], ask)
 

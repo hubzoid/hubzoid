@@ -240,7 +240,8 @@ async def test_cancellation_terminates_child_and_removes_credentials(tmp_path, m
     auth = tmp_path / "auth.json"
     auth.write_text('{}')
     monkeypatch.setattr(factory_codex, "_auth_file", lambda: auth)
-    monkeypatch.setattr(factory_codex, "codex_binary", lambda: "unused")
+    # The runtime asks _codex() for the binary and its reviewed version (Codex review of 2.0.2).
+    monkeypatch.setattr(factory_codex, "_codex", lambda: ("unused", factory_codex._newest_reviewed()))
     started = asyncio.Event()
     class Child:
         returncode = None

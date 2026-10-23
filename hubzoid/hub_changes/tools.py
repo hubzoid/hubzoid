@@ -202,7 +202,8 @@ def gate(ft: FunctionTool, hub_dir, access, permission: str) -> FunctionTool:
         return bool(cur.is_enabled(*args, **kwargs) or mgr.is_enabled(*args, **kwargs))
 
     enabled.hubzoid_permission = permission
-    enabled.hubzoid_key = ("curator-or-manager", str(Path(hub_dir)))
+    # Reads and writes are visible on different terms: never share a cache entry.
+    enabled.hubzoid_key = ("curator-or-manager", str(Path(hub_dir)), bool(writes))
 
     async def invoke(ctx, input_str):
         if writes:

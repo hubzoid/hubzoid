@@ -322,9 +322,11 @@ def short_name(raw: str) -> str:
 # The blocks above are display markup for Hubzoid's own surfaces. A client of
 # the OpenAI-compatible API (a personal key, another company's web app) wants
 # the answer alone: tool progress reaches it as status events instead.
-_STRIP_OPENERS = ('<details type="tool_calls"', "<details>\n<summary>↳ ", "<think>")
+# SHOW_TOOLS=full writes one line per call or error ("> ↳ **name** `args`",
+# "> ⚠ **name** ..."): dropped to the end of that line.
+_STRIP_OPENERS = ('<details type="tool_calls"', "<details>\n<summary>↳ ", "<think>", "> ↳ ", "> ⚠ ")
 _STRIP_CLOSERS = {'<details type="tool_calls"': "</details>", "<details>\n<summary>↳ ": "</details>",
-                  "<think>": "</think>"}
+                  "<think>": "</think>", "> ↳ ": "\n", "> ⚠ ": "\n"}
 
 
 class AnswerText:

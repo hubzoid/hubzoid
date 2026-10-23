@@ -100,8 +100,10 @@ def _person_timezone(hub_dir, email: str) -> str | None:
         from ..workflows.personal import current_account
 
         account = current_account(hub_dir, email) or email
-        zone = service_for(Path(hub_dir)).get_preferences(account)["effective"]["timezone"]
-        if zone.get("value") and (zone.get("source") in ("account", "deployment") or zone.get("locked")):
+        service = service_for(Path(hub_dir))
+        zone = service.get_preferences(account)["effective"]["timezone"]
+        if zone.get("value") and (zone.get("source") in ("account", "deployment") or zone.get("locked")
+                                  or service.sets_timezone()):
             return zone["value"]
     except Exception:  # noqa: BLE001 - unknown: the browser's, shown in the proposal to correct
         log.debug("schedule time zone: preferences unreadable", exc_info=True)

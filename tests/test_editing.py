@@ -95,7 +95,25 @@ def test_the_agent_does_not_offer_shared_changes_while_off(tmp_path, monkeypatch
     hub.mkdir()
     writes, reads = hc_tools.gate(propose, hub, Access, "curator"), hc_tools.gate(read, hub, Access, "curator")
     assert writes.is_enabled() is False and reads.is_enabled() is not False
+    # The runtimes decide visibility for the whole list at once, one check per
+    # key: the read's answer must not stand in for the write's (Codex review).
+    from hubzoid.access.guard import visible_map
+
+    shown = visible_map({"read_hub_file": reads, "propose_hub_change": writes})
+    assert shown == {"read_hub_file": True, "propose_hub_change": False}
     out = json.loads(asyncio.run(writes.on_invoke_tool(None, "{}")))
     assert "from the browser is off" in out["error"]
     monkeypatch.setenv(editing.ENV, "true")
     assert writes.is_enabled() is not False
+
+
+def test_card_settings_and_github_setup_are_refused_while_off(bridge):
+    """Codex review of 2.0.2: two more routes write files (mcp-apps.yaml, a
+    channel's YAML) and must follow the switch too."""
+    client, hub = bridge
+    origin = {"origin": "http://127.0.0.1"}
+    r = client.put("/portal/api/hubs/hub/apps/config", json={"expected_revision": 0, "config": {}}, headers=origin)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "in_app_editing_off", r.text
+    for path in ("setup", "setup/verify", "import-app", "configure"):
+        r = client.post(f"/api/hubs/hub/channels/gh/github/{path}", json={}, headers=origin)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "in_app_editing_off", (path, r.text)

@@ -228,6 +228,11 @@ def test_answer_text_drops_only_hubzoids_own_blocks():
     f = AnswerText()                         # split anywhere, even inside a tag
     out = "".join(f.feed(s[i:i + 3]) for i in range(0, len(s), 3)) + f.flush()
     assert out.strip() == answer_text(s)
+    # SHOW_TOOLS=full: the call and error lines go too (Codex review of 2.0.2).
+    from hubzoid.tool_events import format_call, format_error
+
+    full = "Checking." + format_call("lookup", {"q": "x"}, mode="full") + format_error("lookup") + "Done."
+    assert answer_text(full) == "Checking.\n\nDone."
     f = AnswerText()
     assert f.feed('Hi <details type="tool_calls" name="x">') == "Hi "
     assert f.flush() == ""                   # an unclosed block is dropped
