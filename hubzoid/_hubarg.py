@@ -48,6 +48,25 @@ def resolve(value: Path, *, command: str = "", deployment_wide: bool = False) ->
     raise typer.BadParameter(f"This folder runs {len(hubs)} hubs ({names}). Name one, for example: {example}")
 
 
+def deployment_environment(hub: Path) -> None:
+    """Fill in what the hub's hubzoid.yaml sets (public_url, sign_in, owner,
+    in_app_editing) as `hubzoid run` would, for a command run on its own.
+    The process environment still wins; a broken file changes nothing."""
+    import os
+
+    from . import deployfile
+
+    try:
+        path = deployfile.owning(Path(hub))
+        if path is None:
+            return
+        values, _conflicts = deployfile.environment(deployfile.load(path))
+    except (deployfile.DeployFileError, OSError, ValueError):
+        return
+    for name, value in values.items():
+        os.environ.setdefault(name, value)
+
+
 def _callback(path: tuple[str, ...], previous):
     wide = bool(path) and path[0] in DEPLOYMENT_WIDE
     command = " ".join(path)
@@ -57,7 +76,9 @@ def _callback(path: tuple[str, ...], previous):
             value = previous(ctx, param, value)
         if value is None:
             return value
-        return resolve(Path(value), command=command, deployment_wide=wide)
+        hub = resolve(Path(value), command=command, deployment_wide=wide)
+        deployment_environment(hub)   # e.g. public_url for links and webhooks
+        return hub
 
     return callback
 

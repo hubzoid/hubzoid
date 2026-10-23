@@ -143,7 +143,8 @@ def load(path: Path) -> DeployFile:
     out.hubs = [h.strip() for h in hubs]
     for i, folder in enumerate(out.hub_dirs()):
         if not (folder / "AGENTS.md").is_file():
-            raise _fail(loaded, f"/hubs/{i}", f"{out.hubs[i]} is not a hub folder (no AGENTS.md).")
+            raise _fail(loaded, f"/hubs/{i}", f"{out.hubs[i]} is not a hub folder (no AGENTS.md). Hub folders "
+                                              f"are relative to {FILE}, for example hubs/{Path(out.hubs[i]).name}.")
     for key in ("brand", "chat", "diagnostics", "apps"):
         value = data.get(key)
         if value is not None and not isinstance(value, dict):

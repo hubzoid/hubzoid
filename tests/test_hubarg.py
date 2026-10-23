@@ -65,3 +65,20 @@ def test_the_deployment_data_folder_holds_the_manifest_itself(tmp_path):
     state.mkdir()
     (state / "deployment.json").write_text(json.dumps({"version": 1, "hubs": []}))
     assert deployment.manifest_path(tmp_path, env={}) == state / "deployment.json"
+
+
+def test_a_hub_command_gets_the_deployments_public_url(tmp_path, monkeypatch):
+    """Session B: `hubzoid channels github connect hubs/x` asked for
+    HUBZOID_PUBLIC_URL though hubzoid.yaml sets public_url."""
+    import os
+
+    root = tmp_path
+    (root / "hubs" / "ops").mkdir(parents=True)
+    (root / "hubs" / "ops" / "AGENTS.md").write_text("hi")
+    (root / "hubzoid.yaml").write_text("version: 1\npublic_url: https://hub.example.com\nhubs:\n  - hubs/ops\n")
+    monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
+    _hubarg.deployment_environment(root / "hubs" / "ops")
+    assert os.environ["HUBZOID_PUBLIC_URL"] == "https://hub.example.com"
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://other.example.com")   # the environment wins
+    _hubarg.deployment_environment(root / "hubs" / "ops")
+    assert os.environ["HUBZOID_PUBLIC_URL"] == "https://other.example.com"

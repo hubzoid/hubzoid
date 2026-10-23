@@ -132,6 +132,7 @@ def definitions(hub_dir) -> list[dict]:
                         sensitive=False,
                         has_inputs=False,
                         title=node.name.replace("_", " ").strip().capitalize(),
+                        purpose=first_sentence(ast.get_docstring(node) or ""),
                     )
                     try:
                         args = {
@@ -239,6 +240,18 @@ def catalog(hub_dir) -> list[dict]:
     return rows
 
 
+def first_sentence(text: str, limit: int = 160) -> str:
+    """A workflow's purpose for people: the first sentence of its brief or
+    docstring, without Markdown, cut at a word."""
+    import re
+
+    plain = " ".join((text or "").replace("`", "").replace("*", "").split())
+    sentence = re.split(r"(?<=[.!?])\s", plain, maxsplit=1)[0]
+    if len(sentence) > limit:
+        sentence = sentence[:limit].rsplit(" ", 1)[0] + "…"
+    return sentence
+
+
 def markdown_catalog(hub_dir) -> list[dict]:
     """The hub's `schedule/*.md` tasks, in the same row shape as code workflows.
     They run whenever their files exist (HUBZOID_DISABLE_SCHEDULE=1 stops them)."""
@@ -271,6 +284,8 @@ def markdown_catalog(hub_dir) -> list[dict]:
             next_run=nxt.astimezone().isoformat() if nxt else None,
             last_dispatch=last.get("last_fired_iso"), missed=0,
             heartbeat=None, downtime=None, run_as=t.run_as,
+            title=t.name.replace("-", " ").replace("_", " ").strip().capitalize(),
+            purpose=first_sentence(t.body),
         ))
     for problem in problems:
         rows.append(dict(hub=hub_dir.name.lower(), name="md:?", kind="markdown",
