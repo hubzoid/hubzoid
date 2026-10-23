@@ -206,6 +206,10 @@ def catalog(hub_dir) -> list[dict]:
             row["state"] = "manual"
         elif not enabled:
             row["state"] = "disabled"
+        elif health.get("schedules") is False and not row["name"].startswith("md:"):
+            # The engine runs (webhooks, schedule/*.md) but code timetables are
+            # off on this machine (HUBZOID_SCHEDULES): never show a next run.
+            row["state"] = "schedules_off"
         elif stale:
             row["state"] = "stale"
         else:
@@ -213,7 +217,7 @@ def catalog(hub_dir) -> list[dict]:
         row["error"] = row["error"] or health.get("error")
         row["next_run"] = (
             next_after(row["schedule"], row["timezone"], now).isoformat()
-            if row["enabled"] and row["schedule"]
+            if row["enabled"] and row["schedule"] and row["state"] != "schedules_off"
             else None
         )
         if row["schedule"] and not row["error"]:

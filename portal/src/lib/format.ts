@@ -302,6 +302,9 @@ export function workflowState(state: string): Presentation {
       };
     case "disabled":
       return { label: "Schedules off", color: "default", hint: "Schedules are disabled for this deployment." };
+    case "schedules_off":
+      return { label: "Schedules off on this machine", color: "orange",
+               hint: "This machine doesn't run timetables (HUBZOID_SCHEDULES). Webhooks and manual runs still work." };
     case "stale":
       return {
         label: "Scheduler stopped",

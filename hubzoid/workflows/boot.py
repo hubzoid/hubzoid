@@ -262,6 +262,16 @@ async def start(hub_dir, hub_name: str | None = None):
     return EngineSupervisor(hub_dir, hub_name, disp)
 
 
+def _scheduled_code(hub_dir) -> list[str]:
+    """Code workflows in this hub that declare a schedule."""
+    try:
+        from .observe import definitions
+
+        return [d["name"] for d in definitions(hub_dir) if d.get("schedule") and not d["name"].startswith("md:")]
+    except Exception:  # noqa: BLE001 - a warning helper never stops the start
+        return []
+
+
 async def _start_engine(hub_dir, hub_name):
     """(dispatcher, owner_busy). Never raises: chat must start regardless."""
     from ..access import store_for
@@ -278,7 +288,7 @@ async def _start_engine(hub_dir, hub_name):
     code_on = schedules_enabled()
     md_on = await asyncio.to_thread(markdown_work, hub_dir)
     if not code_on and not md_on and not webhook_on:
-        gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=None)
+        gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=None, schedules=False)
         log.info(
             "workflows: schedules idle (set HUBZOID_SCHEDULES=1 to enable on this box)"
         )
@@ -306,6 +316,11 @@ async def _start_engine(hub_dir, hub_name):
             gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=disp.load_error)
         log.info("workflows: none defined under <hub>/workflows/")
         return None, False
+    if not code_on and n and _scheduled_code(hub_dir):
+        # The engine runs (for webhooks or schedule/*.md), but code workflows'
+        # timetables don't fire on this machine: say so, here and in Settings.
+        log.warning("workflows: schedules are off on this machine, so the scheduled code workflows of %s "
+                    "will not run here. Set HUBZOID_SCHEDULES=1 to run them.", Path(hub_dir).name)
     disp.owner = disp.owner or runtime._OWNER
     if hasattr(disp.owner, "on_lost"):
         loop = asyncio.get_running_loop()
@@ -318,7 +333,7 @@ async def _start_engine(hub_dir, hub_name):
     downtime = None
     prior = gs.runtime_health(Path(hub_dir).name)
     prior_beat = prior.get("heartbeat")
-    if prior_beat and n:
+    if prior_beat and n and code_on:   # nothing to catch up when schedules are off
         try:
             since = datetime.fromisoformat(prior_beat)
             if since.tzinfo is None:
@@ -342,6 +357,7 @@ async def _start_engine(hub_dir, hub_name):
     gs.set_runtime_health(
         Path(hub_dir).name,
         enabled=True,
+        schedules=code_on,
         error=disp.load_error,
         downtime=downtime,
         missed_log=runtime.missed_log(prior, downtime["missed"] if downtime else 0, now),
