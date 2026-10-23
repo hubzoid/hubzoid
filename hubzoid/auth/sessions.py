@@ -285,6 +285,25 @@ def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
     return user
 
 
+def ended_by_block(hub_dir: Path, token: str) -> bool:
+    """Whether this (no longer valid) session belongs to a blocked account, so
+    sign-in can say why it ended (HUB-140 F23)."""
+    if not token or len(token) > 256:
+        return False
+    try:
+        with engine_for(Path(hub_dir)).connect() as conn:
+            email = conn.execute(
+                sa.select(users.c.email).select_from(sessions.join(users, users.c.id == sessions.c.user_id))
+                .where(sessions.c.token_hash == digest(token))).scalar()
+        if not email:
+            return False
+        from ..access import store_for
+
+        return store_for(Path(hub_dir)).is_suspended(email)
+    except (SQLAlchemyError, OSError, ValueError, RuntimeError):
+        return False
+
+
 def resolve_token(hub_dir: Path, token: str) -> AuthUser | None:
     """The account behind a session token, when the session is valid."""
     if not token or len(token) > 256:
