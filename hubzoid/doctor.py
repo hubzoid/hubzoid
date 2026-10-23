@@ -696,7 +696,8 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
                              f"{len(problems)} setting problem(s): " + "; ".join(p.message for p in problems[:5]),
                              [p.public() for p in problems]))
         else:
-            out.append(Check("settings.values", "ok", f"{len(resolved)} declared setting(s) set",
+            filled = sum(1 for r in resolved if r.is_set)
+            out.append(Check("settings.values", "ok", f"{len(resolved)} declared, {filled} set",
                              [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
     for result in probes_lib.run(hub):
         detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \

@@ -350,7 +350,7 @@ class Connection:
             code = getattr(exc, "code", "credential_missing")
             raise ChannelError("credential_missing" if code == "secret_unavailable" else code,
                                f"The secret {ref} for {self.id} is not set. Fill it with "
-                               f"hubzoid secrets set --ref {ref} --stdin --apply.", status=503,
+                               f"hubzoid secrets set {self.hub_dir.name} --ref {ref} --stdin.", status=503,
                                field=field_name) from None
 
 

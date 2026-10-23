@@ -464,3 +464,18 @@ def test_a_hyphenated_channel_can_be_granted_in_settings(slack_hub):
 
     rows = {r["permission"]: r for r in capabilities.catalog(slack_hub)}
     assert rows["channel_slack-main"]["label"] == "Start work from slack-main (slack)"
+
+
+def test_doctor_says_when_nobody_may_start_work_from_a_channel(slack_hub):
+    """Session B, HUB-140: nobody held channel_<id>, so the owner's own
+    request was refused, and the doctor didn't say so."""
+    from hubzoid.access import store_for
+    from hubzoid.channels import doctor
+    from tests.chat_helpers import PEOPLE
+
+    checks = {c["id"]: c for c in doctor.run(config.active(slack_hub, "slack-main"))["checks"]}
+    assert checks["grants"]["status"] == "ok" and f"{len(PEOPLE)} hold it" in checks["grants"]["message"]
+    for person in PEOPLE.values():
+        store_for(slack_hub).revoke(person.email, slack_hub.name, "channel_slack-main", actor="test")
+    checks = {c["id"]: c for c in doctor.run(config.active(slack_hub, "slack-main"))["checks"]}
+    assert checks["grants"]["status"] == "warn" and checks["grants"]["code"] == "nobody_granted"

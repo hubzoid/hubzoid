@@ -76,9 +76,10 @@ def _target(hub_dir: Path, name: str | None, ref: str | None, restricted: bool, 
             parsed = parse(ref)
         except RefError as exc:
             _fail(exc.code, str(exc), 400, as_json)
-        if parsed.provider != "secret" or parsed.scope == "channel":
-            _fail("invalid_request", "Set a secret:hub/... or secret:deployment/... reference.", 400, as_json)
-        if parsed.scope == "hub" and parsed.hub != hub_key(hub_dir):
+        if parsed.provider != "secret":
+            _fail("invalid_request", "Set a secret:... reference (env: values live in the environment).", 400,
+                  as_json)
+        if parsed.scope in ("hub", "channel") and parsed.hub != hub_key(hub_dir):
             _fail("hub_not_found", f"{ref} names another hub. Run this in that hub's folder.", 404, as_json)
         return parsed.scope, parsed.target, parsed.name
     if not name:
@@ -170,8 +171,8 @@ def list_cmd(
 def set_cmd(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     name: str = typer.Option(None, "--name", help="The secret's name, for example OPENAI_API_KEY."),
-    ref: str = typer.Option(None, "--ref", help="Or a reference: secret:hub/<hub>/<name> or "
-                                                "secret:deployment/<name>."),
+    ref: str = typer.Option(None, "--ref", help="Or a reference, such as a channel's "
+                                                "secret:channel/<hub>/<channel>/<name>."),
     restricted: bool = typer.Option(None, "--restricted/--not-restricted",
                                     help="Only restricted tools see it, as with restricted/.env. "
                                          "Omitted: a stored secret keeps its setting."),
