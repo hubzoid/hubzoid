@@ -2288,6 +2288,8 @@ def audit(
     limit: int = typer.Option(50, "--limit", "-n", help="Show the most recent N decisions."),
     user: str = typer.Option(None, "--user", help="Filter to one user."),
     denied: bool = typer.Option(False, "--denied", help="Show only denied attempts."),
+    as_json: bool = typer.Option(False, "--json", help="Print the entries as JSON: "
+                                 "{entries: [{ts, user, decision, tool, surface, reason}]}."),
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
@@ -2299,6 +2301,10 @@ def audit(
 
     hub = hub.resolve()
     rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
+    if as_json:
+        keys = ("ts", "user", "decision", "tool", "surface", "reason")
+        print(json.dumps({"entries": [{k: r.get(k) for k in keys} for r in rows]}, indent=2, default=str))
+        return
     if not rows:
         console.print("[dim]no access decisions logged yet[/dim]")
         return

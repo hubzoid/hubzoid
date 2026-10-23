@@ -255,3 +255,21 @@ def test_test_json_is_one_json_document(tmp_path, monkeypatch):
     assert data["tool_calls"] and "<details" not in data["reply"]
     plain = CliRunner().invoke(app, ["test", str(hub), "--prompt", "use a tool please"])
     assert "<details" not in plain.stdout
+
+
+def test_audit_json_is_one_json_document(tmp_path, monkeypatch):
+    """HUB-140 D5: `hubzoid audit --json`, the one monitoring command without it."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    hub = tmp_path / "hub"
+    shutil.copytree(Path(__file__).parent / "fixtures" / "minimal_hub", hub,
+                    ignore=shutil.ignore_patterns(".hubzoid"))
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    out = CliRunner().invoke(app, ["audit", str(hub), "--json"])
+    assert out.exit_code == 0 and json.loads(out.stdout) == {"entries": []}
