@@ -18,3 +18,8 @@ bce5f60a503a202fb7e2683e0ada8176cc8da0aa:tests/test_hub_settings.py:generic-api-
 2e33981f4ec26af3b5c9892e304b3174139f22ef:tests/test_auth_mfa.py:generic-api-key:57
 1910d060d2fd5e40dd102c4454707fa730409fd0:tests/test_auth_mfa.py:generic-api-key:57
 d2bade0e2166c1645c8d1bbc136da50fe25c48cf:tests/test_auth_mfa.py:generic-api-key:57
+
+# A fake app token ("t-0123456789") in an embedded-chat test, replaced with a plainly
+# fake value on 23 October 2026.
+971d63808df616c70668c9452f7a78085af56722:tests/test_embed_agui.py:generic-api-key:267
+971d63808df616c70668c9452f7a78085af56722:tests/test_embed_agui.py:generic-api-key:271
