@@ -3507,3 +3507,10 @@
 :root[data-theme="light"] .hz-connection-list .logo.ink-light,
 :root[data-theme="dark"] .hz-connection-list .logo.ink-dark,
 :root[data-theme="oled"] .hz-connection-list .logo.ink-dark { color: var(--hz-ink) !important; }
+
+/* A row that opens something: its name turns orange on hover (founder review). */
+.hz-agent-row:not(.is-head):hover .hz-agent-name,
+.people-table tr.clickable:hover .person-cell strong,
+.people-table tr.clickable:hover .person-name,
+.hz-workflow-table .hz-workflow-name:hover { color: var(--hz-accent-text); }
+.hz-agent-name, .hz-workflow-table .hz-workflow-name { transition: color 120ms ease; }
