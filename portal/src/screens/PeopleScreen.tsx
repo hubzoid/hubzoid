@@ -50,7 +50,7 @@ import { AccountDrawer, OneTimeLink, OneTimePassword, PasswordField } from "./pe
 import { passwordProblem } from "./people/password";
 
 const { Text, Title, Paragraph } = Typography;
-const PAGE = 50;
+const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
 type PeoplePage = { people: Person[]; total: number };
 

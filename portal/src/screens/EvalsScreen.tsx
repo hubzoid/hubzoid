@@ -29,7 +29,7 @@ import {
 } from "../api";
 import { useData } from "../hooks/useData";
 import { href, navigate } from "../hooks/useRoute";
-import { LoadState, When, InfoHelp } from "../components/common";
+import { LoadState, When, InfoHelp, PAGED } from "../components/common";
 import { describeCron, formatDuration, formatTime } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
@@ -156,7 +156,7 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
   const underTabs = useUnderTabs();
   const [page, setPage] = useState(1);
   const overview = useData<EvalsOverview>("/evals" + query({ hub: hub.key }), { keepStale: true });
-  const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*50, limit: 50 }), {
+  const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*20, limit: 20 }), {
     keepStale: true,
   });
   const active = overview.data?.active ?? null;
@@ -236,7 +236,7 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
             {!runs.data ? (
               <LoadState error={runs.error} retry={runs.reload} rows={2} />
             ) : (
-              <><RunsTable embedded={embedded} hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={50} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
+              <><RunsTable embedded={embedded} hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={20} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
             )}
           </div>
         </>
@@ -335,7 +335,7 @@ function CasesTable({ hub, cases, embedded }: { hub: Hub; cases: EvalCaseRow[]; 
       rowKey="name"
       size="middle"
       dataSource={cases}
-      pagination={false}
+      pagination={PAGED}
       scroll={{ x: 900 }}
       columns={[
         {
@@ -445,7 +445,7 @@ function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; 
       size="middle"
       dataSource={runs}
       scroll={{ x: 720 }}
-      pagination={false}
+      pagination={PAGED}
       locale={{
         emptyText: (
           <Empty

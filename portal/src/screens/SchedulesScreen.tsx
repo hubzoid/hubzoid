@@ -37,7 +37,7 @@ import { inputField } from "../components/WorkflowInputs";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
-import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When } from "../components/common";
+import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When, PAGED } from "../components/common";
 import { formatDuration } from "../lib/format";
 import { displayName } from "../app/lib/format";
 
@@ -141,7 +141,7 @@ function MineReports() {
             rowKey="id"
             size="middle"
             dataSource={reports}
-            pagination={false}
+            pagination={PAGED}
             scroll={{ x: 640 }}
             rowClassName="clickable"
             onRow={(r) => ({ onClick: () => window.open(r.url, "_blank", "noopener") })}
@@ -239,7 +239,7 @@ function SchedulesTable({
         rowKey="id"
         size="middle"
         dataSource={rows}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 900 }}
         rowClassName="clickable"
         onRow={(s) => ({ onClick: () => setOpenId(s.id) })}
@@ -453,7 +453,7 @@ function LiveReports({ hub }: { hub: Hub }) {
         rowKey="id"
         size="middle"
         dataSource={reports}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 900 }}
         columns={[
           { title: "Report", key: "title", render: (_, r) => <><div>{r.title}</div><Text type="secondary" className="identity">{r.key}</Text></> },

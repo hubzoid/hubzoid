@@ -4,6 +4,7 @@
 // can produce a support bundle of metadata only. Same API as
 // `hubzoid admin diagnostics ...`.
 import { useUnderTabs } from "../lib/underTabs";
+import { PAGED } from "../components/common";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, App, Button, Card, Checkbox, Col, Descriptions, Empty, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { Hub } from "../api";
@@ -194,7 +195,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
             <Table<ReportRow>
               size="small"
               rowKey="report_id"
-              pagination={false}
+              pagination={PAGED}
               dataSource={reports ?? []}
               loading={!reports}
               locale={{ emptyText: "No diagnostic reports yet. Run checks to make one." }}
@@ -253,7 +254,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
               <Table<Check>
                 size="small"
                 rowKey="check_id"
-                pagination={false}
+                pagination={PAGED}
                 dataSource={selected.checks}
                 locale={{ emptyText: ["queued", "running"].includes(selected.status) ? "Running…" : "No checks recorded." }}
                 columns={[

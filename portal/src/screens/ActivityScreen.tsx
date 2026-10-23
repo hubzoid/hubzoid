@@ -30,7 +30,7 @@ import {
 } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
-const PAGE = 50;
+const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
 type Feed = "changes" | "decisions";
 const RANGES: Record<string, number> = { "1d": 86400, "7d": 604800, "30d": 2592000 };

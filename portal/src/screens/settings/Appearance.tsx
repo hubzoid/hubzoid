@@ -3,7 +3,7 @@
 // this view is read-only: change the files, or ask Claude Code or Codex to.
 // Every agent picks the change up within a few seconds; history is Git.
 import { useEffect, useState } from "react";
-import { InfoHelp } from "../../components/common";
+import { InfoHelp, PAGED } from "../../components/common";
 import { Alert, Button, Card, Descriptions, Space, Table, Typography } from "antd";
 import { control } from "../../lib/controlApi";
 
@@ -67,7 +67,7 @@ export function Appearance() {
           <Table
             size="small"
             rowKey="key"
-            pagination={false}
+            pagination={PAGED}
             dataSource={active.assets}
             columns={[
               { title: "Slot", dataIndex: "key" },
@@ -86,7 +86,7 @@ export function Appearance() {
           <Table
             size="small"
             rowKey="file"
-            pagination={false}
+            pagination={PAGED}
             dataSource={source.legacy}
             columns={[
               { title: "File", dataIndex: "file" },

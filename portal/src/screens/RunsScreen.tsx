@@ -35,8 +35,7 @@ import {
   RunStatusTag,
   When,
   WorkflowStateTag,
-  InfoHelp as Help,
-} from "../components/common";
+  InfoHelp as Help, PAGED } from "../components/common";
 import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
 import { WorkflowResult } from "../components/WorkflowResult";
 import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
@@ -46,7 +45,7 @@ const TRIGGERS: Record<string, string> = {
   schedule: "Team schedule", personal_schedule: "Personal schedule", tool: "Chat",
   operator: "Run now", cli: "CLI", webhook: "Webhook", update: "Update now",
 };
-const PAGE = 50;
+const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 function CopyCommand({ command, label }: { command: string; label: string }) {
   return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
     <Button size="small" icon={<Copy size={14} />} onClick={async () => {
@@ -137,7 +136,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
         rowKey={(w) => `${w.hub}:${w.name}`}
         size="middle"
         dataSource={workflows}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 720 }}
         locale={{
           emptyText: (
@@ -305,7 +304,7 @@ function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
       className="hz-workflow-table"
       rowKey={(w) => w.name}
       size="middle"
-      pagination={false}
+      pagination={PAGED}
       dataSource={workflows}
       scroll={{ x: 760 }}
       columns={[
@@ -424,7 +423,7 @@ function Webhooks({ hub }: { hub: Hub }) {
         rowKey="name"
         size="middle"
         dataSource={webhooks}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 720 }}
         expandable={{
           rowExpandable: (h) => h.failures.length > 0,

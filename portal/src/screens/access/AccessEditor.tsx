@@ -36,7 +36,7 @@ import { editDraft, loadAccessRow } from "./load";
 import { LegacyServiceTag } from "./AccessParts";
 
 const { Text, Title, Paragraph } = Typography;
-const PAGE = 50;
+const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
 export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: boolean }) {
   const underTabs = useUnderTabs();

@@ -2,6 +2,7 @@
 // live in hubzoid.yaml (chat:); this shows the values every agent reads and
 // where they come from.
 import { useCallback, useEffect, useState } from "react";
+import { PAGED } from "../../components/common";
 import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography, ConfigProvider } from "antd";
 import { control, ControlError } from "../../lib/controlApi";
 
@@ -195,7 +196,7 @@ export function ChatSettings() {
         <Table<Change>
           size="small"
           rowKey="pointer"
-          pagination={false}
+          pagination={PAGED}
           dataSource={changes}
           locale={{ emptyText: "No changes." }}
           columns={[
@@ -234,7 +235,7 @@ export function ChatSettings() {
                 <Table
                   size="small"
                   rowKey="pointer"
-                  pagination={false}
+                  pagination={PAGED}
                   tableLayout="fixed"
                   dataSource={Object.entries(active.sources).map(([pointer, v]) => ({ pointer, ...v }))}
                   columns={[

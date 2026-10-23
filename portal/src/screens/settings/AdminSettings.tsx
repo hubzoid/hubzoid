@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Card, Descriptions, Space, Table, Tag, Typography } from "antd";
 import { control, ControlError } from "../../lib/controlApi";
-import { InfoHelp } from "../../components/common";
+import { InfoHelp, PAGED } from "../../components/common";
 
 const { Text, Paragraph } = Typography;
 
@@ -84,7 +84,7 @@ export function AdminSettings() {
         <Table<Domain>
           size="small"
           rowKey="domain"
-          pagination={false}
+          pagination={PAGED}
           dataSource={domains}
           columns={[
             { title: "Area", dataIndex: "domain", render: (d: string) => <Text strong>{d}</Text> },

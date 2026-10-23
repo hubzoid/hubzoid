@@ -3,7 +3,7 @@ import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Ta
 import { Lock } from "lucide-react";
 import { ApiError, secretsRequest } from "../api";
 import type { Hub, SecretList, SecretLevel, SecretRow } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 
 const { Title, Text } = Typography;
@@ -88,7 +88,7 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
       <Table<SecretRow>
         rowKey={(r) => `${r.level}:${r.name}`}
         size="small"
-        pagination={false}
+        pagination={PAGED}
         dataSource={secrets}
         locale={{ emptyText: "No secrets are set or expected for this agent. List the names it needs in .env.example." }}
         columns={[

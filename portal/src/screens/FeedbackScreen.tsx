@@ -4,7 +4,7 @@ import { Alert, Button, Empty, Segmented, Select, Space, Table, Tag, Typography 
 import { Download, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 import { href } from "../hooks/useRoute";
 
@@ -175,7 +175,7 @@ export function AgentFeedback({ hub }: { hub: Hub }) {
             <Table<Item>
               rowKey="id"
               dataSource={items}
-              pagination={false}
+              pagination={PAGED}
               loading={loading}
               scroll={{ x: true }}
               size="middle"

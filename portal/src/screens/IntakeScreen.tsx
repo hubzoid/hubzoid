@@ -4,7 +4,7 @@ import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Segmented, Space
 import { RefreshCw } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 import { href } from "../hooks/useRoute";
 
@@ -108,7 +108,7 @@ function ItemList({ hub }: { hub: Hub }) {
         <Table<Item>
           rowKey="id"
           dataSource={list.data.items}
-          pagination={false}
+          pagination={PAGED}
           scroll={{ x: true }}
           columns={[
             { title: "From", render: (_, r) => <a href={intakeHref(hub, r.id)}>{r.sender.external_id || "Unknown"}</a> },
@@ -198,7 +198,7 @@ function ItemView({ hub, id }: { hub: Hub; id: string }) {
           <Table<Attachment>
             rowKey="id"
             size="small"
-            pagination={false}
+            pagination={PAGED}
             dataSource={d.attachments}
             columns={[
               { title: "File", render: (_, a) => a.state === "available"

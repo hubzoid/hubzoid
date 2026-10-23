@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PAGED } from "../components/common";
 import { useEditing } from "../app/lib/editing";
 import { Alert, App, Button, Card, Descriptions, Empty, Input, Modal, Select, Space, Spin, Table, Tag, Typography } from "antd";
 import { ApiError, request } from "../api";
@@ -142,7 +143,7 @@ export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
           </Card>
           {s.open_reservations.length > 0 && (
             <Card size="small" title="Held by running calls">
-              <Table<Reservation> rowKey="id" size="small" pagination={false} dataSource={s.open_reservations}
+              <Table<Reservation> rowKey="id" size="small" pagination={PAGED} dataSource={s.open_reservations}
                 columns={[
                   { title: "Run", dataIndex: "run_id", render: (v) => <Text className="mono">{String(v).slice(0, 24)}</Text> },
                   { title: "Since", dataIndex: "created", render: (v) => when(v) },

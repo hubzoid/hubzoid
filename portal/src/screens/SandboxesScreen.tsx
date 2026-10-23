@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { InfoHelp } from "../components/common";
+import { InfoHelp, PAGED } from "../components/common";
 import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert, App, Button, Card, Descriptions, Drawer, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag,
@@ -158,7 +158,7 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
         <Empty description={state ? "No sandboxes in this state." : "No sandboxes yet. One starts when an agent with a sandbox runs."} />
       ) : (
         <Table<Sandbox>
-          rowKey="id" size="middle" pagination={false} dataSource={list.data?.sandboxes}
+          rowKey="id" size="middle" pagination={PAGED} dataSource={list.data?.sandboxes}
           onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
           columns={[
             { title: "Owner", render: (_, r) => (<>

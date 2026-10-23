@@ -1124,17 +1124,18 @@ function step(name) {
     await change.getByText("allowed", { exact: true }).waitFor();
     // The saves made earlier in this run are recorded with the viewer as actor.
     await rows().filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
-    // A run control from an agent tool says who, which workflow, where from, and the run.
-    const started = rows().filter({ hasText: "started the monthly_close workflow" });
-    await started.getByText("Aisha Rahman").waitFor();
-    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
-      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
     await page.getByRole("combobox", { name: "Action" }).click();
     await page.locator(".ant-select-item-option").filter({ hasText: "Started a workflow" }).click();
     await page.waitForFunction(() => {
       const rows = [...document.querySelectorAll("tbody tr.ant-table-row")];
       return rows.length > 0 && rows.every((tr) => (tr.textContent || "").includes("started"));
     });
+    // A run control from an agent tool says who, which workflow, where from, and
+    // the run (filtered first: a page holds 20 rows).
+    const started = rows().filter({ hasText: "started the monthly_close workflow" });
+    await started.getByText("Aisha Rahman").waitFor();
+    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
+      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
     assert.ok((await hash()).includes("action=run_start"), await hash());
     await go("/agents/finance/activity");
     await page.getByText("allowed").first().waitFor();
@@ -1193,10 +1194,15 @@ function step(name) {
     await page.keyboard.press("Escape");
     await go("/activity");
     await settingsTab("Audit log");
+    // A page holds 20 rows: each check narrows to its person first.
+    await go("/activity?person=admin%40example.org");
     await page.getByText("made").first().waitFor();
-    await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").waitFor();
-    await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").waitFor();
+    await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").first().waitFor();
+    await go("/activity?person=tomas.herrera%40example.org");
+    await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").first().waitFor();
+    await go("/activity?actor=admin%40example.org&action=grant");
     await rows().filter({ hasText: "Everyone signed in" }).getByText("Support Assistant").first().waitFor();
+    await go("/activity");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-activity.png"), fullPage: true });
 
     // ---- people -----------------------------------------------------------------------------

@@ -298,3 +298,7 @@ export function SentenceText({ sentence }: { sentence: Sentence }) {
     </div>
   );
 }
+
+/** Every table pages at 20 rows, and shows page controls only when there is
+ *  more than one page (founder review, HUB-140). */
+export const PAGED = { pageSize: 20, hideOnSinglePage: true, showSizeChanger: false } as const;

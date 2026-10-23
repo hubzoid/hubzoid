@@ -32,7 +32,7 @@ import {
   type HubMcpServer,
   type Me,
 } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { useData } from "../hooks/useData";
 import { useNavigationGuard } from "../hooks/useRoute";
 import { CATALOG, catalogAuthLabel, type CatalogEntry } from "./connectorCatalog";
@@ -126,7 +126,7 @@ function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean })
       <Table<HubMcpServer>
         rowKey="name"
         size="small"
-        pagination={false}
+        pagination={PAGED}
         dataSource={servers}
         columns={[
           { title: "Server", key: "name", render: (_, s) => <Text strong>{s.name}</Text> },
@@ -303,7 +303,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               rowKey="id"
               size="middle"
               dataSource={list}
-              pagination={false}
+              pagination={PAGED}
               scroll={{ x: embedded ? 600 : 900 }}
               locale={{
                 emptyText: (

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { ApiError, hubRequest } from "../api";
 import type { Hub, HubCheck, HubSetting, HubSettings, SettingProblem } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 import { useAgentEditing } from "../app/lib/editing";
 
@@ -156,7 +156,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
               <Title level={4} style={{ marginTop: 24 }}>Secret settings</Title>
               <Text type="secondary">Values are never shown. Set them in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent.</Text>
               <Table<HubSetting>
-                rowKey="name" size="small" pagination={false} style={{ marginTop: 8 }} dataSource={secrets}
+                rowKey="name" size="small" pagination={PAGED} style={{ marginTop: 8 }} dataSource={secrets}
                 columns={[
                   { title: "Name", key: "name", render: (_, s) => <Text code>{s.name}</Text> },
                   { title: "Reference", key: "ref", render: (_, s) => <Text code>{s.ref}</Text> },
@@ -177,7 +177,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
       {checks.error && <Alert type="error" showIcon title={checks.error} style={{ marginBottom: 8 }} />}
       {checks.data && (
         <Table<HubCheck>
-          rowKey="id" size="small" pagination={false} dataSource={checks.data}
+          rowKey="id" size="small" pagination={PAGED} dataSource={checks.data}
           locale={{ emptyText: "This agent declares no settings or checks." }}
           columns={[
             { title: "Check", key: "id", render: (_, c) => <Text code>{c.id}</Text> },

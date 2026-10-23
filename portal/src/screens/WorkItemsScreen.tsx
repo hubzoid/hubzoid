@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { InfoHelp } from "../components/common";
+import { InfoHelp, PAGED } from "../components/common";
 import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert, App, Button, Card, Checkbox, Descriptions, Drawer, Empty, Input, Radio, Segmented, Select,
@@ -123,7 +123,7 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
           rowKey="id"
           size="middle"
           dataSource={items.data?.items}
-          pagination={false}
+          pagination={PAGED}
           onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
           columns={[
             { title: "Work", render: (_, r) => (<>
