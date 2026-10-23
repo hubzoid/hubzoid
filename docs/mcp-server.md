@@ -43,8 +43,7 @@ Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
 * The caller needs `use_hub` to connect, plus the named grant for each
-  restricted capability. The built-in `remember` tool requires `curator`,
-  shown in Settings as **Save shared knowledge**.
+  restricted capability.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
@@ -53,6 +52,13 @@ Chat-scoped tools (`write_artifact`, `read_upload`, …) are not exposed —
 they need a live chat to resolve their directories. Model-delegates are not
 exposed either: an MCP caller brings their own model; the hub does not spend
 inference for them.
+
+Saving shared knowledge is not available over MCP either. `remember` and the
+other **Save shared knowledge** (`curator`) tools (`read_hub_file`,
+`propose_hub_change`, `hub_change_status`) work in chat and in workflows, for
+accounts with that grant; see
+[approvals and hub changes](approvals-and-hub-changes.md). Whether MCP callers
+should get a way to save corrections is still being decided.
 
 ## Instructions
 

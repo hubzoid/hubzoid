@@ -428,7 +428,8 @@ The built-in **Save shared knowledge** capability (`curator`) controls
 `remember`. Grant it in Settings to the accounts (people, or the account a workflow runs as) that should
 create or replace documents under `knowledge/_learned/`. These documents are
 shared agent knowledge, not private conversation memory. No `restricted/curator.py`
-file is required to make this capability appear.
+file is required to make this capability appear. It applies in chat and in
+workflows; hosted MCP (`/mcp`) does not expose `remember`.
 
 ## Decisions with Jev in chat
 
