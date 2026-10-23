@@ -162,9 +162,10 @@ def test_openai_agents_shows_it_only_to_granted_callers(hub, user, surface, allo
 
 
 @pytest.mark.parametrize("user,surface,allowed", CALLERS, ids=CALLER_IDS)
-def test_claude_shows_it_only_to_granted_callers(hub, user, surface, allowed):
+def test_claude_shows_it_only_to_granted_callers(hub, user, surface, allowed, monkeypatch):
     from hubzoid.factory_claude import build_claude_runtime
 
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")   # remember writes files: it needs the Beta switch
     rt = build_claude_runtime(hub)
     with identity_scope(_who(user, surface)):
         opts = rt._options_for_turn()

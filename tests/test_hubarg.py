@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import click
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -106,4 +107,6 @@ def test_a_hub_option_resolves_too_and_embed_spans_the_deployment(tmp_path, monk
     assert runner.invoke(app, ["embed", "list"]).exit_code == 0
     assert seen["embed"] == (root / "ops").resolve()
     out = runner.invoke(app, ["chat"])
-    assert out.exit_code == 2 and "hubzoid chat --hub ops" in out.output
+    # CI renders the usage error styled and boxed at its own width: compare the words.
+    words = " ".join(click.unstyle(out.output).replace("│", " ").split())
+    assert out.exit_code == 2 and "hubzoid chat --hub ops" in words, out.output

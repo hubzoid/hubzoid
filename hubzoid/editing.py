@@ -67,7 +67,9 @@ def refusal(hub_dir: Path, what: str = "this agent's files") -> dict | None:
     """None when allowed, else the error body every route returns (409)."""
     if allowed(hub_dir):
         return None
-    return {"code": CODE, "message": message(hub_dir, what), "source": source(hub_dir)}
+    where = source(hub_dir)
+    # Files from an image keep 2.0.1's code: the switch would not help there.
+    return {"code": "hub_read_only" if where == "image" else CODE, "message": message(hub_dir, what), "source": where}
 
 
 def check(hub_dir: Path, what: str = "this agent's files") -> None:

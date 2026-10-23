@@ -1617,7 +1617,9 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     from . import appmode
 
     mode = "sign-in on" if appmode.auth_enabled(gp.backends[0].hub_dir) else "local mode, sign-in off"
-    console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(appmode.public_url() or display_url)}  "
+    # The local address: the public URL may come from the deployment secret,
+    # and no value from it is printed.
+    console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(display_url)}  "
                   f"[dim]({mode})[/dim]", soft_wrap=True)
     _wait_any(procs, supervisor=sup)
 
