@@ -603,7 +603,7 @@ export const en = {
     export: "Export my chats",
     downloadReady: "Download the export",
     nothing: "You have no chats to export yet.",
-    import: "Import chats…",
+    import: "Import chats",
     importHelp: "Review before importing.",
     previewSummary: (format: string, ok: number, rejected: number, held: number) =>
       `${format}: ${ok} item${ok === 1 ? "" : "s"} ready to import` + (rejected ? `, ${rejected} unreadable (left out)` : "") + (held ? `, ${held} held back` : "") + ".",
@@ -948,7 +948,7 @@ export const en = {
     everyone: "Everyone in this agent",
     earlier: "From earlier permissions",
     removeFor: (who: string) => `Remove access for ${who}`,
-    add: "Give access…",
+    add: "Give access",
     give: "Give access",
     cancel: "Cancel",
     person: "Person",
