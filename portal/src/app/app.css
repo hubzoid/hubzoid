@@ -3515,3 +3515,17 @@
 .people-table tr.clickable:hover .person-cell > .ant-typography strong,
 .hz-workflow-table .hz-workflow-name:hover { color: var(--hz-accent-text); }
 .hz-agent-name, .hz-workflow-table .hz-workflow-name { transition: color 120ms ease; }
+
+/* A drawer's facts: a fixed label column, even rows, a line between (founder review). */
+.hz-facts .ant-descriptions-item { padding-bottom: 0 !important; }
+.hz-facts .ant-descriptions-row > td { padding: 9px 0 !important; border-bottom: 1px solid var(--hz-line-soft); }
+.hz-facts .ant-descriptions-item-label { flex: 0 0 96px !important; width: 96px; color: var(--hz-mute) !important; }
+.hz-facts .ant-descriptions-item-content { min-width: 0; overflow-wrap: anywhere; }
+.hz-facts-head.ant-typography { margin: 24px 0 4px !important; }
+.hz-mono-sm { font: 12px var(--hz-mono, ui-monospace, Menlo, monospace); }
+.hz-run-item { flex-direction: column; align-items: stretch !important; gap: 2px; padding: 10px 0 !important; }
+.hz-run-item-main { display: flex; align-items: center; gap: 10px; }
+.hz-run-item-time { margin-left: auto; }
+
+/* Back to chat hovers like a menu item: the full row, the same height and corners (founder review). */
+.hz-set-backlink { display: flex !important; width: 100%; height: 32px !important; border-radius: 8px !important; padding: 0 8px !important; margin: 0 0 12px !important; }

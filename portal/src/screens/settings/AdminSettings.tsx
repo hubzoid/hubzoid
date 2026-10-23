@@ -6,7 +6,7 @@ import { Alert, Button, Card, Descriptions, Space, Table, Tag, Typography } from
 import { control, ControlError } from "../../lib/controlApi";
 import { InfoHelp, PAGED } from "../../components/common";
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 type Diagnostics = {
   check_timeout_seconds: number;
@@ -32,6 +32,12 @@ type Domain = {
   console?: string;
   note?: string;
   values?: { key: string; value?: string; source: string }[];
+};
+
+/** Settings areas by the names Settings uses for them. */
+const AREA_NAMES: Record<string, string> = {
+  chat: "Chat defaults", branding: "Brand", admin: "Advanced", auth: "Sign-in", sign_in: "Sign-in",
+  diagnostics: "Health", models: "Models", retrieval: "Sources", hitl: "Approvals",
 };
 
 export function AdminSettings() {
@@ -77,45 +83,37 @@ export function AdminSettings() {
       </Card>
 
       <Card title="All settings" size="small">
-        <Paragraph type="secondary">
-          Each area has one home, a file. Process settings from the environment are shown too and need a restart to
-          change.
-        </Paragraph>
+        {/* One row per area: where it is set and the command that shows it.
+            Everything here is read-only (founder review, HUB-140). */}
         <Table<Domain>
           size="small"
           rowKey="domain"
           pagination={PAGED}
           dataSource={domains}
           columns={[
-            { title: "Area", dataIndex: "domain", render: (d: string) => <Text strong>{d}</Text> },
-            { title: "File", dataIndex: "file", render: (f: string) => <Text code>{f}</Text> },
             {
-              title: "In effect",
-              render: (_, d) =>
-                d.values ? (
-                  d.values.map((v) => (
-                    <div key={v.key}>
-                      <Text code>{v.key}</Text> {v.value ?? ""} <Tag>{v.source}</Tag>
-                    </div>
-                  ))
-                ) : (
-                  <>revision {String(d.revision ?? "—")}</>
-                ),
+              title: "Area",
+              dataIndex: "domain",
+              render: (_: string, d) => (
+                <Space size={4}>
+                  <Text strong>{AREA_NAMES[d.domain] ?? d.domain.charAt(0).toUpperCase() + d.domain.slice(1)}</Text>
+                  {d.note && <InfoHelp text={d.note} />}
+                </Space>
+              ),
             },
             {
-              title: "Change with",
-              render: (_, d) => (
-                <>
-                  {d.read_only && <Tag>read-only here</Tag>}
-                  {d.restart_required && <Tag color="gold">restart</Tag>}
-                  {d.cli?.slice(0, 1).map((c) => (
-                    <div key={c}>
-                      <Text code copyable>{c}</Text>
-                    </div>
-                  ))}
-                  {d.note && <Text type="secondary">{d.note}</Text>}
-                </>
+              title: "Set in",
+              dataIndex: "file",
+              render: (f: string, d) => (
+                <Space size={6} wrap>
+                  {!f || f === "default" ? <Text type="secondary">Not set, defaults apply</Text> : <Text code>{f}</Text>}
+                  {d.restart_required && <Tag>needs a restart</Tag>}
+                </Space>
               ),
+            },
+            {
+              title: "See it with",
+              render: (_, d) => d.cli?.[0] ? <Text code copyable className="hz-mono-sm">{d.cli[0]}</Text> : <Text type="secondary">—</Text>,
             },
           ]}
         />

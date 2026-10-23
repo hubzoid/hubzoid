@@ -31,7 +31,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  CornerDownRight,
   Download,
   FileText,
   FolderOpen,
@@ -930,7 +929,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
                       </span>
                     </Menu.Item>
                     <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={() => void interrupt()} data-testid="interrupt">
-                      <CornerDownRight size={15} aria-hidden className="mt-0.5" />
+                      <ArrowUp size={15} aria-hidden className="mt-0.5" />
                       <span>
                         {t.chat.interrupt}
                         <small>{t.chat.interruptHelp}</small>
@@ -1067,7 +1066,8 @@ function QueueList() {
                         .catch(onError)
                     }
                   >
-                    <CornerDownRight size={12} aria-hidden />
+                    {/* Sends it now: the same arrow as the send button (founder review). */}
+                    <ArrowUp size={12} aria-hidden />
                   </IconButton>
                 )}
                 <IconButton label={t.chat.queueRemove} className="!h-6 !w-6" onClick={() => void feed.patchQueue(item, { action: "remove" }).catch(onError)}>

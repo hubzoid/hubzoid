@@ -328,7 +328,7 @@ function ScheduleDrawer({
       extra={row && <Actions s={row} mine={mine} edit={edit} act={async (s, a) => { await act(s, a); if (a === "stop") close(); }} />}>
       {row && (
         <>
-          <Descriptions column={1} size="small" items={[
+          <Descriptions column={1} size="small" colon={false} className="hz-facts" items={[
             ...(row.owner ? [{ key: "owner", label: "Person", children: row.owner }] : []),
             { key: "report", label: "Report", children: row.reports?.length
               ? row.reports.map((r) => <div key={r.url}><a href={r.url} target="_blank" rel="noreferrer">{r.title} ↗</a></div>)
@@ -337,23 +337,23 @@ function ScheduleDrawer({
             { key: "when", label: "When", children: `${row.when} (${row.timezone})` },
             { key: "state", label: "State", children: <Dot tone={STATE_TAG[row.state] ?? "default"} label={row.state_label} /> },
             { key: "next", label: "Next run", children: row.next_fire ? <When value={at(row.next_fire)} /> : "—" },
+            ...(row.last_run ? [{ key: "ref", label: "Last run", children: <Text copyable className="hz-mono-sm">{row.last_run}</Text> }] : []),
           ]} />
           {row.recovery && <Alert type="warning" showIcon message={row.recovery} />}
-          {row.last_run && <div><Text type="secondary">Run reference: </Text><Text copyable style={{ overflowWrap: "anywhere" }}>{row.last_run}</Text></div>}
-          <Title level={5} style={{ marginTop: 20 }}>Latest runs</Title>
+          <Title level={5} className="hz-facts-head">Latest runs</Title>
           {runs.data ? (
             <List
               size="small"
               dataSource={runs.data.runs}
               locale={{ emptyText: "No runs yet." }}
               renderItem={(r) => (
-                <List.Item>
-                  <Space wrap>
+                <List.Item className="hz-run-item">
+                  <div className="hz-run-item-main">
                     <RunStatusTag status={r.status} />
-                    {r.id && <Text copyable>{r.id}</Text>}
-                    {r.started ? <When value={new Date(r.started).toISOString()} /> : "—"}
-                    {r.duration_ms != null && <Text type="secondary">{formatDuration(r.duration_ms)}</Text>}
-                  </Space>
+                    <Text type="secondary">{r.started ? <When value={new Date(r.started).toISOString()} /> : "—"}</Text>
+                    {r.duration_ms != null && <Text type="secondary" className="hz-run-item-time">{formatDuration(r.duration_ms)}</Text>}
+                  </div>
+                  {r.id && <Text copyable type="secondary" className="hz-mono-sm">{r.id}</Text>}
                 </List.Item>
               )}
             />
