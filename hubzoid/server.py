@@ -221,8 +221,13 @@ def build_app() -> FastAPI:
             await rt.aclose()
             await browser_mgr.stop()
 
-    app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
+    from . import __version__
+
+    app = FastAPI(title="Hubzoid API", version=__version__, lifespan=_lifespan)
     app.state.runtime = rt
+    from . import openapi_doc
+
+    openapi_doc.install(app)   # only the public API, on every schema address
 
     # In-bridge OTLP normalize intercept (opt-in, claude-local only). When on,
     # the `claude` subprocess exports OTel to this loopback route instead of
