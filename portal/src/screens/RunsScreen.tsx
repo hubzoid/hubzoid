@@ -256,6 +256,15 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   );
 }
 
+/** "Fri 23 Oct, 19:50" in the viewer's zone; the full time is the title. */
+function shortTime(value: string | number): string {
+  const d = new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day}, ${time}`;
+}
+
 /** One line that says whether a workflow will run, and what to do if not. */
 function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "warning" } {
   const when = w.webhook ? "when its webhook receives an event"
@@ -279,7 +288,7 @@ function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "wa
     case "manual":
       return { text: "Runs when someone starts it." };
     default:
-      return { text: <>On. Runs {when}.{w.next_run ? <> Next run {formatTime(w.next_run)}.</> : null}</> };
+      return { text: <>On. Runs {when}.{w.next_run ? <> Next run <span title={formatTime(w.next_run)}>{shortTime(w.next_run)}</span>.</> : null}</> };
   }
 }
 
