@@ -171,14 +171,15 @@ function Mfa({ data, reload, run }: { data: Security; reload: () => void; run: R
         <strong className="font-medium text-ink">{m.enabled ? S.mfaOn : S.mfaOff}</strong>
         {m.enabled && m.since && <span className="text-mute">{S.mfaSince(formatDate(m.since))}</span>}
         {data.mfa_required && <span className="text-mute">· {S.mfaRequired}</span>}
-      </p>
-      {m.enabled && <p className="m-0 text-mute">{S.codesLeft(m.recovery_codes_left)}</p>}
-      <div className="flex flex-wrap gap-2">
+        {/* Off: the way to turn it on sits on the same line (founder review). */}
         {!m.enabled && (
-          <Button variant="primary" loading={busy} onClick={() => void start()}>
+          <Button size="sm" variant="primary" className="ml-2" loading={busy} onClick={() => void start()}>
             {S.turnOn}
           </Button>
         )}
+      </p>
+      {m.enabled && <p className="m-0 text-mute">{S.codesLeft(m.recovery_codes_left)}</p>}
+      <div className="flex flex-wrap gap-2 empty:hidden">
         {m.enabled && (
           <>
             <Button size="sm" loading={busy} onClick={() => void start()}>
