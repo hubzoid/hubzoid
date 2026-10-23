@@ -807,6 +807,12 @@ def launch(*, target: str | None = None) -> None:
     # Work items: one execution per item at a time (a partition per item).
     _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-wi", partition_concurrency=1,
                          on_conflict="always_update")
+    if _app_name(_HUB_NAME.lower()) != _app_name(_HUB_NAME):
+        # 2.0.1 queued work items of a folder named with capitals under the
+        # lowercase name, where nothing took them. Serve that queue too so
+        # they run once (HUB-140 F5). Remove after 2.1.
+        _DBOS.register_queue(f"{_app_name(_HUB_NAME.lower())}-wi", partition_concurrency=1,
+                             on_conflict="always_update")
     _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-alerts", worker_concurrency=4,
                          on_conflict="always_update")
     if target:
