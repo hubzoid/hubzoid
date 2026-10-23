@@ -351,6 +351,9 @@ def _workflow_tools(hub_dir: Path, taken: set[str]) -> list[dict]:
     return out
 
 
+_CHANNEL_ID = re.compile(r"^channel_[a-z0-9][a-z0-9_-]{0,55}$")
+
+
 def channel_permission(cid: str) -> str:
     """The grant that lets a person start work from a channel connection."""
     return "channel_" + _norm(cid)
@@ -375,7 +378,8 @@ def _channels(hub_dir: Path, taken: set[str]) -> list[dict]:
         if not v.valid or not v.config.agent:
             continue
         pid = channel_permission(v.config.id)
-        if pid in taken or not _ID.match(pid):
+        # Channel ids may hold a hyphen ("slack-main"); the grant keeps the id as written.
+        if pid in taken or not _CHANNEL_ID.match(pid):
             continue
         taken.add(pid)
         out.append(dict(

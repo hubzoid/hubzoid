@@ -454,3 +454,13 @@ def test_whatsapp_collection_off_removal_works_and_ratings_are_not_intake(hub_di
     # A reaction to anything else is still an ordinary message.
     deliver(conn, hub_dir, reaction("wamid.c7", "wamid.not-ours", "👍", ts=50))
     assert wa_count(hub_dir) == intake + 1 and len(meta.sent) == 1
+
+
+def test_a_hyphenated_channel_can_be_granted_in_settings(slack_hub):
+    """Found in the HUB-140 E2E: "slack-main" never reached the capability list
+    (the permission id check refused the hyphen), so Settings answered
+    "Unknown permission for this hub" when an administrator granted it."""
+    from hubzoid import capabilities
+
+    rows = {r["permission"]: r for r in capabilities.catalog(slack_hub)}
+    assert rows["channel_slack-main"]["label"] == "Start work from slack-main (slack)"
