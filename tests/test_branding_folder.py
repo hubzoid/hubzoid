@@ -145,6 +145,7 @@ def test_install_manifest_follows_active_brand(client):
 
 
 def test_legacy_folder_serves_only_logo_and_icon(hub, client):
+    (hub / "branding").mkdir(exist_ok=True)  # the starter has no branding folder
     (hub / "branding" / "page.html").write_text("<script>alert(1)</script>")
     (hub / "branding" / "logo.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
     assert client.get("/branding/page.html").status_code == 404
@@ -191,6 +192,7 @@ def test_terms_bind_person_and_policy(client):
 
 
 def test_legacy_source_explicit_and_custom_css_dropped(hub, client):
+    (hub / "branding").mkdir(exist_ok=True)  # the starter has no branding folder
     (hub / "branding" / "custom.css").write_text("body { display: none }")
     from hubzoid.cli import app as cli_app
 
