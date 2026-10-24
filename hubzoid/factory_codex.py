@@ -233,8 +233,14 @@ class CodexRuntime:
         def refuse(exc):
             self._error.set(exc)
 
-        async for part in budgets.guarded(self.hub_dir, "codex-local", lambda: self._turn_events(prompt), refuse):
-            yield part
+        # Closed at once when the turn is cut off, so the budget hold reaches
+        # the usage row (a bare loop leaves it to garbage collection).
+        from contextlib import aclosing
+
+        async with aclosing(budgets.guarded(self.hub_dir, "codex-local", lambda: self._turn_events(prompt),
+                                            refuse)) as parts:
+            async for part in parts:
+                yield part
 
     async def _turn_events(self, prompt):
         """When the caller connected personal MCP servers (see

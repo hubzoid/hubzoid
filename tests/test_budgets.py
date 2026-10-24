@@ -201,8 +201,12 @@ def test_a_workflow_call_cut_off_by_its_deadline_settles_its_hold(hub_dir, monke
                 await asyncio.sleep(30)
                 yield "never"
 
-            async for item in budgets.guarded(hub_dir, "claude-local", inner, lambda e: None):
-                yield item
+            from contextlib import aclosing
+
+            # As the runtimes do: closed at once, so the hold reaches the usage row.
+            async with aclosing(budgets.guarded(hub_dir, "claude-local", inner, lambda e: None)) as items:
+                async for item in items:
+                    yield item
 
     monkeypatch.setattr(runtime, "build", lambda hd, **kw: Slow())
     with deadlines.scope(absolute=time.time() + 1, check_exit=False), pytest.raises(BaseException):

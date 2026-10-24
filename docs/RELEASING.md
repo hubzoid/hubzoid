@@ -2,29 +2,36 @@
 
 Pull requests and pushes to `main` run the fast checks
 (`.github/workflows/tests.yml`), and every push and pull request is scanned for
-secrets (`.github/workflows/secrets.yml`). The broader validation and image
-builds run before publication on a pull request labeled `release-candidate`,
-or through a manual run of the release workflow. These validation runs cannot
+secrets (`.github/workflows/secrets.yml`). The native Windows checks
+(`.github/workflows/windows.yml`: startup, locks, evals and a clean install of
+the wheel on Python 3.11 and 3.12) run on every push to `main`, not on ordinary
+pull requests. The broader validation, the Windows checks and the image builds
+run before publication on a pull request labeled `release-candidate`, or
+through a manual run of the release workflow. These validation runs cannot
 publish packages or images. Publishing requires a GitHub release event
 (`.github/workflows/ci.yml`). Its checks (every test, on two machines in
-parallel, the Console journeys, packaging and both images) run side by side
-on hosted runners, and publishing waits for all of them. No test is left out
-for its duration. Skipped critical checks are not passes.
+parallel, the Console journeys, packaging, Windows and both images) run side
+by side on hosted runners, and publishing waits for all of them. No test is
+left out for its duration. Skipped critical checks are not passes.
 
-Before tagging, validate the exact candidate commit on a draft pull request
-with the `release-candidate` label. Inspect skips, test failures, both native
-image checks and clean-install results. Complete acceptance on a copy of the
-intended deployment, including its runtime, sign-in, permissions and restart
-persistence. Check real email delivery if that deployment promotes email.
-Apply the chat-interface validation requirements below.
-
-1. Update `pyproject.toml` and `CHANGELOG.md` to the new version and push main.
-2. In GitHub, open **Releases → Draft a new release**.
-3. Choose **Choose a tag**, enter the new tag (for example `v1.0.2`), and
+1. **Open the release pull request with the `release-candidate` label.** This
+   step is required: without the label the pull request runs only the fast
+   checks, and the slow tests, Windows and the images would meet the release
+   for the first time on the tag, where a failure costs a version number. The
+   pull request updates `pyproject.toml` and `CHANGELOG.md` to the new
+   version. Wait until every check on it passes, then inspect skips, test
+   failures, both native image checks, Windows and the clean-install results.
+   Complete acceptance on a copy of the intended deployment, including its
+   runtime, sign-in, permissions and restart persistence. Check real email
+   delivery if that deployment promotes email. Apply the chat-interface
+   validation requirements below.
+2. Merge the release pull request into `main`.
+3. In GitHub, open **Releases → Draft a new release**.
+4. Choose **Choose a tag**, enter the new tag (for example `v1.0.2`), and
    choose **Create new tag on publish**. Set **Target: main**.
-4. Enter the release title and notes, then click **Publish release**.
-5. Under **Actions → release**, wait for validation, both image builds, and
-   publishing to finish. The workflow uploads the wheel and source archive
+5. Enter the release title and notes, then click **Publish release**.
+6. Under **Actions → release**, wait for validation, Windows, both image
+   builds, and publishing to finish. The workflow uploads the wheel and source archive
    to the release automatically. No downloads or manual attachments are needed.
 
 The GitHub release page becomes visible before validation finishes. PyPI and

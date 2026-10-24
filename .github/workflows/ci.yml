@@ -3,7 +3,8 @@ name: release
 # Release pipeline. The file keeps the name ci.yml because PyPI trusted
 # publishing is registered against this workflow file name.
 # Publish a GitHub release with a vX.Y.Z tag matching pyproject.toml.
-# Check the tagged source (tests on two machines, Console journeys, packaging)
+# Check the tagged source (tests on two machines, Console journeys, packaging,
+# Windows tests and install)
 # and both native image builds side by side before publishing.
 # Keep image -> PyPI -> GitHub attachments as separate, retryable jobs.
 on:
@@ -156,6 +157,11 @@ jobs:
           name: release-dists
           path: dist/
 
+  windows:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    # Native Windows tests and a clean install of the wheel (windows.yml).
+    uses: ./.github/workflows/windows.yml
+
   image:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     # Each architecture builds and boots natively; no emulation on this path.
@@ -188,7 +194,8 @@ jobs:
           # The hub comes from the candidate image's own `hubzoid init` (the starter).
           mkdir /tmp/hub && chmod a+rwX /tmp/hub
           docker run --rm -v /tmp/hub:/hub hubzoid:candidate init /hub --model claude-local
-          test -f /tmp/hub/knowledge/house-rules.md && chmod -R a+rwX /tmp/hub
+          # The container's user owns what init wrote: the runner needs sudo to open it up.
+          test -f /tmp/hub/knowledge/house-rules.md && sudo chmod -R a+rwX /tmp/hub
           printf 'MODEL=openrouter/anthropic/claude-haiku-4.5\nOPENROUTER_API_KEY=not-used\nBRIDGE_API_KEYS=ci-key\n' > /tmp/hub/.env
           # Without sign-in, the container's network bind is refused with instructions.
           set +e; docker run --rm -v /tmp/hub:/hub hubzoid:candidate; refused=$?; set -e
@@ -203,7 +210,7 @@ jobs:
 
   publish-image:
     if: github.event_name == 'release'
-    needs: [tests, console, package, image]
+    needs: [tests, console, package, windows, image]
     runs-on: ubuntu-24.04
     environment:
       name: pypi

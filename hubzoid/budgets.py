@@ -454,9 +454,12 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
     from . import _request_ctx
     from .run_events import Notice
 
+    from contextlib import aclosing
+
     if hub_dir is None or _CURRENT.get() is not None:
-        async for item in inner():
-            yield item
+        async with aclosing(inner()) as items:
+            async for item in items:
+                yield item
         return
     try:
         ticket = await asyncio.to_thread(admit, hub_dir, model=model)
@@ -466,8 +469,9 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
         yield Notice(kind="error", text=exc.message, legacy=f"\n\n{exc.message}", error_kind="budget")
         return
     if ticket is None:
-        async for item in inner():
-            yield item
+        async with aclosing(inner()) as items:
+            async for item in items:
+                yield item
         return
     token = _CURRENT.set(ticket)
     capped = ticket.max_turns is not None or ticket.max_budget_usd is not None
@@ -475,11 +479,12 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
     # hold goes with it and is settled in the same transaction.
     handed_off = _request_ctx._current_usage.get() is not None
     try:
-        async for item in inner():
-            if capped and isinstance(item, Notice) and item.kind == "error" and _STOPPED.search(item.text or ""):
-                # Stopped by this run's limit: say so plainly, and how to go on.
-                item = Notice(kind="error", text=RUN_LIMIT, legacy=f"\n\n{RUN_LIMIT}", error_kind="run_limit")
-            yield item
+        async with aclosing(inner()) as items:
+            async for item in items:
+                if capped and isinstance(item, Notice) and item.kind == "error" and _STOPPED.search(item.text or ""):
+                    # Stopped by this run's limit: say so plainly, and how to go on.
+                    item = Notice(kind="error", text=RUN_LIMIT, legacy=f"\n\n{RUN_LIMIT}", error_kind="run_limit")
+                yield item
     finally:
         try:
             _CURRENT.reset(token)

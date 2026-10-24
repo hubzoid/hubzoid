@@ -1,16 +1,21 @@
-name: Windows startup
+name: Windows
 
+# Native Windows checks: on every push to main, and called by the release
+# pipeline (ci.yml) for release-candidate pull requests and releases, so a
+# release that does not install and run on Windows is not published. Other
+# pull requests skip it (11 to 25 minutes).
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  # The workflow name keeps a release's call apart from the same ref's own run.
+  group: windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,9 +34,73 @@ jobs:
           cache: pip
       - name: Install core and test tools (no Open WebUI)
         run: pip install -e '.[dev]'
-      - name: Native startup, process cleanup, SQLite locks and credential failover
+      - name: Native startup, process cleanup, SQLite locks, credential failover and eval results
         run: >-
           python -m pytest -q -m "" --timeout-method=thread
           tests/test_platform_lifecycle.py tests/test_claude_credentials.py
           tests/test_inbound_dedup.py tests/test_migrations.py
+          tests/test_evals.py tests/test_evals_cli.py
           -k "not postgres"
+      - name: Eval results in the Windows code page (no UTF-8 mode, as on a laptop)
+        env:
+          PYTHONUTF8: "0"
+        run: python -m pytest -q --timeout-method=thread tests/test_evals.py
+
+  install:
+    # What a teammate does: pip install the wheel into a fresh environment, then
+    # init, run evals twice and read the results back. No UTF-8 mode, no keys.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Build the wheel
+        run: pip install build && python -m build --wheel
+      - name: Clean install of the wheel
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m venv "$env:RUNNER_TEMP\clean"
+          & "$env:RUNNER_TEMP\clean\Scripts\pip.exe" install (Get-ChildItem dist\*.whl).FullName
+          & "$env:RUNNER_TEMP\clean\Scripts\pip.exe" check
+      - name: The installed package serves the web app and Console
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $want = python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          Push-Location $env:RUNNER_TEMP
+          & "$env:RUNNER_TEMP\clean\Scripts\python.exe" "$env:GITHUB_WORKSPACE\.github\scripts\verify_install.py" $want
+          Pop-Location
+      - name: hubzoid init and eval run, with text outside the code page
+        env:
+          MODEL: hubzoid-test/scripted
+          HUBZOID_TEST_RUNTIME: "1"
+          # Only the log pipe: a console window is Unicode already, a CI pipe is not.
+          PYTHONIOENCODING: utf-8
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          hz = str(tmp / "clean" / "Scripts" / "hubzoid.exe")
+          def run(*args, cwd):
+              subprocess.run([hz, *args], cwd=cwd, check=True)
+          run("version", cwd=tmp)
+          run("init", "smoke-hub", cwd=tmp)
+          hub = tmp / "smoke-hub"
+          thanks = "நன்றி"  # Tamil, not in cp1252
+          (hub / "evals" / "tamil.md").write_text(
+              f'---\ncontains: ["{thanks}"]\n---\n## Prompt\nSay {thanks} back to me.\n', encoding="utf-8")
+          # The hub's .env names a real model and wins over the job's MODEL, and
+          # the starter's own case needs one: run the Tamil case, scripted.
+          scripted = ("--no-judge", "--case", "tamil", "--model", "hubzoid-test/scripted")
+          run("eval", "run", *scripted, cwd=hub)
+          run("eval", "run", *scripted, "--compare", cwd=hub)
+          runs = [p for p in (hub / ".hubzoid" / "evals").glob("*.json") if p.name != "index.json"]
+          assert len(runs) == 2 and thanks in max(runs).read_text(encoding="utf-8"), runs

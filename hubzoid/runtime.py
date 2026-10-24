@@ -246,9 +246,14 @@ class OpenAIAgentsRuntime:
         def refuse(exc):
             self.last_error = exc
 
-        async for item in budgets.guarded(self._hub_dir, str(model) if model else None,
-                                          lambda: self._turn_events(prompt), refuse):
-            yield item
+        # Closed at once when the turn is cut off, so the budget hold reaches
+        # the usage row (a bare loop leaves it to garbage collection).
+        from contextlib import aclosing
+
+        async with aclosing(budgets.guarded(self._hub_dir, str(model) if model else None,
+                                            lambda: self._turn_events(prompt), refuse)) as items:
+            async for item in items:
+                yield item
 
     async def _turn_events(self, prompt: str) -> AsyncIterator[StreamItem]:
         """When the caller connected personal MCP servers (see

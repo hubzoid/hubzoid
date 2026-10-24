@@ -81,11 +81,16 @@ def test_release_candidates_can_validate_without_publishing():
         "workflow_dispatch": "",
         "pull_request": {"types": ["labeled", "synchronize", "reopened"]},
     }
-    for name in ("tests", "console", "package", "image"):
+    for name in ("tests", "console", "package", "image", "windows"):
         assert config["jobs"][name]["if"] == (
             "github.event_name != 'pull_request' || "
             "contains(github.event.pull_request.labels.*.name, 'release-candidate')"
         )
+
+
+def test_windows_runs_on_main_and_release_candidates_not_every_pull_request():
+    config = yaml.load((ROOT / ".github/workflows/windows.yml").read_text(), Loader=yaml.BaseLoader)
+    assert config["on"] == {"push": {"branches": ["main"]}, "workflow_dispatch": "", "workflow_call": ""}
 
 
 def test_every_push_and_pull_request_is_scanned_for_secrets():
@@ -157,7 +162,7 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
 
 def test_all_release_checks_gate_publishing_and_publish_jobs_retry_independently():
     jobs = WORKFLOW["jobs"]
-    assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image"}
+    assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image", "windows"}   # Windows too (#125)
     assert jobs["publish-pypi"]["needs"] == "publish-image"
     assert jobs["github-release"]["needs"] == "publish-pypi"
     # An ordinary condition keeps the implicit success() dependency gate.
