@@ -78,7 +78,7 @@ def check(hub_dir: Path, what: str = "this agent's files") -> None:
     if body is not None:
         from .control.http import error
 
-        raise error(409, CODE, body["message"], source=body["source"])
+        raise error(409, body["code"], body["message"], source=body["source"])
 
 
 def status(hub_dir: Path) -> dict:
