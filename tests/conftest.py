@@ -20,6 +20,9 @@ os.environ.setdefault("HUBZOID_MFA_REQUIRED", "none")
 # A wide, fixed terminal: long temp paths (CI, parallel workers) must not wrap
 # the CLI's messages that tests look for.
 os.environ["COLUMNS"] = "250"
+# Typer styles and boxes its errors when GITHUB_ACTIONS is set, so CI saw other
+# text than a laptop. Tests read the plain form everywhere.
+os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
 
 # Every bridge takes a weekly backup by default. Tests that build an app are
 # about something else; tests/test_backup_verify.py runs the schedule itself.
