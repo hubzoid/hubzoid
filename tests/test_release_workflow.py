@@ -81,11 +81,16 @@ def test_release_candidates_can_validate_without_publishing():
         "workflow_dispatch": "",
         "pull_request": {"types": ["labeled", "synchronize", "reopened"]},
     }
-    for name in ("tests", "console", "package", "image"):
+    for name in ("tests", "console", "package", "image", "windows"):
         assert config["jobs"][name]["if"] == (
             "github.event_name != 'pull_request' || "
             "contains(github.event.pull_request.labels.*.name, 'release-candidate')"
         )
+
+
+def test_windows_runs_on_main_and_release_candidates_not_every_pull_request():
+    config = yaml.load((ROOT / ".github/workflows/windows.yml").read_text(), Loader=yaml.BaseLoader)
+    assert config["on"] == {"push": {"branches": ["main"]}, "workflow_dispatch": "", "workflow_call": ""}
 
 
 def test_every_push_and_pull_request_is_scanned_for_secrets():

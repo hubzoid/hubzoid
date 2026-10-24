@@ -1,9 +1,10 @@
 name: Windows
 
-# Native Windows checks. Also called by the release pipeline (ci.yml), so a
-# release that does not install and run on Windows is not published.
+# Native Windows checks: on every push to main, and called by the release
+# pipeline (ci.yml) for release-candidate pull requests and releases, so a
+# release that does not install and run on Windows is not published. Other
+# pull requests skip it (11 to 25 minutes).
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
