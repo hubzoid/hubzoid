@@ -14,7 +14,7 @@ import type {
   ThreadMessage,
 } from "@assistant-ui/react";
 import { t } from "../i18n/en";
-import { ApiError, errorFrom, get, hubUrl, enc, patch, post, isAbort } from "../lib/api";
+import { ApiError, errorFrom, get, hubUrl, enc, patch, post, isAbort, zoneHeader } from "../lib/api";
 import { describeError } from "../lib/errors";
 import { formatBytes } from "../lib/format";
 import { IdMap, newConversationId, randomId } from "../lib/ids";
@@ -305,7 +305,7 @@ export class ChatSession {
           response = await fetch(hubUrl(this.apiBase, "/api/chat"), {
             method: "POST",
             credentials: "same-origin",
-            headers: { "content-type": "application/json", accept: "text/event-stream" },
+            headers: { "content-type": "application/json", accept: "text/event-stream", ...zoneHeader },
             body: JSON.stringify(body),
             signal: abortSignal,
           });

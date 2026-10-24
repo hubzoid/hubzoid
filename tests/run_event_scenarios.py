@@ -370,7 +370,7 @@ def codex_runtime(mp, tmp_path: Path, middle: list[dict], registry: dict, *, too
     auth = tmp_path / "codex-auth.json"
     auth.write_text("{}")
     mp.setattr(factory_codex, "_auth_file", lambda: auth)
-    mp.setattr(factory_codex, "codex_binary", lambda: "codex")
+    mp.setattr(factory_codex, "_codex", lambda: ("codex", factory_codex._newest_reviewed()))
 
     async def stop(proc):
         proc.returncode = 0

@@ -363,6 +363,8 @@ def build_router(hub_dir: Path) -> APIRouter:
                 "public_origin": _public_origin()}
         if view is not None:
             body["user"] = view
+        elif sessionlib.ended_by_block(hub_dir, request.cookies.get(sessionlib.SESSION_COOKIE) or ""):
+            body["ended"] = "suspended"
         return JSONResponse(body, headers=_NO_STORE)
 
     # ---- password sign-in ---------------------------------------------------------

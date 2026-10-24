@@ -9,7 +9,6 @@ import { AgentAvatar } from "../app/components/ui";
 import { BarePage } from "../app/pages/barePage";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
-import { ActivityScreen } from "./ActivityScreen";
 import { EvalsScreen } from "./EvalsScreen";
 import { AgentConnectors } from "./ConnectorsScreen";
 import { AgentSecrets } from "./SecretsScreen";
@@ -17,33 +16,49 @@ import { AgentChannels } from "./ChannelsScreen";
 import { AgentIntake } from "./IntakeScreen";
 import { AgentFeedback } from "./FeedbackScreen";
 import { AgentSetup } from "./SetupScreen";
+import { AgentEditing, useEditing } from "../app/lib/editing";
+import { UnderTabs } from "../lib/underTabs";
 import { WorkItemsScreen } from "./WorkItemsScreen";
 import { agentName } from "../lib/agentName";
 import { SandboxesScreen } from "./SandboxesScreen";
 
 const WorkspacePage = lazyChunk(() => import("../app/pages/WorkspacePage"));
 const HubChangesPage = lazyChunk(() => import("../app/pages/HubChangesPage"));
+const WorkflowAccessPage = lazyChunk(() => import("../app/pages/WorkflowAccessPage"));
 
 export type AgentTab =
-  | "access" | "connectors" | "instructions" | "changes" | "runs" | "work" | "sandboxes"
-  | "evals" | "feedback" | "setup" | "secrets" | "channels" | "intake" | "activity";
+  | "instructions" | "changes" | "access" | "permissions" | "connectors" | "runs" | "work" | "intake"
+  | "sandboxes" | "evals" | "feedback" | "config" | "channels";
 
-/** The agent page's sections: a few tabs, each holding its related parts as
- *  sub-tabs (a nested view), instead of one tab per screen. */
-const SECTIONS: { key: AgentTab; label: string; parts?: [AgentTab, string][] }[] = [
-  { key: "access", label: "Access" },
-  { key: "connectors", label: "Connectors" },
-  { key: "instructions", label: "Instructions", parts: [["instructions", "Files"], ["changes", "Changes to review"]] },
-  { key: "runs", label: "Runs & schedules", parts: [["runs", "Workflows"], ["work", "Work items"], ["sandboxes", "Sandboxes"]] },
-  { key: "evals", label: "Quality", parts: [["evals", "Evals"], ["feedback", "Feedback"]] },
-  { key: "setup", label: "Setup", parts: [["setup", "Settings"], ["secrets", "Secrets"], ["channels", "Channels"], ["intake", "Intake"]] },
-  { key: "activity", label: "Activity" },
-];
-const sectionOf = (tab: AgentTab) => SECTIONS.find((s) => s.key === tab || s.parts?.some(([k]) => k === tab)) ?? SECTIONS[0];
+type Section = { key: AgentTab; label: string; parts?: [AgentTab, string][] };
+
+/** The agent page's tabs. A tab never repeats its own name one level down;
+ *  rarely used parts show as a second row only when the agent has them. */
+function sections(hub: Hub, editable: boolean): Section[] {
+  const has = hub.has ?? { work: false, intake: false, sandboxes: false };
+  const work: [AgentTab, string][] = [];
+  if (has.work) work.push(["work", "Work items"]);
+  if (has.intake) work.push(["intake", "Incoming messages"]);
+  if (has.sandboxes) work.push(["sandboxes", "Sandboxes"]);
+  return [
+    { key: "instructions", label: "Instructions",
+      parts: editable ? [["instructions", "Files"], ["changes", "Changes to review"]] : undefined },
+    { key: "access", label: "Access", parts: [["access", "People"], ["permissions", "Workflow permissions"]] },
+    { key: "connectors", label: "Connectors" },
+    { key: "runs", label: "Workflows" },
+    ...(work.length ? [{ key: work[0][0], label: "Work", parts: work.length > 1 ? work : undefined }] : []),
+    { key: "evals", label: "Evals" },
+    { key: "feedback", label: "Feedback" },
+    { key: "config", label: "Configuration" },
+  ];
+}
+const sectionOf = (list: Section[], tab: AgentTab) =>
+  list.find((s) => s.key === tab || s.parts?.some(([k]) => k === tab))
+  ?? (tab === "channels" ? list.find((s) => s.key === "config") : undefined) ?? list[0];
 
 export function AgentDetail({
   hub,
-  hubs,
+  hubs: _hubs,
   me,
   tab,
   rest,
@@ -61,7 +76,9 @@ export function AgentDetail({
   const app = useContext(AppContext);
   const agent = app?.agents.list.find((a) => a.hub === hub.key);
   const name = agentName(agent?.name, hub.name, hub.key);
-  const section = sectionOf(tab);
+  const editing = useEditing(hub.key);
+  const SECTIONS = sections(hub, editing.editable);
+  const section = sectionOf(SECTIONS, tab);
   const chat = hub.can_chat && agent ? `/new/${encodeURIComponent(agent.id)}` : null;
   return (
     <>
@@ -72,6 +89,9 @@ export function AgentDetail({
           <h1>{name}</h1>
           {agent?.description && <p>{agent.description}</p>}
         </div>
+        <a className="hz-btn hz-btn-ghost" href={href(`/activity?agent=${encodeURIComponent(hub.key)}`)}>
+          View activity
+        </a>
         {chat && (
           <a className="hz-btn hz-btn-secondary" href={chat}>
             <MessageSquare size={15} aria-hidden /> Open chat
@@ -86,16 +106,25 @@ export function AgentDetail({
       {section.parts && (
         <nav className="hz-subtabs" aria-label={section.label}>
           {section.parts.map(([key, label]) => (
-            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? "page" : undefined}>{label}</a>
+            <a key={key} href={agentHref(hub.key, key)} aria-current={tab === key ? "page" : undefined}>
+              {label}{key === "changes" && <span className="hz-beta">Beta</span>}
+            </a>
           ))}
         </nav>
       )}
+      <AgentEditing.Provider value={editing}>
+      <UnderTabs.Provider value={tab !== "config"}>
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} embedded={embedded} />}
+        {tab === "permissions" && (
+          <BarePage.Provider value>
+            <Suspense fallback={<Spin />}><WorkflowAccessPage hub={hub.key} /></Suspense>
+          </BarePage.Provider>
+        )}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
         {tab === "instructions" && (
           <BarePage.Provider value>
-            <Suspense fallback={<Spin />}><WorkspacePage agent={hub.key} /></Suspense>
+            <Suspense fallback={<Spin />}><WorkspacePage agent={hub.key} readOnly={!editing.editable} note={editing.message} /></Suspense>
           </BarePage.Provider>
         )}
         {tab === "changes" && (
@@ -107,13 +136,20 @@ export function AgentDetail({
         {tab === "work" && <WorkItemsScreen hubs={[hub]} selected={rest[0] ? { hub: hub.key, item: rest[0] } : undefined} />}
         {tab === "sandboxes" && <SandboxesScreen hubs={[hub]} />}
         {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} embedded={embedded} />}
-        {tab === "setup" && <AgentSetup hub={hub} />}
-        {tab === "secrets" && <AgentSecrets hub={hub} />}
+        {tab === "config" && (
+          // One page with headings: what the agent declares, its secrets, its channels.
+          <div className="hz-config-page">
+            <AgentSetup hub={hub} />
+            <AgentSecrets hub={hub} />
+            <AgentChannels hub={hub} rest={[]} />
+          </div>
+        )}
         {tab === "channels" && <AgentChannels hub={hub} rest={rest} />}
         {tab === "intake" && <AgentIntake hub={hub} rest={rest} />}
         {tab === "feedback" && <AgentFeedback hub={hub} />}
-        {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
       </div>
+      </UnderTabs.Provider>
+      </AgentEditing.Provider>
     </>
   );
 }

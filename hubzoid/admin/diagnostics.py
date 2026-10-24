@@ -225,10 +225,17 @@ def check_model_auth(hub: Path) -> Result:
                       "Run `claude` once and sign in, or set CLAUDE_CODE_OAUTH_TOKEN in the hub's .env.",
                       "model_signin")
     if low.startswith("codex-local"):
-        if shutil.which("codex"):
-            return Result("ok", "The Codex CLI is installed for the codex-local runtime.", {"runtime": "codex-local"})
-        return Result("fail", "Model provider credential is not configured.", {"runtime": "codex-local"},
-                      "Install Codex and run `codex login`.", "model_signin")
+        # The same check the runtime makes: a reviewed Codex version and a
+        # file-backed login, not merely some `codex` on PATH (HUB-140 F4).
+        from ..factory_codex import REVIEWED_CODEX_VERSIONS, codex_available
+
+        if codex_available():
+            return Result("ok", "A reviewed Codex CLI with a file-backed login is ready for codex-local.",
+                          {"runtime": "codex-local"})
+        return Result("fail", "Codex isn't ready: it needs a reviewed Codex CLI version and a file-backed login.",
+                      {"runtime": "codex-local"},
+                      f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one), "
+                      "then run `codex -c 'cli_auth_credentials_store=\"file\"' login`.", "model_signin")
     provider = low.split("/", 1)[0]
     names = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY",
              "azure": "AZURE_API_KEY", "gemini": "GEMINI_API_KEY"}
@@ -276,7 +283,7 @@ def check_connectors(hub: Path) -> Result:
         return Result("info", "No connector files yet.")
     if problems:
         return Result("warn", "; ".join(problems[:3]), {"connectors": count})
-    return Result("ok" if count else "info", f"{count} connector(s) defined in connectors/.",
+    return Result("ok" if count else "info", f"{_n(count, 'connector')} defined in connectors/.",
                   {"connectors": count})
 
 
@@ -291,7 +298,7 @@ def check_chat_config(hub: Path) -> Result:
 
     state = chat_cfg.service_for(hub).file_state()
     if not state.get("exists"):
-        return Result("ok", "No chat/config.yaml: product defaults apply.")
+        return Result("ok", "No chat settings yet, so the defaults apply.")
     if state.get("valid") is False:
         return Result("fail", f"chat/config.yaml is invalid: {state['error']['message']}",
                       {"line": state["error"].get("line")},
@@ -301,6 +308,11 @@ def check_chat_config(hub: Path) -> Result:
         return Result("warn", "chat/config.yaml has changes that are not applied.", {"pending": state.get("pending_changes")},
                       "Review with `hubzoid chat config diff`, then apply.", "chat_config_pending")
     return Result("ok", "chat/config.yaml matches the active revision.")
+
+
+def _n(count: int, one: str, many: str | None = None) -> str:
+    """'1 person', '3 people', '2 organization administrators'."""
+    return f"{count} {one if count == 1 else (many or one + 's')}"
 
 
 def check_branding(hub: Path) -> Result:
@@ -318,11 +330,11 @@ def check_branding(hub: Path) -> Result:
             scope, logo = None, None
         if scope is not None and (logo or scope.name != "Hubzoid"):
             where = f" with the logo in {scope.folder.parent.name}/branding" if logo else ""
-            return Result("info", f"No brand published in Settings → Brand; people see “{scope.name}”{where}.")
-        return Result("info", "No brand published: the Hubzoid brand shows.")
+            return Result("ok", f"People see “{scope.name}”{where}, from the agent's folder.")
+        return Result("info", "No brand set: people see the Hubzoid brand.")
     missing = [a["key"] for a in src["assets"] if svc.asset_bytes(a["digest"]) is None]
     if missing:
-        return Result("fail", f"{len(missing)} brand file(s) of the active revision are missing.", {"missing": missing},
+        return Result("fail", f"{_n(len(missing), 'brand file')} of the active revision {'is' if len(missing) == 1 else 'are'} missing.", {"missing": missing},
                       "Roll back to an earlier revision or activate a new draft.", "branding_assets_missing")
     return Result("ok", f"Brand generation {src['generation']} is active and complete.")
 
@@ -339,7 +351,7 @@ def check_access(hub: Path) -> Result:
         return Result("warn", "Nobody can administer this deployment.",
                       remediation="Run `hubzoid access bootstrap --admin you@example.com`.",
                       remediation_code="no_admin")
-    return Result("ok", f"{len(admins)} organization administrator(s).", {"admins": len(admins)})
+    return Result("ok", f"{_n(len(admins), 'organization administrator')}.", {"admins": len(admins)})
 
 
 def check_people_access(hub: Path) -> Result:
@@ -362,7 +374,7 @@ def check_people_access(hub: Path) -> Result:
         return Result("warn", f"{len(stuck)} active people can use no agent, so they see \"No agents yet\".",
                       {"people": len(stuck)},
                       "Give them an agent in Settings → People & access, or remove the accounts.", "people_without_access")
-    return Result("ok", f"Everyone active can use at least one agent ({len(people)} people).")
+    return Result("ok", f"Everyone active can use at least one agent ({_n(len(people), 'person', 'people')}).")
 
 
 def check_unowned_admins(hub: Path) -> Result:
@@ -378,7 +390,7 @@ def check_unowned_admins(hub: Path) -> Result:
     except Exception as exc:  # noqa: BLE001
         return Result("warn", f"Accounts could not be checked ({type(exc).__name__}).")
     if odd:
-        return Result("warn", f"{len(odd)} administrator account(s) use a @localhost address nobody receives mail at.",
+        return Result("warn", f"{_n(len(odd), 'administrator account')} {'uses' if len(odd) == 1 else 'use'} a @localhost address nobody receives mail at.",
                       {"accounts": len(odd)}, "Delete them in Settings → People & access if nobody uses them.",
                       "unowned_admin")
     return Result("ok", "Every administrator has a real address.")
@@ -402,7 +414,7 @@ def check_workflow_failures(hub: Path) -> Result:
         name = str(r.get("name") or r.get("workflow") or "?").removeprefix("md:")
         by[name] = by.get(name, 0) + 1
     top = ", ".join(f"{n} ({c})" for n, c in sorted(by.items(), key=lambda x: -x[1])[:5])
-    return Result("warn", f"{len(failed)}{'+' if len(failed) >= 200 else ''} workflow run(s) failed in the last day: {top}.",
+    return Result("warn", f"{len(failed)}{'+' if len(failed) >= 200 else ''} workflow {'run' if len(failed) == 1 else 'runs'} failed in the last day: {top}.",
                   {"by_workflow": by}, "Open the agent's Runs & schedules to see why.", "workflow_failures")
 
 
@@ -421,7 +433,7 @@ def check_alert_delivery(hub: Path) -> Result:
     if not rows:
         return Result("ok", "Workflow alerts are being delivered.")
     reasons = sorted({scrub(str(r.error or "unknown"))[:120] for r in rows})[:3]
-    return Result("warn", f"{len(rows)} workflow alert(s) could not be sent: {'; '.join(reasons)}.",
+    return Result("warn", f"{_n(len(rows), 'workflow alert')} could not be sent: {'; '.join(reasons)}.",
                   {"alerts": len(rows)}, "Check the alert destination (docs/workflows.md).", "alert_delivery")
 
 
@@ -450,9 +462,9 @@ def check_connector_reachability(hub: Path) -> Result:
         except OSError:
             down.append(host)
     if down:
-        return Result("warn", f"{len(down)} of {len(urls)} connector host(s) did not answer.", {"unreachable": down},
+        return Result("warn", f"{len(down)} of {_n(len(urls), 'connector host')} did not answer.", {"unreachable": down},
                       "Check the connector's URL in the agent's Connectors tab.", "connector_unreachable")
-    return Result("ok", f"All {len(urls)} connector host(s) answered.")
+    return Result("ok", f"All {_n(len(urls), 'connector host')} answered.")
 
 
 CHECKS: tuple[CheckDef, ...] = (

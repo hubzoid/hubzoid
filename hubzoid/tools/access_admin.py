@@ -3,13 +3,13 @@
 Three read tools (`my_management_scope`, `who_has_access`, `explain_access`)
 and two that only propose (`propose_access_change`, `propose_new_account`): a
 proposal applies after the proposing manager confirms the exact plan in the
-Admin Console.
+Settings.
 
 Who gets them: a person granted "Manage access from chat" (`access_tools`, an
 organization-administrator-only grant) in the agent where the chat runs, who
 also manages access (organization administrator or hub delegate). What they
 see or propose stays bounded by that management scope and ceiling. Effective
-only on an agent whose access is managed in the Console.
+only on an agent whose access is managed in Settings.
 
 Switches: `HUBZOID_ACCESS_TOOLS=false` (or `HUBZOID_MANAGEMENT_TOOLS=false`)
 removes the tools from the agent. `HUBZOID_MANAGEMENT_TOOLS=true` keeps its
@@ -44,12 +44,12 @@ ACCESS_TOOLS = register(Capability(
     surfaces=("chat", "mcp"), sensitive=True, delegate_grantable=False,
     description=("See who has access and propose access changes, from chat or an assistant, "
                  "in the agents this person manages. Has an effect only for people who manage "
-                 "access. Every change is confirmed in the Console."),
+                 "access. Every change is confirmed in Settings."),
     enabled_by=("HUBZOID_ACCESS_TOOLS", "HUBZOID_MANAGEMENT_TOOLS"),
 ))
 
 NOT_GRANTED = ("Manage access from chat is not turned on for you in this agent. An "
-               "organization administrator can turn it on in the Console.")
+               "organization administrator can turn it on in Settings.")
 MAX_ROWS = 50
 
 _legacy_warned = False
@@ -69,7 +69,7 @@ def _warn_legacy() -> None:
         _legacy_warned = True
         log.warning("HUBZOID_MANAGEMENT_TOOLS=true is deprecated: every access manager gets the "
                     "access tools without a grant. Grant \"Manage access from chat\" "
-                    "(access_tools) in the Console instead, then remove the setting.")
+                    "(access_tools) in Settings instead, then remove the setting.")
 
 
 def confirm_url(path: str) -> str:
@@ -190,7 +190,7 @@ def make(ctx) -> list:
         lines = [
             "Proposed, not applied. Nothing changes until you confirm it.",
             f"Change: {result['summary']}",
-            f"Review and confirm in the Admin Console within {minutes} minutes: {link}",
+            f"Review and confirm in Settings within {minutes} minutes: {link}",
         ]
         if actor.surface in ("whatsapp", "telegram"):
             lines.append("Open the link in a browser. Sign in to the chat site first if asked, "
@@ -219,7 +219,7 @@ def make(ctx) -> list:
             lines.append(f"- {hub}: " + (labelled(hub, perms) if perms else
                                          "access is still managed in the chat app"))
         lines.append("Use the id in parentheses when proposing a change.")
-        lines.append("Changes you propose apply only after you confirm them in the Admin Console.")
+        lines.append("Changes you propose apply only after you confirm them in Settings.")
         return "\n".join(lines)
 
     @function_tool
@@ -258,7 +258,7 @@ def make(ctx) -> list:
                          + (labelled(hub, sorted(row["perms"]), known) or "no grants in this agent")
                          + (f" [{', '.join(flags)}]" if flags else ""))
         if len(rows) > MAX_ROWS:
-            lines.append(f"... and {len(rows) - MAX_ROWS} more, see the Console.")
+            lines.append(f"... and {len(rows) - MAX_ROWS} more, see Settings.")
         return "\n".join(lines)
 
     # Not strict: `hub` is optional, so a call naming only the person validates.
@@ -319,7 +319,7 @@ def make(ctx) -> list:
         """Propose granting or removing capabilities for one person in one agent.
 
         Nothing changes until the person asking confirms the exact change in the
-        Admin Console. You get a link to give them.
+        Settings. You get a link to give them.
 
         Args:
             person: The email address of the person whose access changes.

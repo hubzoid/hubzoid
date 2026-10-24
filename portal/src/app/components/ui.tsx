@@ -110,7 +110,7 @@ export function PageSpinner() {
 
 type NoticeTone = "info" | "success" | "warning" | "error";
 const toneStyle: Record<NoticeTone, string> = {
-  info: "bg-info-soft text-info",
+  info: "bg-transparent text-secondary !px-0", // an explanation is plain text, not a coloured box (HUB-140)
   success: "bg-success-soft text-success",
   warning: "bg-warning-soft text-warning",
   error: "bg-danger-soft text-danger",

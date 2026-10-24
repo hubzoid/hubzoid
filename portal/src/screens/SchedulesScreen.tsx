@@ -32,13 +32,12 @@ import {
   type ScheduleRun,
   type ScheduleEdit,
   type PersonalRun,
-  type Workflow,
 } from "../api";
 import { inputField } from "../components/WorkflowInputs";
 import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
-import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When } from "../components/common";
+import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When, PAGED } from "../components/common";
 import { formatDuration } from "../lib/format";
 import { displayName } from "../app/lib/format";
 
@@ -64,31 +63,26 @@ const adminPaused = (s: Row) => s.state === "paused" && s.reason === "admin";
 const at = (seconds: number | null | undefined) => (seconds ? new Date(seconds * 1000).toISOString() : null);
 
 /**
- * Schedules: one page for everyone. "Yours" is the signed-in
- * person's own schedules and report links on every agent; admins also get
- * "Everyone", one agent at a time. The server decides what each view returns.
+ * Schedules (HUB-140 settings plan). `admin` (Settings, Team schedules):
+ * everyone's repeating requests, one agent at a time. Otherwise (My
+ * schedules): one page, your repeating requests, then the reports you can
+ * run. Agents' own workflow timetables are on each agent's Workflows tab.
  */
 export function SchedulesScreen({ admin, hubs, embedded = false }: { admin: boolean; hubs?: Hub[]; embedded?: boolean }) {
   const [q, setQ] = useHashQuery();
-  const view = q.view === "reports" ? "reports" : admin && q.view === "workflows" ? "workflows"
-    : admin && (q.view === "everyone" || q.scope === "everyone") ? "everyone" : "mine";
-  const tabs: [string, string][] = [["mine", admin ? "Yours" : "Schedules"],
-    ...(admin ? [["everyone", "Everyone's"], ["workflows", "Agent workflows"]] as [string, string][] : []), ["reports", "Reports"]];
+  if (admin)
+    return (
+      <>
+        <PageHeader title="Team schedules" description={embedded ? undefined : "Everyone's repeating requests."} />
+        <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} />
+      </>
+    );
   return (
     <>
-      <PageHeader
-        title="Schedules"
-        description={embedded ? "Work your agents run on a timetable, as the person who set it up. Make one in chat, for example “every Monday at 9”." : undefined}
-      />
-      <nav className="hz-agent-tabs" aria-label="Schedules">
-        {tabs.map(([key, label]) => (
-          <a key={key} href={`#/schedules${key === "mine" ? "" : `?view=${key}`}`} aria-current={view === key ? "page" : undefined}
-            onClick={(e) => { e.preventDefault(); setQ({ view: key === "mine" ? undefined : key, scope: undefined }); }}>{label}</a>
-        ))}
-      </nav>
-      {view === "everyone" ? <Everyone hubs={hubs ?? []} hub={q.hub} setHub={(hub) => setQ({ hub })} />
-        : view === "workflows" ? <AgentWorkflows hubs={hubs ?? []} />
-        : view === "reports" ? <MineReports /> : <Mine />}
+      <h3 className="hz-set-subhead">Repeating requests</h3>
+      <Mine />
+      <h3 className="hz-set-subhead">Reports</h3>
+      <MineReports />
     </>
   );
 }
@@ -147,7 +141,7 @@ function MineReports() {
             rowKey="id"
             size="middle"
             dataSource={reports}
-            pagination={false}
+            pagination={PAGED}
             scroll={{ x: 640 }}
             rowClassName="clickable"
             onRow={(r) => ({ onClick: () => window.open(r.url, "_blank", "noopener") })}
@@ -174,41 +168,6 @@ function MineReports() {
       {catalog.length === 0 && reports.length === 0 && (
         <Empty description="No reports yet. Agents that offer reports list them here, with the request to type in chat." />
       )}
-    </div>
-  );
-}
-
-/** Every agent's own scheduled workflows in one list. A row opens the
- *  workflow in its agent's Runs & schedules. */
-function AgentWorkflows({ hubs }: { hubs: Hub[] }) {
-  const data = useData<{ workflows: Workflow[] }>("/workflows", { keepStale: true });
-  useVisibleRefresh(data.reload, data.refreshing || data.loading);
-  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
-  const rows = data.data.workflows.filter((w) => w.schedule);
-  const hubName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
-  const state = (w: Workflow) => w.state === "error" ? <Dot tone="red" label="Error" />
-    : w.state === "stale" ? <Dot tone="red" label="Scheduler stopped" />
-    : w.state === "paused" ? <Dot tone="gold" label="Paused" /> : <Dot tone="green" label="Active" />;
-  return (
-    <div className="panel">
-      <Table<Workflow>
-        rowKey={(w) => `${w.hub}:${w.name}`}
-        size="middle"
-        dataSource={rows}
-        pagination={false}
-        scroll={{ x: 760 }}
-        rowClassName="clickable"
-        onRow={(w) => ({ onClick: () => { location.hash = `/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`; } })}
-        locale={{ emptyText: <Empty description="No agent has a scheduled workflow. A workflow gets a schedule in its folder's workflow file." /> }}
-        columns={[
-          { title: "Workflow", key: "name", render: (_, w) => <><a className="row-name" href={`#/agents/${encodeURIComponent(w.hub)}/runs/${encodeURIComponent(w.name)}`}
-            onClick={(e) => e.stopPropagation()}>{w.name}</a><div style={{ marginTop: 2 }}>{state(w)}</div></> },
-          { title: "Agent", key: "hub", render: (_, w) => hubName(w.hub) },
-          { title: "When", key: "when", render: (_, w) => <><div>{w.schedule}</div><Text type="secondary">{w.timezone}</Text></> },
-          { title: "Next run", key: "next", render: (_, w) => w.next_run ? <When value={w.next_run} /> : <Text type="secondary">—</Text> },
-          { title: "Last started", key: "last", render: (_, w) => w.last_dispatch ? <When value={w.last_dispatch} /> : <Text type="secondary">Not yet</Text> },
-        ]}
-      />
     </div>
   );
 }
@@ -280,7 +239,7 @@ function SchedulesTable({
         rowKey="id"
         size="middle"
         dataSource={rows}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 900 }}
         rowClassName="clickable"
         onRow={(s) => ({ onClick: () => setOpenId(s.id) })}
@@ -369,7 +328,7 @@ function ScheduleDrawer({
       extra={row && <Actions s={row} mine={mine} edit={edit} act={async (s, a) => { await act(s, a); if (a === "stop") close(); }} />}>
       {row && (
         <>
-          <Descriptions column={1} size="small" items={[
+          <Descriptions column={1} size="small" colon={false} className="hz-facts" items={[
             ...(row.owner ? [{ key: "owner", label: "Person", children: row.owner }] : []),
             { key: "report", label: "Report", children: row.reports?.length
               ? row.reports.map((r) => <div key={r.url}><a href={r.url} target="_blank" rel="noreferrer">{r.title} ↗</a></div>)
@@ -378,23 +337,23 @@ function ScheduleDrawer({
             { key: "when", label: "When", children: `${row.when} (${row.timezone})` },
             { key: "state", label: "State", children: <Dot tone={STATE_TAG[row.state] ?? "default"} label={row.state_label} /> },
             { key: "next", label: "Next run", children: row.next_fire ? <When value={at(row.next_fire)} /> : "—" },
+            ...(row.last_run ? [{ key: "ref", label: "Last run", children: <Text copyable className="hz-mono-sm">{row.last_run}</Text> }] : []),
           ]} />
           {row.recovery && <Alert type="warning" showIcon message={row.recovery} />}
-          {row.last_run && <div><Text type="secondary">Run reference: </Text><Text copyable style={{ overflowWrap: "anywhere" }}>{row.last_run}</Text></div>}
-          <Title level={5} style={{ marginTop: 20 }}>Latest runs</Title>
+          <Title level={5} className="hz-facts-head">Latest runs</Title>
           {runs.data ? (
             <List
               size="small"
               dataSource={runs.data.runs}
               locale={{ emptyText: "No runs yet." }}
               renderItem={(r) => (
-                <List.Item>
-                  <Space wrap>
+                <List.Item className="hz-run-item">
+                  <div className="hz-run-item-main">
                     <RunStatusTag status={r.status} />
-                    {r.id && <Text copyable>{r.id}</Text>}
-                    {r.started ? <When value={new Date(r.started).toISOString()} /> : "—"}
-                    {r.duration_ms != null && <Text type="secondary">{formatDuration(r.duration_ms)}</Text>}
-                  </Space>
+                    <Text type="secondary">{r.started ? <When value={new Date(r.started).toISOString()} /> : "—"}</Text>
+                    {r.duration_ms != null && <Text type="secondary" className="hz-run-item-time">{formatDuration(r.duration_ms)}</Text>}
+                  </div>
+                  {r.id && <Text copyable type="secondary" className="hz-mono-sm">{r.id}</Text>}
                 </List.Item>
               )}
             />
@@ -494,7 +453,7 @@ function LiveReports({ hub }: { hub: Hub }) {
         rowKey="id"
         size="middle"
         dataSource={reports}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 900 }}
         columns={[
           { title: "Report", key: "title", render: (_, r) => <><div>{r.title}</div><Text type="secondary" className="identity">{r.key}</Text></> },

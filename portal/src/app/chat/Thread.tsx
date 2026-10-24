@@ -31,7 +31,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  CornerDownRight,
   Download,
   FileText,
   FolderOpen,
@@ -91,10 +90,70 @@ export type ThreadProps = {
 // On touch screens focusing the composer on load would pop up the keyboard.
 const coarsePointer = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
+/** After a suggestion fills the message box, typing and Enter go there, not
+ *  to the chip again (HUB-140 F15). */
+function focusComposer() {
+  requestAnimationFrame(() => {
+    const box = document.querySelector<HTMLTextAreaElement>("textarea.hz-composer-input");
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  });
+}
+
+/**
+ * The unsent text is kept for this person and this chat (or new-chat page
+ * and agent) in this tab, so a sign-out mid-message (session ended, signed
+ * out elsewhere) doesn't lose it: it's back after signing in again. Signing
+ * out clears it (clearDeviceCache).
+ *
+ * It lives in Thread, not in Composer: the new-chat composer and the
+ * conversation's composer are different elements, and the second one used to
+ * restore, on mounting, the message just sent from the first (GitHub #120:
+ * a first message with an attachment came back into the box after sending).
+ */
+function useComposerDraft(enabled: boolean) {
+  const aui = useAui();
+  const me = useApp().user?.id ?? "local";
+  const draftKey = `hz.draft:${me}:${location.pathname}${location.search}`;
+  const text = useAuiState((s) => s.composer.text);
+  useEffect(() => {
+    if (!enabled) return;
+    try {
+      const saved = sessionStorage.getItem(draftKey);
+      if (saved && aui.composer().getState().isEmpty) aui.composer().setText(saved);
+    } catch {
+      /* no storage: nothing to restore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, enabled]);
+  useEffect(() => {
+    if (!enabled) return;
+    try {
+      if (text) sessionStorage.setItem(draftKey, text);
+    } catch {
+      /* no storage: the draft just isn't kept */
+    }
+    if (text) return;
+    // Sending empties the composer before the server answers. The kept text
+    // goes only once the send has stood for a moment: a send refused because
+    // the sign-in ended leaves this page first, and the text is still there.
+    const timer = setTimeout(() => {
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {
+        /* no storage */
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [text, draftKey, enabled]);
+}
+
 export function Thread(props: ThreadProps) {
   const { agent, readOnly } = props;
   const aui = useAui();
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
+  useComposerDraft(!readOnly);
 
   // Screen readers hear when a reply starts and how it ended.
   useAuiEvent({ scope: "*", event: "thread.runStart" }, () => announce(t.chat.responding));
@@ -232,7 +291,7 @@ function EmptyThread(props: ThreadProps) {
         <section aria-label={t.agents.suggestions} className="hz-pills">
           {pills.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
-              <button type="button" className="hz-suggestion" title={s.label}>
+              <button type="button" className="hz-suggestion" title={s.label} onClick={focusComposer}>
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -300,9 +359,10 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
   const decision = useAuiState((s) => !!(s.message.metadata?.custom as { decision?: boolean } | undefined)?.decision);
   const del = useDelete();
   if (decision)
-    // The answer to a card: a quiet line under it, not a chat bubble.
+    // The answer to a card: the card itself shows it (HUB-140 F16), so this
+    // line is for screen readers only.
     return (
-      <MessagePrimitive.Root className="hz-message hz-decision" data-role="user" role="note" data-testid="decision-line">
+      <MessagePrimitive.Root className="hz-message hz-decision sr-only" data-role="user" role="note" data-testid="decision-line">
         <span className="hz-decision-line">
           <MessagePrimitive.Parts components={{ Text: UserText }} />
         </span>
@@ -396,6 +456,12 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   const hasContent = useAuiState((s) => s.message.content.length > 0);
+  // After a tool step the parts show "Working on it…" (Empty, shown when the
+  // last part is not text): one indicator, not two (F17).
+  const toolRunning = useAuiState((s) => {
+    const last = s.message.content[s.message.content.length - 1] as { type?: string } | undefined;
+    return last?.type === "tool-call";
+  });
   const speaking = useAuiState((s) => s.message.speech != null);
   const value = useFeed();
   const del = useDelete();
@@ -424,7 +490,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
             Empty: Working,
           }}
         />
-        {running && hasContent && (
+        {running && hasContent && !toolRunning && (
           <span className="hz-streaming" aria-hidden data-testid="streaming">
             <span className="hz-spin-dot" />
           </span>
@@ -740,41 +806,6 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
     history.replaceState(null, "", location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // The unsent text is kept for this person and this chat (or new-chat page
-  // and agent) in this tab, so a sign-out mid-message (session ended, signed
-  // out elsewhere) doesn't lose it: it's back after signing in again. Signing
-  // out clears it (clearDeviceCache).
-  const me = useApp().user?.id ?? "local";
-  const draftKey = `hz.draft:${me}:${location.pathname}${location.search}`;
-  const text = useAuiState((s) => s.composer.text);
-  useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(draftKey);
-      if (saved && aui.composer().getState().isEmpty) aui.composer().setText(saved);
-    } catch {
-      /* no storage: nothing to restore */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
-  useEffect(() => {
-    try {
-      if (text) sessionStorage.setItem(draftKey, text);
-    } catch {
-      /* no storage: the draft just isn't kept */
-    }
-    if (text) return;
-    // Sending empties the composer before the server answers. The kept text
-    // goes only once the send has stood for a moment: a send refused because
-    // the sign-in ended leaves this page first, and the text is still there.
-    const timer = setTimeout(() => {
-      try {
-        sessionStorage.removeItem(draftKey);
-      } catch {
-        /* no storage */
-      }
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [text, draftKey]);
   const running = useAuiState((s) => s.thread.isRunning);
   const hasDraft = useAuiState((s) => !s.composer.isEmpty);
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
@@ -898,7 +929,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
                       </span>
                     </Menu.Item>
                     <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={() => void interrupt()} data-testid="interrupt">
-                      <CornerDownRight size={15} aria-hidden className="mt-0.5" />
+                      <ArrowUp size={15} aria-hidden className="mt-0.5" />
                       <span>
                         {t.chat.interrupt}
                         <small>{t.chat.interruptHelp}</small>
@@ -1035,7 +1066,8 @@ function QueueList() {
                         .catch(onError)
                     }
                   >
-                    <CornerDownRight size={12} aria-hidden />
+                    {/* Sends it now: the same arrow as the send button (founder review). */}
+                    <ArrowUp size={12} aria-hidden />
                   </IconButton>
                 )}
                 <IconButton label={t.chat.queueRemove} className="!h-6 !w-6" onClick={() => void feed.patchQueue(item, { action: "remove" }).catch(onError)}>

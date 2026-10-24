@@ -209,7 +209,7 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
     if suspended:
         raise IdentityError(
             f"{what} runs as {email} ({where}), and that account is blocked or was "
-            "replaced. Reactivate it in the Console, or change the configured account. "
+            "replaced. Reactivate it in Settings, or change the configured account. "
             "Hubzoid never falls back to another person.")
     local = email == LOCAL_OWNER and local_quickstart(hub_dir)
     if not ident.get("owui_id"):
@@ -223,7 +223,7 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
         raise IdentityError(
             f"{what} runs as {email} ({where}), but that account is awaiting approval "
             "or was removed from the chat app. Approve or restore it, then refresh "
-            "accounts in the Console.")
+            "accounts in Settings.")
     if account_id and ident["owui_id"] != account_id:
         raise IdentityError(
             f"The account behind {email} changed while this run was in progress. The "
@@ -235,7 +235,7 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
     if not allowed:
         raise IdentityError(
             f"{what} runs as {email} ({where}), but that account has no access to "
-            f"hub {hub!r}. Grant 'Use this agent' in the Console, or change the "
+            f"hub {hub!r}. Grant 'Use this agent' in Settings, or change the "
             "configured account.")
     return RunIdentity(email, ident["owui_id"], source, ident.get("email") or email)
 
@@ -256,7 +256,7 @@ def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
         if missing:
             log.warning(
                 "%s held %s before workflows ran as people; it now runs as %s, who does "
-                "not. Grant those to %s in the Console (or set run_as to an account that "
+                "not. Grant those to %s in Settings (or set run_as to an account that "
                 "holds them). Legacy grants are not carried over.",
                 legacy_subject, ", ".join(missing), ident.subject, ident.subject)
             ident = RunIdentity(ident.subject, ident.account_id, ident.source, ident.email,

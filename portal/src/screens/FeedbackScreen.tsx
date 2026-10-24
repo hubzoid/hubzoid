@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useUnderTabs } from "../lib/underTabs";
 import { Alert, Button, Empty, Segmented, Select, Space, Table, Tag, Typography } from "antd";
 import { Download, RefreshCw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 import { href } from "../hooks/useRoute";
 
@@ -68,6 +69,7 @@ type Filters = { rating: string; source: string; reason: string; period: string 
 
 /** Agents → agent → Feedback: every rating of this agent's answers, from every surface. */
 export function AgentFeedback({ hub }: { hub: Hub }) {
+  const underTabs = useUnderTabs();
   const [filters, setFilters] = useState<Filters>({ rating: "all", source: "all", reason: "all", period: "30" });
   const [n, setN] = useState(0);
   const reload = useCallback(() => setN((x) => x + 1), []);
@@ -106,13 +108,10 @@ export function AgentFeedback({ hub }: { hub: Hub }) {
 
   return (
     <div className="panel" data-testid="feedback-review">
-      <Title level={2}>
-        Feedback
-        <InfoHelp text="Ratings people gave this agent's answers: thumbs in the web chat, a rating they asked the agent to save, Slack buttons and WhatsApp reactions. The same list as hubzoid chat feedback list." />
-      </Title>
+      {!underTabs && <Title level={2}>Feedback</Title>}
       <Paragraph type="secondary">
-        A rating is a person's view of one answer. It does not change the agent. You see a comment and the answer only
-        where you could open that conversation or Intake item yourself.
+        Ratings people gave this agent's answers. They don't change the agent.
+        <InfoHelp text="Thumbs in the web chat, a rating someone asked the agent to save, Slack buttons and WhatsApp reactions. You see a comment and its answer only where you could open that conversation yourself. The same list is in hubzoid chat feedback list." />
       </Paragraph>
       <Space style={{ marginBottom: 12 }} wrap>
         <Segmented
@@ -176,7 +175,7 @@ export function AgentFeedback({ hub }: { hub: Hub }) {
             <Table<Item>
               rowKey="id"
               dataSource={items}
-              pagination={false}
+              pagination={PAGED}
               loading={loading}
               scroll={{ x: true }}
               size="middle"

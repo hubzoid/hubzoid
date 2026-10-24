@@ -15,6 +15,8 @@ STAGE_PREFIX = "hz_stage:"
 
 
 def queue_name(hub: str) -> str:
+    """The work-item queue of the hub whose folder is named ``hub``, exactly as
+    written: the engine registers it under that name."""
     from ..workflows.runtime import _app_name
 
     return _app_name(hub) + "-wi"

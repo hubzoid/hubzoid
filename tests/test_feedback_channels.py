@@ -454,3 +454,28 @@ def test_whatsapp_collection_off_removal_works_and_ratings_are_not_intake(hub_di
     # A reaction to anything else is still an ordinary message.
     deliver(conn, hub_dir, reaction("wamid.c7", "wamid.not-ours", "👍", ts=50))
     assert wa_count(hub_dir) == intake + 1 and len(meta.sent) == 1
+
+
+def test_a_hyphenated_channel_can_be_granted_in_settings(slack_hub):
+    """Found in the HUB-140 E2E: "slack-main" never reached the capability list
+    (the permission id check refused the hyphen), so Settings answered
+    "Unknown permission for this hub" when an administrator granted it."""
+    from hubzoid import capabilities
+
+    rows = {r["permission"]: r for r in capabilities.catalog(slack_hub)}
+    assert rows["channel_slack-main"]["label"] == "Start work from slack-main (slack)"
+
+
+def test_doctor_says_when_nobody_may_start_work_from_a_channel(slack_hub):
+    """Session B, HUB-140: nobody held channel_<id>, so the owner's own
+    request was refused, and the doctor didn't say so."""
+    from hubzoid.access import store_for
+    from hubzoid.channels import doctor
+    from tests.chat_helpers import PEOPLE
+
+    checks = {c["id"]: c for c in doctor.run(config.active(slack_hub, "slack-main"))["checks"]}
+    assert checks["grants"]["status"] == "ok" and f"{len(PEOPLE)} hold it" in checks["grants"]["message"]
+    for person in PEOPLE.values():
+        store_for(slack_hub).revoke(person.email, slack_hub.name, "channel_slack-main", actor="test")
+    checks = {c["id"]: c for c in doctor.run(config.active(slack_hub, "slack-main"))["checks"]}
+    assert checks["grants"]["status"] == "warn" and checks["grants"]["code"] == "nobody_granted"

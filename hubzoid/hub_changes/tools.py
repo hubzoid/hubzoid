@@ -189,13 +189,28 @@ def gate(ft: FunctionTool, hub_dir, access, permission: str) -> FunctionTool:
     cur = access.guard_tool(ft, permission, hub_dir)
     mgr = access.guard_tool(ft, service.REVIEW_PERMISSION, hub_dir)
 
+    writes = ft.name in ("propose_hub_change", "remember")
+
     def enabled(*args, **kwargs) -> bool:
+        if writes:
+            from .. import editing
+
+            if not editing.allowed(hub_dir):
+                # In-app editing is off (the default): the agent doesn't offer
+                # to change shared files; the builder changes them (HUB-140 D9).
+                return False
         return bool(cur.is_enabled(*args, **kwargs) or mgr.is_enabled(*args, **kwargs))
 
     enabled.hubzoid_permission = permission
-    enabled.hubzoid_key = ("curator-or-manager", str(Path(hub_dir)))
+    # Reads and writes are visible on different terms: never share a cache entry.
+    enabled.hubzoid_key = ("curator-or-manager", str(Path(hub_dir)), bool(writes))
 
     async def invoke(ctx, input_str):
+        if writes:
+            from .. import editing
+
+            if not editing.allowed(hub_dir):
+                return json.dumps({"error": editing.message(hub_dir, "the agent's shared files")})
         return await (mgr if mgr.is_enabled() else cur).on_invoke_tool(ctx, input_str)
 
     # copy_tool keeps the guards' marks, such as an eval's fakes sitting inside them.

@@ -150,7 +150,7 @@ async def test_real_codex_has_only_hub_tools(tmp_path, monkeypatch, code_mode):
             requests.append(request)
             if len(requests) == 1:
                 item = ({"id": "fc1", "type": "custom_tool_call", "name": "exec", "call_id": "call1",
-                         "input": 'text({process:typeof process,require:typeof require,fetch:typeof fetch}); try { await import("node:fs"); } catch(e) { text("import blocked"); } if (ALL_TOOLS.length !== 1 || ALL_TOOLS[0].name !== "sample") throw new Error("unexpected tool exposure"); text(await tools.sample({}));'}
+                         "input": 'text({process:typeof process,require:typeof require,fetch:typeof fetch}); try { await import("node:fs"); } catch(e) { text("import blocked"); } const own = ALL_TOOLS.map(t => t.name).filter(n => !["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"].includes(n)); if (own.length !== 1 || own[0] !== "sample") throw new Error("unexpected tool exposure"); if (ALL_TOOLS.length > 1) { text("resources:" + JSON.stringify(await tools.list_mcp_resources({}))); text("templates:" + JSON.stringify(await tools.list_mcp_resource_templates({}))); } text(await tools.sample({}));'}
                         if code_mode else {"id": "fc1", "type": "function_call", "name": "sample", "call_id": "call1", "arguments": "{}"})
             else:
                 item = {"id": "msg1", "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done", "annotations": []}], "status": "completed"}
@@ -200,6 +200,14 @@ async def test_real_codex_has_only_hub_tools(tmp_path, monkeypatch, code_mode):
             output = json.dumps(requests[1]["input"])
             assert "import blocked" in output
             assert output.count("undefined") >= 3
+            # Codex 0.163 also offers MCP-resource helpers in code mode. Its
+            # isolated config has no MCP servers (the hub's own reach Codex as
+            # Hubzoid-guarded tools), so they have nothing to list or read.
+            texts = [part.get("text", "") for part in requests[1]["input"][-1].get("output", [])]
+            for label, key in (("resources:", "resources"), ("templates:", "resourceTemplates")):
+                for text_ in texts:
+                    if text_.startswith(label):
+                        assert json.loads(json.loads(text_[len(label):]))[key] == [], text_
         else:
             assert {t.get("name") for t in requests[0]["tools"]} == {"sample"}, requests[0]["tools"]
             assert requests[0]["tools"][0]["parameters"] == {k: v for k, v in sample.params_json_schema.items() if k != "title"}
@@ -232,7 +240,8 @@ async def test_cancellation_terminates_child_and_removes_credentials(tmp_path, m
     auth = tmp_path / "auth.json"
     auth.write_text('{}')
     monkeypatch.setattr(factory_codex, "_auth_file", lambda: auth)
-    monkeypatch.setattr(factory_codex, "codex_binary", lambda: "unused")
+    # The runtime asks _codex() for the binary and its reviewed version (Codex review of 2.0.2).
+    monkeypatch.setattr(factory_codex, "_codex", lambda: ("unused", factory_codex._newest_reviewed()))
     started = asyncio.Event()
     class Child:
         returncode = None

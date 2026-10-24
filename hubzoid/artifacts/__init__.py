@@ -22,7 +22,7 @@ Who may open an artifact is decided here, in `role`, and nowhere else:
                 link    anyone holding an unexpired, unrevoked public link
   * nobody else. Organization admins and workflow managers get nothing extra.
 
-`people` and `hub` follow the agent's current access in the Console. A public
+`people` and `hub` follow the agent's current access in Settings. A public
 link needs the owner to hold `share_public_links` in the hub,
 when it is created and every time it is opened. Link tokens are 256-bit random
 values stored only as a SHA-256 hash. A workflow or model can never create one.
@@ -401,7 +401,7 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
             raise ArtifactError(409, why)
         if not _store(hub_dir).can(owner, hub, SHARE_DOMAIN.permission):
             raise ArtifactError(403, f"{owner} can't share reports with {domains.label()}. An admin "
-                                     f"can allow it in the Console (\u201c{SHARE_DOMAIN.label}\u201d).")
+                                     f"can allow it in Settings (\u201c{SHARE_DOMAIN.label}\u201d).")
     if digest is not None and (not isinstance(digest, str) or not 1 <= len(digest) <= 128):
         raise ArtifactError(400, "digest must be a short string, such as a hash of the data.")
     found = series_lib.claim(hub_dir, hub=hub, workflow=workflow, scope=scope, owner=owner,
@@ -846,6 +846,16 @@ def preview(hub_dir, art: Artifact) -> dict | None:
         return {"kind": "csv", "rows": rows, "truncated": i >= PREVIEW_ROWS if rows else False}
     if art.kind == "text":
         raw = content_path(hub_dir, art).read_bytes()
-        return {"kind": "text", "text": raw[:PREVIEW_TEXT_BYTES].decode("utf-8", errors="replace"),
-                "truncated": len(raw) > PREVIEW_TEXT_BYTES}
+        text = raw[:PREVIEW_TEXT_BYTES].decode("utf-8", errors="replace")
+        if art.filename.lower().endswith((".md", ".markdown")):
+            # A plan or report written in Markdown reads as a document, not its
+            # source (HUB-140, session B). Only safe structure survives.
+            import markdown
+
+            from ..email_delivery import _safe_html
+
+            body = markdown.markdown(text, extensions=["tables", "fenced_code", "sane_lists"])
+            return {"kind": "markdown", "html": _safe_html(body), "text": text,
+                    "truncated": len(raw) > PREVIEW_TEXT_BYTES}
+        return {"kind": "text", "text": text, "truncated": len(raw) > PREVIEW_TEXT_BYTES}
     return None

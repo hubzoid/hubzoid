@@ -765,3 +765,28 @@ def test_session_writes_need_the_sites_own_origin(hub_dir):
     assert client.get(f"/hubs/desk/work-items/{item['id']}").status_code == 200       # reads need no origin
     via["value"] = "api-key"                                       # an explicit credential
     assert client.post(url, json={}, headers={"Origin": "https://elsewhere.example"}).status_code == 202
+
+
+def test_a_folder_named_with_capitals_queues_where_the_engine_listens(tmp_path, monkeypatch, fake_engine):
+    """2.0.1 queued under the lowercase name, where no worker listened (HUB-140 F5)."""
+    from hubzoid.work_items import engine as engine_lib
+    from hubzoid.workflows.runtime import _app_name
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("HUBZOID_OPERATIONAL_DB", raising=False)
+    root = tmp_path / "B-Customer-Desk"
+    (root / "workflows" / "desk").mkdir(parents=True)
+    (root / "AGENTS.md").write_text("---\nname: Desk\n---\nA desk.\n")
+    (root / "workflows" / "desk" / "main.py").write_text(WORKFLOW)
+    seen = {}
+
+    def enqueue(options, *args):
+        seen.update(options)
+        return options["workflow_id"]
+
+    fake_engine.enqueue = enqueue
+    item, _ = service.admit(root, workflow="desk", key="k", requester=OWNER)
+    assert item["hub"] == "b-customer-desk"
+    service.start(root, item)
+    assert seen["queue_name"] == _app_name("B-Customer-Desk") + "-wi" == engine_lib.queue_name(root.name)
+    assert seen["queue_name"] != engine_lib.queue_name(item["hub"])

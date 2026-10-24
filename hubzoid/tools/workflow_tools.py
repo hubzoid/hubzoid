@@ -1,6 +1,6 @@
 """Agent tools that list, start, pause, resume and cancel this agent's workflows.
 
-Two capabilities, granted per person in the Console (Hubzoid tools >
+Two capabilities, granted per person in Settings (Hubzoid tools >
 Workflows): `workflows_view` for the read tools and `workflows_manage` for the
 run controls. Nobody has either until someone ticks the box.
 `HUBZOID_WORKFLOW_TOOLS=false` removes the tools from this agent.
@@ -72,7 +72,7 @@ _STATES = {
     "stale": "scheduled, but the scheduler is not running",
     "event": "runs when its webhook fires",
     "definition-disabled": "switched off in its file",
-    "error": "has a problem (the Console's Workflows page shows it)",
+    "error": "has a problem (the agent's Workflows tab in Settings shows it)",
 }
 _STATUS = {
     "SUCCESS": "succeeded",
@@ -148,7 +148,7 @@ def _cap(text: str | None, limit: int) -> str:
 def _workflow_line(row: dict) -> str:
     if row["name"] == "md:?":
         return ("- A file under schedule/ can't be read, so that task doesn't run. A builder "
-                "can see why in the Console or with `hubzoid schedule list`.")
+                "can see why in Settings or with `hubzoid schedule list`.")
     kind = "scheduled task" if row.get("kind") == "markdown" else "code workflow"
     state = _STATES.get(row.get("state"), str(row.get("state") or ""))
     parts = [f"- {row['name']} ({kind}): {_schedule(row)}.",
@@ -164,7 +164,7 @@ def _workflow_line(row: dict) -> str:
         parts.append("In chat: people can run it for themselves"
                      + (" and schedule it." if row.get("schedulable") else "."))
     elif who.get("error"):
-        parts.append("It can't run: no usable account to run as (see the Console).")
+        parts.append("It can't run: no usable account to run as (see Settings).")
     return " ".join(parts)
 
 

@@ -51,10 +51,10 @@ def _hub_checks(hub: Path) -> list[Check]:
         rt = runtime_lib.build(hub)
         out.append(Check("runtime.build", "ok", f"Agent builds: {rt.name!r} via {type(rt).__name__}"))
         if type(rt).__name__ == "CodexRuntime":
-            from .factory_codex import codex_available, SUPPORTED_CODEX_VERSION
+            from .factory_codex import codex_available, REVIEWED_CODEX_VERSIONS
             ready = codex_available()
             out.append(Check("runtime.codex_login", "ok" if ready else "fail",
-                             "Codex CLI login available" if ready else f"Install Codex CLI {SUPPORTED_CODEX_VERSION} and complete file-backed codex login as the service user"))
+                             "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
 
@@ -166,7 +166,7 @@ def _config_checks(hub: Path, *, fetch_secrets: bool) -> tuple[list[Check], dict
 
 
 def _google_merge(deployment_values: dict[str, str]) -> Check | None:
-    """Google sign-in onto a Console-created account needs merge by email."""
+    """Google sign-in onto an account created in Settings needs merge by email."""
     def value(key: str) -> str:
         return (os.environ.get(key) or deployment_values.get(key) or "").strip()
 
@@ -176,7 +176,7 @@ def _google_merge(deployment_values: dict[str, str]) -> Check | None:
         return Check("auth.google_merge", "ok", "Google sign-in merges onto existing accounts by email")
     return Check("auth.google_merge", "warn",
                  "GOOGLE_CLIENT_ID is set without OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true, so people with a "
-                 "Console-created account cannot sign in with Google (see docs/auth.md)")
+                 "account created in Settings cannot sign in with Google (see docs/auth.md)")
 
 
 def _versions() -> Check:
@@ -523,7 +523,7 @@ def _store_checks(hub: Path) -> list[Check]:
 
 
 def _who_may_use(hub: Path, engine) -> Check:
-    """Access is decided only by grants in the Console. An agent nobody may use
+    """Access is decided only by grants in Settings. An agent nobody may use
     (or only its owner) is usually an access setup still to do."""
     from sqlalchemy import text
 
@@ -537,12 +537,12 @@ def _who_may_use(hub: Path, engine) -> Check:
     owner = _meta_text(engine, "initial_owner:" + key)
     if not holders:
         return Check("access.who", "warn", f"Nobody may use {key}. Grant \"Use this agent\" "
-                     "in the Console (Agents, Access), or sign in once as the configured owner.")
+                     "in Settings, on the agent's Access tab, or sign in once as the configured owner.")
     if "*" in holders:
         return Check("access.who", "ok", f"Everyone signed in may use {key}")
     if holders == [owner]:
         return Check("access.who", "info", f"Only the owner ({owner}) may use {key} so far. "
-                     "Add people in the Console (Agents, Access).")
+                     "Add people in Settings, on the agent's Access tab.")
     return Check("access.who", "ok", f"{len(holders)} people may use {key}")
 
 
@@ -578,7 +578,7 @@ def _mcp_access_group() -> Check | None:
         return None
     return Check("mcp.access_group", "warn",
                  "MCP_ACCESS_GROUP is no longer read: who may use an agent over MCP is its "
-                 "\"Use this agent\" grant in the Console. Remove the setting.")
+                 "\"Use this agent\" grant in Settings. Remove the setting.")
 
 
 def _legacy_management_flag() -> Check | None:
@@ -591,7 +591,7 @@ def _legacy_management_flag() -> Check | None:
     return Check("tools.legacy_management_flag", "warn",
                  "HUBZOID_MANAGEMENT_TOOLS=true gives every manager the access tools without a "
                  "grant. It is deprecated: grant \"Manage access from chat\" (access_tools) in "
-                 "the Console to the managers who use them, then remove the setting.")
+                 "Settings to the managers who use them, then remove the setting.")
 
 
 def _eval_checks(hub: Path) -> list[Check]:
@@ -696,7 +696,8 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
                              f"{len(problems)} setting problem(s): " + "; ".join(p.message for p in problems[:5]),
                              [p.public() for p in problems]))
         else:
-            out.append(Check("settings.values", "ok", f"{len(resolved)} declared setting(s) set",
+            filled = sum(1 for r in resolved if r.is_set)
+            out.append(Check("settings.values", "ok", f"{len(resolved)} declared, {filled} set",
                              [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
     for result in probes_lib.run(hub):
         detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \

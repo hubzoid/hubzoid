@@ -104,3 +104,20 @@ def test_a_broken_policy_section_stops_the_start(tmp_path, launched, monkeypatch
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli.app, ["run", "--port", "3840", "--no-open"])
     assert result.exit_code == 2 and "chat:" in result.output and not launched
+
+
+def test_in_app_editing_reaches_every_process_as_its_environment_name(tmp_path):
+    """Beta switch for changing agent files from the browser (HUB-140 D9)."""
+    from hubzoid import deployfile
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "AGENTS.md").write_text("hi")
+    path = tmp_path / "hubzoid.yaml"
+    path.write_text("version: 1\nin_app_editing: true\nhubs:\n  - a\n")
+    values, problems = deployfile.environment(deployfile.load(path), env={})
+    assert values["HUBZOID_IN_APP_EDITING"] == "true" and not problems
+    path.write_text("version: 1\nin_app_editing: yes please\nhubs:\n  - a\n")
+    import pytest
+
+    with pytest.raises(deployfile.DeployFileError, match="in_app_editing is true or false"):
+        deployfile.load(path)

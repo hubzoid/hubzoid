@@ -221,8 +221,13 @@ def build_app() -> FastAPI:
             await rt.aclose()
             await browser_mgr.stop()
 
-    app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
+    from . import __version__
+
+    app = FastAPI(title="Hubzoid API", version=__version__, lifespan=_lifespan)
     app.state.runtime = rt
+    from . import openapi_doc
+
+    openapi_doc.install(app)   # only the public API, on every schema address
 
     # In-bridge OTLP normalize intercept (opt-in, claude-local only). When on,
     # the `claude` subprocess exports OTel to this loopback route instead of
@@ -392,7 +397,8 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir),
+                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir,
+                        plain=key_user is not None),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -409,6 +415,11 @@ def build_app() -> FastAPI:
         if request.headers.get("x-hubzoid-task", "").strip():
             raw_usage = {**raw_usage, "kind": "background"}
         await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
+        if key_user is not None:
+            # An API client gets the answer, not the chat app's tool markup.
+            from .tool_events import answer_text
+
+            text = answer_text(text)
         return JSONResponse(_blocking_envelope(text, model_label, _usage_envelope(raw_usage)))
 
     # ------------------------------------------------------------------
@@ -555,11 +566,25 @@ class _InFlight:
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
                   inflight: _InFlight | None = None,
-                  identity=None, hub_dir: Path | None = None) -> AsyncIterator[bytes]:
+                  identity=None, hub_dir: Path | None = None, *, plain: bool = False) -> AsyncIterator[bytes]:
+    """The OpenAI-compatible stream. Every chunk of one answer carries the same
+    id and created time. ``plain`` (an API client): the answer without the
+    chat app's tool and thinking markup."""
     if inflight:
         inflight.enter()
     started = time.monotonic()
     shown = None  # the status line on screen ("Working on it…", "Running X…"), or None
+    envelope = {"id": f"chatcmpl-{uuid.uuid4().hex[:24]}", "created": int(time.time())}
+    from .tool_events import AnswerText
+
+    answer = AnswerText() if plain else None
+
+    def _chunk(content_delta, *, finish_reason=None, model):
+        return {**_chunk_body(content_delta, finish_reason=finish_reason, model=model), **envelope}
+
+    def _status_event(model, description):
+        return _status_event_body(model, description, envelope)
+
     try:
         # Role chunk first (OpenAI convention).
         first = _chunk("", model=model)
@@ -585,11 +610,17 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
                         shown = delta.description
                         yield _status_event(model, shown)
                     continue
+                if delta and answer is not None:
+                    delta = answer.feed(delta)
                 if delta:
                     if shown in (_WAITING, THINKING):  # the answer has started
                         shown = None
                         yield _status_event(model, None)
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
+            if answer is not None:
+                rest = answer.flush()
+                if rest:
+                    yield f"data: {json.dumps(_chunk(rest, model=model))}\n\n".encode()
             # Drain usage while still inside chat_scope (the runtime set it
             # there); build the OpenAI usage envelope for the final chunk.
             raw_usage = _request_ctx.drain_usage()
@@ -603,9 +634,8 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
         # empty choices + top-level usage, for clients that show token counts.
         usage_chunk = {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+            **envelope,
             "object": "chat.completion.chunk",
-            "created": int(time.time()),
             "model": model,
             "choices": [],
             "usage": usage,
@@ -635,11 +665,15 @@ def _waiting_status(model: str, *, done: bool) -> bytes:
 def _status_event(model: str, description: str | None) -> bytes:
     """The chat app's status line: `description` while work runs, hidden when
     None (the line disappears; the chat app keeps the history as metadata)."""
+    return _status_event_body(model, description, None)
+
+
+def _status_event_body(model: str, description: str | None, envelope: dict | None) -> bytes:
     data = {"description": description or _WAITING, "done": description is None}
     if description is None:
         data["hidden"] = True
     chunk = {"object": "chat.completion.chunk", "created": int(time.time()), "model": model,
-             "choices": [], "event": {"type": "status", "data": data}}
+             "choices": [], "event": {"type": "status", "data": data}, **(envelope or {})}
     return f"data: {json.dumps(chunk)}\n\n".encode()
 
 
@@ -754,7 +788,7 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None):
             detail=(
                 f"You do not have access to the '{hub_dir.name}' hub. "
                 f"Signed in as {verified}. "
-                + ("Open Console → Agents → Access to review your chat permission."
+                + ("Ask an administrator to give you this agent."
                    if gs.can(verified, hub_dir.name, "manage_access") else
                    "Ask your hub administrator for chat access, then start a new chat.")
             ),
@@ -1104,6 +1138,10 @@ def _flatten_messages(messages: list[dict[str, Any]]) -> str:
 
 
 def _chunk(content_delta: str | None, *, finish_reason: str | None = None, model: str) -> dict[str, Any]:
+    return _chunk_body(content_delta, finish_reason=finish_reason, model=model)
+
+
+def _chunk_body(content_delta: str | None, *, finish_reason: str | None = None, model: str) -> dict[str, Any]:
     delta: dict[str, Any] = {}
     if content_delta is not None:
         delta["content"] = content_delta

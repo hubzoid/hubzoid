@@ -846,6 +846,11 @@ def test_doctor_says_when_workflows_cannot_run(hub_dir, box, monkeypatch):
     assert checks["workflows"]["code"] == "workflows_off"
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
     assert "workflows" not in {c["id"] for c in doctor.run(config.active(hub_dir, "orders-email"))["checks"]}
+    # The hub's own .env counts, not only this shell's (session B, HUB-140).
+    monkeypatch.delenv("HUBZOID_SCHEDULES")
+    env_file = hub_dir / ".env"
+    env_file.write_text((env_file.read_text() if env_file.exists() else "") + "\nHUBZOID_SCHEDULES=1\n")
+    assert "workflows" not in {c["id"] for c in doctor.run(config.active(hub_dir, "orders-email"))["checks"]}
 
 
 def test_unattended_work_in_approve_mode_stops_instead_of_waiting(hub_dir, box, started):

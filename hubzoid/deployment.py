@@ -26,7 +26,7 @@ def read(hub_dir: Path, env=None, *, require_hub: bool = True) -> dict:
     manifest = env.get("HUBZOID_DEPLOYMENT")
     pointer = datadir.state(hub_dir) / "deployment.json"
     if not manifest and pointer.exists():
-        manifest = json.loads(pointer.read_text())["manifest"]
+        manifest = _pointed(pointer)
     if not manifest:
         return {}
     data = json.loads(Path(manifest).read_text())
@@ -49,10 +49,19 @@ def manifest_path(hub_dir: Path, env=None) -> Path | None:
     pointer = datadir.state(hub_dir) / "deployment.json"
     if not manifest and pointer.exists():
         try:
-            manifest = json.loads(pointer.read_text()).get("manifest")
+            manifest = _pointed(pointer)
         except (OSError, ValueError):
             manifest = None
     return Path(manifest) if manifest else None
+
+
+def _pointed(pointer: Path) -> str | None:
+    """The manifest a hub's pointer names. In the deployment's own data folder
+    the file is the manifest itself (it has ``hubs``, not ``manifest``)."""
+    data = json.loads(pointer.read_text())
+    if "manifest" in data:
+        return data["manifest"]
+    return str(pointer) if "hubs" in data else None
 
 
 def _write(path: Path, data: dict) -> None:

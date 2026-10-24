@@ -293,7 +293,7 @@ def test_who_has_access_reports_everyone_and_caps_rows(dep, monkeypatch):
     assert lines[0] == f"finance: {total} people and services have access."
     assert lines[1] == "Everyone signed in can use this agent; 1 of them has no access of their own here."
     assert sum(line.startswith("- ") for line in lines) == 50
-    assert lines[-1] == f"... and {total - 50} more, see the Console."
+    assert lines[-1] == f"... and {total - 50} more, see Settings."
     assert "- gone@x.org: Use this agent (use_hub) [awaiting sign-up, account unavailable]" in lines
 
 

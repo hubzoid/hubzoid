@@ -43,8 +43,8 @@ Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
 * The caller needs `use_hub` to connect, plus the named grant for each
-  restricted capability. The built-in `remember` tool requires `curator`,
-  shown in Settings as **Save shared knowledge**.
+  restricted capability. Saving shared knowledge (`remember`) is a chat
+  tool and is not offered over MCP.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.

@@ -264,10 +264,10 @@ def _validated(hub_dir, hub: str, actor: str, workflow: str, values, cadence: st
     from . import access as wf_access
 
     if not wf_access.authorize(hub_dir, actor, workflow, "run").allowed:
-        raise ScheduleError(f"You can't run {wf.title} yet. An admin can give it to you in the Console.")
+        raise ScheduleError(f"You can't run {wf.title} yet. An admin can give it to you in Settings.")
     if not wf_access.authorize(hub_dir, actor, workflow, "schedule").allowed:
         raise ScheduleError("You can run this report but not schedule it. An admin can allow "
-                            "scheduling in the Console.")
+                            "scheduling in Settings.")
     try:
         data = inputs_lib.dump(inputs_lib.validate(wf.inputs, values or None)) or {}
     except inputs_lib.InputError as exc:

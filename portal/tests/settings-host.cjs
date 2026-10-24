@@ -23,9 +23,11 @@ async function settingsHost({ as } = {}) {
     app,
     // Answer a chat-app request from the app fixture; false when it is not one.
     async forward(route, url) {
-      if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/branding/")) return false;
+      // An agent's own address (/b/<agent>/api/...) is the same app here.
+      const pathname = url.pathname.replace(/^\/b\/[^/]+(?=\/api\/)/, "");
+      if (!pathname.startsWith("/api/") && !pathname.startsWith("/branding/")) return false;
       const headers = { ...route.request().headers(), ...(cookie ? { cookie } : {}) };
-      const response = await route.fetch({ url: base + url.pathname + url.search, headers });
+      const response = await route.fetch({ url: base + pathname + url.search, headers });
       await route.fulfill({ response });
       return true;
     },

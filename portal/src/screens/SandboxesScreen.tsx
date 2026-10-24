@@ -1,4 +1,6 @@
 import { useCallback, useState } from "react";
+import { InfoHelp, PAGED } from "../components/common";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert, App, Button, Card, Descriptions, Drawer, Empty, Input, Modal, Segmented, Select, Space, Spin, Table, Tag,
   Typography,
@@ -55,6 +57,7 @@ const errorMessage = (e: unknown) => {
 /** Sandboxes of a hub: health, the workspaces agents are using, and cleanup.
  *  Shows metadata only, never a sandbox's files or command output. */
 export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
+  const underTabs = useUnderTabs();
   const { message } = App.useApp();
   const [hub, setHub] = useState<string | undefined>(hubs[0]?.key);
   const [state, setState] = useState("");
@@ -97,11 +100,10 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
   if (!hubs.length) return <Empty description="You have no agents yet." />;
   return (
     <div>
-      <Title level={2} style={{ marginTop: 0 }}>Sandboxes</Title>
+      {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Sandboxes</Title>}
       <Paragraph type="secondary">
-        Isolated workspaces where agents run commands and edit files. Each belongs to one agent call, runs offline
-        after its reviewed setup, and is removed when the work is done. Your hub's files and outputs are never
-        touched by cleanup. The same controls are in <Text code>hubzoid sandbox</Text> and the API.
+        Isolated workspaces where the agent runs commands, removed when the work is done.
+        <InfoHelp text="Each belongs to one agent call and runs offline after its reviewed setup. Your hub's files and outputs are never touched by cleanup. The same controls are in hubzoid sandbox." />
       </Paragraph>
       <Space wrap style={{ marginBottom: 16 }}>
         {hubs.length > 1 && (
@@ -156,7 +158,7 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
         <Empty description={state ? "No sandboxes in this state." : "No sandboxes yet. One starts when an agent with a sandbox runs."} />
       ) : (
         <Table<Sandbox>
-          rowKey="id" size="middle" pagination={false} dataSource={list.data?.sandboxes}
+          rowKey="id" size="middle" pagination={PAGED} dataSource={list.data?.sandboxes}
           onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
           columns={[
             { title: "Owner", render: (_, r) => (<>

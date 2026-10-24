@@ -1,9 +1,10 @@
 // Inbox: one place for everything that needs this person or happened for them,
 // like a notifications page. "Needs you" holds approvals and questions they can
 // answer right here; "Updates" holds replies that finished elsewhere and
-// requests waiting on someone else; "Done" holds what was decided. Each hub
-// keeps its own requests, so the page asks every agent's hub and merges them.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+// requests waiting on someone else; "My work" holds the longer jobs this person
+// asked for; "Decided" holds what was answered. Each hub keeps its own
+// requests, so the page asks every agent's hub and merges them.
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowUpRight, Check, CircleHelp, CirclePause, MailOpen, MessageSquare, ShieldCheck } from "lucide-react";
 import { get, hubUrl } from "../lib/api";
 import { useApp } from "../lib/app-context";
@@ -14,11 +15,12 @@ import { t } from "../i18n/en";
 import { FilesContext } from "../chat/parts";
 import { RequestCard, type HitlRequest } from "../chat/RequestCard";
 import { Select } from "../components/Select";
-import { Button, cx } from "../components/ui";
+import { Button, Notice as Callout, cx } from "../components/ui";
+import { lazyChunk } from "../../lib/lazyChunk";
 import { PageFrame } from "./PageFrame";
 
 type Row = HitlRequest & { conversation_id?: string | null; created_at?: string; apiBase: string };
-type Tab = "needs" | "updates" | "done";
+type Tab = "needs" | "updates" | "work" | "done";
 
 /** The distinct hub addresses of the agents this person can use. */
 function useBases(): string[] {
@@ -29,15 +31,28 @@ function useBases(): string[] {
   return [...bases];
 }
 
+const ConsoleEmbed = lazyChunk(() => import("../../ConsoleEmbed"));
+
 export async function loadPending(bases: string[], status = "pending"): Promise<Row[]> {
+  return (await loadChecked(bases, status)).rows;
+}
+
+/** The requests of every agent, and the agents that could not be checked: a
+ *  failed check is never shown as "nothing waiting" (HUB-140 F40). */
+async function loadChecked(bases: string[], status = "pending"): Promise<{ rows: Row[]; failed: string[] }> {
+  const failed: string[] = [];
   const lists = await Promise.all(
     bases.map((base) =>
       get<{ items: HitlRequest[] }>(hubUrl(base, `/api/requests?status=${status}`))
         .then((r) => (r?.items ?? []).map((i) => ({ ...i, apiBase: base }) as Row))
-        .catch(() => [] as Row[]),
+        .catch(() => {
+          failed.push(base);
+          return [] as Row[];
+        }),
     ),
   );
-  return lists.flat().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const rows = lists.flat().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return { rows, failed };
 }
 
 /** How many requests wait for this person's answer (for the sidebar). */
@@ -86,13 +101,24 @@ export default function RequestsPage() {
   const key = bases.join("|");
   const notices = useNotices();
   const [pending, setPending] = useState<Row[] | null>(null);
+  const [failed, setFailed] = useState<string[]>([]);
   const [decided, setDecided] = useState<Row[] | null>(null);
-  const [tab, setTab] = useState<Tab>("needs");
+  // ?tab=work (and ?hub=&item=) opens My work, as old Settings links do.
+  const asked = new URLSearchParams(location.search);
+  const [tab, setTab] = useState<Tab>(asked.get("tab") === "work" ? "work" : "needs");
+  useEffect(() => {
+    const hub = asked.get("hub"), item = asked.get("item");
+    if (hub && item) history.replaceState(null, "", `${location.pathname}${location.search}#/me/work/${hub}/${item}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [agent, setAgent] = useState("");
   const [open, setOpen] = useState<string | null>(null);
 
   const reload = useCallback(() => {
-    void loadPending(bases).then(setPending);
+    void loadChecked(bases).then((r) => {
+      setPending(r.rows);
+      setFailed(r.failed);
+    });
     void loadPending(bases, "all").then((rows) => setDecided(rows.filter((r) => r.status !== "pending")));
     window.dispatchEvent(new Event("hz:inbox-changed"));
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -112,8 +138,8 @@ export default function RequestsPage() {
   const unread = updates.filter((n) => n.state === "unread").length;
 
   // Until a tab is chosen, land on the first one with something in it.
-  const counts = { needs: needs.length, updates: unread, done: 0 };
-  const [chose, setChose] = useState(false);
+  const counts: Record<Tab, number> = { needs: needs.length, updates: unread, work: 0, done: 0 };
+  const [chose, setChose] = useState(asked.get("tab") === "work");
   const shown: Tab = chose || pending === null ? tab : needs.length === 0 && unread > 0 ? "updates" : tab;
 
   const agentOptions = useMemo(
@@ -140,7 +166,8 @@ export default function RequestsPage() {
             {([
               ["needs", "Needs you"],
               ["updates", "Updates"],
-              ["done", "Done"],
+              ["work", "My work"],
+              ["done", "Decided"],
             ] as const).map(([id, label]) => (
               <button
                 key={id}
@@ -161,10 +188,20 @@ export default function RequestsPage() {
           )}
         </div>
 
-        {pending === null ? (
+        {shown === "needs" && failed.length > 0 && (
+          <Callout tone="warning" className="mb-3">
+            Couldn't check {failed.map((b) => agentOf(b)?.name ?? "an agent").join(", ")}.{" "}
+            <button type="button" className="hz-link-btn" onClick={reload}>Retry</button>
+          </Callout>
+        )}
+        {shown === "work" ? (
+          <Suspense fallback={<p className="hz-inbox-empty">{t.requests.loading}</p>}>
+            <ConsoleEmbed personal="work" />
+          </Suspense>
+        ) : pending === null ? (
           <p className="hz-inbox-empty">{t.requests.loading}</p>
         ) : shown === "needs" ? (
-          needs.length === 0 ? (
+          needs.length === 0 && failed.length > 0 ? null : needs.length === 0 ? (
             <Empty icon={<Check size={18} aria-hidden />} title="You're all caught up" text="Approvals and questions from your agents appear here." testId="requests-empty" />
           ) : (
             <ul className="hz-inbox-list">

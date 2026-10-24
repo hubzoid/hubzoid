@@ -183,7 +183,7 @@ def start(hub_dir, item: dict) -> dict:
             if item["execution"] != 1 or item["workflow_id"] != wid:
                 return item
     with engine_lib.live(hub_dir) as eng:
-        options = {"workflow_name": item["workflow"], "queue_name": engine_lib.queue_name(item["hub"]),
+        options = {"workflow_name": item["workflow"], "queue_name": engine_lib.queue_name(Path(hub_dir).name),
                    "queue_partition_key": item["id"], "workflow_id": wid}
         envelope = {"trigger": "work_item", "scope": "team", "work_item": item["id"],
                     "started_by": item.get("requester") or None}
@@ -444,14 +444,17 @@ def _continue(hub_dir, item: dict, start_step: int | None, *, new_version: bool 
                                  execution=nxt, workflow_id=wid, reason=None, error=None,
                                  resume_step=start_step,
                                  app_version=version if new_version else item.get("app_version"))
-        _create_execution(eng, previous, start_step, wid, item, version)
+        _create_execution(eng, previous, start_step, wid, item, version, Path(hub_dir).name)
     return store.require_item(hub_dir, item["id"])
 
 
-def _create_execution(eng, previous: str, start_step: int, wid: str, item: dict, version: str | None) -> None:
+def _create_execution(eng, previous: str, start_step: int, wid: str, item: dict, version: str | None,
+                      hub_name: str) -> None:
     if eng.status(wid) is not None:
         return                                  # created before a crash: adopt it
-    kw = {"queue_name": engine_lib.queue_name(item["hub"]), "queue_partition_key": item["id"]}
+    # The engine's queue is named after the hub folder as written; item["hub"]
+    # is the lowercase access key (HUB-140 F5).
+    kw = {"queue_name": engine_lib.queue_name(hub_name), "queue_partition_key": item["id"]}
     if version:
         kw["application_version"] = version
     eng.fork(previous, start_step, wid, **kw)
@@ -472,7 +475,8 @@ def reconcile_stranded(hub_dir) -> int:
                 start(hub_dir, item)
             else:
                 _create_execution(eng, engine_lib.execution_id(item["id"], item["execution"] - 1),
-                                  item.get("resume_step"), item["workflow_id"], item, item.get("app_version"))
+                                  item.get("resume_step"), item["workflow_id"], item, item.get("app_version"),
+                                  Path(hub_dir).name)
         count += 1
     return count
 

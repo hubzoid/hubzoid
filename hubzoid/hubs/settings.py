@@ -370,8 +370,8 @@ def resolve(hub_dir: Path, *, values: ValuesFile | None = None, env: Mapping[str
                 r.problems.append(problem)
             elif decl.required and not r.available:
                 r.problems.append(Problem(decl.name, "secret_unavailable",
-                                          f"{decl.name} is required. Set it with hubzoid secrets set "
-                                          f"--name {decl.name}, or point {decl.name}_ref at a secret."))
+                                          f"{decl.name} is required. Set it in the hub's .env (or the "
+                                          f"host's environment), or point {decl.name}_ref at a secret."))
         else:
             raw, source = None, None
             r.stored = vals.get(decl.name)

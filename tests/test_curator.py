@@ -9,6 +9,8 @@ Covers:
 """
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import json
 from dataclasses import dataclass, field
@@ -144,3 +146,10 @@ def test_hub_managers_may_use_remember_without_the_curator_grant(tmp_path):
         assert reg["remember"].is_enabled(None, None) is True
     with identity_scope(Identity.make("nobody", [], surface="owui")):
         assert reg["remember"].is_enabled(None, None) is False
+
+
+@pytest.fixture(autouse=True)
+def _in_app_editing_on(monkeypatch):
+    """These tests change agent files from the browser: Beta, off by default
+    (hubzoid.editing). The switch is on for them."""
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")

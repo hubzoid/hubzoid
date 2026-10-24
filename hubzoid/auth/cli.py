@@ -82,8 +82,34 @@ def _link_base(hub: Path | None = None) -> str:
             recorded = str((deployment.read(hub) or {}).get("public_url") or "")
         except Exception:  # noqa: BLE001 — an unreadable record means no record
             recorded = ""
-    return (appmode.public_url() or recorded.rstrip("/")
+    return (appmode.public_url() or recorded.rstrip("/") or _listener(hub)
             or f"http://127.0.0.1:{os.environ.get('PORT') or 3080}")
+
+
+def _listener(hub: Path | None) -> str:
+    """The address `hubzoid run` last served this hub on (``listener.json``,
+    kept after it stops), or "". Never a bridge address."""
+    import json
+
+    from .. import datadir, deployment
+
+    if hub is None:
+        return ""
+    folders = [datadir.state(hub)]
+    try:
+        manifest = deployment.manifest_path(hub)
+    except Exception:  # noqa: BLE001
+        manifest = None
+    if manifest is not None:
+        folders.insert(0, manifest.parent)
+    for folder in folders:
+        try:
+            url = str(json.loads((folder / "listener.json").read_text()).get("url") or "")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if url.startswith(("http://", "https://")):
+            return url.rstrip("/")
+    return ""
 
 
 def _when(ts: float | None) -> str:
@@ -159,7 +185,7 @@ def create(
     with gs.engine.connect() as conn:
         blocked = gs._meta_get(conn, "suspended:" + email) == "1"  # noqa: SLF001
     if blocked:
-        _fail(f"{email} is blocked. Reactivate them in the Console (People) first.")
+        _fail(f"{email} is blocked. Reactivate them in Settings, People, first.")
     st = users.store(hub)
     if st.find_by_email(email) is not None:
         _fail(f"An account for {email} already exists. Use `hubzoid admin reset-password` or "
@@ -189,7 +215,7 @@ def create(
         _fail(f"The account was created, but it could not be recorded for access: {exc}")
     if replaced:
         console.print("[yellow]This email belonged to an earlier account. Its access was "
-                      "removed; give access again in the Console.[/yellow]")
+                      "removed; give access again in Settings.[/yellow]")
     if role == "admin":
         gs.grant(email, ORG, MANAGE_ACCESS, actor=operator)
     kind = "administrator" if role == "admin" else "user"

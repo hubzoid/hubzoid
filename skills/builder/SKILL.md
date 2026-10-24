@@ -154,12 +154,13 @@ Leave `enabled: false` until the person says to switch it on. Try it once with
 ## 9. Run it, restart it, ask it again
 
 ```bash
-nohup hubzoid run <hub> --port <port> --bridge-port <bridge-port> --no-open > <hub>-run.log 2>&1 &
+nohup hubzoid run <hub> --port <port> --no-open > <hub>-run.log 2>&1 &
 echo $! > <hub>-run.pid
 ```
 
 Wait for `Hubzoid is ready` in the log. Each hub on one machine needs its own
-`--port` and `--bridge-port`. Restart after every change to `.env`, `hitl.yaml`,
+`--port`; the bridge takes a free port from 8000 up unless you pin one with
+`--bridge-port`. Restart after every change to `.env`, `hitl.yaml`,
 `budgets.yaml` or `connectors/`: stop that PID, start again, wait for ready.
 
 Do this before step 11. Once sign-in is on, an administrator needs two-step
@@ -183,7 +184,9 @@ hubzoid auth keys revoke "$(printf '%s' "$J" | python3 -c 'import json,sys; prin
 - **Servers the hub uses:** `connectors/.mcp.json` (`docs/mcp.md`). Put tokens in
   `.env` as `${VAR}` references, set by the person. Restart, then ask a question
   that needs the server and check the tool was called (`hubzoid test --json`).
-- **Remote servers each person signs in to:** with the hub running, as an
+- **Remote servers each person signs in to:** add a file under `connectors/`
+  (`docs/mcp.md`), or, where changing agent files from the browser is on
+  (`in_app_editing: true`, Beta), with the hub running, as an
   administrator, `POST /portal/api/connectors?hub=<hub>` with `name`, `url` and
   `auth_type` (`oauth`, `shared` or `none`). Without `?hub=` it is registered
   but offered nowhere. Each person then connects with

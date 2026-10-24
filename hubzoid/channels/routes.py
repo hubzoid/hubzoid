@@ -209,6 +209,9 @@ def mount(app, hub_dir: Path, **_ctx) -> None:
     @router.put("/channels/{cid}/config")
     async def put_config(hub_id: str, cid: str, request: Request):
         p = await person(request, "channels.manage", mutation=True)
+        from .. import editing
+
+        editing.check(hub_dir, "channels (channels/*.yaml)")
         body = await _json(request)
         expected = _revision(body.get("expected_revision"))
         if expected is None:
@@ -231,6 +234,11 @@ def mount(app, hub_dir: Path, **_ctx) -> None:
     @router.post("/channels/{cid}/enabled")
     async def set_enabled(hub_id: str, cid: str, request: Request):
         p = await person(request, "channels.manage", mutation=True)
+        from .. import editing
+
+        # Pausing or resuming rewrites the channel's file, so it follows the
+        # same switch (`hubzoid channels apply` still works on the server).
+        editing.check(hub_dir, "channels (channels/*.yaml)")
         body = await _json(request)
         expected = _revision(body.get("expected_revision"))
         if not isinstance(body.get("enabled"), bool) or not isinstance(expected, int):

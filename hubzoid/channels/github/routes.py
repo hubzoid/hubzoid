@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 from fastapi import Request
@@ -17,6 +18,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from ...control import authz
 from .. import config
 from ..errors import ChannelError
+
+
+def return_url(public_url: str | None, hub: str, cid: str) -> str:
+    """Where GitHub's App setup sends the browser back: the agent's channel in
+    Settings, at the deployment's address. A hub's own public URL ends in
+    /b/<hub>, where Settings isn't served (it answered Not Found, HUB-140)."""
+    public = re.sub(r"/b/[^/]+$", "", (public_url or "").rstrip("/"))
+    return f"{public}/settings#/agents/{hub}/channels/{cid}?connected=github"
 
 
 def mount(router, hub_dir: Path) -> None:
@@ -53,15 +62,18 @@ def mount(router, hub_dir: Path) -> None:
     def page(title: str, message: str, status: int = 400) -> HTMLResponse:
         import html
 
-        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>{html.escape(title)}</title>"
-                            f"<body style='font:16px system-ui;max-width:640px;margin:48px auto'>"
-                            f"<h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>", status_code=status)
+        from .setup import page as hubzoid_page
+
+        return HTMLResponse(hubzoid_page(title, f"<p>{html.escape(message)}</p>"), status_code=status)
 
     @router.post("/channels/{cid}/github/setup", status_code=201)
     async def setup_start(hub_id: str, cid: str, request: Request):
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         conn = await github_conn(cid)
         return await run(setup.start, conn, owner=str(b.get("owner") or ""), owner_type=str(b.get("type") or ""),
@@ -116,14 +128,17 @@ def mount(router, hub_dir: Path) -> None:
             await asyncio.to_thread(s.installed, conn, installation_id, state)
         except ChannelError as exc:
             return page("GitHub setup", exc.message, exc.status)
-        public = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
-        return RedirectResponse(f"{public}/portal/#/agents/{config.hub_of(hub_dir)}/channels/{cid}", status_code=303)
+        return RedirectResponse(return_url(os.environ.get("HUBZOID_PUBLIC_URL"), config.hub_of(hub_dir), cid),
+                                status_code=303)
 
     @router.post("/channels/{cid}/github/setup/verify")
     async def setup_verify(hub_id: str, cid: str, request: Request):
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.installed, await github_conn(cid), int(b.get("installation_id") or 0), None,
                          actor=p.email)
@@ -133,6 +148,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.import_app, await github_conn(cid), app_id=int(b.get("app_id") or 0),
                          installation_id=int(b.get("installation_id") or 0), owner_id=int(b.get("owner_id") or 0),
@@ -160,6 +178,9 @@ def mount(router, hub_dir: Path) -> None:
         from . import setup
 
         p = await person(request, "channels.manage", mutation=True)
+        from ... import editing
+
+        editing.check(hub_dir, "the GitHub channel (channels/*.yaml)")   # writes the channel file
         b = await body(request)
         return await run(setup.configure, await github_conn(cid), expected_revision=int(b.get("expected_revision") or 0),
                          actor=p.email, repositories_=b.get("repositories"), sets=b.get("set") or {},

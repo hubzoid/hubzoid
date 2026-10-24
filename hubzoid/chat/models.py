@@ -1,9 +1,11 @@
 """Models, presets and side-by-side comparison in the chat (HUB-78, first part).
 
 **Catalog.** The models people may pick come from the ``models`` namespace of
-``chat/config.yaml`` (a label and the runtime's own model id per entry). With
-no catalog configured, the runtime offers what it supports itself: Claude's
-model aliases on the Claude runtime, the agent's own model elsewhere. A turn
+the chat settings (``chat.models.catalog`` in ``hubzoid.yaml``: a label and the
+runtime's own model id per entry). With no catalog configured there is no
+choice: every reply uses the agent's own model, the one its builder tuned it
+on (HUB-140: Claude agents used to offer Sonnet, Opus and Haiku to everyone,
+unasked, at Opus prices). A turn
 names a catalog entry; the server checks it before the runtime sees it, and the
 answer records both the model asked for and the one that answered.
 
@@ -35,8 +37,6 @@ Err = g.GraphError
 REF = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 READ_ONLY_TOOLS = ["current_time", "list_knowledge", "read_knowledge", "read_upload", "read_upload_full",
                    "search_sources", "list_skills", "read_skill"]
-#: What the Claude runtime accepts by name (its own aliases).
-CLAUDE_MODELS = [("sonnet", "Claude Sonnet"), ("opus", "Claude Opus"), ("haiku", "Claude Haiku")]
 
 
 class _Strict(BaseModel):
@@ -136,8 +136,6 @@ class ModelService:
         out = [{"ref": "default", "label": "Agent default", "model": None}]
         if cfg["catalog"]:
             out += [{"ref": k, "label": v["label"], "model": v["model"]} for k, v in cfg["catalog"].items()]
-        elif self.runtime_kind() == "claude":
-            out += [{"ref": m, "label": label, "model": m} for m, label in CLAUDE_MODELS]
         return out
 
     def resolve(self, ref: str | None) -> dict | None:

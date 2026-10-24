@@ -97,7 +97,7 @@ Webhook providers deliver to
 `$HUBZOID_PUBLIC_URL/api/hubs/<hub>/channels/<id>/webhook`. Set
 `HUBZOID_PUBLIC_URL` to the deployment's HTTPS address first.
 
-The Console has the same controls under **Agents → agent → Channels**:
+Settings has the same controls under **Agents → agent → Configuration** (changing them there is Beta and off by default, see [DEPLOYING](DEPLOYING.md#in-app-editing)):
 connections, checks, threads, deliveries, replies and account links.
 
 ## Who may ask
@@ -107,7 +107,7 @@ bytes. That proves where it came from, not who may act. Then:
 
 1. The sender's provider account must be **linked** to a Hubzoid account by an
    administrator (`hubzoid channels link`, or **Account links** in the
-   Console). Names and email addresses in a message never count.
+   Settings). Names and email addresses in a message never count.
 2. That account must be active and have access to the hub.
 3. For an agent connection, it must hold the connection's grant
    (`channel_<id>`, **Start work from &lt;id&gt;** in Settings → Access).
@@ -133,7 +133,7 @@ and finished answers that were not posted yet are posted once.
 
 Every reply is recorded before it is sent. If the network drops while posting,
 the hub cannot know whether the provider received it. That reply is marked
-**Outcome unknown** and is never sent again on its own. In the Console under
+**Outcome unknown** and is never sent again on its own. In Settings under
 **Replies**, or with `hubzoid channels reconcile`:
 
 - **Check thread** looks for the reply's marker. Only a find settles it.
@@ -208,4 +208,4 @@ deduplication, identity, routing, the reply record and recovery. See
 Answering a numbered question or approving a plan from inside a thread waits
 for the shared approvals and plan review services. Until then, a follow-up
 from the person who asked continues the work, and a consequential send waits
-for a person in **Work** in the Console.
+for a person in the agent's **Work** tab in Settings.

@@ -70,7 +70,7 @@ ENGINE = textwrap.dedent('''
     import sys, time
     from pathlib import Path
     from hubzoid.workflows import runtime
-    runtime.init(sys.argv[1], hub_name="desk")
+    runtime.init(sys.argv[1])  # as the server does: the folder name as written
     runtime.load_workflows(sys.argv[1])
     runtime.launch()
     runtime._OWNER.heartbeat(runtime.ready_record())   # what the bridge's dispatcher does
@@ -90,7 +90,9 @@ ENGINE = textwrap.dedent('''
 def desk(tmp_path, monkeypatch):
     for var in ("WEBUI_AUTH", "DATABASE_URL", "HUBZOID_OPERATIONAL_DB"):
         monkeypatch.delenv(var, raising=False)
-    root = tmp_path / "desk"
+    # Capitals in the folder name: 2.0.1 queued such hubs' items where no
+    # worker listened (HUB-140 F5).
+    root = tmp_path / "Desk-Hub"
     (root / "workflows" / "desk").mkdir(parents=True)
     (root / "AGENTS.md").write_text("---\nname: Desk\n---\nA desk.\n")
     (root / "workflows" / "desk" / "main.py").write_text(WORKFLOW)
@@ -170,7 +172,7 @@ def test_crash_after_stage_and_approval_continuation(desk):
         waiting = wait_for(hub, item["id"], ("waiting",))
         assert waiting["reason"] == "approval_required"
         assert lines(log).count("plan") == 1          # the finished stage was not repeated
-        op = store.list_ops(hub, "desk", item_id=item["id"])[0]
+        op = store.list_ops(hub, "desk-hub", item_id=item["id"])[0]
         result = service.approve(hub, op["id"], OWNER, digest=op["args_digest"])
         assert result["work_item"]["execution"] == 2
         done = wait_for(hub, item["id"], ("completed",))
@@ -193,7 +195,7 @@ def test_uncertain_send_waits_for_its_requester(desk):
         item, _ = service.admit_and_start(hub, workflow="desk", key="operator:lost",
                                           input={"name": "Bo", "send": "lose"}, requester=OWNER)
         wait_for(hub, item["id"], ("waiting",))
-        op = store.list_ops(hub, "desk", item_id=item["id"])[0]
+        op = store.list_ops(hub, "desk-hub", item_id=item["id"])[0]
         service.approve(hub, op["id"], OWNER, digest=op["args_digest"])
         blocked = wait_for(hub, item["id"], ("needs_input",))
         assert blocked["reason"] == "operation_ambiguous"

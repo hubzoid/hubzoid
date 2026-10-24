@@ -59,6 +59,36 @@ from .access.store import (
 log = logging.getLogger("hubzoid.portal")
 
 
+
+def _present(hub_dir: Path, hub: str) -> dict[str, bool]:
+    """Which of an agent's optional parts it uses, so Settings shows a tab
+    only when it has something: work items (declared or any recorded),
+    incoming messages (an email or WhatsApp channel, or anything held), and
+    sandboxes (a profile, or any created). Never raises."""
+    out = {"work": False, "intake": False, "sandboxes": False}
+    try:
+        from .work_items import store as wi_store
+
+        out["work"] = (hub_dir / "work-items.yaml").is_file() or bool(wi_store.list_items(hub_dir, hub, limit=1))
+    except Exception:  # noqa: BLE001 - a summary never breaks the list
+        pass
+    try:
+        from .intake import service as intake
+
+        channels = [p for p in (hub_dir / "channels").glob("*.y*ml")] if (hub_dir / "channels").is_dir() else []
+        inbound = any(any(word in p.read_text(errors="ignore") for word in ("provider: email", "whatsapp"))
+                      for p in channels)
+        out["intake"] = inbound or bool(intake.list_items(hub_dir, limit=1).get("items"))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .sandbox import config as sb_config, service as sb_service
+
+        out["sandboxes"] = bool(sb_config.list_profiles(hub_dir)) or bool(sb_service.list_rows(hub_dir, limit=1))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
 def _truthy_env(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -441,6 +471,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     model_id=h["model_id"],
                     can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
                     contents=contents_loader.counts(Path(h["path"])),
+                    has=_present(Path(h["path"]), h["key"]),
                 )
                 for h in allowed_hubs(admin)
             ]

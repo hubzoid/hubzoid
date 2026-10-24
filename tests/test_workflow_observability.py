@@ -241,3 +241,19 @@ def test_structured_results_and_steps_preserve_json_without_revealing_private_da
     step = {'function_name': 'publish_report', 'output': value}
     assert json.loads(observe._step_row(step, True)['output']) == value
     assert observe._step_row(step, False)['output'] is None
+
+
+def test_a_running_engine_with_schedules_off_never_shows_a_next_run(tmp_path, monkeypatch):
+    """HUB-140 F13: a webhook keeps the engine running, but HUBZOID_SCHEDULES is
+    off, so a timetable never fires. It said "Scheduled, next in 23 hours"."""
+    from hubzoid.access import store_for
+
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setattr(observe, 'definitions', lambda _: [dict(
+        name='pr_sweep', schedule='0 7 * * *', timezone='UTC', error=None)])
+    store_for(tmp_path).set_runtime_health(tmp_path.name, enabled=True, schedules=False,
+                                           heartbeat=datetime.now(timezone.utc).isoformat())
+    row = observe.catalog(tmp_path)[0]
+    assert row['state'] == 'schedules_off' and row['next_run'] is None
+    store_for(tmp_path).set_runtime_health(tmp_path.name, schedules=True)
+    assert observe.catalog(tmp_path)[0]['state'] == 'scheduled'

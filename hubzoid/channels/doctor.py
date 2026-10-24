@@ -17,6 +17,36 @@ from .errors import ChannelError
 from .protocol import Check
 
 
+def _hub_env(hub_dir) -> dict:
+    """The settings the hub runs with, not this shell's: its .env, the
+    deployment's .env, then the environment. Under hubzoid run (a
+    hubzoid.yaml deployment) code workflows are on."""
+    from pathlib import Path
+
+    from dotenv import dotenv_values
+
+    from .. import deployfile
+
+    env: dict = {}
+    owner = deployfile.owning(Path(hub_dir))
+    if owner is not None:
+        env.update({k: v for k, v in dotenv_values(owner.parent / ".env").items() if v is not None})
+        env["HUBZOID_GATEWAY"] = "1"
+    env.update({k: v for k, v in dotenv_values(Path(hub_dir) / ".env").items() if v is not None})
+    env.update(os.environ)
+    return env
+
+
+def _holders(conn: Connection, grant: str) -> int | None:
+    """How many people hold this channel's grant (None when unknown)."""
+    try:
+        from ..access import store_for
+
+        return sum(1 for _s, _h, p in store_for(conn.hub_dir).list_grants(conn.hub_dir.name) if p == grant)
+    except Exception:  # noqa: BLE001 - the check says it couldn't tell
+        return None
+
+
 def webhook_url(conn: Connection) -> str | None:
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     if not base:
@@ -74,21 +104,29 @@ def run(conn: Connection, inputs: dict | None = None) -> dict:
             checks.append(Check(f"secret:{name}", "ok", f"{ref} is set."))
         except ChannelError as exc:
             checks.append(Check(f"secret:{name}", "fail", exc.message, exc.code,
-                                f"hubzoid secrets set {conn.hub_dir} --ref {ref} --stdin --apply"))
+                                f"hubzoid secrets set {conn.hub_dir} --ref {ref} --stdin"))
     checks.append(_public_url_check(conn))
     if conn.config.workflow:
         from ..workflows.boot import schedules_enabled
 
-        if not schedules_enabled():
+        if not schedules_enabled(_hub_env(conn.hub_dir)):
             checks.append(Check("workflows", "fail", "Code workflows are off on this deployment, so work from this "
                                 "channel is recorded but never runs.", "workflows_off",
                                 "Set HUBZOID_SCHEDULES=1 in the hub's .env and restart the hub."))
     if conn.config.agent:
         from ..capabilities import channel_permission
 
-        checks.append(Check("grants", "ok", f"Who may start work here is the {channel_permission(conn.id)!r} "
-                            "grant in Settings (with access to the agent).", "",
-                            "Grant it in Settings > Access to the people who may ask."))
+        grant = channel_permission(conn.id)
+        holders = _holders(conn, grant)
+        if holders == 0:
+            checks.append(Check("grants", "warn", f"Nobody holds {grant!r} yet, so every request from this channel "
+                                "is refused, including the owner's.", "nobody_granted",
+                                f"In Settings > Agents > {conn.hub_dir.name} > Access, give the people who may ask "
+                                f"\"Start work from {conn.id}\"."))
+        else:
+            checks.append(Check("grants", "ok", f"Who may start work here is the {grant!r} grant in Settings "
+                                f"(with access to the agent): {holders} hold it.", "",
+                                "Grant it in Settings > Access to the people who may ask."))
     if conn.config.allowed_groups:
         checks.append(Check("groups", "warn", "allowed_groups is no longer read: who may start work is a grant "
                             "in Settings, so nobody gains access from this list.", "groups_ignored",

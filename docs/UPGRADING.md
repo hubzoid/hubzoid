@@ -7,6 +7,7 @@ the 1.x line (`pip install "hubzoid<2"`). The sections for 1.x releases below
 describe those releases as they were.
 
 - [Templates moved out of the package](#templates-moved-out-of-the-package)
+- [Upgrading to 2.0.2](#upgrading-to-202)
 - [One run mode: every hub supervised, every setting in one file](#one-run-mode)
 - [Upgrading to 2.0: Open WebUI removed](#upgrading-to-20-open-webui-removed)
 - [Upgrading to 1.3.2](#upgrading-to-132)
@@ -50,6 +51,44 @@ existing hub for this: it overwrites the starter's files in that folder.
 **Running the repo's `demo-hub/` or Docker Compose without `HUB_PATH`:**
 `demo-hub/` is gone, and `docker/docker-compose.yml` now needs `HUB_PATH` set to
 your hub folder. Its header shows how to make a starter with the image itself.
+
+## Upgrading to 2.0.2
+
+```bash
+pip install -U "hubzoid==2.0.2"
+hubzoid restart <hub> [<hub>…]     # or restart the service
+```
+
+No database or file changes. What behaves differently:
+
+- **Changing agent files from the browser is Beta and off by default.**
+  Proposing and approving hub changes, the agent's `remember` and
+  `propose_hub_change` tools, and saving connectors, channels, settings,
+  approval rules and budgets in Settings now answer that it is off. People can
+  still read everything there; the CLI and your editor work as before. To keep
+  the 2.0.1 behaviour, set `in_app_editing: true` in `hubzoid.yaml` (or
+  `HUBZOID_IN_APP_EDITING=true`) and restart `hubzoid run`. See
+  [DEPLOYING](DEPLOYING.md#in-app-editing).
+- **Settings is reorganised** into Personal and Manage. Old addresses and
+  bookmarks open the new place: Health is under Organization, Runs and the audit
+  log under Activity, My work items in the Inbox.
+- **Work items on a hub whose folder name has capitals** (`Customer-Desk`) were
+  queued where no worker listened in 2.0.1. After the upgrade they run, including
+  ones already waiting.
+- **Codex:** `codex-local` works with Codex CLI 0.163.0 as well as 0.147.0. Other
+  versions are refused with the versions to install. `HUBZOID_CODEX_BIN` names a
+  binary that is not first on `PATH`.
+- **Schedules off on a machine** (`HUBZOID_SCHEDULES`): the start now warns when
+  an agent has scheduled workflows, the missed-run catch-up no longer runs, and
+  Settings says the schedules are off instead of showing a next run.
+- **API reference** (`/docs`, `/openapi.json`) is titled Hubzoid API with the
+  real version and lists only the public API. See [the API guide](api.md).
+- **Model picker:** Claude agents no longer offer Sonnet, Opus and Haiku unless
+  the deployment lists models under `chat.models.catalog`
+  ([chat-config](chat-config.md#models-people-may-pick)). Every reply uses the
+  agent's own model by default.
+- **Embedded chat** (AG-UI) is new. See [embedding](embedding.md).
+- `typer` from 0.26.8, so docling (2.60 and later) installs alongside Hubzoid in the same environment.
 
 ## One run mode
 

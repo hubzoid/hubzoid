@@ -136,3 +136,15 @@ def fresh_postgres_url(postgres_url):
         conn.execute(text(f"CREATE DATABASE {name}"))
     admin.dispose()
     return postgres_url.rsplit("/", 1)[0] + "/" + name
+
+
+@pytest.fixture(autouse=True)
+def _planned_ports_ignore_this_machine(request, monkeypatch):
+    """Port planning skips ports in use on this machine. Unit tests plan the
+    same ports wherever they run; a test about busy ports sets its own probe
+    or is marked ``real_ports``."""
+    if request.node.get_closest_marker("real_ports"):
+        return
+    import hubzoid.gateway as gateway
+
+    monkeypatch.setattr(gateway, "port_free", lambda port, host="127.0.0.1": True)

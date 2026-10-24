@@ -12,6 +12,7 @@ import {
 } from "antd";
 import { ShieldCheck, Sparkle, Workflow, CircleHelp } from "lucide-react";
 import { signedOut, signInHref, type Permission } from "../api";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   accountStatus,
   capabilityLabel,
@@ -46,6 +47,7 @@ export function PageHeader({
   description?: ReactNode;
   extra?: ReactNode;
 }) {
+  if (useUnderTabs()) return extra ? <div className="page-header page-header-bare"><div className="page-header-extra">{extra}</div></div> : null;
   return (
     <div className="page-header">
       <div>
@@ -296,3 +298,7 @@ export function SentenceText({ sentence }: { sentence: Sentence }) {
     </div>
   );
 }
+
+/** Every table pages at 20 rows, and shows page controls only when there is
+ *  more than one page (founder review, HUB-140). */
+export const PAGED = { pageSize: 20, hideOnSinglePage: true, showSizeChanger: false } as const;

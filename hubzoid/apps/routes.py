@@ -108,6 +108,9 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
     @router.put("/hubs/{hub}/apps/config")
     async def apply(hub: str, body: ApplyBody, actor=Depends(writer)):
         hub_dir = hub_for(actor, hub, manage=True)
+        from .. import editing
+
+        editing.check(hub_dir, "card settings (mcp-apps.yaml)")   # writes a file (HUB-140 D9)
 
         return await _call(cards.apply, hub_dir, expected=body.expected_revision, actor=actor.subject,
                            apps_doc=body.config)

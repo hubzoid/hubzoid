@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "2.0.1"
+version = "2.0.2"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -53,7 +53,7 @@ dependencies = [
   "python-dotenv>=1.2,<2",
   "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42 (connected_accounts / auth_configs / link)
   "opentelemetry-proto>=1.44,<2",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
-  "typer>=0.27,<1",
+  "typer>=0.26.8,<1",  # 0.26.8: the newest docling (2.140) allows (HUB-140 F26)
   "jinja2>=3.1.6,<4",
   "slack-bolt>=1.30,<2",
   "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
@@ -160,5 +160,6 @@ markers = [
   "slow: starts DBOS, Postgres, the gateway or another process (seconds per test)",
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
+  "real_ports: port planning sees which ports are busy on this machine (otherwise every port counts as free)",
   "e2e_browser: end-to-end test that spawns the shared playwright-mcp sidecar and drives a real browser (needs Node/npx; pooled-mode cases also need Docker)",
 ]
