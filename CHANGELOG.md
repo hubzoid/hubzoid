@@ -27,8 +27,17 @@ fixed here. 2.0.3 is 2.0.2 plus these changes.
   the reply's end was being saved got the end of the stream without it.
 - A reply whose writer lost its branch lease ends as interrupted, with its
   queue parked, instead of as stopped by a person.
+- `hubzoid eval run` works on Windows. Saving results no longer stops with
+  `PermissionError: [Errno 13]` on `.hubzoid\evals`, and results with text
+  outside the Windows code page (Tamil, Hindi, emoji) are written and read
+  as UTF-8.
+- Stopping or restarting a hub under `hubzoid run` on Windows ends its process
+  tree instead of failing on a POSIX-only signal.
 - Release checks: tests that waited out timeouts or skipped fast tests on pull
   requests, and CLI output that differed between CI and a laptop.
+- Windows CI also installs the built wheel into a fresh environment on Python
+  3.11 and 3.12, runs `hubzoid init` and `hubzoid eval run` without UTF-8 mode,
+  and runs the eval tests. Releases wait for it.
 
 ## [2.0.2]
 

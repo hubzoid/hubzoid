@@ -145,3 +145,17 @@ def test_windows_cleanup_timeout_does_not_skip_other_children(monkeypatch, caplo
     cli._stop_groups([Child(10), Child(11)], timeout=1)
     assert calls == [(10, 1), (11, 0)]
     assert "did not exit after forced shutdown" in caplog.text
+
+
+def test_windows_supervisor_stops_each_tree_without_posix_signals(monkeypatch):
+    from hubzoid import supervisor, _process_tree
+    stopped = []
+    class Child:
+        def __init__(self, pid, running=True): self.pid, self.running = pid, running
+        def poll(self): return None if self.running else 0
+        def wait(self, *, timeout): pass
+    monkeypatch.setattr(supervisor, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(supervisor, "signal", SimpleNamespace(SIGTERM=15))  # no SIGKILL on Windows
+    monkeypatch.setattr(_process_tree, "stop_windows_tree", lambda p: stopped.append(p.pid))
+    supervisor.stop_procs([Child(10), None, Child(11, running=False), Child(12)])
+    assert stopped == [12, 10]

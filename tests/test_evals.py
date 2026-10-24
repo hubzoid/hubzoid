@@ -412,15 +412,16 @@ def _suite(**verdicts) -> SuiteResult:
 
 
 def test_save_and_reload_round_trips(tmp_path, patched_build):
+    # Text outside the Windows code page (cp1252), as a Tamil hub replies.
     hub = _hub(tmp_path, {"a.md": "---\ncontains: [ok]\n---\nhi"})
-    patched_build(FakeRuntime(replies={"hi": "ok"}))
+    patched_build(FakeRuntime(replies={"hi": "ok, நன்றி →"}))
     suite = runner.run_suite(hub, cases.discover(hub))
 
     path = report.save(hub, suite)
     assert path.exists()
     back = report.latest(hub)
     assert back.passed == 1 and back.cases[0].name == "a"
-    assert back.cases[0].response == "ok"
+    assert back.cases[0].response == "ok, நன்றி →"
 
 
 def test_json_is_valid_and_carries_the_schema(tmp_path):
