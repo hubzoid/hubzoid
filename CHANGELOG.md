@@ -5,6 +5,31 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.3]
+
+2.0.2 was tagged but never published: its release checks found the races
+fixed here. 2.0.3 is 2.0.2 plus these changes.
+
+### Changed
+- **Hub templates moved out of the package.** `hubzoid init` writes a small
+  starter (every folder Hubzoid reads, three house rules and one check).
+  Complete agents are hubs in their own repos: Software Factory, Order &
+  Invoice Desk, Customer Desk and GitZoid. `hubzoid init --template <name>`
+  stops with exit code 2, says where that template went, and creates nothing.
+  Hubs already made from a template keep working. `demo-hub/` is gone and
+  `docker/docker-compose.yml` needs `HUB_PATH`. See
+  [templates moved out of the package](docs/UPGRADING.md#templates-moved-out-of-the-package).
+
+### Fixed
+- A turn cut off by a workflow deadline or Stop settles its budget hold. The
+  hold stayed open, counting against the limit, until it expired.
+- A fast reply always ends with its `finish` event. A client that joined while
+  the reply's end was being saved got the end of the stream without it.
+- A reply whose writer lost its branch lease ends as interrupted, with its
+  queue parked, instead of as stopped by a person.
+- Release checks: tests that waited out timeouts or skipped fast tests on pull
+  requests, and CLI output that differed between CI and a laptop.
+
 ## [2.0.2]
 
 Stability and the fixes found testing 2.0.1 end to end with three teams' hubs.
