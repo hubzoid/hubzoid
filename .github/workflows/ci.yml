@@ -67,11 +67,6 @@ jobs:
           npm install -g @openai/codex@0.147.0
           python -c "from hubzoid.factory_codex import codex_binary; codex_binary()"
           pytest -q -ra -m "" tests/test_codex_runtime.py -k real_codex_has_only_hub_tools
-      - name: GitZoid scanner and audit regressions (real scanner, no provider)
-        if: matrix.group == 1
-        run: |
-          command -v gitleaks
-          pytest -q -ra -m "" tests/test_gitzoid_followup.py
       - name: Live web app (sign-in, stream, restart; no model)
         if: matrix.group == 2
         timeout-minutes: 4
@@ -88,7 +83,6 @@ jobs:
         run: >-
           pytest -q -ra --no-header -m "" -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
           --ignore=tests/test_ui_release_smoke.py
-          --ignore=tests/test_gitzoid_followup.py
           --ignore=tests/test_gateway_app_live.py
           --ignore=tests/test_workflow_concurrency.py
           --deselect=tests/test_codex_runtime.py::test_real_codex_has_only_hub_tools
@@ -191,7 +185,10 @@ jobs:
           cache-to: type=gha,scope=release-${{ matrix.arch }},mode=max
       - name: Check the image starts
         run: |
-          cp -r demo-hub /tmp/hub && chmod -R a+rwX /tmp/hub
+          # The hub comes from the candidate image's own `hubzoid init` (the starter).
+          mkdir /tmp/hub && chmod a+rwX /tmp/hub
+          docker run --rm -v /tmp/hub:/hub hubzoid:candidate init /hub --model claude-local
+          test -f /tmp/hub/knowledge/house-rules.md && chmod -R a+rwX /tmp/hub
           printf 'MODEL=openrouter/anthropic/claude-haiku-4.5\nOPENROUTER_API_KEY=not-used\nBRIDGE_API_KEYS=ci-key\n' > /tmp/hub/.env
           # Without sign-in, the container's network bind is refused with instructions.
           set +e; docker run --rm -v /tmp/hub:/hub hubzoid:candidate; refused=$?; set -e

@@ -171,7 +171,109 @@ def _choose_initial_model() -> str | None:
         console.print("Choose one of the listed numbers.")
 
 
-DEFAULT_TEMPLATE = "operations"
+# The ready-to-use hubs `hubzoid init` points to: (name, what it does, clone command).
+READY_HUBS = (
+    ("Software Factory", "turns issues into reviewed draft pull requests",
+     "git clone https://github.com/hubzoid/software-factory-hub software-factory"),
+    ("Order & Invoice Desk", "orders and invoices from your inbox, every line sourced",
+     "git clone https://github.com/hubzoid/order-desk-hub order-desk"),
+    ("Customer Desk", "drafts customer replies from your knowledge, a person approves",
+     "git clone https://github.com/hubzoid/customer-desk-hub customer-desk"),
+    ("GitZoid (sample)", "pull request reviews and answers about your code",
+     "git clone https://github.com/hubzoid/gitzoid-hub gitzoid"),
+)
+
+# Templates bundled up to 2.0.1. `--template NAME` names where each went and
+# creates nothing, so a script that relied on one stops instead of running on
+# the wrong hub.
+RETIRED_TEMPLATES = {
+    "gitzoid": "GitZoid is its own hub now: git clone https://github.com/hubzoid/gitzoid-hub gitzoid",
+    "operations": "The operations sample was retired. `hubzoid init` writes a smaller starter for the same shop.",
+    "minimal": "The minimal template was retired. `hubzoid init` writes every folder with one or no example file.",
+    "demo": "The guided tour was retired. Start with `hubzoid init`, or a ready-to-use hub below.",
+    "watchtower": "The Watchtower sample was retired. `hubzoid new workflow <name> <hub>` scaffolds a workflow.",
+}
+TEMPLATE_ARCHIVE = "https://github.com/hubzoid/hubzoid/tree/v2.0.1/hubzoid/templates"
+
+# The starter `hubzoid init` writes: every folder Hubzoid reads, with sample
+# content only where it teaches the main loop (a rule to edit, a check that the
+# edit worked). Kestrel & Oak is fictional.
+_STARTER_AGENTS = """\
+---
+description: A starter assistant for Kestrel & Oak, a fictional home-goods shop. Make it yours.
+suggestions:
+  - A customer wants a refund 40 days after delivery. What can we offer?
+  - Who has to approve a $650 order?
+  - When is support open?
+---
+
+You are the team assistant for Kestrel & Oak, a fictional home-goods shop
+used as Hubzoid's starter. Answer from the files in `knowledge/` and name the
+file you used. If they do not answer the question, say so instead of
+guessing. Keep answers short.
+"""
+_STARTER_RULES = """\
+# House rules
+
+- **Refunds.** A customer can return an unused item within 30 days of
+  delivery for a full refund. After 30 days we offer store credit or a
+  repair, not a refund.
+- **Large orders.** An order over $500 needs a manager's approval before it
+  ships.
+- **Support hours.** Support answers from 09:00 to 18:00 UTC, Monday to Friday.
+"""
+_STARTER_EVAL = """\
+---
+# One check per file. Run them with: hubzoid eval run <hub>
+# Docs: https://github.com/hubzoid/hubzoid/blob/main/docs/evals.md
+contains: ["house-rules"]
+---
+## Prompt
+A customer wants a refund 40 days after delivery. What can we offer?
+
+## Criteria
+Follows the refund rule in knowledge/house-rules.md for that many days,
+and names house-rules.md as its source.
+"""
+_STARTER_README = """\
+# {name}
+
+A Hubzoid hub. `AGENTS.md` is the assistant's job. Each folder adds one kind
+of thing. Empty folders are ready for your own files.
+
+| Folder | What goes in it |
+|---|---|
+| `knowledge/` | What the assistant knows: your rules, policies, notes. One Markdown file each. |
+| `skills/` | Step-by-step procedures it follows when a task matches. |
+| `agents/` | Specialist agents it can hand work to. |
+| `tools_local/` | Your own Python tools. |
+| `connectors/` | MCP connections to other systems, in `.mcp.json`. |
+| `workflows/` | Repeatable work in Python: `hubzoid new workflow <name> .` |
+| `schedule/` | Tasks that run on a schedule, one Markdown file each. |
+| `evals/` | Checks that answers stay right: `hubzoid eval run .` |
+| `raw_data/` | Files the assistant can search and read. |
+
+Start: `hubzoid run .` and ask "A customer wants a refund 40 days after
+delivery. What can we offer?" Then change 30 days in
+`knowledge/house-rules.md`, restart, and ask again.
+
+Guides: https://github.com/hubzoid/hubzoid/tree/main/docs
+"""
+_STARTER_GITIGNORE = ".env\noutput/\n.hubzoid/\n__pycache__/\n*.pyc\n.pytest_cache/\n"
+_STARTER_FOLDERS = ("knowledge", "skills", "agents", "tools_local", "connectors", "workflows", "schedule",
+                    "evals", "raw_data")
+
+
+def _starter_files(hub_name: str) -> dict[str, str]:
+    """The starter's files by path in the hub. Empty folders get a .gitkeep."""
+    return {
+        "AGENTS.md": _STARTER_AGENTS,
+        "README.md": _STARTER_README.format(name=hub_name),
+        ".gitignore": _STARTER_GITIGNORE,
+        "knowledge/house-rules.md": _STARTER_RULES,
+        "evals/refund-window.md": _STARTER_EVAL,
+        "connectors/.mcp.json": '{\n  "mcpServers": {}\n}\n',
+    }
 
 # Hosted model providers `hubzoid init` sets up from a pasted key: (name, the
 # .env setting, default model, key prefix). The models match the commented
@@ -251,21 +353,17 @@ def init(
         Path("demo-hub"),
         help="Name of the new hub folder. Created under the current directory. Default: demo-hub.",
     ),
-    template: str = typer.Option(
-        DEFAULT_TEMPLATE,
+    template: str | None = typer.Option(
+        None,
         "--template", "-t",
-        help="Which bundled template to use. 'operations' (default): an operations "
-        "assistant for a fictional home-goods shop, with policy files, a stock export, "
-        "a stock_check tool and three suggested prompts. 'minimal': a tiny, runnable hub "
-        "with one example of each file type. 'demo': the guided tour with a Hubzoid Guide "
-        "agent, four teaching skills and six knowledge pages. 'watchtower': a "
-        "workflow-first sample, a scheduled check on bundled sample metrics that explains "
-        "threshold breaches. 'gitzoid': PR reviews, security checks and engineering reports, with a fictional repo.",
+        hidden=True,
+        help="Retired: no templates are bundled. Says where a template went and creates nothing.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
     model: str | None = typer.Option(None, "--model", help="Model for a new hub, e.g. codex-local, claude-local or a provider model id."),
 ) -> None:
-    """Scaffold a new hub. Also drops agents-repo wrapper files if the parent looks fresh.
+    """Start a new hub: every folder Hubzoid reads, a small sample to try, and
+    the model. Also drops agents-repo wrapper files if the parent looks fresh.
 
     First run in an empty directory:
       $ hubzoid init devops-agent
@@ -275,9 +373,8 @@ def init(
       $ hubzoid init sales-agent
       → writes ./sales-agent/... only. Parent files are left alone.
 
-    A tiny hub with one example of each file type, or the guided tour:
-      $ hubzoid init my-hub --template minimal
-      $ hubzoid init my-hub --template demo
+    For a ready-to-use hub (Software Factory, Order & Invoice Desk, Customer
+    Desk, GitZoid), clone its repo instead. `init` prints the commands.
 
     In a terminal with no signed-in Claude Code or Codex CLI, init offers to
     save an OpenRouter, Anthropic or OpenAI key in the hub's .env.
@@ -293,13 +390,13 @@ def init(
         hub_dir = (Path.cwd() / name).resolve() if not name.is_absolute() else name.resolve()
         is_in_place = False
 
-    template_root = _template_root(template)
-    if template_root is None:
-        available = ", ".join(_available_templates())
-        console.print(
-            f"[red]Template '{template}' not found.[/red] "
-            f"Available: {available or '(none)'}."
-        )
+    if template is not None:
+        reason = RETIRED_TEMPLATES.get(template, f"There is no template '{template}'.")
+        console.print(f"[red]Hubzoid no longer bundles templates.[/red] {escape(reason)}\n"
+                      f"Nothing was created. Run `hubzoid init {escape(str(name))}` for the starter.")
+        if template in RETIRED_TEMPLATES and template != "gitzoid":
+            console.print(f"The 2.0.1 template files are at {TEMPLATE_ARCHIVE}/{template}")
+        _print_ready_hubs()
         raise typer.Exit(2)
 
     parent = hub_dir.parent
@@ -310,24 +407,23 @@ def init(
     fresh_hub = not (hub_dir / "AGENTS.md").exists()
     hub_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Scaffold the hub folder from the bundled template.
+    # 1. The starter's files, then every folder (an empty one keeps a .gitkeep
+    # so it survives in git).
     written: list[Path] = []
     skipped: list[Path] = []
-    for src in template_root.rglob("*"):
-        if src.is_dir():
-            continue
-        rel = src.relative_to(template_root)
-        # Never copy runtime state (a template used for a local run or test can
-        # hold .hubzoid/, including the artifact link secret).
-        if rel.parts[0] in (".hubzoid", ".openwebui-data") or "__pycache__" in rel.parts:
-            continue
+    for rel, content in _starter_files(hub_dir.name).items():
         dst = hub_dir / rel
         if dst.exists() and not force:
             skipped.append(dst)
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        dst.write_text(content)
         written.append(dst)
+    for folder in _STARTER_FOLDERS:
+        path = hub_dir / folder
+        path.mkdir(exist_ok=True)
+        if not any(path.iterdir()):
+            (path / ".gitkeep").touch()
 
     # 2. Write .env from a Python constant (not part of the template tree
     # because .env is gitignored). Same skip rules as template files.
@@ -398,24 +494,16 @@ def init(
                       "signed-in `claude` CLI. Without one, set an OpenRouter, Anthropic or OpenAI key there.")
         step += 1
     console.print(f"  {step}. hubzoid run {escape(shlex.quote(str(hub_dir)))}   (opens the web app in your browser)")
-    if template == "gitzoid":
-        target = escape(shlex.quote(str(hub_dir)))
-        console.print(
-            f"\nGitZoid starts with a fictional repo and preview publishing. Your selected model is still required.\n"
-            f"  hubzoid schedule run {target} setup_check\n"
-            f"  hubzoid schedule run {target} repo_profiles\n"
-            f"  hubzoid schedule run {target} pr_sweep\n"
-            f"Connect your repos: python {escape(shlex.quote(str(hub_dir / 'setup.py')))} --help\n"
-            "Enable GitZoid tools for your own account in Settings, on the agent's Access tab (or use hubzoid grant).\n"
-            "All eligible open PRs are queued by default; drafts and bot PRs can be included. See the Hub README."
-        )
-    if template == DEFAULT_TEMPLATE:
-        console.print(
-            "\n[dim]Kestrel & Oak is a fictional shop. Try a suggested prompt, such as "
-            "\"What should we reorder today, and what could run out first?\"\n"
-            "Other templates: --template minimal (one example of each file type), "
-            "--template demo (a guided tour of Hubzoid).[/dim]"
-        )
+    console.print(f"  {step + 1}. Ask: \"A customer wants a refund 40 days after delivery. What can we offer?\"\n"
+                  f"     Then change the rule in {escape(str(hub_dir / 'knowledge' / 'house-rules.md'))}, "
+                  "restart and ask again.")
+    _print_ready_hubs()
+
+
+def _print_ready_hubs() -> None:
+    console.print("\nOr start from a ready-to-use hub (each repo's README has its setup):")
+    for title, what, clone in READY_HUBS:
+        console.print(f"  {title}: {what}\n    {clone}")
 
 
 # ---------------------------------------------------------------------------
@@ -3691,34 +3779,6 @@ def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, 
         parent / ".gitignore": gitignore,
         parent / "README.md": readme,
     }
-
-
-def _template_root(name: str = DEFAULT_TEMPLATE) -> Path | None:
-    """Return the on-disk path of a bundled template, or None.
-
-    Templates live at `hubzoid/templates/<name>/`: `operations` (the default
-    example), `minimal` (one example per file type), `demo` (the guided tour)
-    and `watchtower` (workflow-first).
-    """
-    try:
-        root = resources.files("hubzoid") / "templates" / name
-    except (ModuleNotFoundError, FileNotFoundError):
-        return None
-    # `resources.files` returns a Traversable; we need a real Path. For files
-    # installed normally (not zipped), this just works.
-    p = Path(str(root))
-    return p if p.exists() and p.is_dir() else None
-
-
-def _available_templates() -> list[str]:
-    """List bundled template names. Used for error messages."""
-    try:
-        root = Path(str(resources.files("hubzoid") / "templates"))
-    except (ModuleNotFoundError, FileNotFoundError):
-        return []
-    if not root.exists():
-        return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 def _wait_for(url: str, timeout: float = 60.0, *, expected_hub: str | None = None,

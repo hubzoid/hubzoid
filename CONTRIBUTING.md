@@ -103,8 +103,8 @@ CI also scans every push and pull request for secrets with gitleaks
 The shared browser (`HUBZOID_BROWSER`) gives every agent one shared,
 resource-limited Playwright browser — see [docs/BROWSER.md](docs/BROWSER.md).
 
-The e2e tests boot the FastAPI bridge against `demo-hub/` and hit a real
-provider. They are skipped automatically if no provider key is set.
+The e2e tests boot the FastAPI bridge against a fresh `hubzoid init` starter
+and hit a real provider. They are skipped automatically if no provider key is set.
 
 ## Code conventions
 

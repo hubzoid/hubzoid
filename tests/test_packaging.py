@@ -63,24 +63,30 @@ def test_every_package_directory_is_found():
         assert name in found, name
 
 
-def test_package_data_covers_templates_migrations_and_the_web_app():
+def test_package_data_covers_migrations_stock_marks_and_the_web_app():
     data = _package_data()
-    for rel in ("templates/minimal/AGENTS.md", "templates/minimal/connectors/.mcp.json",
-                "migrations/operational/versions/0009_accounts.py",
+    for rel in ("migrations/operational/versions/0009_accounts.py",
                 "migrations/operational/script.py.mako"):
         assert (PKG / rel).resolve() in data, rel
-    for name in ("operations", "minimal", "demo", "watchtower", "gitzoid"):
-        tpl = PKG / "templates" / name
-        assert all(p.resolve() in data for p in tpl.rglob("*") if p.is_file()
-                   and "__pycache__" not in p.parts and p.suffix != ".pyc"), name
+    marks = [p for p in (PKG / "core_assets" / "stock-marks").iterdir() if p.suffix in (".svg", ".png")]
+    assert marks and all(p.resolve() in data for p in marks)
     index = PKG / "portal_dist" / "index.html"
     if index.is_file():
         assert index.resolve() in data
 
 
-def test_template_bytecode_never_ships():
-    """Tests and local runs import template tools (tools_local/*.py), which
-    leaves __pycache__ beside them; a wheel built afterwards must not carry it."""
+def test_no_hub_templates_ship():
+    """Ready-to-use hubs are their own repos. `hubzoid init` writes its starter
+    from code, so no hub folder ships in the package."""
+    assert not (PKG / "templates").exists()
+    globs = PYPROJECT["tool"]["setuptools"]["package-data"]["hubzoid"]
+    assert not [g for g in globs if g.startswith("templates")]
+    assert not any((ROOT / name).exists() for name in ("demo-hub", "templates"))
+
+
+def test_bytecode_never_ships():
+    """Local runs leave __pycache__ beside package files; a wheel built
+    afterwards must not carry it."""
     excluded = PYPROJECT["tool"]["setuptools"]["exclude-package-data"]["hubzoid"]
     assert "*.pyc" in excluded and "**/__pycache__/*" in excluded
 

@@ -49,9 +49,16 @@ def main() -> int:
         print("Formatted email did not retain plain text and rendered Markdown")
         return 1
 
+    import importlib.resources
+    if (importlib.resources.files("hubzoid") / "templates").is_dir():
+        print("The wheel still ships hub templates")
+        return 1
     work = Path(tempfile.mkdtemp())
     subprocess.run([sys.executable, "-m", "hubzoid.cli", "init", "hub"], cwd=work, check=True,
                    stdout=subprocess.DEVNULL)
+    if not (work / "hub" / "knowledge" / "house-rules.md").is_file():
+        print("hubzoid init did not write the starter")
+        return 1
     os.environ.update({
         "HUBZOID_HUB_DIR": str(work / "hub"),
         "MODEL": "openrouter/anthropic/claude-haiku-4.5",

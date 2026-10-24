@@ -789,19 +789,6 @@ def test_cli_schedule_status_shows_history(tmp_path):
 
 
 # ===========================================================================
-# template ships a (disabled) example task
-# ===========================================================================
-def test_minimal_template_ships_example_schedule():
-    tpl = Path(__file__).resolve().parents[1] / "hubzoid" / "templates" / "minimal"
-    example = tpl / "schedule" / "example.md"
-    assert example.is_file()
-    text = example.read_text()
-    assert "schedule:" in text and "enabled: false" in text
-    # gitignore covers runtime state
-    assert ".hubzoid/" in (tpl / ".gitignore").read_text()
-
-
-# ===========================================================================
 # #2 per-schedule model override
 # ===========================================================================
 def test_loader_parses_model_override(tmp_path):

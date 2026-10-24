@@ -27,8 +27,9 @@ This context update authorizes no migration.
 The engineering, compatibility, licensing, and validation rules below still apply.
 
 This file guides AI coding tools (Claude Code, Cursor, Codex, Copilot, Gemini
-CLI, etc.) editing the hubzoid platform source. The per-hub `demo-hub/AGENTS.md`
-is a different thing. that's the runtime prompt for the hub's main agent.
+CLI, etc.) editing the hubzoid platform source. A hub's own `AGENTS.md` (the one
+`hubzoid init` writes, for example) is a different thing: the runtime prompt for
+the hub's main agent.
 
 ## Adoption and stabilization
 
@@ -124,12 +125,9 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/` | The installable Python package. |
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
-| `hubzoid/templates/operations/` | Default `hubzoid init` template. A runnable operations assistant with a stock-check example. |
-| `hubzoid/templates/minimal/` | Small runnable hub, selected with `--template minimal`. |
-| `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
-| `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
-| `hubzoid/templates/gitzoid/` | PR review, security and engineering-report sample, with fictional data and optional GitHub setup. `--template gitzoid`. |
-| `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
+| `cli.py` `init` | Writes the starter from code: every hub folder, a small fictional sample, and the list of ready-to-use hubs (their own repos). No hub templates ship in the package. |
+| `hubzoid/core_assets/stock-marks/` | Logos the old bundled templates copied into hubs. The gateway treats an unchanged copy as the stock mark. Never edit. |
+| `tests/fixtures/` | Test hubs, including the 2.0.1 operations and watchtower samples that tests still exercise. |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Public reverse proxy in front of the bridge: the web app, its Settings and the API, with client identity headers refused. |
 | `gateway.py` | Plans one deployment of hubs: ports, slugs, the edge's per-hub routes. |

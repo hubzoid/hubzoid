@@ -1,9 +1,10 @@
 # Authoring a hub
 
-A hub is one folder. The shape:
+A hub is one folder. `hubzoid init my-hub` writes this shape with every folder
+in place. The shape:
 
 ```
-demo-hub/
+my-hub/
 ├── .env                          keys + model id (gitignored)
 ├── AGENTS.md                     main agent: prompt + frontmatter
 ├── agents/<name>/AGENTS.md       sub-agent (handoff target)

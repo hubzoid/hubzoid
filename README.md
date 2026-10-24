@@ -6,7 +6,7 @@
 </p>
 
 <h3 align="center">One brain for your internal agents.</h3>
-<p align="center">Your knowledge. Your way of working. Useful across your assistants and your team.</p>
+<p align="center">Build agents around your knowledge and your way of working. Start on your laptop. Bring them to your team.</p>
 <p align="center">
   <a href="https://hubzoid.com/docs">Documentation</a> ·
   <a href="https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md">Quickstart</a> ·
@@ -20,22 +20,17 @@
 
 **Hubzoid turns a folder of your knowledge, rules and tools into an agent you can
 use yourself and share with your team.** Ask it questions in chat, run repeatable
-workflows, or connect your own assistant through MCP.
-
-Start with one useful job: a stock check, a policy answer, or a weekly report.
-Keep the context and rules in files you can read, edit and version. Add teammates
-with access to the agents and capabilities they need.
+workflows, or connect your own assistant through MCP. The rules live in files you
+can read, edit and version.
 
 <p align="center">
   <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="https://raw.githubusercontent.com/hubzoid/hubzoid/72ac7bf1610c8a335b9b3ac3b536de8fdb6770f1/assets/shared-hub-light.svg" width="680">
 </p>
 
-## Get your first useful result
+## Start in two minutes
 
-Use Claude Code or Codex with the setup prompt below, or run these commands
-yourself.
-
-Use **Python 3.11 or 3.12** in a virtual environment:
+You need Python 3.11 or 3.12, and Claude Code or Codex signed in on this
+machine (or a model API key).
 
 ```bash
 python3.12 -m venv .venv
@@ -47,15 +42,27 @@ hubzoid run my-hub
 
 The web app opens at **http://127.0.0.1:3080**. Ask:
 
-> What should we reorder, and what could run out first?
+> A customer wants a refund 40 days after delivery. What can we offer?
 
-The starter is an operations assistant for a **fictional home-goods shop**. It
-uses a stock export and saved policies to explain what needs attention. You can
-inspect the numbers and rules in `my-hub/`.
+`my-hub` is a small starter for Kestrel & Oak, a fictional shop. It has every
+folder Hubzoid reads, three house rules in `knowledge/house-rules.md`, and a
+check in `evals/`. The assistant answers from the rules and names the file.
 
-`init` detects a signed-in Claude Code or Codex CLI. Otherwise it offers to save
-a model API key in the Hub's private `.env`. Chat needs model authentication;
-provider charges or subscription limits apply. [Choose a runtime →](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
+`init` uses the Claude Code or Codex you are signed in to. Without one, it offers
+to save a model API key in the hub's private `.env`. Subscription limits or
+provider charges apply. [Choose a runtime](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
+
+## Make it yours
+
+1. Open `my-hub/knowledge/house-rules.md` and change the refund window from 30
+   days to 45. Or ask Claude Code or Codex to make the change and show you the diff.
+2. Stop `hubzoid run` and start it again.
+3. Ask the same question. The answer now follows your rule.
+
+Then replace the sample with your own material: your rules and notes in
+`knowledge/`, your job for the assistant in `AGENTS.md`, your checks in
+`evals/`. Only what is in the files is shared. A correction in chat is not saved
+on its own. [Authoring a hub](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
 
 <details>
 <summary>Prefer to set up with Claude Code or Codex?</summary>
@@ -63,139 +70,102 @@ provider charges or subscription limits apply. [Choose a runtime →](https://gi
 Paste this into your coding assistant:
 
 ```text
-Help me set up a local Hubzoid agent using the current quickstart:
+Help me set up a Hubzoid agent using the quickstart:
 https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md
 
 Use a new folder and a Python 3.11 or 3.12 virtual environment.
 Help me choose an available runtime without pasting secrets into chat.
-Run the operations sample and show me one result from its stock data.
-Then help me adapt it to one task using material I choose.
-Show me proposed file changes before replacing sample content.
+Run the starter and show me one answer from its house rules.
+Then help me turn it into an agent for one task, using material I choose.
+Show me each file change before you make it.
 ```
 
-Your coding assistant helps author the Hub. Its setup conversation is not
-shared Hub knowledge. Authoring, runtime selection and MCP access are separate.
+Your coding assistant helps you write the hub. Its conversation with you is not
+saved into the hub.
 
 </details>
 
-Local mode is private to your machine. Turn on sign-in before sharing access.
-For Windows, uv, troubleshooting and source installation, see the
-[quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md).
+## Use a ready-to-use hub
 
-**Python 3.12 workflows need SQLite 3.42+ or PostgreSQL.** `hubzoid doctor my-hub`
-checks the environment. This checkout is **2.0.1**; until it is published,
-`pip install hubzoid` installs the earlier 1.x release. Use the
-[source-install steps](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
-to try this revision. Deployments that still need Open WebUI stay on 1.x
-(`pip install "hubzoid<2"`).
+Complete agents built on Hubzoid, each in its own repo. Clone one and follow its
+README.
 
-## Make it work your way
-
-Try a correction you can verify:
-
-1. Ask the sample: **“A customer opened a blender 40 days ago and wants to
-   return it. What can we offer?”** Its saved change-of-mind policy is 30 days.
-2. Ask Claude Code or Codex to change the **change-of-mind** window to 45 days
-   in `my-hub/knowledge/returns-policy.md`, keep the faulty-item rules unchanged,
-   and show you the diff. Or edit the file yourself.
-3. Restart the Hub and ask again. The answer should apply the saved 45-day
-   window and the policy's other conditions.
-
-Then replace the fictional policies and stock export with your own material.
-Only explicit Hub content is shared; a correction in chat alone does not become
-shared knowledge or automatic memory.
-[Learn to author a Hub →](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
-
-## One Hub, three ways to use it
-
-| You want to… | Use… |
-|---|---|
-| Ask about your work and get a useful answer | **Chat**, with your Hub's knowledge and permitted tools |
-| Repeat a report or check, with saved inputs and results | **Workflows**, on demand or on a schedule |
-| Bring the same capabilities into your own assistant | **MCP**, with your own access |
-
-In **1.3.1**, offered reports can run from chat and have personal schedules.
-**My workspace → Schedules & reports** shows available reports, recent results
-and your schedules. Edit inputs and timing, pause or stop. Schedules need the
-Hub running; email notices are off by default.
-[Reports, permissions and sharing →](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md)
-
-For Claude Code, use the connection command printed by `hubzoid run`, then open
-`/mcp` in Claude Code and approve the connection. Other clients have their own
-setup. [Connect your assistant →](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md)
-
-## Pick a starting point
-
-| Sample | What you can try | Create it |
+| Hub | What it does | You need |
 |---|---|---|
-| **Operations** | Stock decisions, supplier delays and customer returns from sample data and policies | `hubzoid init my-hub` |
-| **Watchtower** | A personal service report, an explicit rule correction and repeat runs; also a model-assisted incident check | `hubzoid init my-watchtower --template watchtower` |
-| **Guided tour** | Explore Hub tools, knowledge and skills | `hubzoid init my-tour --template demo` |
-| **GitZoid** | Review fictional pull requests against saved rules, then connect your own repos | `hubzoid init my-gitzoid --template gitzoid` |
+| [Software Factory](https://github.com/hubzoid/software-factory-hub) | Turns issues into reviewed draft pull requests, with people on the judgment calls | Docker, a GitHub repo, Claude Code or Codex |
+| [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub) | Organizes orders and invoices from your inbox, every line tied to its source | An inbox, Claude Code or Codex. An ERP is optional |
+| [Customer Desk](https://github.com/hubzoid/customer-desk-hub) | Drafts customer replies from your knowledge and systems. A person approves each one | A helpdesk, Claude Code or Codex. A labelled sample is included |
+| [GitZoid](https://github.com/hubzoid/gitzoid-hub) (sample) | Pull request reviews and answers about your code | Claude Code or Codex. A GitHub token for your own repos |
 
-Each sample includes instructions. Watchtower's
-[Service snapshot walkthrough](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131)
-uses a model-free report; chat still uses your configured runtime.
-GitZoid starts in preview mode with fictional data; reviews still use your
-configured model. Its [setup guide](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/gitzoid/README.md)
-covers GitHub access, existing PRs, publishing and costs.
-For a small starting folder, use `--template minimal`.
+```bash
+git clone https://github.com/hubzoid/software-factory-hub software-factory
+```
+
+Each hub's README has a setup prompt for Claude Code or Codex, too.
+
+## One hub, three ways to use it
+
+| You want to | Use |
+|---|---|
+| Ask about your work and get a useful answer | **Chat**, with your hub's knowledge and permitted tools |
+| Repeat a report or check, with saved inputs and results | **Workflows**, on demand or on a schedule. [Reports and sharing](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md) |
+| Bring the same capabilities into your own assistant | **MCP**, with your own access. [Connect your assistant](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md) |
+
+For Claude Code, paste the connection command `hubzoid run` prints, then open
+`/mcp` in Claude Code and approve the connection.
 
 ## Share with your team
 
-Turn on sign-in and set the public address in `my-hub/.env`, then create your
-first administrator:
+Local mode is private to your machine. To share, turn on sign-in and set the
+public address in `my-hub/.env`:
 
 ```dotenv
 HUBZOID_AUTH=true
 HUBZOID_PUBLIC_URL=https://hub.example.com
 ```
 
+Then create the first administrator and start the hub:
+
 ```bash
 hubzoid admin create you@example.com my-hub --owner
+hubzoid run my-hub
 ```
 
-Open the one-time sign-in link, set a password, and add teammates through
-**Settings → People & access**. Grant access to the agents and capabilities they
+Open the one-time sign-in link it prints, set a password, and add teammates in
+**Settings → People & access**. Give each person the agents and capabilities they
 need. Shared knowledge does not mean shared credentials or access to another
 person's private results.
 
-For a public deployment, configure HTTPS and persistent storage, then restart.
+For a public deployment, use HTTPS and persistent storage.
 [Team setup](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md) ·
 [Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) ·
 [Backup and restore](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md)
-
-**Optional Claude failover (1.3.2 and later):** add up to two backup credentials to keep
-answering when a Claude credential reaches a confirmed usage limit or its login
-is rejected. Switching keeps the same model and permissions and never replays
-work that has started. Existing single-credential setups are unchanged.
-[Configuration, token replacement and limits →](docs/DEPLOYING.md#claude-credential-failover)
-
-## The web app
-
-`pip install hubzoid` includes the chat and its Settings, built with
-assistant-ui and bundled with Hubzoid. No separate UI package or Node
-installation is needed. Hubzoid 2.0 no longer offers Open WebUI; deployments
-that still need it stay on 1.x. When upgrading an existing deployment, read the
-[upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
-first.
 
 ## Go further
 
 | Next step | Guide |
 |---|---|
-| Add knowledge, skills, tools or specialist agents | [Hub authoring](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md) |
+| Add knowledge, skills, tools or specialist agents | [Authoring a hub](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md) |
 | Connect business systems | [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md) |
 | Write repeatable work | [Python workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md), [Markdown tasks](https://github.com/hubzoid/hubzoid/blob/main/docs/schedule.md) |
 | Check answer quality and inspect runs | [Evals](https://github.com/hubzoid/hubzoid/blob/main/docs/evals.md), [observability](https://github.com/hubzoid/hubzoid/blob/main/docs/OBSERVABILITY.md) |
+| Put the chat inside your own app | [Embedding the chat](https://github.com/hubzoid/hubzoid/blob/main/docs/embedding.md) |
 | Use Slack or other channels | [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md), [other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) |
+| Keep answering when a Claude login hits its limit | [Claude failover](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md#claude-credential-failover) |
+| Run on Windows, with uv, or from source | [Quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md) |
 
 [All guides](https://github.com/hubzoid/hubzoid/blob/main/docs/README.md) ·
 [Website documentation](https://hubzoid.com/docs) ·
-[Release notes](https://github.com/hubzoid/hubzoid/blob/main/CHANGELOG.md)
+[Release notes](https://github.com/hubzoid/hubzoid/blob/main/CHANGELOG.md) ·
+[Upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
+
+The chat and its Settings come with `pip install hubzoid`: no separate UI or
+Node install. Hubzoid 2 no longer includes Open WebUI. Deployments that need it
+stay on 1.x (`pip install "hubzoid<2"`). Python 3.12 workflows need SQLite 3.42
+or later, or PostgreSQL. `hubzoid doctor my-hub` checks this.
 
 Hubzoid is **Apache-2.0**, including team controls. Dependencies and brand assets
-retain their own terms. [Licensing](https://github.com/hubzoid/hubzoid/blob/main/LICENSING.md).
+keep their own terms. [Licensing](https://github.com/hubzoid/hubzoid/blob/main/LICENSING.md).
 To contribute, start with the [contributing guide](https://github.com/hubzoid/hubzoid/blob/main/CONTRIBUTING.md).
-Need help with your company's agent? [Build with us](https://hubzoid.com/enterprise)
+Need help with your company's agents? [Build with us](https://hubzoid.com/build-with-us)
 uses the same open-source product.

@@ -21,14 +21,12 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-On Windows PowerShell, use Python 3.12 and Hubzoid **2.0.1 or newer**. Until
-2.0.1 is published, use the
-[source-install steps](#run-this-checkout) instead of the package install below.
-Calling the virtual environment's Python directly avoids activation-policy changes:
+On Windows PowerShell, use Python 3.12. Calling the virtual environment's
+Python directly avoids activation-policy changes:
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install "hubzoid>=2.0.1"
+.\.venv\Scripts\python -m pip install hubzoid
 .\.venv\Scripts\python -m hubzoid init my-hub
 .\.venv\Scripts\python -m hubzoid run my-hub
 ```
@@ -44,16 +42,27 @@ Check with the same Python the hub uses:
 
 ## What `init` and `run` do
 
-`hubzoid init my-hub` creates the hub folder and, in a fresh parent folder, an
-agents-repo wrapper (`requirements.txt`, `.gitignore`, `README.md`). The
-default template is an operations assistant for Kestrel & Oak, a fictional
-home-goods shop: five policy files, a stock export, a `stock_check` tool and
-three suggested prompts. Other templates: `--template minimal` (one example of
-each file type), `--template demo` (a guided tour) and `--template watchtower`
-(a workflow-first sample).
-For PR reviews and engineering reports, use `--template gitzoid` and follow its
-[setup guide](../hubzoid/templates/gitzoid/README.md). It starts with fictional
-PRs in preview mode; reviews use your chosen model.
+`hubzoid init my-hub` creates a small starter and, in a fresh parent folder, an
+agents-repo wrapper (`requirements.txt`, `.gitignore`, `README.md`):
+
+```text
+my-hub/
+  AGENTS.md                  the assistant's job (Kestrel & Oak, a fictional shop)
+  README.md                  what each folder is for
+  .env                       the model
+  knowledge/house-rules.md   three house rules to ask about and edit
+  evals/refund-window.md     a check that the refund answer follows the rules
+  connectors/.mcp.json       MCP connections, empty
+  skills/  agents/  tools_local/  workflows/  schedule/  raw_data/   empty, ready for your files
+```
+
+Every folder Hubzoid reads is there, so you can see the whole layout.
+[Authoring a hub](authoring-a-hub.md) explains each one.
+
+For a complete agent instead, clone a ready-to-use hub: Software Factory,
+Order & Invoice Desk, Customer Desk, or the GitZoid sample. `init` prints their
+clone commands, and the [README](../README.md#use-a-ready-to-use-hub) lists
+what each needs.
 
 For the model, init uses a signed-in Claude Code or Codex CLI when it finds
 one (it asks when it finds both). Otherwise, in a terminal, it offers to save
@@ -66,13 +75,14 @@ port (3080 by default, `--port` to change it) and prints one ready line:
 
 ```text
 ✓ Hubzoid is ready: http://127.0.0.1:3080  (local mode, sign-in off)
-  Connect Claude Code: claude mcp add --transport http kestrel-oak-ops http://127.0.0.1:3080/mcp
+  Connect Claude Code: claude mcp add --transport http my-hub http://127.0.0.1:3080/mcp
 ```
 
 From a terminal it opens the page in your browser (`--no-open` to skip). Pick
-a suggested prompt such as "What should we reorder today, and what could run
-out first?". The agent answers from the hub's files and its `stock_check`
-tool, and you see each tool step as it runs.
+a suggested prompt such as "A customer wants a refund 40 days after delivery.
+What can we offer?". The agent answers from `knowledge/house-rules.md` and
+names it. To see a correction work, change the 30 days in that file, restart
+`hubzoid run`, and ask again.
 
 If Hubzoid gave your team a useful agent, a ⭐ on [GitHub](https://github.com/hubzoid/hubzoid) helps others find it.
 
@@ -123,7 +133,7 @@ hubzoid schedule run . first_check
 Hosted MCP is on for a local run. Paste the line `hubzoid run` printed:
 
 ```bash
-claude mcp add --transport http kestrel-oak-ops http://127.0.0.1:3080/mcp
+claude mcp add --transport http my-hub http://127.0.0.1:3080/mcp
 ```
 
 In Claude Code, run `/mcp`, choose the hub and authenticate. Your browser opens
@@ -162,11 +172,10 @@ Open **Settings → Agents → your agent → Runs & schedules** to inspect its 
 and steps. The scaffold is manual. Scheduling is a separate, deliberate choice.
 See [workflows.md](workflows.md) for scheduling, retries and recovery.
 
-With 1.3.1, the [Watchtower Service snapshot walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131)
-also covers running a report from chat, saving a rule correction, and managing
-your own schedule in **My workspace → Schedules & reports**. The report is
-model-free; chat still needs runtime authentication. Report and scheduling
-permissions must be granted, and the hub must be running when a schedule is due.
+A workflow marked as a tool can also run from chat, and people can keep it
+on their own schedule in **My workspace → Schedules & reports** once they have
+the grants ([reports and sharing](reports-and-email.md)). The hub must be
+running when a schedule is due.
 
 ## Share with a team
 
@@ -191,19 +200,26 @@ them the agent.
 With Google, Microsoft or an OpenID Connect provider configured, people can
 sign in with it instead ([authentication](auth.md)).
 
-For several agents behind one address, give each hub a unique `BRIDGE_PORT`
-in its `.env` (for example 8000 and 8001), then run a gateway with sign-in set
-once in the gateway's environment:
+For several agents behind one address, put a `hubzoid.yaml` in the folder that
+holds the hub folders, and run `hubzoid run` there:
 
-```bash
-export HUBZOID_AUTH=true
-export HUBZOID_ADMIN_EMAIL=you@example.com
-export HUBZOID_ADMIN_PASSWORD='a-strong-password'
-hubzoid gateway ./sales ./support --data-dir ./gateway-data
+```yaml
+version: 1
+sign_in: true
+owner: you@example.com
+hubs:
+  - sales
+  - support
 ```
 
-On the first start the gateway creates that administrator. Sign in with that
-email and password. One sign-in covers every agent a person may use.
+```bash
+export HUBZOID_ADMIN_PASSWORD='a-strong-bootstrap-password'   # first start only
+hubzoid run
+```
+
+Each hub runs in its own process. One sign-in covers every agent a person may
+use. [Deployment](DEPLOYING.md#several-hubs-on-one-address-hubzoidyaml) has the
+full file.
 
 Before going live, read [administration](ADMINISTRATION.md),
 [authentication](auth.md) and [deployment](DEPLOYING.md): a public deployment

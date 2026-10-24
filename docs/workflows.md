@@ -12,9 +12,9 @@ two ways to write that work, and both run on the same engine.
 | Starts on its own | Whenever the file exists | With `HUBZOID_SCHEDULES=1` (on by default in a gateway) |
 
 Start with a markdown task. Move to a code workflow when you need the steps to
-be exact. The [Watchtower sample](../hubzoid/templates/watchtower/README.md)
-(`hubzoid init my-watchtower --template watchtower`) is a complete code
-workflow to copy from.
+be exact. `hubzoid new workflow <name> <hub>` scaffolds one, and the
+[GitZoid hub](https://github.com/hubzoid/gitzoid-hub) is a complete set of code
+workflows to read.
 
 Both kinds run on the hub's [DBOS](https://docs.dbos.dev) engine, so they share
 one run history (`hubzoid schedule status`, each agent's **Runs & schedules**

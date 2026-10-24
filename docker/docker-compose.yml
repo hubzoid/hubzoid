@@ -6,6 +6,14 @@
 #
 #   HUB_PATH=/path/to/your/hub docker compose -f docker/docker-compose.yml up -d
 #
+# HUB_PATH is required (an absolute path). No hub yet? Make the starter with
+# the image itself, no Python needed on the host:
+#   mkdir -p ~/my-hub && chmod a+rwX ~/my-hub   # the image runs as its own user
+#   docker run --rm -v ~/my-hub:/hub hubzoid:local init /hub
+# Or clone a ready-to-use hub (github.com/hubzoid/software-factory-hub and
+# the others listed in the Hubzoid README). Put the model's credentials in the
+# hub's .env: a container cannot use the claude or codex login on your laptop.
+#
 # The published port is reachable from other machines, so sign-in is on
 # (HUBZOID_AUTH below). Before the first start, put the first administrator in
 # the hub's .env, and remove both lines after it:
@@ -33,7 +41,7 @@ services:
     ports:
       - "${HUBZOID_PUBLISH:-3080}:3080"
     volumes:
-      - ${HUB_PATH:-../demo-hub}:/hub
+      - ${HUB_PATH:?Set HUB_PATH to your hub folder, an absolute path. The top of docker/docker-compose.yml shows how to make one}:/hub
     environment:
       PORT: 3080
       BRIDGE_PORT: 8000

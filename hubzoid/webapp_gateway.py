@@ -94,17 +94,20 @@ def api_base_for(hub_dir: Path) -> str:
 
 @functools.lru_cache(maxsize=1)
 def _stock_marks() -> frozenset[bytes]:
-    """The Hubzoid wordmark and icon `hubzoid init` copies into every hub's
-    branding/. They are the product's marks, drawn by the app itself in the
-    colours of the current theme, so an unchanged copy is not a custom logo."""
-    root = Path(__file__).parent / "templates"
+    """The logos and icons the bundled templates (up to 2.0.1) copied into a
+    hub's branding/. They are the product's marks, drawn by the app itself in
+    the colours of the current theme, so an unchanged copy is not a custom logo.
+    Kept in core_assets/stock-marks/ so hubs made from those templates keep
+    being recognised now that the templates are gone."""
+    root = Path(__file__).parent / "core_assets" / "stock-marks"
     marks = set()
-    for path in root.glob("*/branding/*"):
-        if path.name.lower() in _LOGO_CANDIDATES:
-            try:
-                marks.add(path.read_bytes())
-            except OSError:
-                pass
+    for path in root.glob("*"):
+        if path.suffix.lower() not in (".svg", ".png", ".webp"):
+            continue
+        try:
+            marks.add(path.read_bytes())
+        except OSError:
+            pass
     return frozenset(marks)
 
 
