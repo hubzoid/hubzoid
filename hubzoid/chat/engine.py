@@ -1091,7 +1091,8 @@ class ChatEngine:
         is parked, admit the branch's next queued message."""
         from .. import drain
 
-        status = {"complete": "complete", "cancelled": "stopped", "error": "failed"}.get(message_status, "failed")
+        status = {"complete": "complete", "cancelled": "stopped", "error": "failed",
+                  "interrupted": "interrupted"}.get(message_status, "failed")
         restarting = drain.active()
         if restarting and status == "stopped":
             # Cut off by a restart's grace period, not by a person.
@@ -1114,9 +1115,10 @@ class ChatEngine:
             for item in conn.execute(sa.select(g.queue).where(g.queue.c.dispatched_run_id == run_id)):
                 if status != "complete":
                     self._block_dependents(conn, r.conversation_id, item.id, f"the earlier message {status}", t)
-            if restarting:
-                # Nothing new starts while the hub drains: what waits stays
-                # parked, as after any restart, for the person to send on.
+            if restarting or status == "interrupted":
+                # Nothing new starts while the hub drains, or after a writer
+                # lost its lease: what waits stays parked, as after any
+                # restart, for the person to send on.
                 self._park(conn, r.conversation_id, r.branch_id, "interrupted", t)
         self.notify(r.conversation_id)
         if self.on_terminal is not None:

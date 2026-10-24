@@ -304,7 +304,10 @@ class Orchestrator:
             except Exception:  # noqa: BLE001 - the reply stands; its files stay in the folder
                 log.warning("chat: could not record the artifacts of %s", run.run_id, exc_info=True)
         try:
-            nxt = await db(self.engine.run_finished, run.run_id, status, error_text)
+            # A writer that lost its branch lease was cut off, not stopped by a
+            # person: its run ends interrupted, as the sweep would record it.
+            nxt = await db(self.engine.run_finished, run.run_id,
+                           "interrupted" if run.fenced_out else status, error_text)
         except Exception:  # noqa: BLE001
             log.exception("chat: could not record the end of run %s", run.run_id)
             return
