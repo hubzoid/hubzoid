@@ -104,7 +104,7 @@ def test_a_hub_that_exits_is_started_again_alone(tmp_path, started):
 
 def test_backoff_doubles_and_five_failed_starts_mark_the_hub_failed(tmp_path, started):
     bad = _unit("bad")
-    sup = _sup(tmp_path, [bad], probe=lambda u: False)
+    sup = _sup(tmp_path, [bad], probe=lambda u: False, ready_wait=0.01)   # one probe per start
     delays = []
     for _ in range(5):
         sup._start(bad)

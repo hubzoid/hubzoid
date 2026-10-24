@@ -539,8 +539,13 @@ def test_a_reply_records_the_session_that_started_it(hub, monkeypatch):
     from hubzoid.access import run_identity
     from hubzoid.auth import AuthUser, sessions
 
+    from hubzoid.access import evaluator
+
     me = AuthUser(id="u_ana", email="ana@example.org", name="Ana", credential="session", credential_id="sess_ana_1")
     monkeypatch.setattr(sessions, "resolve", lambda request, hub_dir: me)
+    # The session is a stand-in, so tell the queue it is still signed in (it
+    # parked the queued message as "signed out" and the test waited 15 s).
+    monkeypatch.setattr(evaluator, "still_valid", lambda hub_dir, account, cred: cred.get("id") == "sess_ana_1")
     with TestClient(build_app()) as c:
         cid, b = new_conv(c)
         sent = send(c, cid, "hello", b)
@@ -554,6 +559,7 @@ def test_a_reply_records_the_session_that_started_it(hub, monkeypatch):
         while time.time() < end and len([m for m in snap(c, cid)["messages"] if m["role"] == "assistant"]) < 3:
             time.sleep(0.1)
         replies = [m["id"] for m in snap(c, cid)["messages"] if m["role"] == "assistant"]
+    assert len(replies) == 3, replies    # the queued message ran too
     for mid in replies:
         record = run_identity.for_run(hub, "chat", mid)
         assert record and (record["credential_kind"], record["credential_id"]) == ("session", "sess_ana_1"), record

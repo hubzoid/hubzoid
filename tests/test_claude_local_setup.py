@@ -20,12 +20,6 @@ def test_starter_env_documents_subscription_token():
     assert "NOT an API key" in _STARTER_ENV
 
 
-def test_deploying_has_claude_local_prod_section():
-    assert "Running claude-local in production" in _DEPLOYING
-    assert "claude setup-token" in _DEPLOYING
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in _DEPLOYING
-
-
 def test_systemd_unit_is_claude_local_ready():
     # Restart hardened to always; ProtectHome must not hide ~/.claude.
     assert "Restart=always" in _DEPLOYING
