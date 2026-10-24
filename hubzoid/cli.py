@@ -342,7 +342,8 @@ def _interactive() -> bool:
 def _write_private(path: Path, text: str) -> None:
     """Write a file only its owner can read, from the first byte (it holds keys)."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    # UTF-8 everywhere: settings read it so, and Windows would use its code page.
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     path.chmod(0o600)  # an existing file keeps its mode through O_TRUNC
 
@@ -417,7 +418,7 @@ def init(
             skipped.append(dst)
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(content)
+        dst.write_text(content, encoding="utf-8")
         written.append(dst)
     for folder in _STARTER_FOLDERS:
         path = hub_dir / folder
@@ -473,7 +474,7 @@ def init(
         for dst, content in wrapper.items():
             if dst.exists():
                 continue
-            dst.write_text(content)
+            dst.write_text(content, encoding="utf-8")
             parent_written.append(dst)
 
     # 3. Report.
@@ -2133,7 +2134,7 @@ def service_install(
         return
     target = Path("/etc/systemd/system/hubzoid.service")
     try:
-        target.write_text(unit)
+        target.write_text(unit, encoding="utf-8")
     except OSError as exc:
         console.print(f"[red]Could not write {target}: {exc}. Run as root, or save the unit by hand.[/red]")
         raise typer.Exit(1)
@@ -3424,7 +3425,7 @@ def new_workflow(
         raise typer.Exit(1)
     wf_dir.mkdir(parents=True)
     body = _WORKFLOW_TEMPLATE.format(name=name, func=func)
-    (wf_dir / "main.py").write_text(body)
+    (wf_dir / "main.py").write_text(body, encoding="utf-8")
     console.print(f"[green]created[/green] {wf_dir / 'main.py'}")
     console.print(
         "[dim]run it once: [/dim]"

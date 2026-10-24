@@ -33,6 +33,8 @@ fixed here. 2.0.3 is 2.0.2 plus these changes.
   as UTF-8.
 - Stopping or restarting a hub under `hubzoid run` on Windows ends its process
   tree instead of failing on a POSIX-only signal.
+- A hub made with `hubzoid init` on Windows starts. Its `.env` was written in
+  the Windows code page and could not be read back as UTF-8.
 - Release checks: tests that waited out timeouts or skipped fast tests on pull
   requests, and CLI output that differed between CI and a laptop.
 - Windows CI also installs the built wheel into a fresh environment on Python
