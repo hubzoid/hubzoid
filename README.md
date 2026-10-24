@@ -95,7 +95,7 @@ README.
 | [Software Factory](https://github.com/hubzoid/software-factory-hub) | Turns issues into reviewed draft pull requests, with people on the judgment calls | Docker, a GitHub repo, Claude Code or Codex |
 | [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub) | Organizes orders and invoices from your inbox, every line tied to its source | An inbox, Claude Code or Codex. An ERP is optional |
 | [Customer Desk](https://github.com/hubzoid/customer-desk-hub) | Drafts customer replies from your knowledge and systems. A person approves each one | A helpdesk, Claude Code or Codex. A labelled sample is included |
-| [GitZoid](https://github.com/hubzoid/gitzoid-hub) (sample) | Pull request reviews and answers about your code | Claude Code or Codex. A GitHub token for your own repos |
+| [GitZoid](https://github.com/hubzoid/gitzoid-hub) | Pull request reviews and answers about your code | Claude Code or Codex. A GitHub token for your own repos |
 
 ```bash
 git clone https://github.com/hubzoid/software-factory-hub software-factory

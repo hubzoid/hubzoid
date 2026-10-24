@@ -21,15 +21,17 @@ def signed_in(tmp_path, monkeypatch):
 
     ana = users.create(hub, email="ana@example.org", name="Ana", password=PASSWORD)
     users.sync_identity(hub, ana)
-    client = TestClient(build_app())
-    r = client.post("/api/auth/login", json={"email": ana["email"], "password": PASSWORD},
-                    headers=ORIGIN)
-    assert r.status_code == 200, r.text
-    r = client.post("/api/conversations", headers=ORIGIN,
-                    json={"agent": client.app.state.chat.model_label})
-    assert r.status_code == 201, r.text
-    cid = r.json()["conversation"]["id"]
-    return hub, client, ana, cid
+    # One event loop for the whole test: without `with`, a reply's run started
+    # by one request could be dropped when that request returned (release CI).
+    with TestClient(build_app()) as client:
+        r = client.post("/api/auth/login", json={"email": ana["email"], "password": PASSWORD},
+                        headers=ORIGIN)
+        assert r.status_code == 200, r.text
+        r = client.post("/api/conversations", headers=ORIGIN,
+                        json={"agent": client.app.state.chat.model_label})
+        assert r.status_code == 201, r.text
+        cid = r.json()["conversation"]["id"]
+        yield hub, client, ana, cid
 
 
 def _until_revoked(client, cid, end_access) -> list[str]:
