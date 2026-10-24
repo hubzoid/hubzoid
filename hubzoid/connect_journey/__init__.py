@@ -3,7 +3,7 @@ an app (for example Gmail), confirms the verified result on a browser page and
 back in the chat that asked. Pages live under `/portal/connect/`.
 
 An app is connected through its Hubzoid connector (``hubzoid.connectors``),
-added in the Console, in both UI modes. An app with no switched-on connector is
+added in Settings, in both UI modes. An app with no switched-on connector is
 not available to connect.
 
 The journey, end to end:
@@ -159,7 +159,7 @@ def _denied_message(hub_dir, app: str, reason: str) -> str:
     if reason.startswith("surface:"):
         return f"Connecting {label(app)} is not available on this channel."
     return (f"You do not have permission to connect {label(app)} here. Ask an administrator "
-            f"of this agent to grant you \"{_capability_label(hub_dir, app)}\" in the Admin Console.")
+            f"of this agent to grant you \"{_capability_label(hub_dir, app)}\" in Settings.")
 
 
 # ---------------------------------------------------------------------------

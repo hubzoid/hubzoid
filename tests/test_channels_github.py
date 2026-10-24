@@ -657,3 +657,17 @@ def test_a_hub_admin_cannot_point_github_at_another_secret_through_configure(hub
     out = setup.configure(conn, expected_revision=conn.revision, actor="hub-admin",
                           sets={"provider_config.bot_name": "acme-bot"}, any_secret=False)
     assert out["revision"] == conn.revision + 1
+
+
+def test_after_github_setup_the_browser_lands_on_settings():
+    """Session B, HUB-140: the return went to /b/<hub>/portal/#/..., which
+    answered Not Found, so the founder thought setup had failed."""
+    from hubzoid.channels.github import setup as gh_setup
+    from hubzoid.channels.github.routes import return_url
+
+    assert (return_url("https://internal.example.com/b/software-factory", "software-factory", "github")
+            == "https://internal.example.com/settings#/agents/software-factory/channels/github?connected=github")
+    assert return_url("https://hub.example.com/", "ops", "gh").startswith("https://hub.example.com/settings#/")
+    page = gh_setup.page("Create your GitHub App", "<p>x</p>")
+    assert "/</span>hubzoid" in page and "Create your GitHub App · Hubzoid" in page
+    assert gh_setup.SETUP_SECONDS == 3600

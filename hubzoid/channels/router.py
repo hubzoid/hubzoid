@@ -57,7 +57,8 @@ NOTICES = {
                           "{provider} account to your Hubzoid account."),
     "account_inactive": "I can't act for you: your Hubzoid account is not active. Ask an administrator.",
     "hub_access_denied": "I can't act for you: your Hubzoid account does not have access to this hub.",
-    "group_not_allowed": "I can't act for you: this channel is limited to certain groups. Ask an administrator.",
+    "group_not_allowed": ("I can't act for you here yet. An administrator gives you \"Start work from\" this "
+                          "channel in Settings, under the agent's Access."),
     "terms_required": "Please open Hubzoid and accept the current terms of use first, then ask again.",
     "empty_request": "Tell me what you want done, or attach a file.",
     "queue_full": "There are too many requests waiting in this thread. Try again once they finish.",

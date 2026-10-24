@@ -247,6 +247,7 @@ def test_every_access_check_runs_and_is_audited_before_a_fake(tmp_path, monkeypa
     (hub / "restricted" / "erp.py").write_text(RESTRICTED_ERP)
     real: list = []
     audited: list = []
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")   # remember is offered only with the Beta switch on
     monkeypatch.setattr(guard, "decide", lambda *a, **k: (False, "no grant"))   # revoked since discovery
     monkeypatch.setattr(guard.audit, "record", lambda *a, **k: audited.append((k["tool"], k["decision"])) or True)
     registry = access.apply(hub, {"run_report": wf_access.guard_run(tool("run_report", real), hub, "report",

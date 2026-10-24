@@ -134,6 +134,8 @@ def due_between(schedule: str, tz: str | None, start: datetime, end: datetime) -
 
 _DAY_NAMES = ("Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays",
               "Saturdays")
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August",
+                "September", "October", "November", "December")
 
 
 def describe(schedule: str) -> str:
@@ -153,6 +155,15 @@ def describe(schedule: str) -> str:
             return f"Daily at {at}"
         if dow.isdigit() and 0 <= int(dow) <= 6:
             return f"{_DAY_NAMES[int(dow)]} at {at}"
+        if dow == "1-5":
+            return f"Weekdays at {at}"
+    if mm.isdigit() and hh.isdigit() and dom.isdigit() and dow == "*":
+        # Monthly and yearly (HUB-140 F19: these read as raw cron).
+        at, day = f"{int(hh):02d}:{int(mm):02d}", int(dom)
+        if mon == "*":
+            return f"Day {day} of each month at {at}"
+        if mon.isdigit() and 1 <= int(mon) <= 12:
+            return f"Every year on {day} {_MONTH_NAMES[int(mon) - 1]} at {at}"
     return cron
 
 

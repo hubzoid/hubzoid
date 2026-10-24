@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAgentEditing } from "../app/lib/editing";
 import {
   Alert, Button, Descriptions, Empty, Form, Input, Popconfirm, Select, Space, Switch, Table, Tabs, Tag,
   Tooltip, Typography,
@@ -6,9 +7,9 @@ import {
 import { RefreshCw } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
-import { href } from "../hooks/useRoute";
+import { href, useHashQuery } from "../hooks/useRoute";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -153,7 +154,7 @@ function ChannelList({ hub }: { hub: Hub }) {
         <Table<Connection>
           rowKey="id"
           dataSource={items}
-          pagination={false}
+          pagination={PAGED}
           columns={[
             { title: "Channel", dataIndex: "id", render: (id: string) => <a href={channelHref(hub, id)}>{id}</a> },
             { title: "Provider", dataIndex: "provider" },
@@ -182,6 +183,7 @@ function ConfigEditor({ hub, onApplied, initial, cid, revision }: {
   const [text, setText] = useState(initial ?? "");
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; text: string; fields?: FieldError[] } | null>(null);
   const [busy, setBusy] = useState(false);
+  const files = useAgentEditing();
   useEffect(() => { if (initial !== undefined) setText(initial); }, [initial]);
 
   const validate = async () => {
@@ -217,6 +219,17 @@ function ConfigEditor({ hub, onApplied, initial, cid, revision }: {
     }
   };
 
+  if (!files.editable)
+    // Off (the default): the file is read here and changed where it lives.
+    return (
+      <div style={{ marginTop: 24 }}>
+        <Paragraph type="secondary">
+          {cid ? <>This channel is <Text code>channels/{cid}.yaml</Text>. </> : <>A channel is a file, <Text code>channels/&lt;id&gt;.yaml</Text>. </>}
+          {files.message}
+        </Paragraph>
+        {cid && initial && <pre className="hz-tech">{initial}</pre>}
+      </div>
+    );
   return (
     <div style={{ marginTop: 24 }}>
       <Title level={4}>{cid ? "Change this channel" : "Add a channel"}</Title>
@@ -275,6 +288,9 @@ function ConnectionView({ hub, cid, tab }: { hub: Hub; cid: string; tab?: string
   const exp = useLoad<Exported>(`${url}/config`);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [toggling, setToggling] = useState(false);
+  const files = useAgentEditing();
+  // Back from GitHub's App setup (HUB-140, session B): say it worked.
+  const [q] = useHashQuery();
   const active = tab && ["overview", "threads", "deliveries", "replies", "links", "settings"].includes(tab) ? tab : "overview";
   if (!exp.data) return <LoadState error={exp.error} retry={exp.reload} />;
   const c = exp.data;
@@ -304,15 +320,19 @@ function ConnectionView({ hub, cid, tab }: { hub: Hub; cid: string; tab?: string
         <Title level={2} style={{ margin: 0 }}>{c.id}</Title>
         {tag(STATUS, c.status)}
         <Text type="secondary">{c.provider} · revision {c.revision}</Text>
-        <Popconfirm
+        {files.editable && <Popconfirm
           title={enabled ? "Pause this channel?" : "Resume this channel?"}
           description={enabled ? "New requests are recorded but start no work. Running work still replies." : "Run the checks first. New requests will start work."}
           onConfirm={toggle}
         >
           <Button loading={toggling}>{enabled ? "Pause" : "Resume"}</Button>
-        </Popconfirm>
+        </Popconfirm>}
       </Space>
       {notice && <Alert style={{ marginBottom: 12 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
+      {q.connected === "github" && (
+        <Alert style={{ marginBottom: 12 }} type="success" showIcon title="Connected to GitHub."
+          description="Run the checks on the Overview tab, then give people Start work from this channel in Access." />
+      )}
       {c.file_matches === false && (
         <Alert style={{ marginBottom: 12 }} type="warning" showIcon
           title={`${c.file} was edited after revision ${c.revision} was applied.`}
@@ -376,7 +396,7 @@ function Overview({ url, c }: { url: string; c: Exported }) {
             title={doc.data.ready ? "Ready." : "Not ready yet. Fix the items marked fail."}
             description={doc.data.webhook_url ? <>Provider delivery URL: <Text code copyable>{doc.data.webhook_url}</Text></> : undefined} />
           <Table<Check>
-            rowKey="id" size="small" pagination={false} dataSource={doc.data.checks}
+            rowKey="id" size="small" pagination={PAGED} dataSource={doc.data.checks}
             columns={[
               { title: "Check", dataIndex: "id", width: 200 },
               { title: "Result", dataIndex: "status", width: 90, render: (s: string) => <Tag color={colors[s]}>{s}</Tag> },
@@ -396,7 +416,7 @@ function Threads({ hub, url, cid }: { hub: Hub; url: string; cid: string }) {
   if (!data.data.items.length) return <Empty description="No threads yet. A mention or message in the provider starts one." />;
   return (
     <Table<Thread>
-      rowKey="id" size="small" dataSource={data.data.items} pagination={{ pageSize: 25 }}
+      rowKey="id" size="small" dataSource={data.data.items} pagination={PAGED}
       columns={[
         { title: "Thread", dataIndex: "thread_key", render: (k: string, t) => <a href={channelHref(hub, cid, "threads", t.id)}>{k}</a> },
         { title: "Asked by", dataIndex: "requester" },
@@ -434,7 +454,7 @@ function Deliveries({ url }: { url: string }) {
         <Empty description="No deliveries yet. doctor reports webhook_delivery: unverified until the provider sends one." />
       ) : (
         <Table<Delivery>
-          rowKey="id" size="small" dataSource={data.data.items} pagination={{ pageSize: 25 }}
+          rowKey="id" size="small" dataSource={data.data.items} pagination={PAGED}
           columns={[
             { title: "Received", dataIndex: "created", render: when },
             { title: "From", render: (_: unknown, d) => d.actor?.display || d.actor?.external_id || "?" },
@@ -483,7 +503,7 @@ function Replies({ url }: { url: string }) {
       {notice && <Alert style={{ marginBottom: 12 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
       {!data.data.items.length ? <Empty description="No replies yet." /> : (
         <Table<Reply>
-          rowKey="id" size="small" dataSource={data.data.items} pagination={{ pageSize: 25 }}
+          rowKey="id" size="small" dataSource={data.data.items} pagination={PAGED}
           columns={[
             { title: "Recorded", dataIndex: "created", render: when },
             { title: "Kind", dataIndex: "kind" },
@@ -546,7 +566,7 @@ function Links({ url }: { url: string }) {
       {notice && <Alert style={{ marginBottom: 12 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
       {!data.data ? <LoadState error={data.error} retry={data.reload} /> : (
         <Table<Link>
-          rowKey="id" size="small" dataSource={data.data.items} pagination={false}
+          rowKey="id" size="small" dataSource={data.data.items} pagination={PAGED}
           locale={{ emptyText: "No links yet. Nobody can start work until linked." }}
           columns={[
             { title: "Provider user", dataIndex: "external_id" },
@@ -619,7 +639,7 @@ function ThreadView({ hub, cid, tid }: { hub: Hub; cid: string; tid: string }) {
       </Descriptions>
       <Title level={4}>Deliveries</Title>
       <Table<Delivery>
-        rowKey="id" size="small" pagination={false} dataSource={t.deliveries}
+        rowKey="id" size="small" pagination={PAGED} dataSource={t.deliveries}
         columns={[
           { title: "Received", dataIndex: "created", render: when },
           { title: "From", render: (_: unknown, d) => d.actor?.display || d.actor?.external_id || "?" },
@@ -629,7 +649,7 @@ function ThreadView({ hub, cid, tid }: { hub: Hub; cid: string; tid: string }) {
       />
       <Title level={4} style={{ marginTop: 16 }}>Replies</Title>
       <Table<Reply>
-        rowKey="id" size="small" pagination={false} dataSource={t.replies}
+        rowKey="id" size="small" pagination={PAGED} dataSource={t.replies}
         columns={[
           { title: "Recorded", dataIndex: "created", render: when },
           { title: "Kind", dataIndex: "kind" },
@@ -724,6 +744,7 @@ function GitHubPanel({ url }: { url: string }) {
     }
   };
   const st = status.data?.state ?? "none";
+  const files = useAgentEditing();
   return (
     <div style={{ marginBottom: 16 }}>
       <Title level={4}>GitHub App</Title>
@@ -732,7 +753,10 @@ function GitHubPanel({ url }: { url: string }) {
         hub's secret store directly. Setup state: <Tag>{st}</Tag>
       </Paragraph>
       {notice && <Alert style={{ marginBottom: 8 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
-      {(st === "none" || st === "failed") && (
+      {(st === "none" || st === "failed") && !files.editable && (
+        <Paragraph type="secondary">Set up the App with <Text code>hubzoid channels github connect</Text>. {files.message}</Paragraph>
+      )}
+      {(st === "none" || st === "failed") && files.editable && (
         <Form form={form} layout="inline" onFinish={start} initialValues={{ type: "organization" }}>
           <Form.Item name="owner" rules={[{ required: true, message: "The owner's GitHub login" }]}>
             <Input placeholder="Owner (example-company)" aria-label="GitHub owner" />
@@ -746,7 +770,7 @@ function GitHubPanel({ url }: { url: string }) {
           <Form.Item><Button type="primary" htmlType="submit">Start App setup</Button></Form.Item>
         </Form>
       )}
-      {reg && <Paragraph><a href={reg} target="_blank" rel="noreferrer">Continue to GitHub to create the App</a> (the link works once, for 15 minutes)</Paragraph>}
+      {reg && <Paragraph><a href={reg} target="_blank" rel="noreferrer">Continue to GitHub to create the App</a> (the link works once, for an hour)</Paragraph>}
       {status.data?.installation_url && <Paragraph><a href={status.data.installation_url} target="_blank" rel="noreferrer">Install the App on your repositories</a></Paragraph>}
       {st === "ready" && <Button onClick={list}>Show reachable repositories</Button>}
       {repos && <Paragraph style={{ marginTop: 8 }}>{repos.length ? repos.map((r) => <Tag key={r.id}>{r.full_name} ({r.id})</Tag>) : "None yet."}</Paragraph>}

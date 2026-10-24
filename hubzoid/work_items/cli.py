@@ -52,7 +52,7 @@ def _decider(hub: Path, as_json: bool) -> str:
     """Who makes a decision from the CLI. A decision belongs to the person who
     asked for the work, so the CLI can make it only where that person is the
     machine's own single account: local mode with sign-in off. Elsewhere,
-    decide in the Console or the API, signed in as that person."""
+    decide in Settings or the API, signed in as that person."""
     from ..access.session import LOCAL_OWNER
     from ..workflows import identity
 
@@ -61,7 +61,7 @@ def _decider(hub: Path, as_json: bool) -> str:
     _fail(WorkItemError(
         "decide_as_requester",
         "Approvals and decisions are made by the person who asked for the work, signed in. "
-        "Use the Console's Work items page or the API as that person.", status=403), as_json)
+        "Use My work in the Inbox page or the API as that person.", status=403), as_json)
 
 
 def _exit_code(status: int) -> int:

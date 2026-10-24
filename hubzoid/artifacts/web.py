@@ -401,7 +401,7 @@ def build_router(hub_dir) -> APIRouter:
             raise HTTPException(409, why)
         if not store_for(hub_dir).can(subject, found.hub, arts.SHARE_DOMAIN.permission):
             raise HTTPException(403, f"You can't share reports with {domains.label()}. An admin can "
-                                     f"allow it in the Console (\u201c{arts.SHARE_DOMAIN.label}\u201d).")
+                                     f"allow it in Settings (\u201c{arts.SHARE_DOMAIN.label}\u201d).")
         token = series_lib.domain_on(hub_dir, found, subject)
         return {"ok": True, "on": True, "url": series_lib.share_url(hub_dir, token)}
 

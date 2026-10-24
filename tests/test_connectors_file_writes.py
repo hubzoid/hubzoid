@@ -333,3 +333,10 @@ def test_a_padded_client_id_in_the_file_keeps_its_secret(hub, tc):
     r = tc.patch("/portal/api/connectors/gmail", json={"client_id": "client", "name": "Renamed"}, headers=SAME)
     assert r.status_code == 200, r.text
     assert registry.client_secret(hub, "gmail") == "kept"
+
+
+@pytest.fixture(autouse=True)
+def _in_app_editing_on(monkeypatch):
+    """These tests change agent files from the browser: Beta, off by default
+    (hubzoid.editing). The switch is on for them."""
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")

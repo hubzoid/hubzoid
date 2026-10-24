@@ -115,6 +115,9 @@ def build_router(hub_dir: Path):
     async def write(request: Request):
         who = hub_access.hub_admin(request, hub_dir)
         hub_access.same_origin(request)
+        from .. import editing
+
+        editing.check(hub_dir, "this agent's settings (settings.yaml)")
         document, expected = await _document(request)
         values = candidate(document)
         try:

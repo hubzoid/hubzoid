@@ -281,7 +281,11 @@ def register_budgets(router: APIRouter, require_person: Callable, hub_path: Call
 
     @router.put("/hubs/{hub}/budgets")
     async def put(hub: str, body: BudgetsBody, actor=Depends(writer)):
-        return await _call(budgets.apply, hub_for(actor, hub, "workflows_manage"), body.yaml,
+        from .. import editing
+
+        target = hub_for(actor, hub, "workflows_manage")
+        editing.check(target, "usage limits (budgets.yaml)")
+        return await _call(budgets.apply, target, body.yaml,
                            expected_revision=body.expected_revision, actor=actor.subject)
 
     @router.post("/hubs/{hub}/budgets/reservations/{reservation_id}/release")

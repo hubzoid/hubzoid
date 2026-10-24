@@ -17,7 +17,7 @@ const SURFACES: Record<string, string> = {
   mcp: "an MCP assistant",
   whatsapp: "WhatsApp",
   telegram: "Telegram",
-  console: "the Console",
+  console: "Settings",
 };
 
 /**

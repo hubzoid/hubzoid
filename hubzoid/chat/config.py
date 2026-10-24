@@ -453,6 +453,22 @@ class ChatConfigService:
         """Changes are the file's history in Git."""
         return []
 
+    def sets_timezone(self) -> bool:
+        """Whether the deployment's file names a time zone itself (even UTC,
+        which the effective view can't tell from the product default)."""
+        cur = self._file.current()
+        if cur.path is None:
+            return False
+        try:
+            import yaml
+
+            raw = yaml.safe_load(Path(cur.path).read_text()) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            return False
+        if Path(cur.path).name == "hubzoid.yaml":
+            raw = raw.get("chat") or {}
+        return isinstance(raw, dict) and "timezone" in (raw.get("presentation") or {})
+
     def file_path(self) -> Path:
         cur = self._file.current()
         return cur.path or (self.root / FILE)

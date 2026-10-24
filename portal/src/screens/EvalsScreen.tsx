@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert,
   Button,
@@ -28,7 +29,7 @@ import {
 } from "../api";
 import { useData } from "../hooks/useData";
 import { href, navigate } from "../hooks/useRoute";
-import { LoadState, When } from "../components/common";
+import { LoadState, When, InfoHelp, PAGED } from "../components/common";
 import { describeCron, formatDuration, formatTime } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
@@ -42,7 +43,7 @@ const evalsPath = (hub: Hub, stamp?: string) =>
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 const TRIGGERS: Record<string, string> = {
-  console: "Console",
+  console: "Settings",
   schedule: "Schedule",
   cli: "Command line",
   ci: "CI",
@@ -78,12 +79,8 @@ function keyArgs(args: unknown): string {
 /** The latest score, the trend over the last 10 runs, and what needs a look. */
 function ScoreSummary({ hub, score }: { hub: Hub; score: NonNullable<EvalsOverview["score"]> }) {
   const latest = score.latest;
-  if (!latest)
-    return (
-      <div className="eval-score">
-        <Text type="secondary">No run yet. Run evals from the command line, CI or a schedule.</Text>
-      </div>
-    );
+  // No run yet: the Runs table below says so, once (founder review).
+  if (!latest) return null;
   const all = latest.passed === latest.total;
   return (
     <div className="eval-score" role="group" aria-label="Eval score">
@@ -156,9 +153,10 @@ function Verdict({ passed }: { passed: boolean }) {
 }
 
 export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: string; embedded?: boolean }) {
+  const underTabs = useUnderTabs();
   const [page, setPage] = useState(1);
   const overview = useData<EvalsOverview>("/evals" + query({ hub: hub.key }), { keepStale: true });
-  const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*50, limit: 50 }), {
+  const runs = useData<{ runs: EvalRunSummary[]; total: number }>("/evals/runs" + query({ hub: hub.key, offset: (page-1)*20, limit: 20 }), {
     keepStale: true,
   });
   const active = overview.data?.active ?? null;
@@ -193,10 +191,10 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={2}>Evals in {hub.name}</Title>
+          {!underTabs && <Title level={2}>Evals in {hub.name}</Title>}
           <Paragraph type="secondary">
-            Checks that this agent still answers as it should. Each case is a markdown file in the agent’s{" "}
-            <Text code>evals</Text> folder.
+            Checks that this agent still answers as it should.
+            <InfoHelp text="Each case is a markdown file in the agent's evals folder. Run them with hubzoid eval run, in CI or on a schedule." />
           </Paragraph>
         </div>
         <Space wrap>
@@ -238,7 +236,7 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
             {!runs.data ? (
               <LoadState error={runs.error} retry={runs.reload} rows={2} />
             ) : (
-              <><RunsTable embedded={embedded} hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={50} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
+              <><RunsTable embedded={embedded} hub={hub} runs={runs.data.runs} /><Pagination current={page} pageSize={20} total={runs.data.total} onChange={setPage} showSizeChanger={false} /></>
             )}
           </div>
         </>
@@ -337,7 +335,7 @@ function CasesTable({ hub, cases, embedded }: { hub: Hub; cases: EvalCaseRow[]; 
       rowKey="name"
       size="middle"
       dataSource={cases}
-      pagination={false}
+      pagination={PAGED}
       scroll={{ x: 900 }}
       columns={[
         {
@@ -447,7 +445,7 @@ function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; 
       size="middle"
       dataSource={runs}
       scroll={{ x: 720 }}
-      pagination={false}
+      pagination={PAGED}
       locale={{
         emptyText: (
           <Empty

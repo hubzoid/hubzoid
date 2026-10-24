@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { useUnderTabs } from "../lib/underTabs";
 import { Alert, Breadcrumb, Button, Descriptions, Empty, Input, Segmented, Space, Table, Tag, Typography } from "antd";
 import { RefreshCw } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
 import { href } from "../hooks/useRoute";
 
@@ -75,17 +76,15 @@ export function AgentIntake({ hub, rest }: { hub: Hub; rest: string[] }) {
 }
 
 function ItemList({ hub }: { hub: Hub }) {
+  const underTabs = useUnderTabs();
   const [state, setState] = useState<string>("quarantined");
   const list = useLoad<Page>(`${base(hub)}${state === "all" ? "" : `?state=${state}`}`);
   return (
     <div className="panel">
-      <Title level={2}>
-        Intake
-        <InfoHelp text="Email and WhatsApp messages from outside the organization, before any work starts. The same list as hubzoid intake list." />
-      </Title>
+      {!underTabs && <Title level={2}>Incoming messages</Title>}
       <Paragraph type="secondary">
-        A message from an allowed, verified sender starts its workflow. Everything else waits here. Nothing is sent to a
-        sender and no model reads a message until it is released.
+        Email and WhatsApp from outside, held until someone lets it through.
+        <InfoHelp text="A message from an allowed, verified sender starts its workflow. Everything else waits here, and no model reads it until it is released. The same list is in hubzoid intake list." />
       </Paragraph>
       <Space style={{ marginBottom: 16 }} wrap>
         <Segmented
@@ -109,7 +108,7 @@ function ItemList({ hub }: { hub: Hub }) {
         <Table<Item>
           rowKey="id"
           dataSource={list.data.items}
-          pagination={false}
+          pagination={PAGED}
           scroll={{ x: true }}
           columns={[
             { title: "From", render: (_, r) => <a href={intakeHref(hub, r.id)}>{r.sender.external_id || "Unknown"}</a> },
@@ -199,7 +198,7 @@ function ItemView({ hub, id }: { hub: Hub; id: string }) {
           <Table<Attachment>
             rowKey="id"
             size="small"
-            pagination={false}
+            pagination={PAGED}
             dataSource={d.attachments}
             columns={[
               { title: "File", render: (_, a) => a.state === "available"

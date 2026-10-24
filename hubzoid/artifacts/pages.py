@@ -45,6 +45,10 @@ main>iframe{flex:1;border:0;width:100%;background:#fff}
 main>.pad{flex:1;overflow:auto;padding:16px}
 img.preview{max-width:100%;height:auto;display:block;margin:0 auto;background:#fff}
 pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.5 var(--mono);margin:0}
+.md{max-width:760px;font-size:15px;line-height:1.6}.md h1{font-size:24px}.md h2{font-size:19px}.md h3{font-size:16px}
+.md table{border-collapse:collapse;margin:12px 0}.md td,.md th{border:1px solid var(--line,#ddd);padding:5px 9px;text-align:left}
+.md pre{background:rgba(127,127,127,.1);padding:10px;border-radius:6px}.md code{font:13px var(--mono)}
+.md blockquote{margin:12px 0;padding:4px 14px;border-left:3px solid var(--line,#ddd)}
 table{border-collapse:collapse;font-size:13px}
 th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
 tr:first-child td{font-weight:600;background:var(--panel)}
@@ -202,6 +206,11 @@ function render(){
     for (const row of meta.preview.rows) { const tr = el('tr'); for (const c of row) tr.append(el('td', {}, c)); t.append(tr); }
     pad.append(t);
     if (meta.preview.truncated) pad.append(el('p', {class:'note'}, 'Showing the first rows. Download the file for all of it.'));
+    box.append(pad);
+  } else if (meta.preview && meta.preview.kind === 'markdown') {
+    // Sanitized on the server: structure only, no scripts, styles or images from elsewhere.
+    const pad = el('div', {class:'pad md'}); pad.innerHTML = meta.preview.html;
+    if (meta.preview.truncated) pad.append(el('p', {class:'note'}, 'Showing the beginning. Download the file for all of it.'));
     box.append(pad);
   } else if (meta.preview && meta.preview.kind === 'text') {
     const pad = el('div', {class:'pad'}); pad.append(el('pre', {}, meta.preview.text));

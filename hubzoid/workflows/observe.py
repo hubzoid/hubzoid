@@ -132,6 +132,7 @@ def definitions(hub_dir) -> list[dict]:
                         sensitive=False,
                         has_inputs=False,
                         title=node.name.replace("_", " ").strip().capitalize(),
+                        purpose=first_sentence(ast.get_docstring(node) or ""),
                     )
                     try:
                         args = {
@@ -206,6 +207,10 @@ def catalog(hub_dir) -> list[dict]:
             row["state"] = "manual"
         elif not enabled:
             row["state"] = "disabled"
+        elif health.get("schedules") is False and not row["name"].startswith("md:"):
+            # The engine runs (webhooks, schedule/*.md) but code timetables are
+            # off on this machine (HUBZOID_SCHEDULES): never show a next run.
+            row["state"] = "schedules_off"
         elif stale:
             row["state"] = "stale"
         else:
@@ -213,7 +218,7 @@ def catalog(hub_dir) -> list[dict]:
         row["error"] = row["error"] or health.get("error")
         row["next_run"] = (
             next_after(row["schedule"], row["timezone"], now).isoformat()
-            if row["enabled"] and row["schedule"]
+            if row["enabled"] and row["schedule"] and row["state"] != "schedules_off"
             else None
         )
         if row["schedule"] and not row["error"]:
@@ -233,6 +238,18 @@ def catalog(hub_dir) -> list[dict]:
         row["runs_as"] = identity.summary(hub_dir, run_as=row.get("run_as"),
                                           legacy_subject=f"workflow:{row['name']}")
     return rows
+
+
+def first_sentence(text: str, limit: int = 160) -> str:
+    """A workflow's purpose for people: the first sentence of its brief or
+    docstring, without Markdown, cut at a word."""
+    import re
+
+    plain = " ".join((text or "").replace("`", "").replace("*", "").split())
+    sentence = re.split(r"(?<=[.!?])\s", plain, maxsplit=1)[0]
+    if len(sentence) > limit:
+        sentence = sentence[:limit].rsplit(" ", 1)[0] + "…"
+    return sentence
 
 
 def markdown_catalog(hub_dir) -> list[dict]:
@@ -267,6 +284,8 @@ def markdown_catalog(hub_dir) -> list[dict]:
             next_run=nxt.astimezone().isoformat() if nxt else None,
             last_dispatch=last.get("last_fired_iso"), missed=0,
             heartbeat=None, downtime=None, run_as=t.run_as,
+            title=t.name.replace("-", " ").replace("_", " ").strip().capitalize(),
+            purpose=first_sentence(t.body),
         ))
     for problem in problems:
         rows.append(dict(hub=hub_dir.name.lower(), name="md:?", kind="markdown",

@@ -17,6 +17,11 @@ export type SessionUser = {
   parity?: boolean;
   /** The Hubzoid version; sent only to people the Console opens for. */
   version?: string;
+  /** How this session signed in ("password", "google", "oidc", "saml", ...). */
+  method?: string;
+  /** Whether this account has a Hubzoid password to change. */
+  has_password?: boolean;
+  password_enabled?: boolean;
 };
 
 export type Provider = { id: string; name: string; kind?: string; login_url?: string };
@@ -31,6 +36,8 @@ export type Session = {
   branding_name?: string;
   /** Sign-in is off and the server listens beyond this computer (an explicit opt-out). */
   unsafe_network?: boolean;
+  /** Why the last session ended, when it says something to the person ("suspended"). */
+  ended?: string;
 };
 
 export type Agent = {

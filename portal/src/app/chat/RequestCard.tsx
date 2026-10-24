@@ -3,7 +3,7 @@
 // card reads the request, sends one decision with the revision and digest it
 // showed, and never claims success it did not get back.
 import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from "react";
-import { Check, ChevronDown, CircleSlash, Hand, Loader2, MessageCircleQuestion, X } from "lucide-react";
+import { Check, ChevronDown, CircleSlash, FileText, Hand, Loader2, MessageCircleQuestion, X } from "lucide-react";
 import { ApiError, enc, get, hubUrl, post } from "../lib/api";
 import { t } from "../i18n/en";
 import { Button, cx } from "../components/ui";
@@ -192,9 +192,7 @@ export function RequestCard({ requestId, toolName, args }: { requestId: string; 
         {label.server && <span className="hz-tag is-quiet">{label.server}</span>}
       </div>
       {isPlan && req.subject?.url ? (
-        <a className="text-[13px]" href={req.subject.url} target="_blank" rel="noopener">
-          {t.requests.openPlan(req.subject.name || req.title, req.subject.version)}
-        </a>
+        <ViewPlan url={req.subject.url} version={req.subject.version} />
       ) : (
         summary && <p className="m-0 truncate text-[13px] text-mute">{summary}</p>
       )}
@@ -259,6 +257,26 @@ export function RequestCard({ requestId, toolName, args }: { requestId: string; 
       {pending && !mine && <p className="m-0 text-[12.5px] text-mute">{t.requests.waitingFor(req.requester_email || "")}</p>}
       {!pending && <p className="hz-request-outcome">{outcomeLine(req).icon}{outcomeLine(req).text}</p>}
       {failure && <p className="m-0 text-[12.5px] text-danger" role="alert">{failure}</p>}
+    </div>
+  );
+}
+
+/** The plan to approve opens in a new tab: a clear button that shows it is
+ *  opening (HUB-140, session B: a text link read as broken). */
+function ViewPlan({ url, version }: { url: string; version?: number }) {
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    if (!opening) return;
+    const done = window.setTimeout(() => setOpening(false), 2500);
+    return () => window.clearTimeout(done);
+  }, [opening]);
+  return (
+    <div>
+      <a className="hz-btn hz-btn-secondary hz-btn-sm" href={url} target="_blank" rel="noopener"
+        onClick={() => setOpening(true)} aria-busy={opening || undefined} data-testid="request-view-plan">
+        {opening ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <FileText size={14} aria-hidden />}
+        {t.requests.viewPlan(version)}
+      </a>
     </div>
   );
 }

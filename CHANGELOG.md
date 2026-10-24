@@ -5,7 +5,52 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.2]
+
+Stability and the fixes found testing 2.0.1 end to end with three teams' hubs.
+See [upgrading to 2.0.2](docs/UPGRADING.md#upgrading-to-202).
+
+### Changed
+- **Changing agent files from the browser is Beta and off by default.**
+  Proposing and approving hub changes, the agent's `remember` and
+  `propose_hub_change` tools, and saving connectors, channels, settings,
+  approval rules and budgets in Settings answer that it is off; people still
+  read everything there. `in_app_editing: true` in `hubzoid.yaml` turns it on,
+  marked Beta. Files that come from an image are never written.
+- **Settings in two groups.** Personal: Account, Connected accounts, Sources,
+  Memory, My schedules (repeating requests, then reports). Manage: Agents,
+  Activity (runs and the audit log), Team schedules, People, Usage and
+  Organization (chat defaults, brand, sign-in, health, advanced). An agent has
+  Instructions, Access, Connectors, Workflows, Work (only when it has work
+  items, incoming messages or sandboxes), Evals, Feedback and Configuration.
+  My work moved to the Inbox. Old addresses open the new place. On a laptop
+  (sign-in off) there are no People or Sign-in pages.
+- The Workflows tab reads in plain words: the workflow's name and purpose, one
+  status line ("Off. Turn it on with `enabled: true` in
+  `schedule/monday-reorder.md`"), "Runs as you (the local owner)", and the run
+  command in a menu.
+- No warning colour on empty pages or explanations, no internal product names
+  (Console, Open WebUI, LibreChat), and a page under a tab no longer repeats
+  its own title.
+- `codex-local` works with Codex CLI 0.163.0 as well as 0.147.0, after an
+  isolation review that turns 0.163's new features off on every request.
+  `HUBZOID_CODEX_BIN` names another binary.
+- The API reference (`/docs`, `/openapi.json`) is **Hubzoid API** with the real
+  version and lists only the public API, with personal-key sign-in. New guide:
+  [docs/api.md](docs/api.md).
+- Schedules made in chat use the person's time zone setting, then the
+  deployment's, then the zone their browser sends, then UTC (not UTC straight
+  away). A repeated request's answer chat is titled with the schedule's name
+  and the time in its zone.
+- The chat's model picker shows only the agent's own model unless the
+  deployment lists models under `chat.models.catalog`. Claude agents offered
+  Sonnet, Opus and Haiku to everyone without being asked.
+- `typer` from 0.26.8, so docling (2.60 and later) installs alongside.
+- Top help says "One brain for your internal agents." and leaves out the
+  maintainers' `parity` command.
+
 ### Added
+- `hubzoid audit --json` ([#58](https://github.com/hubzoid/hubzoid/issues/58)).
 - Chat inside your own app ([docs/embedding.md](docs/embedding.md)). Register an
   app under `apps:` in `hubzoid.yaml` (client id and secret, limited to a set of
   agents and tools). Your server gives the signed-in person a short pass (a JWT
@@ -19,6 +64,61 @@ All notable changes to Hubzoid. Versions follow the package version in
   settings; `hubzoid embed list|pass` check and try it. A working example with
   its own orders API and MCP server is in `examples/embed-agui`, and the
   `hubzoid-embed` skill (`skills/embed/`) walks Claude Code or Codex through it.
+
+### Fixed
+- Commands run in a deployment folder (`hubzoid admin list`, `backup`, `audit`,
+  `embed`, …) no longer crash: one hub means that hub, otherwise they ask which.
+  They also use the deployment's `public_url` and sign-in settings.
+- `hubzoid run` no longer stops when port 8000 is taken: bridge ports skip busy
+  ones. The ready line says whether sign-in is on, the inbound server says its
+  port, and retired-setting warnings show once per hub.
+- Work items on a hub whose folder name has capitals run (they were queued
+  where no worker listened, including ones already waiting).
+- Scheduled workflows on a machine where schedules are off: the start warns,
+  catch-up no longer runs missed jobs, and Settings says schedules are off
+  instead of a next run. "Next next week" and raw cron (`0 7 1 * *`) read as
+  words.
+- `hubzoid test --json` prints only JSON ([#58](https://github.com/hubzoid/hubzoid/issues/58)).
+- API keys get the answer text only (no tool activity or thinking), and every
+  chunk of a streamed answer carries the same id and time.
+- A long duplicate upload name fits the 120-character limit
+  ([#6](https://github.com/hubzoid/hubzoid/issues/6)).
+- A channel whose id has a hyphen (`slack-main`) can be granted in Settings.
+- A blocked person is told their account is blocked when sign-in opens.
+- Sign-in links printed by the CLI use the deployment's address and port.
+- The approval decision shows on its card, not also as a chat bubble; one
+  progress indicator while a tool runs; suggestion chips wrap and hand the
+  cursor to the message box.
+- Person drawer labels, wide tables and the People list on a phone fit; the
+  Inbox says which agent it could not check; an empty key name says "Give the
+  key a name."; Health counts read as words.
+- `hubzoid secrets set --ref secret:channel/<hub>/<channel>/<name>` fills a
+  channel's secret (there was no working way), and channel errors name the
+  real command.
+- A person without a channel's grant is told an administrator gives them
+  "Start work from" that channel in Settings. `hubzoid channels doctor` reads
+  the hub's and deployment's settings instead of the shell's, and warns when
+  nobody holds the channel's grant.
+- After GitHub's App setup the browser returns to the agent's channel in
+  Settings (it answered Not Found); the setup pages look like Hubzoid and the
+  link lasts an hour.
+- Markdown artifacts, such as a plan to approve, read as documents; the plan
+  approval card has a View plan button.
+- With browser editing off, Settings shows settings, connectors, channels and
+  budgets read-only with where to change them, instead of forms that refuse on
+  save. The Secrets tab no longer offers to store keys that belong in `.env`.
+- Workflow permissions for an agent its administrator doesn't chat with show
+  that agent's policy, and review links open the agent's Changes tab.
+- A sandbox profile may set `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`,
+  `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (they were refused as
+  credentials), so a coding agent can commit.
+- The message box is empty after sending a first message with an attachment;
+  it used to keep the text, ready to send twice ([#120](https://github.com/hubzoid/hubzoid/issues/120)).
+- Account shows no password form to someone who signs in with Google or a
+  company sign-in.
+- Docs: MCP does not offer `remember` ([#56](https://github.com/hubzoid/hubzoid/issues/56)); five settings no doc
+  named are documented ([#45](https://github.com/hubzoid/hubzoid/issues/45)); Inbox and Settings replace "Waiting for
+  you" and "the Console".
 
 ## [2.0.1]
 

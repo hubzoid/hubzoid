@@ -91,9 +91,9 @@ hubzoid hub configure . --apply --expected-revision absent
 A change applies after the hub restarts. Editing the file by hand also moves
 the revision on, so a stale editor is refused.
 
-## Configure in the Console
+## Configure in Settings
 
-Agents, then the agent, then **Setup**:
+Agents, then the agent, then **Configuration**, **Setup**. Saving the form there is Beta and off by default (see [DEPLOYING](DEPLOYING.md#in-app-editing)):
 
 - the settings form, with each value's source;
 - the secret settings and whether each is available;

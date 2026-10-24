@@ -25,7 +25,9 @@ export type SignInOptions = {
 export type SignIn = "password" | "google" | "directory";
 /** What the hub folder holds, counted without loading it (GET /hubs). */
 export type HubContents = { knowledge: number; skills: number; subagents: number; tool_files: number; connectors: number };
-export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean; contents?: HubContents };
+/** Which optional parts an agent uses, so its page shows a tab only then. */
+export type HubParts = { work: boolean; intake: boolean; sandboxes: boolean };
+export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean; contents?: HubContents; has?: HubParts };
 export type Permission = {
   permission: string;
   label: string;
@@ -104,6 +106,10 @@ export type Workflow = {
   sensitive?: boolean;
   has_inputs?: boolean;
   title?: string;
+  /** The first sentence of its brief or docstring. */
+  purpose?: string;
+  /** Its file in the agent folder, e.g. schedule/monday-reorder.md. */
+  source?: string;
   input_schema?: InputSchema | null;
 };
 export type InputProperty = {

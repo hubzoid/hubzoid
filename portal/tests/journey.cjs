@@ -24,7 +24,8 @@ function step(name) {
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const host = await settingsHost();
+  // A team deployment: People and Sign-in are hidden on a laptop (sign-in off).
+  const host = await settingsHost({ as: "ada@example.com" });
   const fixture = createFixture();
   const { state } = fixture;
   let diagnosticPage;
@@ -78,8 +79,17 @@ function step(name) {
     await context.route(`${ORIGIN}/**`, serve());
     const go = (hash) => page.goto(`${ORIGIN}/settings${hash ? "#" + hash : ""}`);
     const hash = () => page.evaluate(() => location.hash);
+    // A section under tabs doesn't repeat its name as a heading (HUB-140): the
+    // agent's name heads the page and the open tab names the section.
+    const agentTab = async (agent, tab) => {
+      await page.getByRole("heading", { name: agent, level: 1 }).waitFor();
+      await page.locator(".hz-agent-tabs a[aria-current=page], .hz-subtabs a[aria-current=page]")
+        .filter({ hasText: new RegExp(`^${tab}$`) }).first().waitFor();
+    };
+    const settingsTab = (tab) => page.locator(".hz-preference-tabs a[aria-current=page]")
+      .filter({ hasText: new RegExp(`^${tab}$`) }).waitFor();
     // Settings lists access and workflows as items, and people as table rows.
-    const rows = () => page.locator("tr, .hz-access-list > li, .hz-workflow-list > li");
+    const rows = () => page.locator("tr, .hz-access-list > li");
     const drawer = () => page.locator(".ant-drawer-section[role=dialog]");
     const modal = () => page.locator(".ant-modal-confirm").filter({ visible: true });
     const modalTitle = (text) => modal().locator(".ant-modal-confirm-title").getByText(text);
@@ -171,7 +181,7 @@ function step(name) {
     // ---- access: readable rows -----------------------------------------------
     step("Access tab shows readable capabilities, inherited rights and account states");
     await go("/agents/finance/access");
-    await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
+    await agentTab("Finance Assistant", "People");
     const priyaRow = rows().filter({ hasText: "Priya Natarajan" });
     await priyaRow.getByText("Read ledger", { exact: true }).waitFor();
     await priyaRow.getByText("Manage invoices", { exact: true }).waitFor();
@@ -261,7 +271,7 @@ function step(name) {
     await page.evaluate(() => {
       location.hash = "/agents/support/access";
     });
-    await page.getByRole("heading", { name: "Access to Support Assistant" }).waitFor();
+    await agentTab("Support Assistant", "People");
     assert.equal(await page.getByText("Priya Natarajan").count(), 0, "finance rows must vanish immediately");
     await rows().filter({ hasText: "Mei Lin Chen" }).getByText("Work tickets").waitFor();
     await rows().filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
@@ -933,13 +943,11 @@ function step(name) {
     // ---- runs & schedules ---------------------------------------------------------------
     step("Runs & schedules explains workflow state, opens runs and run details with steps");
     await go("/agents/finance/runs");
-    await page.getByRole("heading", { name: "Workflows in Finance Assistant" }).waitFor();
+    await agentTab("Finance Assistant", "Workflows");
     const close = rows().filter({ hasText: "monthly_close" });
-    await close.getByText("Scheduled", { exact: true }).waitFor();
-    await close.getByText("Asia/Kolkata").waitFor();
-    // Explanations sit behind a "?" help button, named by its text.
-    await rows().filter({ hasText: "reissue_invoice" }).getByRole("button", { name: "No schedule; runs only when started explicitly." }).waitFor();
-    await rows().filter({ hasText: "reissue_invoice" }).getByText("Manual", { exact: true }).waitFor();
+    // One plain status line per workflow (HUB-140 F31), with the schedule's zone.
+    await close.getByText(/^On\. Runs .*\(Asia\/Kolkata\)\./).waitFor();
+    await rows().filter({ hasText: "reissue_invoice" }).getByText("Runs when someone starts it.", { exact: true }).waitFor();
     await close.getByRole("link", { name: "View runs" }).click();
     await page.getByRole("heading", { name: /Runs of monthly_close/ }).waitFor();
     await rows().filter({ hasText: "mc-2026-08-01" }).getByText("Failed").waitFor();
@@ -955,15 +963,15 @@ function step(name) {
     await go("/agents/finance/runs/monthly_close/does-not-exist");
     await page.getByText("Run not found").waitFor();
     await go("/agents/itops/runs");
-    await page.getByText("Scheduler not running", { exact: false }).first().waitFor();
-    await page.getByText("2 scheduled runs missed while the scheduler was down", { exact: false }).waitFor();
+    await page.getByText("The scheduler stopped", { exact: false }).first().waitFor();
+    await page.getByText("2 scheduled runs were missed while the agent was stopped", { exact: false }).waitFor();
     await go("/agents/support/runs/ticket_digest");
     await page.getByText("No runs yet", { exact: true }).waitFor();
 
     // ---- cross-agent runs ----------------------------------------------------------------
     step("Runs across agents: cross-agent list, ordered, filtered before paging, URL-persisted");
     await go("/runs");
-    await page.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
+    await settingsTab("Runs");
     // Runs from more than one agent are shown together, each labelled by agent.
     await rows().filter({ hasText: "mc-2026-09-01" }).getByText("Finance Assistant").waitFor();
     await rows().filter({ hasText: "td-2026-09-15" }).getByText("Support Assistant").waitFor();
@@ -1045,7 +1053,7 @@ function step(name) {
 
     // (a) Fires exactly once per interval (the in-flight guard prevents overlap).
     await cpage.goto(`${ORIGIN}/settings#/runs?auto=1`);
-    await cpage.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
+    await cpage.locator(".hz-preference-tabs a[aria-current=page]").filter({ hasText: /^Runs$/ }).waitFor();
     await cpage.locator("tr, .hz-workflow-list > li").filter({ hasText: "ri-2026-09-18" }).waitFor();
     let n = runsGets;
     let resP = cpage.waitForResponse((x) => x.url().includes("/portal/api/runs"));
@@ -1110,22 +1118,24 @@ function step(name) {
     await page.getByText("allowed").first().waitFor();
     const change = rows().filter({ hasText: "Aisha Rahman" }).filter({ hasText: "Read ledger" }).first();
     await change.getByText("Priya Natarajan").waitFor();
-    await change.getByText("Finance Assistant").waitFor();
+    // The agent's activity is the shared page filtered to it, so the agent shows in the sentence and its column.
+    await change.getByText("Finance Assistant").first().waitFor();
     // Case-sensitive: the sentence verb is lowercase "allowed"; the status tag is "Allowed".
     await change.getByText("allowed", { exact: true }).waitFor();
     // The saves made earlier in this run are recorded with the viewer as actor.
     await rows().filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
-    // A run control from an agent tool says who, which workflow, where from, and the run.
-    const started = rows().filter({ hasText: "started the monthly_close workflow" });
-    await started.getByText("Aisha Rahman").waitFor();
-    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
-      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
     await page.getByRole("combobox", { name: "Action" }).click();
     await page.locator(".ant-select-item-option").filter({ hasText: "Started a workflow" }).click();
     await page.waitForFunction(() => {
       const rows = [...document.querySelectorAll("tbody tr.ant-table-row")];
       return rows.length > 0 && rows.every((tr) => (tr.textContent || "").includes("started"));
     });
+    // A run control from an agent tool says who, which workflow, where from, and
+    // the run (filtered first: a page holds 20 rows).
+    const started = rows().filter({ hasText: "started the monthly_close workflow" });
+    await started.getByText("Aisha Rahman").waitFor();
+    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
+      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
     assert.ok((await hash()).includes("action=run_start"), await hash());
     await go("/agents/finance/activity");
     await page.getByText("allowed").first().waitFor();
@@ -1183,11 +1193,16 @@ function step(name) {
     await drawer().getByText("They do not have the permission this tool requires.").waitFor();
     await page.keyboard.press("Escape");
     await go("/activity");
-    await page.getByRole("heading", { name: "Activity across your agents" }).waitFor();
+    await settingsTab("Audit log");
+    // A page holds 20 rows: each check narrows to its person first.
+    await go("/activity?person=admin%40example.org");
     await page.getByText("made").first().waitFor();
-    await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").waitFor();
-    await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").waitFor();
+    await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").first().waitFor();
+    await go("/activity?person=tomas.herrera%40example.org");
+    await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").first().waitFor();
+    await go("/activity?actor=admin%40example.org&action=grant");
     await rows().filter({ hasText: "Everyone signed in" }).getByText("Support Assistant").first().waitFor();
+    await go("/activity");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-activity.png"), fullPage: true });
 
     // ---- people -----------------------------------------------------------------------------
@@ -1397,18 +1412,18 @@ function step(name) {
     step("Unknown routes and agents recover to a useful place");
     // An unknown Settings address opens the first section.
     await go("/nowhere/at/all");
-    await page.getByRole("heading", { name: "Profile", exact: true }).waitFor();
+    await settingsTab("Profile");
     assert.equal(await hash(), "#/me/profile");
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity").waitFor();
+    await page.getByText("has Instructions, Access, Connectors, Workflows, Evals, Feedback and Configuration").waitFor();
     await go("/agents/finance/runs");
-    // Target the agent's own Activity section, not the Settings Activity link.
-    await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Activity", exact: true }).click();
-    assert.equal(await hash(), "#/agents/finance/activity");
+    // The agent's activity is the shared Activity page, filtered to it.
+    await page.getByRole("link", { name: "View activity", exact: true }).click();
+    await page.waitForURL(/\/activity\?agent=finance/);
     await page.goBack();
-    await page.getByRole("heading", { name: "Workflows in Finance Assistant" }).waitFor();
+    await agentTab("Finance Assistant", "Workflows");
 
     // ---- agent administrator (not org) ------------------------------------------------------
     step("An agent administrator sees only their agents and cannot touch admin or public access");
@@ -1422,7 +1437,7 @@ function step(name) {
     await page.getByRole("link", { name: "Open Finance Assistant", exact: true }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Open Support Assistant", exact: true }).count(), 0);
     await go("/agents/finance/access");
-    await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
+    await agentTab("Finance Assistant", "People");
     // An agent administrator sees an existing Everyone grant read-only.
     state.grants.push([EVERYONE_SUBJECT, "finance", USE_HUB_PERM]);
     await page.reload();

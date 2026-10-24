@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { InfoHelp, PAGED } from "../components/common";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert, App, Button, Card, Checkbox, Descriptions, Drawer, Empty, Input, Radio, Segmented, Select,
   Space, Spin, Steps, Table, Tag, Typography,
@@ -69,6 +71,7 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
   selected?: { hub: string; item: string };
   mine?: boolean;
 }) {
+  const underTabs = useUnderTabs();
   const linked = selected && hubs.some((h) => h.key === selected.hub) ? selected : undefined;
   const [hub, setHub] = useState<string | undefined>(linked?.hub ?? hubs[0]?.key);
   const [state, setState] = useState<string>("");
@@ -90,12 +93,13 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
   if (!hubs.length) return <Empty description="You have no agents yet." />;
   return (
     <div>
-      <Title level={2} style={{ marginTop: 0 }}>Work items</Title>
-      <Paragraph type="secondary">
-        Durable work an agent does for someone: each item keeps its saved stages, and every action it takes
-        outside the hub is recorded. Approve actions and decide uncertain outcomes here, from the CLI
-        (<Text code>hubzoid work-items</Text>, <Text code>hubzoid operations</Text>) or the API.
-      </Paragraph>
+      {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Work items</Title>}
+      {!mine && (
+        <Paragraph type="secondary">
+          Longer jobs people asked this agent for, and the outside actions each one took.
+          <InfoHelp text="Each item keeps its saved stages, and every action outside the hub is recorded. The same list is in hubzoid work-items and hubzoid operations." />
+        </Paragraph>
+      )}
       <Space wrap style={{ marginBottom: 16 }}>
         {hubs.length > 1 && (
           <Select aria-label="Agent" value={hub} onChange={setHub} style={{ minWidth: 200 }}
@@ -119,7 +123,7 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
           rowKey="id"
           size="middle"
           dataSource={items.data?.items}
-          pagination={false}
+          pagination={PAGED}
           onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
           columns={[
             { title: "Work", render: (_, r) => (<>

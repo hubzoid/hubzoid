@@ -3,10 +3,11 @@
 // this view is read-only: change the files, or ask Claude Code or Codex to.
 // Every agent picks the change up within a few seconds; history is Git.
 import { useEffect, useState } from "react";
+import { InfoHelp, PAGED } from "../../components/common";
 import { Alert, Button, Card, Descriptions, Space, Table, Typography } from "antd";
 import { control } from "../../lib/controlApi";
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 type Asset = { key: string; path: string; digest: string; media_type: string; generated?: boolean };
 type Source = {
@@ -45,20 +46,14 @@ export function Appearance() {
   const identity = active?.configuration?.identity ?? {};
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }} data-testid="brand-read-only">
-      <Alert
-        type="info"
-        showIcon
-        title="The brand lives in the deployment folder"
-        description={
-          <>
-            <Paragraph style={{ marginBottom: 4 }}>{source.how_to_change}</Paragraph>
-            <Text type="secondary">
-              Folder: <Text code>{source.folder}</Text>
-            </Text>
-          </>
-        }
-        action={<Button onClick={() => void load()}>Reload</Button>}
-      />
+      {/* One quiet line; the how-to and the folder sit behind the ? (founder review). */}
+      <Space size={6} align="center" style={{ width: "100%", justifyContent: "space-between" }}>
+        <Text type="secondary">
+          The brand comes from <Text code>hubzoid.yaml</Text> and <Text code>branding/</Text>.{" "}
+          <InfoHelp text={`${source.how_to_change} Folder: ${source.folder}`} />
+        </Text>
+        <Button size="small" onClick={() => void load()}>Reload</Button>
+      </Space>
       {active?.error || source.active.error ? (
         <Alert type="warning" showIcon title="The brand file has a problem" description={active?.error ?? source.active.error} />
       ) : null}
@@ -72,7 +67,7 @@ export function Appearance() {
           <Table
             size="small"
             rowKey="key"
-            pagination={false}
+            pagination={PAGED}
             dataSource={active.assets}
             columns={[
               { title: "Slot", dataIndex: "key" },
@@ -83,7 +78,7 @@ export function Appearance() {
         </Card>
       ) : (
         <Card size="small">
-          <Text>No brand file yet: people see the product brand (or the branding/ folder's name, logo and favicon).</Text>
+          <Text type="secondary">No brand set yet, so the default brand shows.</Text>
         </Card>
       )}
       {source.legacy.length > 0 && (
@@ -91,7 +86,7 @@ export function Appearance() {
           <Table
             size="small"
             rowKey="file"
-            pagination={false}
+            pagination={PAGED}
             dataSource={source.legacy}
             columns={[
               { title: "File", dataIndex: "file" },

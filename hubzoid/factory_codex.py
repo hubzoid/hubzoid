@@ -21,7 +21,7 @@ import tempfile
 from . import __version__, _request_ctx, agent_errors, run_events, tool_events
 
 log = logging.getLogger(__name__)
-SUPPORTED_CODEX_VERSION = "0.147.0"
+SUPPORTED_CODEX_VERSION = "0.147.0"      # the first reviewed version (kept for callers)
 _usage_rollup: ContextVar[list | None] = ContextVar("codex_usage_rollup", default=None)
 # What `_exchange` yields: typed run events when `_stream` asks for them (every
 # turn does), the 1.0.x text otherwise (a direct caller, such as a protocol
@@ -43,6 +43,22 @@ _DISABLED_FEATURES = (
     "external_migration", "external_agent_memory_import", "request_permissions_tool",
     "default_mode_request_user_input", "realtime_conversation",
 )
+# Each Codex CLI version Hubzoid accepts was reviewed for tool isolation: the
+# real-binary test (tests/test_codex_runtime.py, test_real_codex_has_only_hub_tools)
+# checks the model sees only the hub's tools. A newer version is refused until
+# it is added here with the native features it turns on by default.
+REVIEWED_CODEX_VERSIONS: dict[str, tuple[str, ...]] = {
+    "0.147.0": (),
+    # 0.163.0 (reviewed 23 Oct 2026, HUB-140): new default-on features that could
+    # give the model tools or reach outside the hub.
+    "0.163.0": ("sleep_tool", "browser_annotation_api", "browser_use_full_cdp_access",
+                "in_app_local_automation", "remote_plugin", "plugin_sharing", "worktrees",
+                "shell_snapshot", "unified_exec_tty", "write_stdin_approval", "guardian_approval",
+                "auth_elicitation", "tool_call_mcp_elicitation", "mentions_v2", "agent_message_board",
+                "artifact", "enable_mcp_apps", "incremental_tools", "codex_apps_mcp_2026_07_28",
+                "daemon_auto_start"),
+}
+_CODEX_BIN_ENV = "HUBZOID_CODEX_BIN"
 
 
 # A failed turn's structured error class (`turn.error.codexErrorInfo`) that the
@@ -78,13 +94,36 @@ def _turn_error_kind(turn: dict) -> str | None:
 
 
 def codex_binary() -> str:
-    binary = shutil.which("codex")
-    if not binary:
-        raise RuntimeError("Codex CLI is not installed. Install @openai/codex, then run codex login.")
+    return _codex()[0]
+
+
+def disabled_features(version: str) -> tuple[str, ...]:
+    return _DISABLED_FEATURES + REVIEWED_CODEX_VERSIONS.get(version, ())
+
+
+def _codex() -> tuple[str, str]:
+    """(path, version) of the Codex CLI to run: HUBZOID_CODEX_BIN, else `codex`
+    on PATH. Only a reviewed version is accepted."""
+    configured = (os.environ.get(_CODEX_BIN_ENV) or "").strip()
+    binary = configured or shutil.which("codex")
+    if not binary or (configured and not Path(configured).is_file()):
+        where = f"{_CODEX_BIN_ENV}={configured} is not a file" if configured else "Codex CLI is not installed"
+        raise RuntimeError(f"{where}. Install @openai/codex@{_newest_reviewed()}, then run codex login.")
     result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
-    if result.returncode or result.stdout.strip() != f"codex-cli {SUPPORTED_CODEX_VERSION}":
-        raise RuntimeError(f"codex-local requires Codex CLI {SUPPORTED_CODEX_VERSION}; install @openai/codex@{SUPPORTED_CODEX_VERSION}. Other versions need a tool-isolation review.")
-    return binary
+    version = result.stdout.strip().removeprefix("codex-cli ").strip()
+    if result.returncode or version not in REVIEWED_CODEX_VERSIONS:
+        reviewed = ", ".join(REVIEWED_CODEX_VERSIONS)
+        raise RuntimeError(
+            f"codex-local supports Codex CLI {reviewed} (found {version or 'an unknown version'}). "
+            f"Install one of them, or keep your own Codex and point Hubzoid at a private copy: "
+            f"npm install --prefix ~/.hubzoid/codex @openai/codex@{_newest_reviewed()}, then set "
+            f"{_CODEX_BIN_ENV}=~/.hubzoid/codex/node_modules/.bin/codex. Other versions wait for a "
+            f"tool-isolation review.")
+    return binary, version
+
+
+def _newest_reviewed() -> str:
+    return max(REVIEWED_CODEX_VERSIONS, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 
 def _auth_file() -> Path:
@@ -264,7 +303,7 @@ class CodexRuntime:
         rollup_token = _usage_rollup.set(records)
         typed_token = _typed_exchange.set(True)
         try:
-            binary = await asyncio.to_thread(codex_binary)
+            binary, version = await asyncio.to_thread(_codex)
             auth = _auth_file()
             if not auth.is_file():
                 raise RuntimeError("Codex file-backed login is required. Run codex -c 'cli_auth_credentials_store=\"file\"' login as the Hubzoid service user.")
@@ -281,7 +320,7 @@ class CodexRuntime:
                 config = {
                     # Some models require code mode. Its V8 host has no imports,
                     # filesystem, network or shell; nested calls still use our registry.
-                    "features": {**{name: False for name in _DISABLED_FEATURES}, "code_mode_host": True},
+                    "features": {**{name: False for name in disabled_features(version)}, "code_mode_host": True},
                     "web_search": "disabled", "project_doc_max_bytes": 0,
                     "orchestrator": {"skills": {"enabled": False}, "mcp": {"enabled": False}},
                     "skills": {"bundled": {"enabled": False}, "include_instructions": False},

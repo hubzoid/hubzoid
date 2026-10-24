@@ -547,3 +547,18 @@ def test_the_parity_ledger_is_for_maintainers_only(monkeypatch):
     assert routes._user_view(Path("."), user)["parity"] is False
     monkeypatch.setenv("HUBZOID_PARITY_LEDGER", "1")
     assert routes._user_view(Path("."), user)["parity"] is True
+
+
+def test_a_blocked_person_is_told_why_their_session_ended(hub):
+    """HUB-140 F23: blocking ends the session, and sign-in then says the account is blocked."""
+    from hubzoid.access import store_for
+
+    person(hub)
+    c = client(hub)
+    assert sign_in(c).status_code == 200
+    assert c.get("/api/auth/session").json()["authenticated"] is True
+    store_for(hub).suspend("ana@example.com", actor="test")
+    body = c.get("/api/auth/session").json()
+    assert body["authenticated"] is False and body["ended"] == "suspended"
+    store_for(hub).suspend("ana@example.com", actor="test", suspended=False)
+    assert "ended" not in c.get("/api/auth/session").json()     # an ordinary ended session says nothing

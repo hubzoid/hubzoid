@@ -1,0 +1,1 @@
+import{i as e}from"./rolldown-runtime-qXqUbbKo.js";import{i as t}from"./react-DL5k5R7h.js";var n=e(t(),1);function r(e){let t=()=>(0,n.lazy)(()=>e().catch(()=>new Promise(e=>setTimeout(e,600)).then(e)).catch(e=>{throw r=t(),e})),r=t();return e=>(0,n.createElement)(r,e)}export{r as t};

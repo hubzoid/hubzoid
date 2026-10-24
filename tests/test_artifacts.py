@@ -533,3 +533,17 @@ def test_first_local_workflow_report_publishes_before_web_login(tmp_path, monkey
     monkeypatch.delenv("HUBZOID_AUTH")
     store_for(hub).suspend(LOCAL_OWNER, actor="test")
     assert arts.role(hub, art, LOCAL_OWNER) is None
+
+
+def test_a_markdown_artifact_previews_as_a_document(hub, tmp_path):
+    """Session B, HUB-140: a plan from hub.review_plan(plan.md) showed its raw
+    Markdown. It renders as structure, and nothing active gets through."""
+    md = ("# Factory plan\n\n| Step | Owner |\n|---|---|\n| Build | you |\n\n"
+          "<script>alert(1)</script>\n\n[click](javascript:alert(1))\n")
+    art, _ = _publish(hub, tmp_path, name="plan.md", body=md)
+    out = arts.preview(hub, art)
+    assert out["kind"] == "markdown"
+    assert "<h1>Factory plan</h1>" in out["html"] and "<table>" in out["html"]
+    assert "<script" not in out["html"] and "javascript:" not in out["html"]
+    txt, _ = _publish(hub, tmp_path, name="notes.txt", body="# not a heading")
+    assert arts.preview(hub, txt)["kind"] == "text"

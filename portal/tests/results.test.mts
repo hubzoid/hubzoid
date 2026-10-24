@@ -10,6 +10,10 @@ for (const url of ['javascript:alert(1)', '/portal/artifacts/wrong', 'https://ev
 }
 assert.deepEqual(resultArtifacts("{'artifact': 'old Python repr'}"), []);
 assert.equal(resultSummary('Plain answer'), 'Plain answer');
+// HUB-140 F21: plain values are labelled, not bare numbers.
+assert.equal(resultSummary('3'), 'Returned 3');
+assert.equal(resultSummary(JSON.stringify({ checked: 12, low_stock: 3 })), 'checked: 12 · low stock: 3');
+assert.equal(resultSummary(JSON.stringify([1, 2])), '2 items');
 assert.equal(workflowCommand('cancel', "run';touch /tmp/unwanted", "/srv/hubs/Finance Hub"), "hubzoid schedule cancel '/srv/hubs/Finance Hub' 'run'\\'';touch /tmp/unwanted'");
 console.log('Workflow result and command checks passed');
 

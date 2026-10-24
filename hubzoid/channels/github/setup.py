@@ -40,7 +40,7 @@ from . import client as gh
 
 log = logging.getLogger("hubzoid.channels.github.setup")
 
-SETUP_SECONDS = 15 * 60
+SETUP_SECONDS = 60 * 60   # an hour: a 15-minute link expired before people got to it (HUB-140)
 PERMISSIONS = {"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write",
                "checks": "read", "actions": "read"}
 EVENTS = ["issues", "issue_comment", "pull_request", "pull_request_review_comment", "check_suite", "check_run",
@@ -101,7 +101,9 @@ def _setup(conn, state: str | None, *, want: tuple[str, ...], current: dict | No
     if not setup or not state or not secrets.compare_digest(setup.get("state_hash", ""), _hash(state)):
         raise ChannelError("setup_state_invalid", "This setup link is not valid. Start a new setup.", status=400)
     if time.time() > float(setup.get("expires") or 0):
-        raise ChannelError("setup_expired", "This setup expired. Start a new one.", status=410)
+        raise ChannelError("setup_expired", "This setup link expired. Make a new one with hubzoid channels github "
+                           f"connect {conn.hub_dir.name} {conn.id} (or in Settings, where browser editing is on).",
+                           status=410)
     if setup.get("status") not in want:
         if setup.get("status") == "converting":
             raise ChannelError("setup_conversion_unknown", "A previous attempt may have created the App before it "
@@ -122,18 +124,34 @@ def registration_page(conn, setup_id: str, state: str) -> str:
     action = (f"{web}/organizations/{setup['owner']}/settings/apps/new" if setup["owner_type"] == "organization"
               else f"{web}/settings/apps/new")
     data = html.escape(json.dumps(manifest(conn, setup["name"])), quote=True)
-    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Create the GitHub App</title>
-<style>body{{font:16px system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1b1f24}}
-code{{background:#f3f4f6;padding:2px 4px;border-radius:4px}}button{{font:inherit;padding:10px 16px}}</style></head>
-<body><h1>Create your GitHub App</h1>
-<p>The App will be owned by <b>{html.escape(setup['owner'])}</b> ({html.escape(setup['owner_type'])}).
-It asks for: metadata read, contents write, issues write, pull requests write, checks read and actions read.
+    return page("Create your GitHub App", f"""
+<p>For <b>{html.escape(conn.hub_dir.name)}</b>, channel <code>{html.escape(conn.id)}</code>. The App will be owned by
+<b>{html.escape(setup['owner'])}</b> ({html.escape(setup['owner_type'])}).</p>
+<p>It asks for: metadata read, contents write, issues write, pull requests write, checks read and actions read.
 It sends events to <code>{html.escape(webhook_url(conn) or '')}</code>.</p>
-<p>GitHub shows the details and creates the App in your account. The App's private key and webhook secret go
-straight to this hub's secret store. Nobody sees them here.</p>
+<p class="mute">GitHub shows the details and creates the App in your account. The App's private key and webhook
+secret go straight to this hub's secret store. Nobody sees them here.</p>
 <form id="f" method="post" action="{html.escape(action)}?state={html.escape(state)}">
-<input type="hidden" name="manifest" value="{data}"><button type="submit">Continue to GitHub</button></form>
-</body></html>"""
+<input type="hidden" name="manifest" value="{data}"><button type="submit">Continue to GitHub</button></form>""")
+
+
+def page(title: str, body_html: str) -> str:
+    """A Hubzoid page for the steps outside the web app (GitHub setup), in its
+    look, so people can tell the page is Hubzoid's (HUB-140, session B)."""
+    import html
+
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)} · Hubzoid</title>
+<style>
+:root{{--bg:#fbfbfa;--fg:#1b1b1d;--mute:#64646b;--line:#e4e4e7;--card:#fff;--acc:#e5552c}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#151515;--fg:#ececee;--mute:#a1a1aa;--line:#2a2a2d;--card:#1c1c1e}}}}
+body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+header{{padding:20px 24px;font:600 17px ui-monospace,Menlo,monospace}} header span{{color:var(--acc)}}
+main{{max-width:560px;margin:40px auto;padding:28px;background:var(--card);border:1px solid var(--line);border-radius:12px}}
+h1{{font-size:22px;font-weight:600;margin:0 0 12px}} p{{margin:0 0 12px}} .mute{{color:var(--mute);font-size:14px}}
+code{{font:13px ui-monospace,Menlo,monospace;background:rgba(127,127,127,.14);padding:1px 5px;border-radius:4px}}
+button{{font:inherit;font-weight:500;padding:9px 16px;border:0;border-radius:8px;background:var(--acc);color:#fff;cursor:pointer}}
+</style></head><body><header><span>/</span>hubzoid</header><main><h1>{html.escape(title)}</h1>{body_html}</main></body></html>"""
 
 
 def callback(conn, code: str, state: str) -> str:

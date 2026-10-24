@@ -80,9 +80,16 @@ def reserve_name(upload_dir: Path, name: str) -> str:
     """Claim ``name`` in the folder, or ``name-2``, ``name-3`` ... when taken.
     Creating the file exclusively makes concurrent uploads of one name safe."""
     stem, ext = _split(name)
+
+    def numbered(suffix: str) -> str:
+        # Shorten the stem so the suffix fits the 120-character name limit
+        # that later reads enforce (HUB-140 F29).
+        room = _NAME_MAX - len(ext) - len(suffix)
+        return f"{stem[:room].rstrip()}{suffix}{ext}"
+
     candidates = itertools.chain(
-        (name if n == 1 else f"{stem}-{n}{ext}" for n in range(1, 1000)),
-        (f"{stem}-{secrets.token_hex(4)}{ext}" for _ in range(10)))
+        (name if n == 1 else numbered(f"-{n}") for n in range(1, 1000)),
+        (numbered(f"-{secrets.token_hex(4)}") for _ in range(10)))
     for candidate in candidates:
         if (upload_dir / f"{candidate}{uploads_lib.SIDECAR_SUFFIX}").exists():
             continue

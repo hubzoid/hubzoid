@@ -204,3 +204,17 @@ def test_attached_files_reach_the_prompt_and_the_message(app, client):
         {"type": "file", "file_id": "notes.txt", "name": "notes.txt", "mime": "text/plain", "size": 5},
     ]
     json.dumps(stored)
+
+
+def test_a_long_duplicate_name_still_fits_and_reads_back(tmp_path):
+    """HUB-140 F29: the "-2" suffix pushed a 120-character name over the limit,
+    so the stored file could not be read back."""
+    from hubzoid.chat.files import _NAME_MAX, reserve_name, safe_upload_name
+
+    name = safe_upload_name("r" * 200 + ".csv")
+    assert len(name) == _NAME_MAX and safe_upload_name(name) == name
+    first = reserve_name(tmp_path, name)
+    second = reserve_name(tmp_path, name)
+    assert first == name and second != name
+    assert len(second) <= _NAME_MAX and second.endswith("-2.csv")
+    assert safe_upload_name(second) == second

@@ -232,7 +232,7 @@ class AccessService:
 
     def links_mode(self) -> bool:
         """True when new accounts and password resets get a one-time sign-in
-        link instead of a password typed in the Console: the directory in use
+        link instead of a password typed in Settings: the directory in use
         says so (``HubzoidAccounts``)."""
         if self._accounts_override is not None:
             return bool(getattr(self._accounts_override, "links", False))
@@ -1337,7 +1337,7 @@ class AccessService:
             if pending >= MAX_PENDING_REQUESTS:
                 raise Denied(429, "too_many",
                              f"You have {MAX_PENDING_REQUESTS} changes waiting for confirmation. "
-                             "Confirm or reject some in the Admin Console first.")
+                             "Confirm or reject some in Settings first.")
             request_id = secrets.token_urlsafe(24)
             expires = now + ttl()
             conn.execute(
@@ -1504,7 +1504,7 @@ class AccessService:
         claimed atomically so it applies at most once; re-checked now."""
         if actor.via != "session":
             raise Denied(403, "session_required",
-                         "Confirm changes in the Admin Console while signed in.")
+                         "Confirm changes in Settings while signed in.")
         row = self._own_row(actor, request_id)
         now = time.time()
         if row["status"] == "pending" and row["expires"] < now:

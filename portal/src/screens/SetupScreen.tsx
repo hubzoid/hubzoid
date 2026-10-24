@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
 import { ApiError, hubRequest } from "../api";
 import type { Hub, HubCheck, HubSetting, HubSettings, SettingProblem } from "../api";
-import { InfoHelp, LoadState } from "../components/common";
+import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
-import { agentHref } from "../hooks/useRoute";
+import { useAgentEditing } from "../app/lib/editing";
 
 const { Title, Text } = Typography;
 
@@ -23,6 +23,7 @@ function control(s: HubSetting) {
 
 /** Agents → agent → Setup: the settings the agent declares, and its own checks. */
 export function AgentSetup({ hub }: { hub: Hub }) {
+  const editing = useAgentEditing();
   const base = `/api/hubs/${encodeURIComponent(hub.key)}`;
   const [state, setState] = useState<{ data?: HubSettings; error?: string }>({});
   const [revision, setRevision] = useState(0);
@@ -116,8 +117,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
           title={notice.text} />
       )}
       {settings.length === 0 ? (
-        <Alert type="info" showIcon style={{ marginBottom: 16 }} title="This agent declares no settings."
-          description="Declare them in settings.yaml in the agent's folder. They then appear here, in hubzoid hub settings and in doctor." />
+        <Text type="secondary" className="hint">No <Text code>settings.yaml</Text> in this agent's folder.</Text>
       ) : (
         <>
           {problems.length > 0 && (
@@ -126,7 +126,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
               description={<ul style={{ margin: 0, paddingLeft: 18 }}>{problems.map((p, i) => <li key={i}>{p.message}</li>)}</ul>} />
           )}
           {plain.length > 0 && (
-            <Form form={form} layout="vertical" requiredMark style={{ maxWidth: 640 }}>
+            <Form form={form} layout="vertical" requiredMark style={{ maxWidth: 640 }} disabled={!editing.editable}>
               {plain.map((s) => (
                 <Form.Item
                   key={s.name}
@@ -141,16 +141,22 @@ export function AgentSetup({ hub }: { hub: Hub }) {
                   {control(s)}
                 </Form.Item>
               ))}
-              <Button type="primary" loading={saving} onClick={save}>Save settings</Button>
-              <Text type="secondary" style={{ marginLeft: 12 }}>Applies after the agent restarts.</Text>
+              {editing.editable ? (
+                <>
+                  <Button type="primary" loading={saving} onClick={save}>Save settings</Button>
+                  <Text type="secondary" style={{ marginLeft: 12 }}>Applies after the agent restarts.</Text>
+                </>
+              ) : (
+                <Text type="secondary">{editing.message ?? "Change these in the agent's settings.yaml."}</Text>
+              )}
             </Form>
           )}
           {secrets.length > 0 && (
             <>
               <Title level={4} style={{ marginTop: 24 }}>Secret settings</Title>
-              <Text type="secondary">Values are never shown. Set them in the <a href={agentHref(hub.key, "secrets")}>Secrets</a> tab or with hubzoid secrets set.</Text>
+              <Text type="secondary">Values are never shown. Set them in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent.</Text>
               <Table<HubSetting>
-                rowKey="name" size="small" pagination={false} style={{ marginTop: 8 }} dataSource={secrets}
+                rowKey="name" size="small" pagination={PAGED} style={{ marginTop: 8 }} dataSource={secrets}
                 columns={[
                   { title: "Name", key: "name", render: (_, s) => <Text code>{s.name}</Text> },
                   { title: "Reference", key: "ref", render: (_, s) => <Text code>{s.ref}</Text> },
@@ -171,7 +177,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
       {checks.error && <Alert type="error" showIcon title={checks.error} style={{ marginBottom: 8 }} />}
       {checks.data && (
         <Table<HubCheck>
-          rowKey="id" size="small" pagination={false} dataSource={checks.data}
+          rowKey="id" size="small" pagination={PAGED} dataSource={checks.data}
           locale={{ emptyText: "This agent declares no settings or checks." }}
           columns={[
             { title: "Check", key: "id", render: (_, c) => <Text code>{c.id}</Text> },

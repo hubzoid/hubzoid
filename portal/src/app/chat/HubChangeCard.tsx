@@ -7,6 +7,7 @@ import { ApiError, enc, get, hubUrl, post } from "../lib/api";
 import { t } from "../i18n/en";
 import { Button, cx } from "../components/ui";
 import { FilesContext } from "./parts";
+import { useApp } from "../lib/app-context";
 
 export type HubChange = {
   id: number;
@@ -123,6 +124,8 @@ export function DecideButtons({ change, url, onDone }: { change: HubChange; url:
 export function HubChangeCard({ id }: { id: number }) {
   const files = useContext(FilesContext);
   const { change, setChange, error, url } = useHubChange(files.apiBase, id);
+  const app = useApp();
+  const hub = app.agents.list.find((a) => a.api_base === files.apiBase)?.hub;
   // Shown open while it waits for review: whoever applies it reads exactly what changes.
   const [open, setOpen] = useState<boolean | null>(null);
   if (error) return <p className="m-0 py-1 text-[13px] text-mute" data-testid="hub-change-card">{error}</p>;
@@ -162,7 +165,10 @@ export function HubChangeCard({ id }: { id: number }) {
           {change.problem && <span className="block text-[12.5px] text-mute">{change.problem}</span>}
         </p>
       )}
-      <a className="text-[12.5px]" href={`/settings#/hub-changes?id=${change.id}`} data-testid="hub-change-open">
+      {/* A reviewer opens it on the agent's Changes tab; the person who proposed it, in My proposals. */}
+      <a className="text-[12.5px]" data-testid="hub-change-open"
+        href={change.can_review && hub ? `/settings#/agents/${encodeURIComponent(hub)}/changes?id=${change.id}`
+          : `/settings#/me/proposals?id=${change.id}`}>
         {H.openReview}
       </a>
     </div>

@@ -22,7 +22,10 @@ const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then
 const UsageScreen = lazyChunk(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
-const TABS: AgentTab[] = ["access", "connectors", "instructions", "changes", "runs", "work", "sandboxes", "evals", "feedback", "setup", "secrets", "channels", "intake", "activity"];
+const TABS: AgentTab[] = ["instructions", "changes", "access", "permissions", "connectors", "runs", "work", "intake",
+  "sandboxes", "evals", "feedback", "config", "channels"];
+/** Old agent tab addresses and where they live now (HUB-140 settings plan). */
+const MOVED: Record<string, AgentTab> = { overview: "access", quality: "evals", setup: "config", secrets: "config" };
 
 /** `embedded`: inside the chat app's Settings page, which has its own navigation. */
 /** Which part of the management screens a route belongs to. */
@@ -38,8 +41,12 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
     if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={reloadHubs} embedded={embedded} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);
-      // An agent opens on Access; an old link to its overview lands there too.
-      const tab = (!rest[1] || rest[1] === "overview" ? "access" : rest[1]) as AgentTab;
+      // An agent opens on Instructions; old tab addresses land where they moved.
+      const tab = (!rest[1] ? "instructions" : MOVED[rest[1]] ?? rest[1]) as AgentTab;
+      if (hub && rest[1] === "activity") {
+        // The agent's activity is the team's Activity, filtered to it.
+        location.hash = `/activity?agent=${encodeURIComponent(hub.key)}`;
+      }
       if (!hub)
         screen = (
           <RecoveryScreen
@@ -51,7 +58,7 @@ export function consoleScreen(parts: string[], me: Me, list: Hub[], reloadHubs: 
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Connectors, Instructions, Runs & schedules, Quality, Setup and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Instructions, Access, Connectors, Workflows, Evals, Feedback and Configuration, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />

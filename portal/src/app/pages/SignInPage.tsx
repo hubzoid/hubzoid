@@ -67,8 +67,13 @@ export default function SignInPage({ redirect, error, step }: { redirect: string
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "error" | "success" | "warning"; text: string } | null>(
-    error ? { tone: error === "session_ended" ? "warning" : "error", text: t.auth.codes[error] ?? t.auth.oauthFallback } : null,
+    session.ended === "suspended" ? { tone: "error", text: t.auth.codes.suspended }
+      : error ? { tone: error === "session_ended" ? "warning" : "error", text: t.auth.codes[error] ?? t.auth.oauthFallback } : null,
   );
+  // The session can arrive after the first render: say why it ended once it does (F23).
+  useEffect(() => {
+    if (session.ended === "suspended") setMessage({ tone: "error", text: t.auth.codes.suspended });
+  }, [session.ended]);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string; name?: string }>({});
   const emailRef = useRef<HTMLInputElement>(null);
 

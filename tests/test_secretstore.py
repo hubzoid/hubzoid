@@ -284,3 +284,21 @@ def test_a_key_a_person_types_has_one_home_dotenv(hub):
     start_bridge(hub)
     assert "OPENAI_API_KEY" not in os.environ
     assert layer.started(hub)[("hub", "OPENAI_API_KEY")][0] == layer.MOVE_TO_ENV
+
+
+def test_a_channel_secret_can_be_stored_from_the_cli(hub):
+    """Found on a live Software Factory run (HUB-140, session B): a channel
+    file names secret:channel/... refs, and no CLI path could fill one."""
+    from hubzoid.secretstore import store
+    from hubzoid.secretstore.cli import secrets_app
+    from hubzoid.assertions import hub_key
+
+    ref = f"secret:channel/{hub_key(hub)}/github-main/webhook_secret"
+    out = CliRunner().invoke(secrets_app, ["set", str(hub), "--ref", ref, "--stdin", "--json"], input=VALUE)
+    assert out.exit_code == 0, out.output
+    assert VALUE not in out.output
+    meta = store.get_meta(hub, scope="channel", target=f"{hub_key(hub)}/github-main", name="webhook_secret")
+    assert meta is not None and meta.revision == 1
+    other = CliRunner().invoke(secrets_app, ["set", str(hub), "--ref", "secret:channel/elsewhere/x/token",
+                                             "--stdin", "--json"], input=VALUE)
+    assert other.exit_code != 0 and "another hub" in other.output

@@ -167,7 +167,35 @@ def _slugify(text: str) -> str:
     return out.strip("-") or "hub"
 
 
-def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
+#: How far past a hub's default port to look for a free one.
+PORT_SEARCH = 50
+
+
+def port_free(port: int, host: str = "127.0.0.1") -> bool:
+    """Whether nothing listens on ``port`` here (the same probe ``run`` uses)."""
+    import socket
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+
+
+def next_free(port: int, taken, *, is_free=None) -> int:
+    """``port`` or the first one after it that no hub takes and nothing listens on."""
+    is_free = is_free or port_free
+    for candidate in range(port, port + PORT_SEARCH):
+        if candidate not in taken and is_free(candidate):
+            return candidate
+    raise ValueError(f"No free port between {port} and {port + PORT_SEARCH - 1} on 127.0.0.1. "
+                     "Set BRIDGE_PORT in each hub's .env, or stop what uses those ports.")
+
+
+def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> GatewayPlan:
     """Build a GatewayPlan from hub directories.
 
     Reads each hub's `.env` for its bridge port + first bridge key + label.
@@ -205,9 +233,9 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         pinned = bool(_own_env_value(hub_dir, "BRIDGE_PORT") or inherited_env.get("BRIDGE_PORT"))
         if not pinned:
             # No port of its own (`hubzoid init` leaves it unset): the next one
-            # no other hub uses or pins.
-            while bridge_port in seen_ports or bridge_port in pinned_ports:
-                bridge_port += 1
+            # no other hub uses or pins and nothing else on this machine holds.
+            bridge_port = next_free(bridge_port, set(seen_ports) | pinned_ports | set(seen_inbound_ports),
+                                    is_free=is_free)
         if bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[bridge_port].name} and "
@@ -249,9 +277,10 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         inbound_port = _inbound_port_for(hub_dir)
         if inbound_on and not _own_env_value(hub_dir, "HUBZOID_INBOUND_PORT"):
             # No port chosen in the hub's .env: the next free one from the
-            # default, so several inbound hubs never collide.
-            while inbound_port in seen_inbound_ports:
-                inbound_port += 1
+            # default, so inbound servers never collide with each other, a
+            # bridge or another program.
+            inbound_port = next_free(inbound_port, set(seen_inbound_ports) | set(seen_ports) | pinned_ports,
+                                     is_free=is_free)
         if inbound_on:
             if inbound_port in seen_inbound_ports:
                 raise ValueError(

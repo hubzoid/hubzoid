@@ -6,6 +6,7 @@ import {
   Button,
   Collapse,
   Descriptions,
+  Dropdown,
   Empty,
   Form,
   Modal,
@@ -16,7 +17,8 @@ import {
   Tooltip,
   message,
 } from "antd";
-import { RefreshCw, Copy, Play } from "lucide-react";
+import { RefreshCw, Copy, Play, MoreHorizontal } from "lucide-react";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   query,
   request,
@@ -26,15 +28,14 @@ import {
   type Workflow,
 } from "../api";
 import { useData } from "../hooks/useData";
-import { agentHref, href, hrefWith } from "../hooks/useRoute";
+import { agentHref, href } from "../hooks/useRoute";
 import {
   LoadState,
   RecoveryScreen,
   RunStatusTag,
   When,
   WorkflowStateTag,
-  InfoHelp as Help,
-} from "../components/common";
+  InfoHelp as Help, PAGED } from "../components/common";
 import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
 import { WorkflowResult } from "../components/WorkflowResult";
 import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
@@ -44,7 +45,7 @@ const TRIGGERS: Record<string, string> = {
   schedule: "Team schedule", personal_schedule: "Personal schedule", tool: "Chat",
   operator: "Run now", cli: "CLI", webhook: "Webhook", update: "Update now",
 };
-const PAGE = 50;
+const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 function CopyCommand({ command, label }: { command: string; label: string }) {
   return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
     <Button size="small" icon={<Copy size={14} />} onClick={async () => {
@@ -89,7 +90,7 @@ function HealthAlerts({ workflows }: { workflows: Workflow[] }) {
           type="error"
           showIcon
           banner
-          message="Scheduler not running — scheduled workflows won’t fire until the bridge restarts."
+          message="The scheduler stopped. Scheduled workflows won't run until the agent restarts."
         />
       )}
       {downtime && (
@@ -98,7 +99,7 @@ function HealthAlerts({ workflows }: { workflows: Workflow[] }) {
           type="warning"
           showIcon
           banner
-          message={`${downtime.missed} scheduled ${downtime.missed === 1 ? "run" : "runs"} missed while the scheduler was down (not back-filled).`}
+          message={`${downtime.missed} scheduled ${downtime.missed === 1 ? "run was" : "runs were"} missed while the agent was stopped.`}
         />
       )}
       {health && (
@@ -116,33 +117,26 @@ function HealthAlerts({ workflows }: { workflows: Workflow[] }) {
 
 function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   const data = useData<{ workflows: Workflow[] }>("/workflows" + query({ hub: hub.key }));
+  const underTabs = useUnderTabs();
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
   const workflows = data.data.workflows;
-  // last_dispatch / missed are the agent's scheduler-level values (the dispatcher
-  // serves all of this agent's workflows), not per-workflow — show them once.
-  const sched = workflows[0];
   return (
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={2}>Workflows <Help text={`Scheduled and manual workflows in ${hub.name}. Open a workflow to see its runs.`} /></Title>
+          {!underTabs && <Title level={2}>Workflows</Title>}
+          <Text type="secondary">Work this agent does on a timetable, on a webhook or when started.</Text>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
           Refresh
         </Button>
       </div>
-      {sched && (
-        <Text type="secondary" className="hint">
-          Scheduler: last dispatch {sched.last_dispatch ? formatTime(sched.last_dispatch) : "never"}
-          {sched.missed ? ` · ${sched.missed} missed run${sched.missed === 1 ? "" : "s"}` : ""}
-        </Text>
-      )}
       <HealthAlerts workflows={workflows} />
       {embedded && workflows.length > 0 ? <WorkflowRows hub={hub} workflows={workflows} /> : <Table<Workflow>
         rowKey={(w) => `${w.hub}:${w.name}`}
         size="middle"
         dataSource={workflows}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 720 }}
         locale={{
           emptyText: (
@@ -254,38 +248,116 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
         ]}
       />}
       <Webhooks hub={hub} />
-      <Text type="secondary">
-        People's own schedules of this agent's reports are under <a href={hrefWith("/schedules", { view: "everyone", hub: hub.key })}>Schedules, Everyone's</a>.
-      </Text>
     </div>
   );
 }
 
-/** In Settings, keep the workflow's context and actions together at narrow widths. */
+/** "Fri 23 Oct, 19:50" in the viewer's zone; the full time is the title. */
+function shortTime(value: string | number): string {
+  const d = new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day}, ${time}`;
+}
+
+/** One line that says whether a workflow will run, and what to do if not. */
+function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "warning" } {
+  const when = w.webhook ? "when its webhook receives an event"
+    : w.schedule ? `${(w.schedule_text ?? describeCron(w.schedule)).replace(/^./, (c) => c.toLowerCase())} (${w.timezone})` : "";
+  const file = w.source ? <Text code>{w.source}</Text> : "its file";
+  switch (w.state) {
+    case "definition-disabled":
+      return { text: <>Off. Turn it on with <Text code>enabled: true</Text> in {file}.</> };
+    case "schedules_off":
+      return { text: <>Schedules are off on this machine (<Text code>HUBZOID_SCHEDULES</Text>), so it won't run {when}.</>, tone: "warning" };
+    case "disabled":
+      return { text: <>Schedules are off here. Set <Text code>HUBZOID_SCHEDULES=1</Text> to run it {when}.</>, tone: "warning" };
+    case "paused":
+      return { text: <>Paused. Resume it with <Text code>hubzoid schedule resume</Text>.</>, tone: "warning" };
+    case "stale":
+      return { text: "The scheduler stopped. Restart the agent to run it again.", tone: "danger" };
+    case "error":
+      return { text: <>Can't run: {w.error}</>, tone: "danger" };
+    case "event":
+      return { text: `On. Runs ${when}.` };
+    case "manual":
+      return { text: "Runs when someone starts it." };
+    default:
+      return { text: <>On. Runs {when}.{w.next_run ? <> Next run <span title={formatTime(w.next_run)}>{shortTime(w.next_run)}</span>.</> : null}</> };
+  }
+}
+
+/** Who a run acts as, in words. The local owner is "you". */
+function runsAs(w: Workflow): string | null {
+  if (!w.runs_as) return null;
+  if (w.runs_as.error) return `Can't run: ${w.runs_as.error}`;
+  return w.runs_as.account === "admin@localhost" ? "Runs as you (the local owner)" : `Runs as ${w.runs_as.account}`;
+}
+
+/** In Settings: each workflow by name, what it does, and one status line
+ *  (HUB-140 F31). The run command sits in a small menu. */
 function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
-  return <ul className="hz-workflow-list" aria-label="Workflows">
-    {workflows.map((w) => <li key={w.name}>
-      <div className="hz-workflow-info">
-        <div className="hz-workflow-title"><a href={runsHref(hub, w.name)}>{w.name}</a><WorkflowStateTag state={w.state} /><Help text={workflowState(w.state).hint} /></div>
-        {w.error && <Text type="danger">{w.error}</Text>}
-        {w.runs_as && <div className="hz-workflow-account"><Text type={w.runs_as.error ? 'danger' : 'secondary'}>
-          {w.runs_as.error ? `Cannot run: ${w.runs_as.error}` : `Runs as ${w.runs_as.account}`}
-        </Text>{w.runs_as.via && <Help text={w.runs_as.via} />}</div>}
-        <div className="hz-workflow-schedule">
-          {w.webhook ? <span>On webhook · <Text code>{w.webhook}</Text></span>
-            : w.schedule ? <span>{w.schedule_text ?? describeCron(w.schedule)} · {w.timezone} <Help text={`Cron: ${w.schedule}`} /></span>
-            : <span>On demand</span>}
-          {w.next_run && <span title={formatTime(w.next_run)}>Next <When value={w.next_run} /></span>}
-        </div>
-        {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
-      </div>
-      <div className="hz-workflow-actions">
-        {!w.webhook && !w.name.startsWith('md:') && !w.error && <RunNow hub={hub} workflow={w} />}
-        <Button href={runsHref(hub, w.name)}>View runs</Button>
-        {!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand('run', w.name, hub.path || hub.key)} />}
-      </div>
-    </li>)}
-  </ul>;
+  // A table like Connectors: a header, then one row per workflow (founder review).
+  return (
+    <Table<Workflow>
+      className="hz-workflow-table"
+      rowKey={(w) => w.name}
+      size="middle"
+      pagination={PAGED}
+      dataSource={workflows}
+      scroll={{ x: 760 }}
+      columns={[
+        {
+          title: "Workflow",
+          key: "name",
+          render: (_, w) => (
+            <div className="hz-workflow-info">
+              <a className="hz-workflow-name" href={runsHref(hub, w.name)}>{w.title ?? w.name}</a>
+              {w.purpose && <Text type="secondary">{w.purpose}</Text>}
+              {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
+            </div>
+          ),
+        },
+        {
+          title: "Status",
+          key: "status",
+          render: (_, w) => {
+            const status = statusLine(w);
+            return <Text type={status.tone}>{status.text}</Text>;
+          },
+        },
+        {
+          title: "Runs as",
+          key: "runs_as",
+          width: 220,
+          render: (_, w) => {
+            const who = runsAs(w);
+            if (!who) return <Text type="secondary">—</Text>;
+            return <Text type={w.runs_as?.error ? "danger" : "secondary"}>{who.replace(/^Runs as you/, "You").replace(/^Runs as /, "")}</Text>;
+          },
+        },
+        {
+          title: "",
+          key: "actions",
+          align: "right",
+          width: 250,
+          render: (_, w) => (
+            <Space size={6}>
+              {!w.webhook && !w.name.startsWith("md:") && !w.error && <RunNow hub={hub} workflow={w} />}
+              <Button href={runsHref(hub, w.name)}>View runs</Button>
+              {!w.webhook && (
+                <Dropdown trigger={["click"]} menu={{ items: [{ key: "copy", label: "Copy run command",
+                  onClick: () => void navigator.clipboard.writeText(workflowCommand("run", w.name, hub.path || hub.key)).then(() => message.success("Copied")) }] }}>
+                  <Button aria-label="More" icon={<MoreHorizontal size={16} />} />
+                </Dropdown>
+              )}
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
 }
 
 function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
@@ -351,7 +423,7 @@ function Webhooks({ hub }: { hub: Hub }) {
         rowKey="name"
         size="middle"
         dataSource={webhooks}
-        pagination={false}
+        pagination={PAGED}
         scroll={{ x: 720 }}
         expandable={{
           rowExpandable: (h) => h.failures.length > 0,

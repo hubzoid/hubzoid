@@ -78,6 +78,10 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
     async def openapi(request: Request):
         user, _ = await actor_of(request, True)
         await need(user, "authoring.draft")
+        from .. import editing
+
+        # A preview with nowhere to publish (HUB-140 F30): only with Beta on.
+        editing.check(ctx.hub_dir, "OpenAPI actions")
         body = await er.read_json(request, er.MESSAGE_BODY_LIMIT)
         return await call(svc.openapi_preview, body.get("spec"), body.get("selected"))
 

@@ -42,11 +42,14 @@ from . import __version__
 from . import settings as settingslib
 from . import uploads as uploadslib
 
+from ._hubarg import HubArgGroup  # noqa: E402
+
 app = typer.Typer(
     name="hubzoid",
+    cls=HubArgGroup,
     add_completion=False,
     no_args_is_help=True,
-    help="An open-source framework for production AI agents.",
+    help="One brain for your internal agents.",
 )
 console = Console()
 
@@ -403,7 +406,7 @@ def init(
             f"  hubzoid schedule run {target} repo_profiles\n"
             f"  hubzoid schedule run {target} pr_sweep\n"
             f"Connect your repos: python {escape(shlex.quote(str(hub_dir / 'setup.py')))} --help\n"
-            "Enable GitZoid tools for your own account in Console → Access (or use hubzoid grant).\n"
+            "Enable GitZoid tools for your own account in Settings, on the agent's Access tab (or use hubzoid grant).\n"
             "All eligible open PRs are queued by default; drafts and bot PRs can be included. See the Hub README."
         )
     if template == DEFAULT_TEMPLATE:
@@ -423,7 +426,7 @@ def run(
     hubs: list[Path] = typer.Argument(None, help="Hub folders. Default: the deployment in hubzoid.yaml here, "
                                                  "else the hub in this folder."),
     port: int = typer.Option(None, "--port", help="Public port: the web app, downloads and MCP. Default: 3080 (or PORT env)."),
-    bridge_port: int = typer.Option(None, "--bridge-port", hidden=True, help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
+    bridge_port: int = typer.Option(None, "--bridge-port", help="One hub only: its bridge port on 127.0.0.1. Default: BRIDGE_PORT, else the first free port from 8000. In hubzoid.yaml, set BRIDGE_PORT in a hub's .env instead."),
     data_dir: Path = typer.Option(None, "--data-dir", help="Where a deployment of several hubs keeps its state "
                                                            "(manifest, shared database, keys, logs). Default: "
                                                            ".hubzoid next to hubzoid.yaml."),
@@ -489,6 +492,10 @@ def run(
         elif not targets:
             targets = [Path(".")]
     if len(targets) > 1 or (df is not None and targets[0].resolve() != df.root):
+        if bridge_port is not None:
+            console.print("[red]--bridge-port is for one hub. In a deployment, set BRIDGE_PORT in a hub's .env, "
+                          "or leave it out and each hub gets a free port.[/red]")
+            raise typer.Exit(2)
         if no_ui:
             console.print("[red]--no-ui runs one hub.[/red]")
             raise typer.Exit(2)
@@ -530,6 +537,16 @@ def run(
     settings = _load_settings(hub)
     ui_port = port or settings.ui_port
     br_port = bridge_port or settings.bridge_port
+    if bridge_port is None and not os.environ.get("BRIDGE_PORT") and not no_ui:
+        # No port chosen: like a deployment, take the first free one, so a
+        # program already on 8000 does not stop the start.
+        from .gateway import next_free
+
+        try:
+            br_port = next_free(br_port, {ui_port})
+        except ValueError as exc:
+            console.print(f"[red]{escape(str(exc))}[/red]")
+            raise typer.Exit(1)
     from . import appmode, config_secrets
 
     # Open WebUI settings that decide sign-in or the interface, and settings
@@ -541,7 +558,9 @@ def run(
             console.print(f"[red]{escape(problem)}[/red]")
         raise typer.Exit(2)
 
-    _warn_retired(hub)
+    if not no_ui:
+        # Under a supervisor the bridge itself logs them: once per hub is enough.
+        _warn_retired(hub)
     auth_on = appmode.auth_enabled(hub)
     if not no_ui:
         _refuse_unauthenticated_network(hub, host, auth_on)
@@ -631,6 +650,7 @@ def run(
                           "program using it? Choose another with --port.[/red]")
             raise typer.Exit(1)
         url = appmode.public_url() or _local_url(host, ui_port)
+        _record_listener(_local_url(host, ui_port), [state])
         mode = "sign-in on" if auth_on else "local mode, sign-in off"
         # One line each, never wrapped, so the URL and the command copy cleanly
         # from any terminal or log viewer.
@@ -1591,10 +1611,29 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     finally:
         procs.extend(edge.procs)
     if not edge_ok:
-        console.print(f"[red]→ gateway[/red]  failed to start. Check logs. URL: {display_url}")
+        console.print(f"[red]→ web app[/red]  failed to start. Check logs. URL: {display_url}")
         raise typer.Exit(1)
-    console.print(f"[green]→ gateway[/green]  ready    {display_url}")
+    _record_listener(_local_url(host, ui_port), [gw_data, *sup.pointers])
+    from . import appmode
+
+    mode = "sign-in on" if appmode.auth_enabled(gp.backends[0].hub_dir) else "local mode, sign-in off"
+    # The local address: the public URL may come from the deployment secret,
+    # and no value from it is printed.
+    console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(display_url)}  "
+                  f"[dim]({mode})[/dim]", soft_wrap=True)
     _wait_any(procs, supervisor=sup)
+
+
+def _record_listener(url: str, folders) -> None:
+    """Remember the address this deployment's web app answers on, so links the
+    CLI prints later (sign-in links) point at it, not at the default port."""
+    data = json.dumps({"url": url}) + "\n"
+    for folder in folders:
+        try:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            (Path(folder) / "listener.json").write_text(data)
+        except OSError:
+            pass
 
 
 def _supervisor(units, state_dir: Path, *, table: dict):
@@ -1673,7 +1712,8 @@ def _channel_specs(hub_dir: Path, env: dict, *, inbound_port: int | None = None)
             inbound_env["HUBZOID_INBOUND_PORT"] = str(inbound_port)
         specs.append(sup_lib.Spec([sys.executable, "-m", "hubzoid", "inbound", "run", str(hub_dir)], inbound_env,
                                   role="channel"))
-        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>")
+        where = f" (127.0.0.1:{inbound_port})" if inbound_port else ""
+        console.print(f"[cyan]→ inbound[/cyan] {hub_dir.name}: {'+'.join(plan.inbound)} at /webhooks/<hub>{where}")
     return specs
 
 
@@ -2271,6 +2311,8 @@ def audit(
     limit: int = typer.Option(50, "--limit", "-n", help="Show the most recent N decisions."),
     user: str = typer.Option(None, "--user", help="Filter to one user."),
     denied: bool = typer.Option(False, "--denied", help="Show only denied attempts."),
+    as_json: bool = typer.Option(False, "--json", help="Print the entries as JSON: "
+                                 "{entries: [{ts, user, decision, tool, surface, reason}]}."),
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
@@ -2282,6 +2324,10 @@ def audit(
 
     hub = hub.resolve()
     rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
+    if as_json:
+        keys = ("ts", "user", "decision", "tool", "surface", "reason")
+        print(json.dumps({"entries": [{k: r.get(k) for k in keys} for r in rows]}, indent=2, default=str))
+        return
     if not rows:
         console.print("[dim]no access decisions logged yet[/dim]")
         return
@@ -2408,7 +2454,9 @@ def test_hub(
     # No MODEL in .env is fine — runtime.build() defaults to claude-local
     # (Claude Agent SDK on Sonnet via the bundled `claude` login).
     rt = runtime_lib.build(hub)
-    console.print(f"[cyan]→[/cyan] {prompt}")
+    if not as_json:
+        # With --json the whole output is one JSON document.
+        console.print(f"[cyan]→[/cyan] {prompt}")
 
     async def _go() -> str:
         # Open/use/close MCP in one task — see runtime.aopen() for why.
@@ -2457,7 +2505,10 @@ def test_hub(
         return
     with scope:
         text = asyncio.run(_go())
-    console.print(f"[green]←[/green] {text}")
+    from .tool_events import answer_text
+
+    # The answer, without the chat app's tool markup. --json lists the calls.
+    console.print(f"[green]←[/green] {escape(answer_text(text))}")
 
 
 # ---------------------------------------------------------------------------
@@ -2824,7 +2875,7 @@ def schedule_run(
                     result = handle.get_result()
                 except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
                     console.print(f"[red]✗ workflow {match} failed: {type(run_exc).__name__}: {run_exc}[/red]")
-                    console.print("[dim]The failed run is in `hubzoid schedule status` and the Console's Runs page.[/dim]")
+                    console.print("[dim]The failed run is in `hubzoid schedule status` and Settings, Activity, Runs.[/dim]")
                     raise typer.Exit(1)
                 finally:
                     _wf.shutdown()
@@ -2995,7 +3046,7 @@ def schedule_resume(
 @schedule_app.command("cancel")
 def schedule_cancel(
     hub: Path = typer.Argument(..., help="Hub directory."),
-    run_id: str = typer.Argument(..., help="The run id (from `hubzoid schedule status` or the Console)."),
+    run_id: str = typer.Argument(..., help="The run id (from `hubzoid schedule status` or Settings)."),
 ) -> None:
     """Cancel a queued or running run. Best effort: a run stops at its next
     step boundary, and work already done (a sent message, a git push, a script's
@@ -3336,6 +3387,7 @@ app.add_typer(
     name="parity",
     help="The chat parity ledger: validate, coverage, candidate, review, freeze.",
     rich_help_panel="Commands",
+    hidden=True,  # a maintainers' release check, not a builder command (HUB-140 F24)
 )
 app.add_typer(
     branding_app,
@@ -3410,7 +3462,7 @@ app.add_typer(
 app.add_typer(
     secrets_app,
     name="secrets",
-    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
+    help="Secrets stored in Hubzoid's database: list, set and delete. Values are never shown.",
     rich_help_panel="Commands",
 )
 

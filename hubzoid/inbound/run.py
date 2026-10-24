@@ -54,7 +54,7 @@ def build_app_for_hub(hub_dir, env=None):
     if resolver.fallback is None:
         log.info(
             "inbound: senders are matched by the phone numbers recorded on people "
-            "in the Console (no identity/access.{csv,py} roster in this hub)."
+            "in Settings (no identity/access.{csv,py} roster in this hub)."
         )
 
     model = settings.model_label or _model_label(hub_dir)

@@ -3,6 +3,7 @@
 // records candidates, digest-bound reviews and freezes. A freeze says the
 // requirements are fixed, never that the product passed them.
 import { useCallback, useEffect, useState } from "react";
+import { PAGED } from "../../components/common";
 import { Alert, App, Button, Card, Empty, Space, Statistic, Table, Tag, Typography } from "antd";
 import { control, ControlError, newKey } from "../../lib/controlApi";
 
@@ -123,7 +124,7 @@ export function Parity() {
           <Table<Candidate>
             size="small"
             rowKey="id"
-            pagination={false}
+            pagination={PAGED}
             dataSource={items}
             columns={[
               { title: "Candidate", dataIndex: "id", render: (v: string) => <Text code>{v.slice(0, 8)}</Text> },

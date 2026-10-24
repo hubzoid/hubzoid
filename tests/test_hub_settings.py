@@ -465,3 +465,10 @@ def test_values_can_be_saved_before_every_required_setting_is_set(hub, tmp_path)
     assert r.exit_code == 0 and body["applied"] and {p["key"] for p in body["still_needed"]} == {"FACTORY_REPO", "GITHUB_TOKEN"}
     rows = {s["name"]: s for s in client(hub).get("/api/hubs/factory/settings").json()["settings"]}
     assert rows["FACTORY_REPO"]["status"] == "missing" and rows["FACTORY_LABEL"]["status"] == "set"
+
+
+@pytest.fixture(autouse=True)
+def _in_app_editing_on(monkeypatch):
+    """These tests change agent files from the browser: Beta, off by default
+    (hubzoid.editing). The switch is on for them."""
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")

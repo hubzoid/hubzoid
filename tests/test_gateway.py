@@ -330,3 +330,25 @@ def test_bridge_identity_mismatch_retries_during_upgrade(monkeypatch, first):
     monkeypatch.setattr(cli.time, 'sleep', lambda *a: None)
     assert cli._wait_for('http://localhost/healthz', timeout=1,
                          expected_hub='sales', expected_model='sales-agent')
+
+
+def test_hubs_without_a_port_of_their_own_skip_ports_in_use(tmp_path):
+    """A program already on 8000 must not stop a deployment (HUB-140 F2)."""
+    from hubzoid import gateway
+
+    hubs = []
+    for name in ("sales", "support"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "AGENTS.md").write_text(f"---\nname: {name}\n---\nhi\n")
+        (tmp_path / name / ".env").write_text("BRIDGE_API_KEYS=k\n")
+        hubs.append(tmp_path / name)
+    busy = {8000, 8002}
+    p = gateway.plan(hubs, is_free=lambda port, host="127.0.0.1": port not in busy)
+    assert [b.bridge_port for b in p.backends] == [8001, 8003]
+
+
+def test_the_free_port_search_stops():
+    from hubzoid import gateway
+
+    with pytest.raises(ValueError, match="No free port between 8000 and 8049"):
+        gateway.next_free(8000, set(), is_free=lambda port, host="127.0.0.1": False)
