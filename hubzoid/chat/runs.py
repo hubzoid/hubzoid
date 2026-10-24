@@ -171,7 +171,9 @@ class RunManager:
         queue: asyncio.Queue = asyncio.Queue()
         for chunk in run.history:
             queue.put_nowait(chunk)
-        if run.finished:
+        # Closed, not finished: a run is finished while its end is being saved,
+        # and its 'finish' chunk goes out only after that.
+        if run.closed:
             queue.put_nowait(_END)
         else:
             run.subscribers.add(queue)
