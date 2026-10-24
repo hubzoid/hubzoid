@@ -97,7 +97,10 @@ jobs:
           thanks = "நன்றி"  # Tamil, not in cp1252
           (hub / "evals" / "tamil.md").write_text(
               f'---\ncontains: ["{thanks}"]\n---\n## Prompt\nSay {thanks} back to me.\n', encoding="utf-8")
-          run("eval", "run", "--no-judge", cwd=hub)
-          run("eval", "run", "--no-judge", "--compare", cwd=hub)
+          # The hub's .env names a real model and wins over the job's MODEL, and
+          # the starter's own case needs one: run the Tamil case, scripted.
+          scripted = ("--no-judge", "--case", "tamil", "--model", "hubzoid-test/scripted")
+          run("eval", "run", *scripted, cwd=hub)
+          run("eval", "run", *scripted, "--compare", cwd=hub)
           runs = [p for p in (hub / ".hubzoid" / "evals").glob("*.json") if p.name != "index.json"]
           assert len(runs) == 2 and thanks in max(runs).read_text(encoding="utf-8"), runs

@@ -507,7 +507,7 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
 
   step("The new chat page greets with the agent's name and offers its suggestions");
   await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
-  await page.getByRole("button", { name: "What is in this hub?" }).waitFor();
+  await page.getByRole("button", { name: "When is support open?" }).waitFor();
   await c.settled();
   // One hub: the agent's name is also the brand, and a title never repeats it.
   assert.equal(await page.title(), `New chat · ${AGENT_NAME}`);
@@ -528,22 +528,22 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
   await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
   const said = await watchAnnouncements(page);
   await c.settled();
-  await page.getByRole("button", { name: "What is in this hub?" }).click();
-  assert.equal(await c.composer().inputValue(), "What is in this hub?");
+  await page.getByRole("button", { name: "When is support open?" }).click();
+  assert.equal(await c.composer().inputValue(), "When is support open?");
   await page.getByTestId("send").click();
   await page.waitForURL(/\/c\/[^/]+$/);
   await c.idle();
   const id = c.conversationId();
   assert.match(id, ID);
-  await c.lastAssistant().getByText("You said: “What is in this hub?”").waitFor();
+  await c.lastAssistant().getByText("You said: “When is support open?”").waitFor();
   await c.lastAssistant().getByText("This is a scripted reply from the Hubzoid test runtime.").waitFor();
-  await page.getByTestId("user-text").getByText("What is in this hub?").waitFor();
+  await page.getByTestId("user-text").getByText("When is support open?").waitFor();
 
   step("The generated title replaces the first words, in the sidebar and the header");
-  await c.sidebar().getByRole("link", { name: "About what is in this" }).waitFor({ timeout: 20_000 });
-  await page.getByTestId("chat-title").getByText("About what is in this").waitFor();
+  await c.sidebar().getByRole("link", { name: "About when is support open" }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("chat-title").getByText("About when is support open").waitFor();
   await said("Response complete");
-  await page.waitForFunction((t) => document.title === t, `About what is in this · ${AGENT_NAME}`);
+  await page.waitForFunction((t) => document.title === t, `About when is support open · ${AGENT_NAME}`);
 
   step("A markdown reply: a table, highlighted code and a working copy button");
   await c.send("Please answer in markdown");
@@ -564,7 +564,7 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
   await page.reload();
   await c.composer().waitFor();
   await c.lastAssistant().getByRole("table").waitFor();
-  await page.getByTestId("chat-title").getByText("About what is in this").waitFor();
+  await page.getByTestId("chat-title").getByText("About when is support open").waitFor();
   assert.equal(await page.locator('[data-role="user"]').count(), 2);
   await context.close();
 });

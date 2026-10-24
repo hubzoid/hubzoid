@@ -194,7 +194,8 @@ jobs:
           # The hub comes from the candidate image's own `hubzoid init` (the starter).
           mkdir /tmp/hub && chmod a+rwX /tmp/hub
           docker run --rm -v /tmp/hub:/hub hubzoid:candidate init /hub --model claude-local
-          test -f /tmp/hub/knowledge/house-rules.md && chmod -R a+rwX /tmp/hub
+          # The container's user owns what init wrote: the runner needs sudo to open it up.
+          test -f /tmp/hub/knowledge/house-rules.md && sudo chmod -R a+rwX /tmp/hub
           printf 'MODEL=openrouter/anthropic/claude-haiku-4.5\nOPENROUTER_API_KEY=not-used\nBRIDGE_API_KEYS=ci-key\n' > /tmp/hub/.env
           # Without sign-in, the container's network bind is refused with instructions.
           set +e; docker run --rm -v /tmp/hub:/hub hubzoid:candidate; refused=$?; set -e
