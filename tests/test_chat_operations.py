@@ -559,6 +559,9 @@ def test_a_reply_records_the_session_that_started_it(hub, monkeypatch):
         while time.time() < end and len([m for m in snap(c, cid)["messages"] if m["role"] == "assistant"]) < 3:
             time.sleep(0.1)
         replies = [m["id"] for m in snap(c, cid)["messages"] if m["role"] == "assistant"]
+        # The queued reply's message exists before its run records who started it.
+        while time.time() < end and not all(run_identity.for_run(hub, "chat", mid) for mid in replies):
+            time.sleep(0.1)
     assert len(replies) == 3, replies    # the queued message ran too
     for mid in replies:
         record = run_identity.for_run(hub, "chat", mid)

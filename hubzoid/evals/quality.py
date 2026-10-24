@@ -122,7 +122,7 @@ def manifest(hub_dir: Path) -> dict | None:
         return None
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise QualityError(f"{MANIFEST}: cannot be read ({type(exc).__name__})") from None
     if not isinstance(data, dict) or data.get("version") != 1:
         raise QualityError(f"{MANIFEST}: starts with version: 1")
