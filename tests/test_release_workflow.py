@@ -157,7 +157,7 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
 
 def test_all_release_checks_gate_publishing_and_publish_jobs_retry_independently():
     jobs = WORKFLOW["jobs"]
-    assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image"}
+    assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image", "windows"}   # Windows too (#125)
     assert jobs["publish-pypi"]["needs"] == "publish-image"
     assert jobs["github-release"]["needs"] == "publish-pypi"
     # An ordinary condition keeps the implicit success() dependency gate.
