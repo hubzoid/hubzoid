@@ -184,6 +184,17 @@ def _signal_group(proc, sig) -> None:
 def stop_procs(procs, *, timeout: float = 15.0) -> None:
     """Stop processes and their groups, last started first, each given
     ``timeout`` to finish before it is killed."""
+    if os.name == "nt":
+        # No SIGKILL or process groups: end each tree as `hubzoid run` does.
+        from ._process_tree import stop_windows_tree
+        for proc in reversed([p for p in procs if p is not None]):
+            if proc.poll() is None:
+                stop_windows_tree(proc)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log.warning("Process %s did not exit after forced shutdown", proc.pid)
+        return
     for proc in reversed([p for p in procs if p is not None]):
         if proc.poll() is None:
             _signal_group(proc, signal.SIGTERM)

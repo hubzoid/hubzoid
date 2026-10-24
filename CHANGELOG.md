@@ -5,6 +5,19 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Fixed
+- `hubzoid eval run` works on Windows. Saving results no longer stops with
+  `PermissionError: [Errno 13]` on `.hubzoid\evals`, and results with text
+  outside the Windows code page (Tamil, Hindi, emoji) are written and read
+  as UTF-8.
+- Stopping or restarting a hub under `hubzoid run` on Windows ends its process
+  tree instead of failing on a POSIX-only signal.
+
+### Changed
+- Windows CI also installs the built wheel into a fresh environment on Python
+  3.11 and 3.12, runs `hubzoid init` and `hubzoid eval run` without UTF-8 mode,
+  and runs the eval tests. Releases wait for it.
+
 ## [2.0.2]
 
 Stability and the fixes found testing 2.0.1 end to end with three teams' hubs.

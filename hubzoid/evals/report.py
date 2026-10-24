@@ -57,16 +57,19 @@ def _atomic(path, data):
     import tempfile
     fd, tmp = tempfile.mkstemp(prefix=".eval-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(data, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        # Windows cannot open a directory as a file, and its rename is already
+        # durable once the file's own data is flushed.
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -89,7 +92,7 @@ def _index(d):
     files = _files(d)
     path = d / "index.json"
     try:
-        index = json.loads(path.read_text())
+        index = json.loads(path.read_text(encoding="utf-8"))
         if set(index) == {p.stem for p in files}:
             return index
     except (OSError, ValueError, TypeError):
@@ -97,7 +100,7 @@ def _index(d):
     index = {}
     for path in files:
         try:
-            index[path.stem] = _entry(path, json.loads(path.read_text()))
+            index[path.stem] = _entry(path, json.loads(path.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError):
             log.warning("Skipping unreadable eval run %s", path.name)
     _atomic(d / "index.json", index)
@@ -160,7 +163,7 @@ def load_runs(hub_dir: Path, limit: int = 2) -> list[tuple[Path, SuiteResult]]:
     with _locked(d):
         for path in _files(d)[-limit:]:
             try:
-                out.append((path, SuiteResult.from_dict(json.loads(path.read_text()))))
+                out.append((path, SuiteResult.from_dict(json.loads(path.read_text(encoding="utf-8")))))
             except (OSError, ValueError, TypeError):
                 log.warning("Skipping unreadable eval run %s", path.name)
     return out
