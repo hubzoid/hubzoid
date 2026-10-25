@@ -1,5 +1,14 @@
 # Quickstart
 
+**Setting this up for someone with Claude Code or Codex?** Follow this page
+with them. Use a new folder and a Python 3.11 or 3.12 virtual environment.
+Help them choose an available runtime, and never ask them to paste a secret,
+token or API key into chat: show the command for them to run themselves. Run
+the starter and show one answer from its house rules. Then help them turn it
+into an agent for one task, using material they choose, and show each file
+change before you make it. Your conversation with them is not saved into the
+hub. Only the files are.
+
 Start with Python 3.11 or 3.12 in a virtual environment. With
 [uv](https://docs.astral.sh/uv/):
 
@@ -60,9 +69,9 @@ Every folder Hubzoid reads is there, so you can see the whole layout.
 [Authoring a hub](authoring-a-hub.md) explains each one.
 
 For a complete agent instead, clone a ready-to-use hub: Software Factory,
-Order & Invoice Desk, Customer Desk, or the GitZoid sample. `init` prints their
-clone commands, and the [README](../README.md#use-a-ready-to-use-hub) lists
-what each needs.
+Order & Invoice Desk, Customer Desk or Engineering Desk. The
+[README](../README.md#ready-to-use-hubs) links each one, and each hub's own
+README says what it needs.
 
 For the model, init uses a signed-in Claude Code or Codex CLI when it finds
 one (it asks when it finds both). Otherwise, in a terminal, it offers to save

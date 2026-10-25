@@ -6,10 +6,11 @@
 </p>
 
 <h3 align="center">One brain for your internal agents.</h3>
-<p align="center">A folder of your knowledge, rules and tools becomes an agent your team can use in chat, in workflows and from the AI assistant they already have.</p>
+<p align="center">Provide context once. Reuse it across workflows, chat, and the AI tools your team already uses.</p>
 <p align="center">
-  <a href="https://hubzoid.com/docs">Documentation</a> ·
+  <a href="https://youtu.be/La2hApf4vQc">Watch the video</a> ·
   <a href="https://github.com/hubzoid/hubzoid#quick-start">Quick start</a> ·
+  <a href="https://hubzoid.com/docs">Documentation</a> ·
   <a href="https://github.com/hubzoid/hubzoid#ready-to-use-hubs">Ready-to-use hubs</a> ·
   <a href="https://hubzoid.com">Website</a> ·
   <a href="https://github.com/hubzoid/hubzoid/discussions">Discussions</a>
@@ -20,8 +21,10 @@
   <a href="https://github.com/hubzoid/hubzoid/discussions"><img src="https://img.shields.io/badge/Community-Discussions-0B0B0C?logo=github" alt="GitHub Discussions"></a>
 </p>
 
+**Hubzoid turns a folder of your knowledge, rules and tools into an agent you can use yourself and share with your team.** Ask it questions in chat, run repeatable workflows, or connect the AI assistant you already use. The rules live in files you can read, edit and version.
+
 <p align="center">
-  <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="https://raw.githubusercontent.com/hubzoid/hubzoid/72ac7bf1610c8a335b9b3ac3b536de8fdb6770f1/assets/shared-hub-light.svg" width="680">
+  <a href="https://youtu.be/La2hApf4vQc"><img alt="Watch: Hubzoid, one brain for your internal agents" src="https://img.youtube.com/vi/La2hApf4vQc/maxresdefault.jpg" width="640"></a>
 </p>
 
 ## Why Hubzoid
@@ -39,14 +42,12 @@ You need Python 3.11 or 3.12, and Claude Code or Codex signed in on this machine
 Paste this into Claude Code or Codex:
 
 ```text
-Help me set up a Hubzoid agent using the quickstart:
+Set up Hubzoid for me using the quickstart:
 https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md
-
-Use a new folder and a Python 3.12 virtual environment. Help me choose an
-available runtime without pasting secrets into chat. Run the starter and show
-me one answer from its house rules. Then help me turn it into an agent for one
-task, using material I choose. Show me each file change before you make it.
+Run the starter, show me one answer, then help me make it mine.
 ```
+
+The quickstart tells your assistant to use a virtual environment, keep secrets out of chat, and show you each file change before making it.
 
 Or by hand:
 
@@ -98,25 +99,26 @@ Then replace the sample with your own material: your rules and notes in `knowled
 
 ## Ready-to-use hubs
 
-Complete agents built on Hubzoid, each in its own repository with a labelled sample you can run before connecting anything of your own.
+Complete agents built on Hubzoid, each in its own repository. Each one starts with a labelled sample you can run before connecting anything of your own, and its README says what it needs.
 
-| Hub | What it does | You need |
-|---|---|---|
-| [Software Factory](https://github.com/hubzoid/software-factory-hub) | Turns engineering requests into reviewed draft pull requests. People approve the plan and merge. | Docker, a GitHub repository |
-| [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub) | Reads orders and invoices from your inbox into sourced records and reports. No ERP required. | A Gmail inbox. ERPNext is optional |
-| [Customer Desk](https://github.com/hubzoid/customer-desk-hub) | Drafts customer replies from your knowledge and systems. A person approves each one. | Zoho Desk or Freshdesk |
-| [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub) | Reviews pull requests against your team's rules and answers questions about your code. Nothing is posted until you say so. | A read-only GitHub token |
-
-All of them run on Claude Code or Codex. Clone one and follow its README, which starts with the sample and has a setup prompt for your coding assistant.
+| Hub | What it does |
+|---|---|
+| [Software Factory](https://github.com/hubzoid/software-factory-hub) | Turns engineering requests into reviewed draft pull requests. People approve the plan and merge. |
+| [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub) | Reads orders and invoices from your inbox into sourced records and reports. No ERP required. |
+| [Customer Desk](https://github.com/hubzoid/customer-desk-hub) | Drafts customer replies from your knowledge and systems. A person approves each one. |
+| [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub) | Reviews pull requests against your team's rules and answers questions about your code. Nothing is posted until you say so. |
 
 ## Use it three ways
 
 | You want to | Use |
 |---|---|
-| Ask about your work and get an answer with its source | **Chat**, with the hub's knowledge and permitted tools |
+| Ask about your work and get an answer with its source | **Chat**, in the web app, in Slack or inside your own app, with the hub's knowledge and permitted tools. [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md) · [Other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) · [Embedding the chat](https://github.com/hubzoid/hubzoid/blob/main/docs/embedding.md) |
 | Repeat a report or a check, with saved inputs and results | **Workflows**, on demand or on a schedule. [Workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md) · [Reports and sharing](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md) |
 | Bring the same capabilities into your own assistant | **MCP**, with your own access. [Connect your assistant](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md) |
-| Answer in Slack, or inside your own app | [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md) · [Other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) · [Embedding the chat](https://github.com/hubzoid/hubzoid/blob/main/docs/embedding.md) |
+
+<p align="center">
+  <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="https://raw.githubusercontent.com/hubzoid/hubzoid/72ac7bf1610c8a335b9b3ac3b536de8fdb6770f1/assets/shared-hub-light.svg" width="680">
+</p>
 
 For Claude Code, paste the connection command `hubzoid run` prints, open `/mcp` in Claude Code and approve the connection.
 
