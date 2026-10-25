@@ -5,6 +5,12 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Changed
+- **GitZoid is now the Engineering Desk.** `hubzoid init` lists it under its
+  new name and prints `git clone https://github.com/hubzoid/engineering-desk-hub
+  engineering-desk`. `hubzoid init --template gitzoid` names the new repo. The
+  old `gitzoid-hub` address still redirects.
+
 ## [2.0.3]
 
 2.0.2 was tagged but never published: its release checks found the races

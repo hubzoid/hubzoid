@@ -91,8 +91,9 @@ def test_init_writes_the_starter_with_every_folder(tmp_path):
     assert "30 days" in (hub / "knowledge" / "house-rules.md").read_text()
     assert "$500" in (hub / "knowledge" / "house-rules.md").read_text()  # USD, as product defaults say
     assert "refund 40 days" in res.output
-    for repo in ("software-factory-hub", "order-desk-hub", "customer-desk-hub", "gitzoid-hub"):
+    for repo in ("software-factory-hub", "order-desk-hub", "customer-desk-hub", "engineering-desk-hub"):
         assert f"github.com/hubzoid/{repo}" in res.output
+    assert "Engineering Desk" in res.output and "gitzoid" not in res.output.lower()  # renamed 25 Oct 2026
 
 
 def test_the_starter_loads_as_a_hub(tmp_path):
@@ -115,7 +116,9 @@ def test_a_template_flag_says_where_it_went_and_creates_nothing(tmp_path, name):
     assert "no longer bundles templates" in res.output and "Nothing was created" in res.output
     assert not (tmp_path / "x").exists() and not (tmp_path / "requirements.txt").exists()
     if name == "gitzoid":
-        assert "github.com/hubzoid/gitzoid-hub" in res.output
+        assert "now the Engineering Desk" in res.output
+        assert "git clone https://github.com/hubzoid/engineering-desk-hub engineering-desk" in res.output
+        assert "gitzoid-hub" not in res.output
     elif name != "no-such-template":
         assert "tree/v2.0.1/hubzoid/templates/" + name in res.output
     short = _run_init(tmp_path, "y", "-t", name)

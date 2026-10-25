@@ -15,7 +15,7 @@ testing an unreleased branch.
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |
 | People in the loop | [Approvals, questions, workflow access, hub changes and memory](approvals-and-hub-changes.md) |
 | Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131) |
-| Start from a ready-to-use hub | [Software Factory](https://github.com/hubzoid/software-factory-hub), [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub), [Customer Desk](https://github.com/hubzoid/customer-desk-hub), [GitZoid sample](https://github.com/hubzoid/gitzoid-hub) |
+| Start from a ready-to-use hub | [Software Factory](https://github.com/hubzoid/software-factory-hub), [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub), [Customer Desk](https://github.com/hubzoid/customer-desk-hub), [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Put the chat inside your own app (ERPNext, Odoo, a dashboard) | [Embedding the chat](embedding.md) |
 | Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |

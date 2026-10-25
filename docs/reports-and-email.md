@@ -344,4 +344,4 @@ exposed in the personal list. Email is off by default and needs both the hub's
 opt-in and working delivery configuration.
 
 For runnable report workflows, see the code, delivery and people reports in
-the [GitZoid hub](https://github.com/hubzoid/gitzoid-hub).
+the [Engineering Desk hub](https://github.com/hubzoid/engineering-desk-hub).

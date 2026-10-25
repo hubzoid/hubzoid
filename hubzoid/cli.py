@@ -179,15 +179,16 @@ READY_HUBS = (
      "git clone https://github.com/hubzoid/order-desk-hub order-desk"),
     ("Customer Desk", "drafts customer replies from your knowledge, a person approves",
      "git clone https://github.com/hubzoid/customer-desk-hub customer-desk"),
-    ("GitZoid (sample)", "pull request reviews and answers about your code",
-     "git clone https://github.com/hubzoid/gitzoid-hub gitzoid"),
+    ("Engineering Desk", "reviews pull requests and answers questions about your code",
+     "git clone https://github.com/hubzoid/engineering-desk-hub engineering-desk"),
 )
 
 # Templates bundled up to 2.0.1. `--template NAME` names where each went and
 # creates nothing, so a script that relied on one stops instead of running on
 # the wrong hub.
 RETIRED_TEMPLATES = {
-    "gitzoid": "GitZoid is its own hub now: git clone https://github.com/hubzoid/gitzoid-hub gitzoid",
+    "gitzoid": ("GitZoid is now the Engineering Desk, in its own repo: "
+                "git clone https://github.com/hubzoid/engineering-desk-hub engineering-desk"),
     "operations": "The operations sample was retired. `hubzoid init` writes a smaller starter for the same shop.",
     "minimal": "The minimal template was retired. `hubzoid init` writes every folder with one or no example file.",
     "demo": "The guided tour was retired. Start with `hubzoid init`, or a ready-to-use hub below.",
@@ -375,7 +376,7 @@ def init(
       → writes ./sales-agent/... only. Parent files are left alone.
 
     For a ready-to-use hub (Software Factory, Order & Invoice Desk, Customer
-    Desk, GitZoid), clone its repo instead. `init` prints the commands.
+    Desk, Engineering Desk), clone its repo instead. `init` prints the commands.
 
     In a terminal with no signed-in Claude Code or Codex CLI, init offers to
     save an OpenRouter, Anthropic or OpenAI key in the hub's .env.

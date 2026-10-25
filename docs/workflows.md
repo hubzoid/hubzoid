@@ -13,7 +13,7 @@ two ways to write that work, and both run on the same engine.
 
 Start with a markdown task. Move to a code workflow when you need the steps to
 be exact. `hubzoid new workflow <name> <hub>` scaffolds one, and the
-[GitZoid hub](https://github.com/hubzoid/gitzoid-hub) is a complete set of code
+[Engineering Desk hub](https://github.com/hubzoid/engineering-desk-hub) is a complete set of code
 workflows to read.
 
 Both kinds run on the hub's [DBOS](https://docs.dbos.dev) engine, so they share
