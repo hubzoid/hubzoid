@@ -30,6 +30,7 @@ import {
 import { useData } from "../hooks/useData";
 import { href, navigate } from "../hooks/useRoute";
 import { LoadState, When, InfoHelp, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { describeCron, formatDuration, formatTime } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
@@ -439,6 +440,7 @@ function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; 
   return (
     <EvalTableFrame embedded={embedded} label="Eval runs">
     <Table<EvalRunSummary>
+      {...ROW_OPENS}
       className={embedded ? "hz-scroll-table" : undefined}
       aria-label="Eval runs"
       rowKey="stamp"
@@ -466,7 +468,7 @@ function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; 
           title: "Run",
           key: "stamp",
           render: (_, r) => (
-            <a href={href(evalsPath(hub, r.stamp))} className="identity">
+            <a href={href(evalsPath(hub, r.stamp))} className="identity hz-row-name">
               {r.stamp}
             </a>
           ),

@@ -124,10 +124,11 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
           size="middle"
           dataSource={items.data?.items}
           pagination={PAGED}
-          onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
+          rowClassName="clickable"
+          onRow={(row) => ({ onClick: () => setOpen(row.id) })}
           columns={[
             { title: "Work", render: (_, r) => (<>
-              <Text strong>{r.workflow}</Text><br /><Text type="secondary" className="mono">{r.logical_key}</Text>
+              <Text strong className="hz-row-name">{r.workflow}</Text><br /><Text type="secondary" className="mono">{r.logical_key}</Text>
             </>) },
             { title: "State", render: (_, r) => <StateTag state={r.state} reason={r.reason} /> },
             { title: "Asked by", dataIndex: "requester", render: (v) => v || <Text type="secondary">unattended</Text> },

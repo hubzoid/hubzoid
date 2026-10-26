@@ -28,6 +28,7 @@ import {
   LoadState,
   PersonCell,
 } from "../../components/common";
+import { ROW_OPENS, openRowName } from "../../lib/rows";
 import { personHref, useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, pickDraft, type Draft } from "./plan";
@@ -37,6 +38,10 @@ import { LegacyServiceTag } from "./AccessParts";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
+
+/** Where a row's person opens, when they have a page of their own. */
+const personLink = (r: AccessRow) =>
+  r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup" ? undefined : personHref(r.subject);
 
 export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: boolean }) {
   const underTabs = useUnderTabs();
@@ -131,15 +136,7 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
     title: "Person",
     key: "person",
     render: (_: unknown, r: AccessRow) => (
-      <PersonCell
-        subject={r.subject}
-        display={r.display}
-        link={
-          r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup"
-            ? undefined
-            : personHref(r.subject)
-        }
-      />
+      <PersonCell subject={r.subject} display={r.display} link={personLink(r)} />
     ),
   };
   const capabilitiesColumn = {
@@ -275,7 +272,8 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
         <>
           <ul className="hz-access-list" aria-label={`Access to ${hub.name}`}>
             {access.rows.map((row) => (
-              <li key={row.subject}>
+              // A row opens the person, as in People (one row style, founder review).
+              <li key={row.subject} className={personLink(row) ? "hz-row-link" : undefined} onClick={openRowName}>
                 <div className="hz-access-person">
                   {personColumn.render(row.status, row)}
                   <div className="hz-access-status">{accountColumn.render(row.status, row)}</div>
@@ -288,6 +286,7 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
           {access.total > PAGE && <Pagination current={page} pageSize={PAGE} total={access.total} onChange={setPage} showSizeChanger={false} />}
         </>
       ) : <Table<AccessRow>
+        {...ROW_OPENS}
         rowKey="subject"
         size="middle"
         dataSource={access.rows}

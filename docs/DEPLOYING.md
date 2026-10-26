@@ -764,7 +764,9 @@ Changing an agent's files from the browser is **Beta and off by default**.
 That covers proposing and approving hub changes (instructions, knowledge,
 skills), the agent's `remember` and `propose_hub_change` tools, and saving
 connectors, channels, settings, approval rules and budgets in Settings. People
-still read all of it there, and the CLI and your editor work as before.
+still read connectors, channels, settings and approval rules there, and the CLI
+and your editor work as before. An agent's instruction files show in Settings
+only while it is on, under **Configuration → Instructions**.
 
 ```yaml
 in_app_editing: true      # in hubzoid.yaml, or HUBZOID_IN_APP_EDITING=true

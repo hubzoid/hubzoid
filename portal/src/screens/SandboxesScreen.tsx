@@ -159,10 +159,11 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
       ) : (
         <Table<Sandbox>
           rowKey="id" size="middle" pagination={PAGED} dataSource={list.data?.sandboxes}
-          onRow={(row) => ({ onClick: () => setOpen(row.id), style: { cursor: "pointer" } })}
+          rowClassName="clickable"
+          onRow={(row) => ({ onClick: () => setOpen(row.id) })}
           columns={[
             { title: "Owner", render: (_, r) => (<>
-              <Text strong>{r.owner_kind === "station_call" ? "Agent call" : r.owner_kind}</Text><br />
+              <Text strong className="hz-row-name">{r.owner_kind === "station_call" ? "Agent call" : r.owner_kind}</Text><br />
               <Text type="secondary" className="mono">{r.owner_id.slice(0, 13)}</Text>
             </>) },
             { title: "Profile", dataIndex: "profile_id" },

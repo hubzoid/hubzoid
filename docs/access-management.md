@@ -21,7 +21,9 @@ an existing account.
 ### Add a user (implemented)
 
 1. Open **Agents → the agent → Access → Add user**, or **People & access →
-   Add user**.
+   Add user**. From an agent, type their email in **Add someone** and choose
+   **Continue**: a new email goes on to create their account, and someone who
+   already has one opens their access instead.
 2. Enter their name and email. They sign in with a one-time link, or choose
    **Google sign-in only** when the deployment supports it (below); otherwise
    that option is disabled with a short hint.
@@ -29,7 +31,8 @@ an existing account.
    shown directly. From People, each agent you manage is a collapsed section.
    Inside, optional groups start collapsed and show how many are selected.
    Anything you may not give is shown as **Outside your access** or **Admins
-   only** and cannot be selected. Descriptions are in tooltips.
+   only** and cannot be selected. Capabilities this agent hasn't set up yet
+   sit behind one **more not set up** line. Descriptions are in tooltips.
 4. **Review**, then **Create account**.
 5. The one-time sign-in link is shown once, with **Copy**. Share it yourself:
    no invitation or email is sent. The person opens it, sets a password and is

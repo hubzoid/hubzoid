@@ -276,6 +276,25 @@ def test_agents_fail_closed(deployment_hubs, monkeypatch):
     assert TestClient(app).get("/api/agents").status_code == 401
 
 
+def test_what_you_can_use_labels_each_agent_from_its_own_folder(deployment_hubs):
+    """A capability of the second hub is named by that hub's catalog, not shown
+    as its raw id because the request reached the first hub's process."""
+    from hubzoid.access.access_routes import my_access
+
+    sales, support, _gw, gs = deployment_hubs
+    (support / "restricted").mkdir()
+    (support / "restricted" / "desk_bindings.py").write_text("")
+    (support / "identity").mkdir()
+    (support / "identity" / "permissions.yaml").write_text("desk_bindings:\n  label: Customer bindings\n")
+    for perm in ("use_hub", "desk_bindings"):
+        gs.grant("ann@example.org", "support", perm, actor="boss@example.org")
+
+    body = my_access(sales, AuthUser(id="u", email="ann@example.org", role="user"))
+    assert [(a["hub"], a["extra"]) for a in body["agents"]] == [
+        ("support", [{"permission": "desk_bindings", "label": "Customer bindings"}])]
+    assert all(f["description"] for f in body["features"])
+
+
 def test_branding_is_the_gateways_and_each_hubs_under_its_prefix(deployment_hubs, monkeypatch):
     sales, support, gw, _gs = deployment_hubs
     app, resolve = _app_for(sales, {"email": "ann@example.org"})

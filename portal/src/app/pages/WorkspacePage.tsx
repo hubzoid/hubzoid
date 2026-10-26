@@ -4,7 +4,7 @@
 // or an editor change the same files.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileCode2, History, ListChecks, Plus } from "lucide-react";
-import { ApiError, get, post } from "../lib/api";
+import { ApiError, get, hubUrl, post } from "../lib/api";
 import { describeError } from "../lib/errors";
 import { t } from "../i18n/en";
 import { toast } from "../components/toast";
@@ -31,6 +31,10 @@ export default function WorkspacePage({ agent = null, readOnly = false, note = n
 
 function Files({ agent, forceReadOnly, note }: { agent: string | null; forceReadOnly: boolean; note: string | null }) {
   const app = useApp();
+  // From an agent's page, that agent's own files: in a deployment the bare
+  // /api/... answers for the first agent (founder review: GitZoid showed
+  // Starter Hub's files).
+  const base = agent ? app.agents.list.find((a) => a.hub === agent)?.api_base ?? `/b/${encodeURIComponent(agent)}` : "";
   const [hub, setHub] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[] | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -40,11 +44,11 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
   const [readOnly, setReadOnly] = useState(false);
   const load = useCallback(async () => {
     try {
-      const got = await get<{ items: FileItem[]; hub?: string; read_only?: boolean }>(`${A}/files`);
+      const got = await get<{ items: FileItem[]; hub?: string; read_only?: boolean }>(hubUrl(base, `${A}/files`));
       setFiles(got.items);
       setHub(got.hub ?? null);
       setReadOnly(!!got.read_only || forceReadOnly);
-      setPending((await get<{ items: Pending[] }>("/api/hub-changes?status=pending")).items);
+      setPending((await get<{ items: Pending[] }>(hubUrl(base, "/api/hub-changes?status=pending"))).items);
       // From an agent's page: its instructions, when this hub is that agent.
       if (agent && got.hub && agent.toLowerCase() === got.hub) {
         setSelected((s) => s ?? (got.items.some((f) => f.path === "AGENTS.md") ? "AGENTS.md" : null));
@@ -53,7 +57,7 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
       setError(e instanceof ApiError && e.status === 403 ? t.workspace.denied : describeError(e));
       setFiles([]);
     }
-  }, [agent, forceReadOnly]);
+  }, [agent, base, forceReadOnly]);
   useEffect(() => void load(), [load]);
   const groups = useMemo(() => ({
     agent: (files ?? []).filter((f) => f.kind === "agent"),
@@ -63,7 +67,7 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
   if (error) return <Notice tone="error">{error}</Notice>;
   return (
     <>
-    {hub && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
+    {hub && !agent && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
     {readOnly && <p className="mb-4 text-[13px] text-mute">{note ?? t.workspace.readOnly}</p>}
     <div className="hz-workspace-files">
       <div className="space-y-4">
@@ -93,18 +97,18 @@ function Files({ agent, forceReadOnly, note }: { agent: string | null; forceRead
       </div>
       <div className="min-w-0">
         {selected ? (
-          <Editor key={selected} path={selected} readOnly={readOnly} onChanged={load} />
+          <Editor key={selected} base={base} path={selected} readOnly={readOnly} onChanged={load} />
         ) : (
           <div className="flex min-h-48 items-center justify-center px-6 py-10 text-center text-[13px] text-mute">{t.workspace.pick}</div>
         )}
       </div>
-      <NewFile kind={creating} onClose={() => setCreating(null)} onCreated={async (path) => { setCreating(null); await load(); setSelected(path); }} />
+      <NewFile base={base} kind={creating} onClose={() => setCreating(null)} onCreated={async (path) => { setCreating(null); await load(); setSelected(path); }} />
     </div>
     </>
   );
 }
 
-function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"; onClose: () => void; onCreated: (path: string) => void }) {
+function NewFile({ base, kind, onClose, onCreated }: { base: string; kind: null | "skill" | "prompt"; onClose: () => void; onCreated: (path: string) => void }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   if (!kind) return null;
@@ -119,7 +123,7 @@ function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"
         e.preventDefault();
         setBusy(true);
         try {
-          const ch = await post<{ id: number }>("/api/hub-changes", { title: `New ${path}`, edits: [{ path, content: template }] });
+          const ch = await post<{ id: number }>(hubUrl(base, "/api/hub-changes"), { title: `New ${path}`, edits: [{ path, content: template }] });
           toast(t.workspace.proposed(ch.id));
           onCreated(path);
         } catch (err) {
@@ -139,8 +143,8 @@ function NewFile({ kind, onClose, onCreated }: { kind: null | "skill" | "prompt"
   );
 }
 
-function Editor({ path, readOnly = false, onChanged }: {
-  path: string; readOnly?: boolean; onChanged: () => Promise<void> | void;
+function Editor({ base, path, readOnly = false, onChanged }: {
+  base: string; path: string; readOnly?: boolean; onChanged: () => Promise<void> | void;
 }) {
   const [original, setOriginal] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -148,15 +152,15 @@ function Editor({ path, readOnly = false, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [proposed, setProposed] = useState<number | null>(null);
   useEffect(() => {
-    get<{ text: string }>(`${A}/files/content?path=${encodeURIComponent(path)}`)
+    get<{ text: string }>(hubUrl(base, `${A}/files/content?path=${encodeURIComponent(path)}`))
       .then((o) => { setOriginal(o.text); setText(o.text); }).catch((e) => toast(describeError(e), "error"));
-    get<{ items: Version[] }>(`${A}/files/versions?path=${encodeURIComponent(path)}`).then((o) => setVersions(o.items)).catch(() => {});
-  }, [path]);
+    get<{ items: Version[] }>(hubUrl(base, `${A}/files/versions?path=${encodeURIComponent(path)}`)).then((o) => setVersions(o.items)).catch(() => {});
+  }, [base, path]);
   const changed = original !== null && text !== original;
   const propose = async () => {
     setBusy(true);
     try {
-      const ch = await post<{ id: number }>("/api/hub-changes", {
+      const ch = await post<{ id: number }>(hubUrl(base, "/api/hub-changes"), {
         title: `Edit ${path}`, edits: [{ path, old_text: original, new_text: text }],
       });
       setProposed(ch.id);

@@ -90,12 +90,13 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
         "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
     # Display order follows the drawer's groups (no empty Workflows group): the
     # agent's own tools first, Hubzoid tools last, and inside Hubzoid tools the
-    # unsectioned rows, then Workflows, then Access control.
+    # unsectioned rows, then Chat features, then Workflows, then Access control.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "ledger", "payroll", "manage_access", "chat_dictation", "chat_model_compare",
-        "chat_read_aloud", "chat_web_search", "curator", "jev", "share_public_links", "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links", "access_tools"]
-    assert [by[p]["section"] for p in ("curator", "workflows_view", "access_tools")] == [
-        "", "workflows", "access"]
+        "use_hub", "ledger", "payroll", "manage_access", "curator", "jev", "share_public_links",
+        "chat_dictation", "chat_read_aloud", "chat_web_search", "chat_model_compare",
+        "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links", "access_tools"]
+    assert [by[p]["section"] for p in ("curator", "chat_dictation", "workflows_view", "access_tools")] == [
+        "", "chat", "workflows", "access"]
     for e in entries:
         assert {"permission", "label", "description", "sensitive", "group", "surfaces", "status",
                 "available", "default", "delegate_grantable", "obsolete"} <= set(e)

@@ -8,6 +8,7 @@ import {
   Input,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { Plus, Search } from "lucide-react";
@@ -17,7 +18,8 @@ import {
   query,
   type Access,
   type AccessRow,
-  type AccountCreated,
+  type AccountCreatedWithLink,
+  usesSignInLinks,
   type AccountGranted,
   type Hub,
   type Me,
@@ -76,7 +78,7 @@ const ALWAYS_OPEN = new Set(["hub", "obsolete"]);
  *  can't commit together, so a created account without its access is shown
  *  as exactly that, and every retry reuses the account. */
 type Outcome =
-  | { type: "created"; created: AccountCreated }
+  | { type: "created"; created: AccountCreatedWithLink }
   | { type: "exists" | "partial" | "uncertain" | "failed"; error: ApiError };
 
 
@@ -207,6 +209,8 @@ export function AccessDrawer({
   // Open groups and pre-review problems belong to one drawer session: they
   // survive Back from review, and reset when the drawer closes.
   const [expanded, setExpanded] = useState<string[]>([]);
+  // Groups whose capabilities that aren't set up in this agent are shown.
+  const [showUnset, setShowUnset] = useState<string[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [aboutOpen, setAboutOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -241,10 +245,13 @@ export function AccessDrawer({
         ? "You can’t create accounts here."
         : undefined;
   const google = isNew && signIn === "google" && !!me?.sign_in?.google;
+  // As in People: a new account gets a one-time link to set their own
+  // password, so nobody else ever knows it (founder review).
+  const links = usesSignInLinks(me);
   const newProblems = {
     name: newName.trim() ? null : "Enter their name.",
     email: emailProblem(draft?.subject ?? "") ?? (google ? googleDomainProblem(subject, me?.sign_in) : null),
-    password: google ? null : passwordProblem(password),
+    password: google || links ? null : passwordProblem(password),
   };
   const subjectError = adding ? newProblems.email : null;
   const changes = draft ? diff(draft.row.perms, draft.selected) : { added: [], removed: [] };
@@ -419,11 +426,11 @@ export function AccessDrawer({
     setDraft({ ...d, step: "saving" });
     setRetryError(null);
     try {
-      const created = await request<AccountCreated>("/accounts", {
+      const created = await request<AccountCreatedWithLink>("/accounts", {
         email: subject,
         name: newName.trim(),
         sign_in: google ? "google" : "password",
-        ...(google ? {} : { password }),
+        ...(google || links ? {} : { password }),
         ...(me?.org_admin && newPhone.trim() ? { phone: newPhone.trim() } : {}),
         grants: accountGrants(d),
       });
@@ -701,6 +708,7 @@ export function AccessDrawer({
             hubName={hub.name}
             password={password}
             signIn={google ? "google" : "password"}
+            links={links}
             afterUncertain={afterUncertain}
             retryError={retryError}
             catalog={catalog}
@@ -805,6 +813,7 @@ export function AccessDrawer({
                     password={password}
                     onPassword={setPassword}
                     touched={touched}
+                    links={links}
                   />
                 </>
               ) : (
@@ -867,6 +876,12 @@ export function AccessDrawer({
                         : draft.selected.includes(p.permission) ||
                           draft.row.inherited.includes(p.permission);
                     const collapsible = !ALWAYS_OPEN.has(g.key);
+                    // Not set up in this agent and not held: out of the way until asked
+                    // for, so the list shows what can actually be used (founder review).
+                    const ready = (p: Permission) =>
+                      p.obsolete || p.available !== false || isChecked(p) || !!problems[p.permission];
+                    const unset = g.items.filter((p) => !ready(p));
+                    const items = showUnset.includes(g.key) ? g.items : g.items.filter(ready);
                     return (
                       <CapabilityGroup
                         key={g.key}
@@ -887,7 +902,7 @@ export function AccessDrawer({
                       >
                         {/* Sub-headings (Workflows, Access control) only group
                             rows for reading; counts stay with the group. */}
-                        {splitSections(g.items).map((s) => (
+                        {splitSections(items).map((s) => (
                           <CapabilitySection key={s.key} id={`${g.key}-${s.key}`} title={s.title}>
                             {s.items.map((p) => {
                               const inherited = draft.row.inherited.includes(p.permission);
@@ -917,6 +932,14 @@ export function AccessDrawer({
                             })}
                           </CapabilitySection>
                         ))}
+                        {unset.length > 0 && (
+                          <button type="button" className="hz-cap-unset"
+                            onClick={() => setShowUnset((s) => (s.includes(g.key) ? s.filter((k) => k !== g.key) : [...s, g.key]))}>
+                            {showUnset.includes(g.key)
+                              ? "Hide what isn’t set up here"
+                              : `${unset.length} more not set up in this agent`}
+                          </button>
+                        )}
                       </CapabilityGroup>
                     );
                   })}
@@ -929,11 +952,12 @@ export function AccessDrawer({
             <Alert
               type="info"
               showIcon
-              title={google ? "New account, signs in with Google" : "New account, signs in with a password"}
-              description={
+              title={
                 google
-                  ? `They sign in with Google as ${subject}. No password is set that anyone knows.`
-                  : "The password is shown once after the account is created, to copy and share with them directly."
+                  ? `New account: they sign in with Google as ${subject}.`
+                  : links
+                    ? "New account: after saving you get a one-time link to send them. They set their own password."
+                    : "New account: they sign in with the password you set. After saving, copy their sign-in details to send them."
               }
             />
           )}
@@ -1069,9 +1093,9 @@ function ReviewList({
                 {capabilityLabel(p, catalog)}
                 {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
                 {catalog[p]?.available === false && (
-                  <Text type="warning" className="capability-status">
-                    {" "}— can’t run until configured ({catalog[p].status || "Not configured"})
-                  </Text>
+                  <Tooltip title={`Works once it is set up: ${catalog[p].status || "not configured"}.`}>
+                    <Tag>Not set up yet</Tag>
+                  </Tooltip>
                 )}
               </li>
             ))}
@@ -1107,12 +1131,7 @@ function ReviewList({
         />
       )}
       {sensitive.length > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          title="This grants a sensitive capability"
-          description={`${sensitive.map((p) => capabilityLabel(p, catalog)).join(", ")}. Make sure ${name} should have this.`}
-        />
+        <Alert type="warning" showIcon title={`Sensitive: check ${name} should have ${sensitive.length === 1 ? "this" : "these"}.`} />
       )}
     </div>
   );
@@ -1131,6 +1150,7 @@ function NewAccountOutcome({
   hubName,
   password,
   signIn,
+  links,
   afterUncertain,
   retryError,
   catalog,
@@ -1142,6 +1162,8 @@ function NewAccountOutcome({
   hubName: string;
   password: string;
   signIn: SignIn;
+  /** The account got a one-time link instead of a password. */
+  links: boolean;
   afterUncertain: boolean;
   retryError: ApiError | null;
   catalog: Catalog;
@@ -1167,7 +1189,8 @@ function NewAccountOutcome({
               : `No access to ${hubName} was granted.`
           }
         />
-        <SignInDetails email={outcome.created.subject} password={password} signIn={outcome.created.sign_in ?? signIn} />
+        <SignInDetails email={outcome.created.subject} password={links ? "" : password} signIn={outcome.created.sign_in ?? signIn}
+          {...(links ? { link: outcome.created.link ?? null, expiresAt: outcome.created.expires_at, linkError: outcome.created.link_error } : {})} />
         <a href={personHref(outcome.created.subject)} onClick={onDone}>
           View user
         </a>
@@ -1183,7 +1206,7 @@ function NewAccountOutcome({
           title={`${email} already has an account`}
           description={`Nothing was changed. Edit their access to ${hubName} instead.`}
         />
-        {afterUncertain && signIn === "password" && (
+        {afterUncertain && signIn === "password" && !links && (
           <>
             <Paragraph style={{ margin: 0 }}>
               It may be the account your earlier attempt created. If so, it signs in with the password you set:
@@ -1203,7 +1226,8 @@ function NewAccountOutcome({
           title="The account was created, but access wasn’t granted"
           description={partialDetail(outcome.error)}
         />
-        <SignInDetails email={email} password={password} signIn={signIn} />
+        <SignInDetails email={email} password={links ? "" : password} signIn={signIn}
+          {...(links ? { link: null, linkError: "Open the user’s profile and choose Reset password to get their link." } : {})} />
         {retry}
       </>
     );
@@ -1220,8 +1244,10 @@ function NewAccountOutcome({
 }
 
 /**
- * Add user, step one: choose who. Search people who already have an account
- * (picking one opens their access here), or enter a new email to create one.
+ * Add user, step one: choose who, in one field as Agno's invite does: type an
+ * email (a new one creates their account) or a name, and people who already
+ * have an account appear underneath to pick (founder review: compact, and
+ * creating an account is said in the field's own help).
  */
 function PickPerson({
   hubKey,
@@ -1263,15 +1289,14 @@ function PickPerson({
 
   const people = q && found?.q === q ? found.people : [];
   const email = normalizeSubject(q);
-  const offerCreate = canCreate && !emailProblem(q) && found?.q === q && !people.some((p) => p.subject === email);
-  const choices = [
-    ...people.map((p) => () => onPick(p)),
-    ...(offerCreate ? [() => onCreate(email)] : []),
-  ];
+  const exact = people.find((p) => p.subject === email);
+  const offerCreate = canCreate && !emailProblem(q) && found?.q === q && !exact;
+  // Continue takes the email typed: that person if they have an account, else a new one.
+  const next = exact ? () => onPick(exact) : offerCreate ? () => onCreate(email) : people.length === 1 ? () => onPick(people[0]) : null;
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && choices.length) {
+    if (e.key === "Enter" && next) {
       e.preventDefault();
-      choices[0]();
+      next();
     }
   };
 
@@ -1279,29 +1304,34 @@ function PickPerson({
     <div className="pick-person">
       <div className="field">
         <label className="field-label" htmlFor="pick-person">
-          Name or email
+          Add someone
         </label>
-        <Input
-          id="pick-person"
-          autoFocus
-          autoComplete="off"
-          prefix={<Search size={16} aria-hidden />}
-          placeholder={canCreate ? "Search people, or enter a new email" : "Search people"}
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={busy}
-        />
+        <div className="pick-input-row">
+          <Input
+            id="pick-person"
+            autoFocus
+            autoComplete="off"
+            prefix={<Search size={16} aria-hidden />}
+            placeholder={canCreate ? "Type their email, or search by name" : "Search by name or email"}
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={busy}
+          />
+          <Button type="primary" disabled={busy || !next} onClick={() => next?.()}>
+            Continue
+          </Button>
+        </div>
+        <Text type="secondary" className="field-help">
+          {canCreate
+            ? "A new email creates their account. People who have one appear as you type."
+            : "People who have an account appear as you type."}
+        </Text>
       </div>
       {error && <Alert type="error" showIcon title={error} />}
-      {!q && (
-        <Text type="secondary">
-          {canCreate ? "Pick someone to give access, or enter a new email to create their account." : "Pick someone to give access."}
-        </Text>
-      )}
       {q && found?.q === q && !people.length && !offerCreate && (
         <Text type="secondary">
-          No one matches “{q}”.{canCreate && emailProblem(q) ? " Enter their full email to create an account." : ""}
+          No one matches “{q}”.{canCreate && emailProblem(q) ? " Type their full email to add them." : ""}
         </Text>
       )}
       {(people.length > 0 || offerCreate) && (
@@ -1311,7 +1341,7 @@ function PickPerson({
             return (
               <li key={p.subject}>
                 <button type="button" className="pick-row" disabled={busy} onClick={() => onPick(p)}>
-                  <PersonAvatar subject={p.subject} display={p.display ?? ""} size={32} />
+                  <PersonAvatar subject={p.subject} display={p.display ?? ""} size={28} />
                   <span className="pick-text">
                     <Text strong>{personName(p.subject, p.display ?? "")}</Text>
                     {p.display && <Text type="secondary" className="identity">{p.subject}</Text>}
@@ -1325,10 +1355,10 @@ function PickPerson({
             <li>
               <button type="button" className="pick-row" disabled={busy} onClick={() => onCreate(email)}>
                 <span className="pick-new" aria-hidden>
-                  <Plus size={16} />
+                  <Plus size={14} />
                 </span>
                 <span className="pick-text">
-                  <Text strong>Create an account</Text>
+                  <Text strong>New person</Text>
                   <Text type="secondary" className="identity">{email}</Text>
                 </span>
               </button>

@@ -14,6 +14,7 @@ import { query, type Hub, type Run } from "../api";
 import { useData } from "../hooks/useData";
 import { useHashQuery, href } from "../hooks/useRoute";
 import { LoadState, RunStatusTag, When } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { formatDuration, formatTime, relativeTime } from "../lib/format";
 import { resultSummary, shortRunId } from "../lib/results";
 
@@ -249,6 +250,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
         <LoadState error={data.error} retry={data.reload} />
       ) : (
         <Table<Run>
+          {...ROW_OPENS}
           rowKey={(r) => `${r.hub}:${r.id}`}
           size="middle"
           dataSource={rows}
@@ -287,7 +289,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
               title: "Workflow",
               key: "workflow",
               width: 180,
-              render: (_, r) => <a href={detailHref(r)}>{r.name}</a>,
+              render: (_, r) => <a className="hz-row-name" href={detailHref(r)}>{r.name}</a>,
             },
             {
               title: "Run",

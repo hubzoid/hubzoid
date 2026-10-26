@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
 import { InfoHelp, LoadState, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { errorText } from "../hooks/useData";
 import { href } from "../hooks/useRoute";
 
@@ -106,12 +107,14 @@ function ItemList({ hub }: { hub: Hub }) {
         <Empty description={state === "quarantined" ? "Nothing is waiting for review." : "No messages here."} />
       ) : (
         <Table<Item>
+          {...ROW_OPENS}
           rowKey="id"
+          size="middle"
           dataSource={list.data.items}
           pagination={PAGED}
           scroll={{ x: true }}
           columns={[
-            { title: "From", render: (_, r) => <a href={intakeHref(hub, r.id)}>{r.sender.external_id || "Unknown"}</a> },
+            { title: "From", render: (_, r) => <a className="hz-row-name" href={intakeHref(hub, r.id)}>{r.sender.external_id || "Unknown"}</a> },
             { title: "Subject", render: (_, r) => <Text ellipsis style={{ maxWidth: 320 }}>{r.subject || r.summary || "(no subject)"}</Text> },
             { title: "Channel", dataIndex: "channel_id" },
             { title: "State", render: (_, r) => stateTag(r.state) },

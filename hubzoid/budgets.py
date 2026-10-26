@@ -446,6 +446,37 @@ class call:
             _CURRENT.reset(self._token)
 
 
+async def _admit_or_release(hub_dir, model: str | None) -> Ticket | None:
+    """`admit` on a thread, safe to cancel. A deadline or Stop can cancel the
+    wait while the thread is still writing the hold; the thread finishes anyway,
+    and a hold nobody will settle would count against the limit until it
+    expires. So whichever side ends last settles it: the thread if the wait was
+    already cancelled, otherwise the cancelled caller."""
+    import asyncio
+    import threading
+
+    lock = threading.Lock()
+    state: dict = {"cancelled": False, "ticket": None}
+
+    def _admit():
+        ticket = admit(hub_dir, model=model)
+        with lock:
+            if not state["cancelled"]:
+                state["ticket"] = ticket
+                return ticket
+        settle(hub_dir, ticket)
+        return None
+
+    try:
+        return await asyncio.to_thread(_admit)
+    except asyncio.CancelledError:
+        with lock:
+            state["cancelled"] = True
+            late = state["ticket"]
+        settle(hub_dir, late)   # admitted just before the cancel: nobody else will
+        raise
+
+
 async def guarded(hub_dir, model: str | None, inner, on_refuse):
     """A runtime's turn stream with admission first. A refusal is one plain
     notice (and `on_refuse(error)` marks the run failed); nothing runs."""
@@ -462,7 +493,7 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
                 yield item
         return
     try:
-        ticket = await asyncio.to_thread(admit, hub_dir, model=model)
+        ticket = await _admit_or_release(hub_dir, model)
     except BudgetError as exc:
         on_refuse(exc)
         _request_ctx.note_run_failure("budget")

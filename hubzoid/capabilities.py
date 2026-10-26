@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 GROUPS = ("hub", "restricted", "connectors", "workflows", "admin", "tools")
 #: Optional sections inside a group, in display order after the unsectioned
 #: rows. Presentation only: e.g. Hubzoid tools > Workflows, Access control.
-SECTIONS = ("workflows", "access")
+SECTIONS = ("chat", "workflows", "access")
 OBSOLETE_GROUP = "obsolete"
 SURFACES = frozenset({"chat", "mcp", "workflow"})
 DEFAULTS = ("grant", "included")

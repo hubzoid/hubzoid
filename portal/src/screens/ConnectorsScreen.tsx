@@ -33,6 +33,7 @@ import {
   type Me,
 } from "../api";
 import { InfoHelp, LoadState, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { useData } from "../hooks/useData";
 import { useNavigationGuard } from "../hooks/useRoute";
 import { CATALOG, catalogAuthLabel, type CatalogEntry } from "./connectorCatalog";
@@ -300,6 +301,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               <Alert type="warning" showIcon title="Couldn’t refresh the list" description={data.error} style={{ marginBottom: 12 }} />
             )}
             <Table<Connector>
+              {...ROW_OPENS}
               rowKey="id"
               size="middle"
               dataSource={list}
@@ -322,6 +324,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
                       <div className="connector-cell-text">
                       <a
                         href="#"
+                        className="hz-row-name"
                         onClick={(e) => {
                           e.preventDefault();
                           setEditing(c);

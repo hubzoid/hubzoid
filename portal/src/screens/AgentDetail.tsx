@@ -1,4 +1,4 @@
-import { Suspense, useContext } from "react";
+import { Suspense, useContext, useEffect } from "react";
 import { Breadcrumb, Spin } from "antd";
 import { MessageSquare } from "lucide-react";
 import { type Hub, type Me } from "../api";
@@ -33,7 +33,10 @@ export type AgentTab =
 type Section = { key: AgentTab; label: string; parts?: [AgentTab, string][] };
 
 /** The agent page's tabs. A tab never repeats its own name one level down;
- *  rarely used parts show as a second row only when the agent has them. */
+ *  rarely used parts show as a second row only when the agent has them.
+ *  Instructions sits under Configuration, and only while in-app editing is on
+ *  (Beta, off by default): otherwise the files change in the repository
+ *  (founder review). */
 function sections(hub: Hub, editable: boolean): Section[] {
   const has = hub.has ?? { work: false, intake: false, sandboxes: false };
   const work: [AgentTab, string][] = [];
@@ -41,15 +44,14 @@ function sections(hub: Hub, editable: boolean): Section[] {
   if (has.intake) work.push(["intake", "Incoming messages"]);
   if (has.sandboxes) work.push(["sandboxes", "Sandboxes"]);
   return [
-    { key: "instructions", label: "Instructions",
-      parts: editable ? [["instructions", "Files"], ["changes", "Changes to review"]] : undefined },
     { key: "access", label: "Access", parts: [["access", "People"], ["permissions", "Workflow permissions"]] },
     { key: "connectors", label: "Connectors" },
     { key: "runs", label: "Workflows" },
     ...(work.length ? [{ key: work[0][0], label: "Work", parts: work.length > 1 ? work : undefined }] : []),
     { key: "evals", label: "Evals" },
     { key: "feedback", label: "Feedback" },
-    { key: "config", label: "Configuration" },
+    { key: "config", label: "Configuration",
+      parts: editable ? [["config", "Settings"], ["instructions", "Instructions"], ["changes", "Changes to review"]] : undefined },
   ];
 }
 const sectionOf = (list: Section[], tab: AgentTab) =>
@@ -79,6 +81,11 @@ export function AgentDetail({
   const editing = useEditing(hub.key);
   const SECTIONS = sections(hub, editing.editable);
   const section = sectionOf(SECTIONS, tab);
+  // An old link to Instructions while editing is off opens Access instead.
+  const filesTab = tab === "instructions" || tab === "changes";
+  useEffect(() => {
+    if (filesTab && editing.loaded && !editing.editable) location.replace(agentHref(hub.key, "access"));
+  }, [filesTab, editing.loaded, editing.editable, hub.key]);
   const chat = hub.can_chat && agent ? `/new/${encodeURIComponent(agent.id)}` : null;
   return (
     <>
@@ -122,12 +129,13 @@ export function AgentDetail({
           </BarePage.Provider>
         )}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} embedded={embedded} />}
-        {tab === "instructions" && (
+        {filesTab && !editing.editable && <Spin />}
+        {tab === "instructions" && editing.editable && (
           <BarePage.Provider value>
             <Suspense fallback={<Spin />}><WorkspacePage agent={hub.key} readOnly={!editing.editable} note={editing.message} /></Suspense>
           </BarePage.Provider>
         )}
-        {tab === "changes" && (
+        {tab === "changes" && editing.editable && (
           <BarePage.Provider value>
             <Suspense fallback={<Spin />}><HubChangesPage hub={hub.key} /></Suspense>
           </BarePage.Provider>

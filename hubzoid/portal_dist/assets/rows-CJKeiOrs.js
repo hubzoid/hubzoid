@@ -1,0 +1,1 @@
+var e={rowClassName:`clickable`,onRow:()=>({onClick:t})};function t(e){let t=e.target;e.currentTarget.contains(t)&&(t.closest(`a, button, input, textarea, label, .ant-select, .ant-dropdown-trigger, .ant-table-row-expand-icon`)||e.currentTarget.querySelector(`a.hz-row-name, button.hz-row-name`)?.click())}export{t as n,e as t};

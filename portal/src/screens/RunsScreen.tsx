@@ -36,6 +36,7 @@ import {
   When,
   WorkflowStateTag,
   InfoHelp as Help, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
 import { WorkflowResult } from "../components/WorkflowResult";
 import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
@@ -133,6 +134,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
       </div>
       <HealthAlerts workflows={workflows} />
       {embedded && workflows.length > 0 ? <WorkflowRows hub={hub} workflows={workflows} /> : <Table<Workflow>
+        {...ROW_OPENS}
         rowKey={(w) => `${w.hub}:${w.name}`}
         size="middle"
         dataSource={workflows}
@@ -157,7 +159,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
             key: "name",
             render: (_, w) => (
               <>
-                <a href={runsHref(hub, w.name)}>{w.name}</a>
+                <a className="hz-row-name" href={runsHref(hub, w.name)}>{w.name}</a>
                 {w.error && (
                   <div>
                     <Text type="danger">{w.error}</Text>
@@ -301,6 +303,7 @@ function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
   // A table like Connectors: a header, then one row per workflow (founder review).
   return (
     <Table<Workflow>
+      {...ROW_OPENS}
       className="hz-workflow-table"
       rowKey={(w) => w.name}
       size="middle"
@@ -313,7 +316,7 @@ function WorkflowRows({ hub, workflows }: { hub: Hub; workflows: Workflow[] }) {
           key: "name",
           render: (_, w) => (
             <div className="hz-workflow-info">
-              <a className="hz-workflow-name" href={runsHref(hub, w.name)}>{w.title ?? w.name}</a>
+              <a className="hz-workflow-name hz-row-name" href={runsHref(hub, w.name)}>{w.title ?? w.name}</a>
               {w.purpose && <Text type="secondary">{w.purpose}</Text>}
               {w.as_tool && <div><Tag>Run in chat</Tag>{w.schedulable && <Tag>Personal schedules</Tag>}</div>}
             </div>
@@ -524,6 +527,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
         <LoadState error={data.error} retry={data.reload} />
       ) : (
         <Table<Run>
+          {...ROW_OPENS}
           rowKey="id"
           size="middle"
           dataSource={data.data.runs}
@@ -553,7 +557,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               title: "Run",
               key: "id",
               render: (_, r) => (
-                <a href={runsHref(hub, workflow, r.id)} className="identity run-id-link" title={r.id}>
+                <a href={runsHref(hub, workflow, r.id)} className="identity run-id-link hz-row-name" title={r.id}>
                   {shortRunId(r.id)}
                 </a>
               ),

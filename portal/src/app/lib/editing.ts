@@ -5,7 +5,8 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { get, hubUrl } from "./api";
 import { useApp } from "./app-context";
 
-export type Editing = { editable: boolean; in_app_editing: boolean; files_from: "local" | "git" | "image"; message: string | null };
+/** `loaded`: the server answered (or failed); until then nothing is known. */
+export type Editing = { editable: boolean; in_app_editing: boolean; files_from: "local" | "git" | "image"; message: string | null; loaded?: boolean };
 
 const OFF: Editing = { editable: false, in_app_editing: false, files_from: "local", message: null };
 const cache = new Map<string, Promise<Editing>>();
@@ -17,7 +18,8 @@ export function useEditing(hub?: string): Editing {
   useEffect(() => {
     let alive = true;
     const key = base || "/";
-    if (!cache.has(key)) cache.set(key, get<Editing>(hubUrl(base, "/api/editing"), { quiet401: true }).catch(() => OFF));
+    if (!cache.has(key)) cache.set(key, get<Editing>(hubUrl(base, "/api/editing"), { quiet401: true })
+      .then((e) => ({ ...e, loaded: true }), () => ({ ...OFF, loaded: true })));
     void cache.get(key)!.then((e) => alive && setState(e));
     return () => {
       alive = false;
