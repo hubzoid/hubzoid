@@ -1,0 +1,24 @@
+{
+  "repo_notes": [
+    {
+      "content": "Hubzoid is an open-source platform for internal AI agents, licensed Apache-2.0 with no paid tier or feature gating. Install it with pip install hubzoid (Python 3.11 or 3.12). A Hub is a folder of Markdown instructions, knowledge, skills, tools, schedules and evals. hubzoid init writes a starter Hub, hubzoid run serves one or more Hubs, and hubzoid doctor checks them. The same Hub is used through the Hubzoid web app, chat channels such as Slack, scheduled workflows and an MCP server for assistants such as Claude Code. Ready-to-use agents live in their own repositories: software-factory-hub, engineering-desk-hub, order-desk-hub and customer-desk-hub. Published user documentation for the latest release is at https://hubzoid.com/docs, and docs/ in this repository can be ahead of it. Call the administration UI Settings (it was the Console before 2.0). Hubzoid supports several execution runtimes (OpenAI Agents SDK, Claude Agent SDK and the Codex app-server) and a Hub must behave the same on each. Ignore docs/design, docs/superpowers, docs/parity, docs/mcp-upgrade and proposals/ when describing what Hubzoid does today: they are internal plans and verification records."
+    }
+  ],
+  "pages": [
+    {"title": "Overview", "purpose": "What Hubzoid is, who it is for, the Hub folder idea and the three ways to use one Hub: chat, workflows and assistants over MCP."},
+    {"title": "Getting started", "purpose": "Install with pip, hubzoid init, hubzoid run and hubzoid doctor, and the first answer from your own agent.", "parent": "Overview"},
+    {"title": "Hub folder structure", "purpose": "Every folder and file a Hub can contain, how hubzoid/loaders reads them, frontmatter validation and the case- and plural-insensitive folder names in hubzoid/_fs.py.", "parent": "Overview"},
+    {"title": "Architecture", "purpose": "How a request flows through edge.py, server.py (the bridge), the runtime adapters in factory.py, factory_claude.py, factory_codex.py and runtime.py, and the model.", "parent": "Overview"},
+    {"title": "Runtimes and models", "purpose": "How the model id picks a runtime and provider, and the runtime neutrality rule.", "parent": "Architecture"},
+    {"title": "Deployment and the supervisor", "purpose": "hubzoid.yaml (deployfile.py), gateway.py for several Hubs, supervisor.py process management and the control commands.", "parent": "Architecture"},
+    {"title": "Chat and channels", "purpose": "The Hubzoid web app, Slack, WhatsApp, Telegram, email and the OpenAI-compatible API, and how each sender is matched to an account.", "parent": "Overview"},
+    {"title": "MCP server and assistants", "purpose": "How a Hub serves MCP with OAuth sign-in so Claude Code and other assistants use its knowledge and permitted tools (mcp_server.py, mcp_oauth.py).", "parent": "Overview"},
+    {"title": "Tools and connectors", "purpose": "Pre-shipped tool factories in hubzoid/tools, Python tools in a Hub, remote MCP connectors and their write scoping rules.", "parent": "Overview"},
+    {"title": "Workflows and schedules", "purpose": "Markdown tasks in schedule/, Python code workflows over DBOS in hubzoid/workflows, the scheduler and webhooks.", "parent": "Overview"},
+    {"title": "Identity, access and approvals", "purpose": "Sign-in, roles, per-person tool permissions checked in code before a tool runs, approvals and the audit log.", "parent": "Overview"},
+    {"title": "Memory and history", "purpose": "Shared Hub knowledge, personal memory, conversation history and what scheduled work remembers.", "parent": "Overview"},
+    {"title": "Evals", "purpose": "Hub-owned behavioural checks in evals/, the runner, the judge and scheduled evals.", "parent": "Overview"},
+    {"title": "Operations", "purpose": "Backup and restore, upgrading, observability with OpenTelemetry, budgets and doctor checks.", "parent": "Overview"},
+    {"title": "Contributing", "purpose": "The proposal workflow in proposals/, CONTRIBUTING.md, tests and the Apache-2.0 sign-off.", "parent": "Overview"}
+  ]
+}

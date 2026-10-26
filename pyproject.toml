@@ -1,19 +1,22 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "2.0.4"
-description = "An open-source framework for production AI agents."
+version = "2.0.5"
+description = "Hubzoid is an open-source platform for internal AI agents. Give it your team's knowledge, rules and tools once, then use them in chat, workflows and the AI assistants you already use."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 authors = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
 maintainers = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
 keywords = [
   "agents",
   "ai",
+  "ai-agents",
+  "internal-ai-agents",
   "llm",
   "openai",
   "anthropic",
@@ -22,13 +25,15 @@ keywords = [
   "markdown",
   "agents.md",
   "mcp",
+  "claude-code",
+  "codex",
+  "self-hosted",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Topic :: Software Development :: Libraries",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -122,14 +127,14 @@ dev = [
 hubzoid = "hubzoid.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/hubzoid/hubzoid"
+Homepage = "https://hubzoid.com"
+Documentation = "https://hubzoid.com/docs"
 Repository = "https://github.com/hubzoid/hubzoid"
 Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
 include-package-data = true
-license-files = ["LICENSE", "NOTICE"]
 
 # Every package under hubzoid/ ships (1.0.1 shipped a wheel without two of them
 # when this was a hand-kept list). Directories without __init__.py are data

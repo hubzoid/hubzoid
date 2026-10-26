@@ -1,0 +1,62 @@
+# Hubzoid
+
+> Hubzoid is an open-source platform for internal AI agents. Give it your team's knowledge, rules and tools once, then use them in chat, workflows and the AI assistants you already use.
+
+Hubzoid is a Python package (`pip install hubzoid`, Python 3.11 or 3.12) under the Apache 2.0 license. A Hub is a folder of Markdown instructions, knowledge, skills and tools that you can keep in Git. `hubzoid run` serves it as web chat, scheduled workflows, chat channels such as Slack, and an MCP server for assistants such as Claude Code. It runs on your laptop or on a server you control.
+
+The published documentation lives at https://hubzoid.com/docs and matches the latest release. Every page there is also available as Markdown by adding `.md` to its URL. All of it in one file: https://hubzoid.com/docs/llms-full.txt. The `docs/` folder in this repository can be ahead of the release.
+
+## Start
+
+- [Quickstart](https://hubzoid.com/docs/getting-started/quickstart.md): Create a Hub, run it on your laptop and get your first answer from your own agent in about five minutes.
+- [Installation](https://hubzoid.com/docs/getting-started/installation.md): Install Hubzoid with pip on macOS, Linux or Windows and check it with the doctor command.
+- [Project structure](https://hubzoid.com/docs/getting-started/project-structure.md): What hubzoid init writes, every folder Hubzoid reads and which runtime folders stay out of Git.
+- [Builder skill](https://github.com/hubzoid/hubzoid/blob/main/skills/builder/SKILL.md): Instructions that let Claude Code or Codex build a working Hub from a person's task, material and rules.
+- [Bring an existing agent](https://hubzoid.com/docs/guides/existing-agents.md): Turn a Claude Code or similar agent project into a Hub your team can use, or connect your assistant to a Hub through MCP.
+
+## Concepts
+
+- [The Hub](https://hubzoid.com/docs/concepts/hub.md): The folder behind every Hubzoid agent, shared by chat, workflows and connected assistants.
+- [Architecture](https://hubzoid.com/docs/concepts/architecture.md): How a request moves from the web app and other surfaces to the agent runtime and the model.
+- [Agents and models](https://hubzoid.com/docs/concepts/agents-and-models.md): A Hub's main agent and sub-agents, and how the model id picks the runtime and provider.
+- [Memory and history](https://hubzoid.com/docs/concepts/memory-and-history.md): Shared knowledge, each person's notes, conversation history and what scheduled work remembers.
+- [Workflows and schedules](https://hubzoid.com/docs/concepts/workflows-and-schedules.md): Work on a schedule, from a webhook or on request, and whose account each run uses.
+- [Identity and access](https://hubzoid.com/docs/concepts/identity-and-access.md): Who may open an agent and use each capability, decided in code before any tool runs.
+
+## Guides
+
+- [Connect an assistant](https://hubzoid.com/docs/guides/connect-an-assistant.md): Use your Hub from Claude Code, Claude or another MCP client, signed in as yourself.
+- [Tools and connectors](https://hubzoid.com/docs/guides/tools-and-connectors.md): Python tools, remote MCP servers as connectors, and the shared browser.
+- [Markdown tasks](https://hubzoid.com/docs/guides/markdown-tasks.md): Recurring work as one Markdown file in schedule/.
+- [Code workflows](https://hubzoid.com/docs/guides/code-workflows.md): Recurring work as Python steps that call the model only where judgment helps.
+- [Restrict a tool](https://hubzoid.com/docs/guides/restrict-tools.md): Put a sensitive tool behind a permission and grant it to named people.
+- [Evals](https://hubzoid.com/docs/guides/evals.md): One Markdown file per behavior, run with one command.
+- [Slack](https://hubzoid.com/docs/chat/slack.md): Run the Hub as a Slack bot, with each sender matched to their access.
+
+## Deploy
+
+- [Deployment topologies](https://hubzoid.com/docs/deploy/topologies.md): The shapes a deployment can take and when to choose PostgreSQL.
+- [Docker](https://hubzoid.com/docs/deploy/docker.md): Run a Hub with Docker Compose, with sign-in on.
+- [Single server](https://hubzoid.com/docs/deploy/single-server.md): Run a Hub on a Linux server under systemd behind a reverse proxy.
+- [Security model](https://hubzoid.com/docs/deploy/security-model.md): How a deployment is protected, from sign-in to fail-closed tool checks.
+
+## Reference
+
+- [CLI reference](https://hubzoid.com/docs/reference/cli.md): Every hubzoid command, option and exit code.
+- [Configuration reference](https://hubzoid.com/docs/reference/configuration.md): Every hubzoid.yaml setting and environment variable.
+- [Hub files](https://hubzoid.com/docs/reference/hub-files.md): Every file and folder a Hub can contain.
+- [Workflow API](https://hubzoid.com/docs/reference/workflow-api.md): The @workflow and @step decorators, the hub object and the schedule grammar.
+- [Built-in tools](https://hubzoid.com/docs/reference/built-in-tools.md): Every tool Hubzoid gives an agent.
+
+## Ready-to-use agents
+
+- [Software Factory](https://github.com/hubzoid/software-factory-hub): Turns GitHub issues and engineering requests into draft pull requests checked by an independent reviewer.
+- [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub): Reviews pull requests against your team's rules and answers questions about your code.
+- [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub): Reads orders and supplier invoices from Gmail into sourced records and reports.
+- [Customer Desk](https://github.com/hubzoid/customer-desk-hub): Drafts replies to customer requests in Zoho Desk or Freshdesk. A person approves every reply.
+
+## Optional
+
+- [Repository docs index](https://github.com/hubzoid/hubzoid/blob/main/docs/README.md): Guides in this repository, which can be ahead of the release.
+- [Changelog](https://github.com/hubzoid/hubzoid/blob/main/CHANGELOG.md): What changed in each release.
+- [Licensing](https://github.com/hubzoid/hubzoid/blob/main/LICENSING.md): Apache 2.0, with the license history.
