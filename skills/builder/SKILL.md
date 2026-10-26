@@ -30,8 +30,9 @@ the product. The facts are in:
   - Installed a release from PyPI:
     `curl -fsSL https://raw.githubusercontent.com/hubzoid/hubzoid/v<version>/docs/<page>.md`
     with `<version>` from `hubzoid --version`.
-  - Take this skill from the same version too. If the commands below are
-    missing from `--help`, the docs and the install don't match. Say so and stop.
+  - This skill lives on `main` and may be newer than the installed release.
+    When a command below is missing from `--help`, follow `--help` and tell
+    the person what differed.
 
 When this skill and the docs or `--help` disagree, follow the docs and `--help`
 and tell the person what differed.
@@ -53,17 +54,23 @@ and tell the person what differed.
   approval cards and Hubzoid's MCP consent page are the person's.
 - Keep originals unchanged. Show the folder and a diff after each change.
 
-## 0. Gather, in one short batch
+## 0. Gather, in two short rounds
 
-Ask only for what is missing: the task in one sentence, an example of a good
-answer, the files to use, the rules, how often the task repeats, which actions
-need a person's approval, a spending limit, and who else should use it.
-Repeat back what you will build in five lines or fewer before writing files.
+If the person does not know what to build yet, suggest two or three agents
+from what they say about their work, one line each, and let them pick.
+
+First round, in one message: the task in one sentence, an example of a good
+answer, and which files and connections it should use. Repeat back what you
+will build in five lines or fewer before writing files.
+
+Second round, before anything runs (step 4): their rules, which actions need a
+person's approval, and a spending limit. Ask how often the task repeats when
+you set up a schedule, and who else should use it at step 11.
 
 ## 1. Install and choose the model
 
 ```bash
-python3.12 -m venv .venv && .venv/bin/pip install "hubzoid==<version>"   # or the wheel or checkout you were given
+python3 -m venv .venv && .venv/bin/pip install "hubzoid==<version>"   # Python 3.11 or newer; or the wheel or checkout you were given
 .venv/bin/hubzoid --version
 ```
 
@@ -225,6 +232,7 @@ Nobody gets an agent without a grant.
 | You see | Do |
 |---|---|
 | `hubzoid: command not found` | Use `.venv/bin/hubzoid`, or create the venv (step 1) |
+| `python3` missing or older than 3.11 | Install Python 3.11 or newer from python.org, then step 1 |
 | A command from this skill isn't in `--help` | The skill, docs and install are different versions. Take all three from one version |
 | A doctor check fails | Fix that check id. Its line says what is wrong |
 | No reply, or a model sign-in error | `docs/providers.md`. Ask the person to sign in. Don't switch models without asking |
