@@ -35,7 +35,11 @@ TIMEOUT = 60
 
 
 def _free(port: int) -> bool:
+    """Whether a server could listen on `port` now. Like uvicorn, it allows
+    reuse: a closed connection waiting out TIME_WAIT is not a process
+    holding the port (macOS keeps those about 30 s); a live listener is."""
     with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True
@@ -181,7 +185,13 @@ def test_the_manifest_and_key_describe_the_deployment(live):
 
 @pytest.mark.parametrize('journey', ['standalone-edge-exit', 'gateway-startup-stop'])
 def test_service_failure_and_startup_stop_release_owned_processes(tmp_path, journey):
-    """Exercise the real CLI and uvicorn children, without a provider call."""
+    """Exercise the real CLI and uvicorn children, without a provider call.
+
+    standalone-edge-exit: the supervisor restarts an edge that exits (every
+    unit, the edge included, restarts alone); stopping `hubzoid run` then
+    releases every process and port, the restarted edge's too. It used to
+    expect `run` to exit 1, which only happened when the edge was killed
+    before the supervisor saw it ready and its restart found the port busy."""
     ports = []
     holders = []
     for _ in range(3):
@@ -249,12 +259,27 @@ cli.app()
             else:
                 pytest.fail('Startup timed out: ' + log_path.read_text()[-4000:])
             if journey == 'standalone-edge-exit':
+                # Once the supervisor has seen the edge ready, so its exit is a
+                # crash to restart, not a failed start.
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and '→ edge  ready' not in log_path.read_text():
+                    time.sleep(.1)
                 os.kill(children[-1]['pid'], signal.SIGTERM)
-                expected = 1
-            else:
-                os.kill(proc.pid, signal.SIGTERM)
-                expected = 0
-            assert proc.wait(timeout=30) == expected, log_path.read_text()[-4000:]
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    children = [json.loads(line) for line in marker.read_text().splitlines()]
+                    assert proc.poll() is None, log_path.read_text()[-4000:]
+                    if len(children) == 3:
+                        try:
+                            if httpx.get(f'http://127.0.0.1:{edge}/healthz', timeout=.5).status_code == 200:
+                                break
+                        except httpx.HTTPError:
+                            pass
+                    time.sleep(.1)
+                else:
+                    pytest.fail('The edge was not restarted: ' + log_path.read_text()[-4000:])
+            os.kill(proc.pid, signal.SIGTERM)
+            assert proc.wait(timeout=30) == 0, log_path.read_text()[-4000:]
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if all(_free(port) for port in ports):
