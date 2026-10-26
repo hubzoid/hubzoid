@@ -214,6 +214,52 @@ def test_a_workflow_call_cut_off_by_its_deadline_settles_its_hold(hub_dir, monke
     assert budgets.status(hub_dir)["open_reservations"] == []    # the usage row settled it
 
 
+def test_a_deadline_during_admission_leaves_no_hold(hub_dir, monkeypatch):
+    """The deadline can fall while the hold is being written on its thread:
+    the thread still writes it, so it must still be settled, never left open
+    (this is the race behind the occasional failure of the test above)."""
+    from hubzoid import runtime
+    from hubzoid.workflows import deadlines
+
+    limits(hub_dir, "  run:\n    max_output_tokens: 100\n")
+    real_admit = budgets.admit
+    deadline = time.time() + 2
+    admitted = []
+
+    def slow_admit(*a, **kw):
+        time.sleep(max(0.0, deadline - time.time()) + 0.5)   # still writing when the deadline falls
+        admitted.append(1)
+        return real_admit(*a, **kw)
+
+    monkeypatch.setattr(budgets, "admit", slow_admit)
+
+    class Never:
+        last_error = None
+
+        async def aopen(self):
+            pass
+
+        async def aclose(self):
+            pass
+
+        async def stream_events(self, prompt):
+            async def inner():
+                await asyncio.sleep(30)
+                yield "never"
+
+            from contextlib import aclosing
+
+            async with aclosing(budgets.guarded(hub_dir, "claude-local", inner, lambda e: None)) as items:
+                async for item in items:
+                    yield item
+
+    monkeypatch.setattr(runtime, "build", lambda hd, **kw: Never())
+    with deadlines.scope(absolute=deadline, check_exit=False), pytest.raises(BaseException):
+        runtime.run_once(hub_dir, "hi")
+    assert admitted, "the deadline must fall while the hold is being written"
+    assert budgets.status(hub_dir)["open_reservations"] == []
+
+
 def test_a_hold_from_last_month_still_counts(hub_dir):
     limits(hub_dir, "  run:\n    max_output_tokens: 100\n  month:\n    max_output_tokens: 100\n")
     held = budgets.admit(hub_dir, model="claude-local", run_id="late-night")
