@@ -1,0 +1,20 @@
+{
+  "name": "hubzoid",
+  "description": "Hubzoid plugins for Claude Code: build an internal AI agent Hub from your own task, material and rules.",
+  "owner": {
+    "name": "Hubzoid",
+    "url": "https://hubzoid.com"
+  },
+  "plugins": [
+    {
+      "name": "hubzoid-builder",
+      "source": "./",
+      "description": "Build a working Hubzoid Hub from your task, material and rules with files and the hubzoid CLI, then test it, correct a rule and share it with your team.",
+      "homepage": "https://hubzoid.com/docs/getting-started/quickstart",
+      "repository": "https://github.com/hubzoid/hubzoid",
+      "license": "Apache-2.0",
+      "keywords": ["hubzoid", "ai-agents", "internal-ai-agents", "mcp", "skills"],
+      "skills": ["./skills/builder"]
+    }
+  ]
+}
