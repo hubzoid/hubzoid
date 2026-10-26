@@ -5,6 +5,8 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.4]
+
 ### Changed
 - **GitZoid is now the Engineering Desk.** `hubzoid init` lists it under its
   new name and prints `git clone https://github.com/hubzoid/engineering-desk-hub
@@ -35,6 +37,9 @@ All notable changes to Hubzoid. Versions follow the package version in
   first agent's files, so an edit there could change the wrong agent.
 - What you can use showed another agent's capabilities as raw ids
   (`desk_bindings`): labels came from the first agent's catalog.
+- A deadline or Stop that fell while a model call's budget hold was being
+  written left the hold open, counting against the limit until it expired.
+  The hold is now settled whichever side finishes last.
 
 ## [2.0.3]
 
