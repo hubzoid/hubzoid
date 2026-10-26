@@ -16,3 +16,9 @@ When distributing modified versions, include the license, preserve applicable
 notices, and mark changed files as required by section 4. Contributions are
 accepted under Apache-2.0 with the sign-off described in [CONTRIBUTING.md](CONTRIBUTING.md).
 Previously distributed versions retain the rights granted with those versions.
+
+## License history
+
+Hubzoid releases up to 0.9.x were published under the MIT License. From 1.0.1,
+every release is Apache-2.0. The license shipped with each version on PyPI
+applies to that version.

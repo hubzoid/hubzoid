@@ -5,6 +5,13 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Changed
+- **Package metadata.** The PyPI summary now matches the description on
+  GitHub and hubzoid.com. The license is declared as the SPDX expression
+  `Apache-2.0`, so PyPI shows the license name instead of the full license
+  text. The project homepage is hubzoid.com, with a Documentation link to
+  hubzoid.com/docs. `LICENSING.md` records that releases up to 0.9.x were MIT.
+
 ## [2.0.4]
 
 ### Changed
