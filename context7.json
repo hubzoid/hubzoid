@@ -1,0 +1,32 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Hubzoid",
+  "description": "Hubzoid is an open-source Python platform for internal AI agents. A Hub is a folder of Markdown instructions, knowledge, skills and tools that Hubzoid serves as web chat, scheduled workflows, chat channels such as Slack, and an MCP server for assistants such as Claude Code.",
+  "folders": ["docs", "skills/builder", "examples"],
+  "excludeFolders": [
+    "docs/design",
+    "docs/superpowers",
+    "docs/parity",
+    "docs/mcp-upgrade",
+    "docs/release-notes",
+    "proposals",
+    "tests"
+  ],
+  "excludeFiles": [
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "DESIGN.md",
+    "PRODUCT_CONTEXT.md",
+    "RELEASING.md",
+    "FIRST-USE-VERIFICATION.md",
+    "PORTAL-ACCOUNT-CONTRACT.md",
+    "AGENTS.md"
+  ],
+  "rules": [
+    "Install with pip install hubzoid. Hubzoid needs Python 3.11 or 3.12.",
+    "A Hub is a folder. Create one with hubzoid init and run it with hubzoid run. Use hubzoid doctor to check it.",
+    "Put instructions, knowledge, skills and tools in Hub files rather than in prompts, so chat, workflows and connected assistants share them.",
+    "Protect sensitive tools with a permission and grant it to named people. Do not rely on prompt text for access control.",
+    "Published documentation for the latest release is at https://hubzoid.com/docs. Add .md to any page URL for Markdown."
+  ]
+}
