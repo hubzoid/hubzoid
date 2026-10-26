@@ -317,7 +317,7 @@ function step(name) {
     await drawer().getByRole("list", { name: "Adding" }).getByText("Run payroll").waitFor();
     await drawer().getByRole("list", { name: "Removing" }).getByText("Manage invoices").waitFor();
     assert.equal(await review.getByRole("listitem").count(), 2, "each change is listed once");
-    await drawer().getByText("This grants a sensitive capability").waitFor();
+    await drawer().getByText(/^Sensitive: check Priya Natarajan should have/).waitFor();
     assert.equal(await drawer().getByText(/Applied together|Allow Run payroll|Remove Manage invoices/).count(), 0, "no duplicate request list or implementation notes");
     for (const name of ["Cancel", "Back", "Save 2 changes"]) await drawer().getByRole("button", { name, exact: true }).waitFor();
     assert.equal(state.mutations.length, 0, "review must not write");
@@ -377,12 +377,13 @@ function step(name) {
     assert.equal(state.mutations.length, 0);
 
     // ---- Add user: pick someone with an account, or create one for a new email -------------
-    const who = () => drawer().getByRole("textbox", { name: "Name or email" });
-    /** Add user → a new email → Create an account: the new-account form. */
+    const who = () => drawer().getByRole("textbox", { name: "Add someone" });
+    /** Add user → a new email → Continue: the new-account form. */
     const addUser = async (email = "someone.new@addusers.local") => {
       await page.getByRole("button", { name: "Add user", exact: true }).click();
       await who().fill(email);
-      await drawer().getByRole("button", { name: /^Create an account/ }).click();
+      await drawer().getByRole("button", { name: /^New person/ }).waitFor();
+      await drawer().getByRole("button", { name: "Continue", exact: true }).click();
       await drawer().getByRole("textbox", { name: "Name", exact: true }).waitFor();
     };
     const newAccount = async ({ name, email, password }) => {
@@ -454,7 +455,7 @@ function step(name) {
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-new.png"), fullPage: true });
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("New account, signs in with a password").waitFor();
+    await drawer().getByText(/^New account: they sign in with the password you set/).waitFor();
     await drawer().getByRole("list", { name: "Adding" }).getByText("Read ledger").waitFor();
     assert.equal(state.mutations.length, 0, "review writes nothing");
     await drawer().getByRole("button", { name: "Create account" }).click();
@@ -558,7 +559,7 @@ function step(name) {
     assert.equal(state.mutations.length, 0);
     await drawer().getByRole("textbox", { name: "Email address" }).fill("kai.moreno@addusers.local");
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("New account, signs in with Google").waitFor();
+    await drawer().getByText(/^New account: they sign in with Google/).waitFor();
     await drawer().getByRole("button", { name: "Create account" }).click();
     await drawer().getByText("Kai Moreno · kai.moreno@addusers.local").waitFor();
     await drawer().getByText("There is no password to share", { exact: false }).waitFor();
@@ -627,6 +628,9 @@ function step(name) {
       ["Workflows", "Access control"],
       "Hubzoid tools shows its two sub-sections in order",
     );
+    // What isn't set up in this agent waits behind one line until asked for.
+    assert.equal(await toolsPanel.locator('.capability[data-permission="jev"]').count(), 0, "unset and not held: hidden");
+    await toolsPanel.getByRole("button", { name: /more not set up in this agent/ }).click();
     assert.deepEqual(
       await toolsPanel.locator(".capability").evaluateAll((nodes) => nodes.map((n) => n.dataset.permission)),
       ["curator", "jev", "email_me", "workflows_view", "workflows_manage", "access_tools"],
@@ -657,7 +661,7 @@ function step(name) {
     assert.equal(await jevBox.isChecked(), true, "selections are kept across collapse and expand");
     await oldBox.uncheck();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("can’t run until configured (Jev key missing)", { exact: false }).waitFor();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Not set up yet").waitFor();
     await drawer().getByRole("button", { name: "Save 2 changes" }).click();
     await saved();
     assert.deepEqual(lastMutation().operations, [
@@ -1284,7 +1288,7 @@ function step(name) {
     state.identities[PRIYA].sign_in = "google";
     await go("/people");
     await go(`/people/${encodeURIComponent(PRIYA)}`);
-    await drawer().getByText("Their password is managed through Google.", { exact: false }).waitFor();
+    await drawer().getByText("Signs in with Google, which manages their password.", { exact: false }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Reset password" }).count(), 0);
     delete state.identities[PRIYA].sign_in;
 
@@ -1417,7 +1421,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Instructions, Access, Connectors, Workflows, Evals, Feedback and Configuration").waitFor();
+    await page.getByText("has Access, Connectors, Workflows, Evals, Feedback and Configuration").waitFor();
     await go("/agents/finance/runs");
     // The agent's activity is the shared Activity page, filtered to it.
     await page.getByRole("link", { name: "View activity", exact: true }).click();

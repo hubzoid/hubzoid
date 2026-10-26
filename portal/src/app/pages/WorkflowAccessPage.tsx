@@ -112,9 +112,20 @@ export default function WorkflowAccessPage({ hub }: { hub?: string } = {}) {
         {error && <Notice tone="error">{error}</Notice>}
         {!policy && !error && <p className="text-mute">{W.loading}</p>}
         {policy && resources.length === 0 && <p className="text-mute">{W.noWorkflows}</p>}
-        {policy &&
-          [{ key: "*", kind: "all", allowed_actions: [] } as Resource, ...resources].map((r) => (
-            <WorkflowBlock
+        {policy && (
+          // One row per workflow, like every other table in Settings (founder review).
+          <div className="hz-wa-scroll">
+          <table className="hz-wa-table" data-testid="wa-table">
+            <thead>
+              <tr>
+                <th scope="col">{W.workflow}</th>
+                <th scope="col">{W.who}</th>
+                <th scope="col"><span className="sr-only">{W.actionsCol}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+          {[{ key: "*", kind: "all", allowed_actions: [] } as Resource, ...resources].map((r) => (
+            <WorkflowRow
               key={r.key}
               resource={r}
               grants={explicit.filter((g) => g.workflow === r.key)}
@@ -131,6 +142,10 @@ export default function WorkflowAccessPage({ hub }: { hub?: string } = {}) {
               onRemove={(subject) => save(explicit.filter((g) => !(g.workflow === r.key && g.subject === subject)), W.removed)}
             />
           ))}
+            </tbody>
+          </table>
+          </div>
+        )}
         {policy && <Explain base={base} people={people} resources={resources} actions={policy.actions} />}
         {policy && <FileView policy={policy} />}
       </div>
@@ -142,7 +157,9 @@ function actionLabel(a: string) {
   return (W.actions as Record<string, string>)[a] ?? a;
 }
 
-function WorkflowBlock({
+/** A workflow's row: its name and kind, who has access with what, and Give
+ *  access. The form opens as a full-width row underneath. */
+function WorkflowRow({
   resource,
   grants,
   earlier,
@@ -172,101 +189,107 @@ function WorkflowBlock({
   const all = resource.key === "*";
   const offered = all ? actions : actions.filter((a) => a !== "create");
   const toggle = (a: string) => setChosen((c) => (c.includes(a) ? c.filter((x) => x !== a) : [...c, a]));
+  const pills = (acts: string[]) => (
+    <span className="hz-wa-acts">
+      {actions.filter((a) => acts.includes(a)).map((a) => <span key={a} className="hz-wa-act">{actionLabel(a)}</span>)}
+    </span>
+  );
   return (
-    <section className="hz-wa-block" data-testid={`wa-${resource.key}`}>
-      <div className="flex items-baseline gap-2">
-        <h3 className="m-0 text-[14px] font-medium text-ink" title={all ? undefined : resource.key}>
-          {all ? W.allWorkflows : resource.title || resource.key}
-        </h3>
-        <span className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : resource.kind === "builtin" ? W.builtin : W.code}</span>
-      </div>
-      {bySubject.size === 0 && earlier.length === 0 && <p className="m-0 text-[13px] text-mute">{W.nobody}</p>}
-      {[...bySubject.entries()].map(([who, acts]) => (
-        <div key={who} className="hz-wa-row" data-testid="wa-grant">
-          <span className="min-w-0 truncate text-[13px] text-ink">{who === "everyone" ? W.everyone : who}</span>
-          <span className="min-w-0 flex-1 truncate text-[13px] text-secondary">
-            {actions.filter((a) => acts.includes(a)).map(actionLabel).join(", ")}
-          </span>
-          <button type="button" className="hz-wa-x" aria-label={W.removeFor(who)} disabled={saving} onClick={() => onRemove(who)}>
-            <X size={13} aria-hidden />
-          </button>
-        </div>
-      ))}
-      {earlier.length > 0 && (
-        <div className="flex flex-col gap-0.5" data-testid="wa-earlier">
-          <span className="text-[12px] text-mute">{W.earlier}</span>
-          {[...new Set(earlier.map((g) => g.subject))].map((who) => {
-            const mine = earlier.filter((g) => g.subject === who);
-            const sources = [...new Set(mine.map((g) => g.source))].join(", ");
-            return (
-              <div key={who} className="hz-wa-row text-[12.5px] text-mute">
-                <span className="min-w-0 truncate">{who}</span>
-                <span className="min-w-0 flex-1 truncate">
-                  {actions.filter((a) => mine.some((g) => g.action === a)).map(actionLabel).join(", ")} · {sources}
-                </span>
+    <>
+      <tr data-testid={`wa-${resource.key}`}>
+        <td className="hz-wa-name">
+          <div className="hz-row-name" title={all ? undefined : resource.key}>{all ? W.allWorkflows : resource.title || resource.key}</div>
+          <div className="text-[12px] text-mute">{all ? W.allHelp : resource.kind === "markdown" ? W.markdown : resource.kind === "builtin" ? W.builtin : W.code}</div>
+        </td>
+        <td>
+          {bySubject.size === 0 && earlier.length === 0 && <span className="text-[13px] text-mute">{W.nobody}</span>}
+          <ul className="hz-wa-who">
+            {[...bySubject.entries()].map(([who, acts]) => (
+              <li key={who} data-testid="wa-grant">
+                <span className="hz-wa-person">{who === "everyone" ? W.everyone : who}</span>
+                {pills(acts)}
+                <button type="button" className="hz-wa-x" aria-label={W.removeFor(who)} disabled={saving} onClick={() => onRemove(who)}>
+                  <X size={13} aria-hidden />
+                </button>
+              </li>
+            ))}
+            {[...new Set(earlier.map((g) => g.subject))].map((who) => {
+              const mine = earlier.filter((g) => g.subject === who);
+              const sources = [...new Set(mine.map((g) => g.source))].join(", ");
+              return (
+                <li key={`earlier:${who}`} className="is-earlier" data-testid="wa-earlier" title={`${W.earlier}: ${sources}`}>
+                  <span className="hz-wa-person">{who === "everyone" ? W.everyone : who}</span>
+                  {pills(mine.map((g) => g.action))}
+                  <span className="hz-wa-source">{sources}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </td>
+        <td className="hz-wa-cell-action">
+          <Button size="sm" onClick={() => setAdding((a) => !a)} aria-expanded={adding} data-testid="wa-add">
+            {W.add}
+          </Button>
+        </td>
+      </tr>
+      {adding && (
+        <tr className="hz-wa-formrow">
+          <td colSpan={3}>
+            <form
+              className="hz-wa-add"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (subject.trim() && chosen.length) {
+                  onAdd(subject.trim().toLowerCase(), chosen);
+                  setAdding(false);
+                  setSubject("");
+                }
+              }}
+            >
+              <input
+                className="hz-input"
+                list={`wa-people-${resource.key}`}
+                placeholder={W.personPlaceholder}
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                aria-label={W.person}
+                data-testid="wa-person"
+                autoFocus
+              />
+              <datalist id={`wa-people-${resource.key}`}>
+                {people.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label={W.actionsLabel}>
+                {offered.map((a) => (
+                  <button
+                    type="button"
+                    key={a}
+                    className={cx("hz-wa-chip", chosen.includes(a) && "is-on")}
+                    aria-pressed={chosen.includes(a)}
+                    onClick={() => toggle(a)}
+                    data-testid={`wa-action-${a}`}
+                    title={(W.help as Record<string, string>)[a]}
+                  >
+                    {chosen.includes(a) && <Check size={12} aria-hidden />}
+                    {actionLabel(a)}
+                  </button>
+                ))}
               </div>
-            );
-          })}
-        </div>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" variant="primary" loading={saving} disabled={!subject.trim() || !chosen.length} data-testid="wa-save">
+                  {W.give}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
+                  {W.cancel}
+                </Button>
+              </div>
+            </form>
+          </td>
+        </tr>
       )}
-      {adding ? (
-        <form
-          className="hz-wa-add"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (subject.trim() && chosen.length) {
-              onAdd(subject.trim().toLowerCase(), chosen);
-              setAdding(false);
-              setSubject("");
-            }
-          }}
-        >
-          <input
-            className="hz-input"
-            list={`wa-people-${resource.key}`}
-            placeholder={W.personPlaceholder}
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            aria-label={W.person}
-            data-testid="wa-person"
-            autoFocus
-          />
-          <datalist id={`wa-people-${resource.key}`}>
-            {people.map((p) => (
-              <option key={p} value={p} />
-            ))}
-          </datalist>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label={W.actionsLabel}>
-            {offered.map((a) => (
-              <button
-                type="button"
-                key={a}
-                className={cx("hz-wa-chip", chosen.includes(a) && "is-on")}
-                aria-pressed={chosen.includes(a)}
-                onClick={() => toggle(a)}
-                data-testid={`wa-action-${a}`}
-                title={(W.help as Record<string, string>)[a]}
-              >
-                {chosen.includes(a) && <Check size={12} aria-hidden />}
-                {actionLabel(a)}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" variant="primary" loading={saving} disabled={!subject.trim() || !chosen.length} data-testid="wa-save">
-              {W.give}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
-              {W.cancel}
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <button type="button" className="hz-wa-addlink" onClick={() => setAdding(true)} data-testid="wa-add">
-          {W.add}
-        </button>
-      )}
-    </section>
+    </>
   );
 }
 

@@ -36,9 +36,10 @@ import {
   LoadState,
   PersonAvatar,
   PersonCell,
-  RoleBadge,
+  RoleTag,
   StatusDot,
   When,
+  type Role,
 } from "../components/common";
 import {
   isService,
@@ -53,6 +54,10 @@ const { Text, Title, Paragraph } = Typography;
 const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
 type PeoplePage = { people: Person[]; total: number };
+
+/** A person's role for the Role badge. */
+const roleOf = (p: Person): Role =>
+  p.organization_admin ? "admin" : p.reader ? "reader" : isService(p.subject) ? "service" : "user";
 
 export function PeopleScreen({
   me,
@@ -251,17 +256,16 @@ export function PeopleScreen({
                 ),
               },
               {
-                title: "Account",
-                key: "account",
-                width: embedded ? 190 : 170,
-                render: (_, p) => (
-                  <div className="people-account">
-                    <AccountTag status={p.status} />
-                    <Text type="secondary">
-                      {p.organization_admin ? "Administrator" : p.reader ? "Reader" : p.subject.startsWith("workflow:") ? "Service" : "User"}
-                    </Text>
-                  </div>
-                ),
+                title: "Role",
+                key: "role",
+                width: 150,
+                render: (_, p) => <RoleTag role={roleOf(p)} />,
+              },
+              {
+                title: "Status",
+                key: "status",
+                width: embedded ? 150 : 140,
+                render: (_, p) => <AccountTag status={p.status} />,
               },
               {
                 title: "Agents",
@@ -626,8 +630,7 @@ function PersonDrawer({
   }
 
   const roleControl = () => {
-    if (!manageAccount)
-      return person?.organization_admin ? <RoleBadge>Administrator</RoleBadge> : <Text>User</Text>;
+    if (!manageAccount) return person ? <RoleTag role={roleOf(person)} /> : null;
     if (!info.data)
       return info.error ? <Text type="warning">Couldn’t read their role</Text> : <Text type="secondary">Loading…</Text>;
     if (role === "pending")
@@ -663,6 +666,12 @@ function PersonDrawer({
     );
   };
 
+  // Their sign-in, when Hubzoid doesn't hold a password for them.
+  const passwordHelp =
+    info.data?.sign_in === "directory" ? "Signs in through your company directory, which manages their password."
+    : "Signs in with Google, which manages their password.";
+  const passwordReset = info.data?.sign_in !== "directory" && info.data?.sign_in !== "google";
+
   return (
     <Drawer
       open={open}
@@ -674,10 +683,13 @@ function PersonDrawer({
       destroyOnHidden
       title={
         person ? (
-          <Space align="center">
-            <PersonAvatar subject={person.subject} display={person.display} size={36} />
-            <span>{name}</span>
-          </Space>
+          <div className="hz-person-title">
+            <PersonAvatar subject={person.subject} display={person.display} size={40} />
+            <div className="hz-person-who">
+              <div className="hz-person-name">{name}</div>
+              {name !== person.subject && <div className="hz-person-email identity">{person.subject}</div>}
+            </div>
+          </div>
         ) : (
           "User"
         )
@@ -708,7 +720,7 @@ function PersonDrawer({
           <Button href={href("/people")}>Back to people</Button>
         </Empty>
       ) : (
-        <div className="drawer-body">
+        <div className="drawer-body hz-person">
           {error && (
             <Alert
               type="error"
@@ -725,127 +737,6 @@ function PersonDrawer({
           )}
           {person.account_unavailable && !person.suspended && (
             <Alert type="warning" showIcon title="Their account is unavailable (removed or not found)." />
-          )}
-          <Descriptions
-            size="small"
-            column={1}
-            className="hz-person-facts"
-            items={[
-              { key: "email", label: "Email", children: <span className="identity">{person.subject}</span> },
-              { key: "status", label: "Status", children: <AccountTag status={person.status} /> },
-              { key: "role", label: "Role", children: roleControl() },
-              ...(me.org_admin && !isService(person.subject)
-                ? [
-                    {
-                      key: "phone",
-                      label: "Phone",
-                      children: (
-                        <PhoneEditor
-                          subject={person.subject}
-                          phone={person.phone ?? null}
-                          onSaved={() => {
-                            data.reload();
-                            onChanged();
-                          }}
-                        />
-                      ),
-                    },
-                  ]
-                : []),
-              ...(manageAccount
-                ? [
-                    {
-                      key: "password",
-                      label: "Password",
-                      children:
-                        info.data?.sign_in === "directory" ? (
-                          <Text type="secondary">Signs in through your company directory, which manages their sign-in.</Text>
-                        ) : info.data?.sign_in === "google" ? (
-                          <Text type="secondary">Signs in with Google. Their password is managed through Google.</Text>
-                        ) : (
-                          <Button
-                            size="small"
-                            disabled={busy}
-                            onClick={() => {
-                              setPanel(panel === "password" ? "" : "password");
-                              setShown("");
-                              setShownLink(null);
-                            }}
-                          >
-                            Reset password
-                          </Button>
-                        ),
-                    },
-                    {
-                      key: "security",
-                      label: "Sign-in security",
-                      children: (
-                        <Space wrap>
-                          <Button size="small" disabled={busy || !person?.owui_id}
-                            onClick={() => void signInAction("reset-mfa",
-                              "Reset their two-step sign-in? They set it up again at their next sign-in, and are signed out everywhere now.",
-                              "Two-step sign-in reset. They're signed out everywhere.")}>
-                            Reset two-step sign-in
-                          </Button>
-                          <Button size="small" disabled={busy || !person?.owui_id}
-                            onClick={() => void signInAction("revoke-credentials",
-                              "Sign them out on every device and end their API keys and assistant connections?",
-                              "Signed out everywhere.")}>
-                            Sign out everywhere
-                          </Button>
-                        </Space>
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
-          />
-
-          {panel === "password" && links && (
-            <div className="agent-access">
-              {shownLink ? (
-                shownLink.link ? (
-                  <OneTimeLink link={shownLink.link} expiresAt={shownLink.expires_at} />
-                ) : (
-                  <Alert type="warning" showIcon title="The sign-in link couldn’t be made. Try again." />
-                )
-              ) : (
-                <>
-                  <Paragraph style={{ margin: 0 }}>
-                    Their current password stops working and they are signed out everywhere. You get a one-time
-                    sign-in link to share with them, so they can set a new password.
-                  </Paragraph>
-                  <Space wrap>
-                    <Button type="primary" loading={busy} onClick={() => void resetWithLink()}>
-                      Reset and create sign-in link
-                    </Button>
-                    <Button disabled={busy} onClick={() => setPanel("")}>
-                      Cancel
-                    </Button>
-                  </Space>
-                </>
-              )}
-            </div>
-          )}
-
-          {panel === "password" && !links && (
-            <div className="agent-access">
-              {shown ? (
-                <OneTimePassword password={shown} />
-              ) : (
-                <>
-                  <PasswordField id="reset-password" value={password} onChange={setPassword} touched={touched} />
-                  <Space wrap>
-                    <Button type="primary" loading={busy} onClick={() => void resetPassword()}>
-                      Set password
-                    </Button>
-                    <Button disabled={busy} onClick={() => { setPanel(""); setPassword(""); }}>
-                      Cancel
-                    </Button>
-                  </Space>
-                </>
-              )}
-            </div>
           )}
 
           {panel === "delete" && (
@@ -889,8 +780,127 @@ function PersonDrawer({
             </div>
           )}
 
-          <div className="section">
-            <Title level={2} style={{ fontSize: 16 }}>Access by agent</Title>
+          <section>
+            <Title level={5} className="hz-facts-head">Account</Title>
+            <Descriptions
+              size="small"
+              column={1}
+              colon={false}
+              className="hz-facts"
+              items={[
+                { key: "role", label: "Role", children: roleControl() },
+                { key: "status", label: "Status", children: <AccountTag status={person.status} /> },
+                ...(person.two_step != null
+                  ? [{ key: "two_step", label: "Two-step", children: person.two_step
+                      ? <StatusDot color="green" label="On" /> : <StatusDot color="gold" label="Off" /> }]
+                  : []),
+                ...(person.last_sign_in !== undefined
+                  ? [{ key: "last_sign_in", label: "Last sign-in", children: person.last_sign_in
+                      ? <When value={new Date(person.last_sign_in * 1000).toISOString()} />
+                      : <Text type="secondary">Never</Text> }]
+                  : []),
+                ...(me.org_admin && !isService(person.subject)
+                  ? [
+                      {
+                        key: "phone",
+                        label: "Phone",
+                        children: (
+                          <PhoneEditor
+                            subject={person.subject}
+                            phone={person.phone ?? null}
+                            onSaved={() => {
+                              data.reload();
+                              onChanged();
+                            }}
+                          />
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </section>
+
+          {manageAccount && (
+            <section>
+              <Title level={5} className="hz-facts-head">Sign-in</Title>
+              {!passwordReset && <Paragraph type="secondary" style={{ margin: "0 0 8px" }}>{passwordHelp}</Paragraph>}
+              {/* Buttons only: each one says what it does when clicked (founder review). */}
+              <Space wrap>
+                {passwordReset && (
+                  <Button
+                    disabled={busy}
+                    onClick={() => {
+                      setPanel(panel === "password" ? "" : "password");
+                      setShown("");
+                      setShownLink(null);
+                    }}
+                  >
+                    Reset password
+                  </Button>
+                )}
+                {person.two_step !== false && (
+                  <Button disabled={busy || !person?.owui_id}
+                    onClick={() => void signInAction("reset-mfa",
+                      "Reset their two-step sign-in? They set it up again at their next sign-in, and are signed out everywhere now.",
+                      "Two-step sign-in reset. They're signed out everywhere.")}>
+                    Reset two-step sign-in
+                  </Button>
+                )}
+                <Button disabled={busy || !person?.owui_id}
+                  onClick={() => void signInAction("revoke-credentials",
+                    "Sign them out on every device and end their API keys and assistant connections?",
+                    "Signed out everywhere.")}>
+                  Sign out everywhere
+                </Button>
+              </Space>
+              {panel === "password" && links && (
+                <div className="hz-person-panel">
+                  {shownLink ? (
+                    shownLink.link ? (
+                      <OneTimeLink link={shownLink.link} expiresAt={shownLink.expires_at} />
+                    ) : (
+                      <Alert type="warning" showIcon title="The sign-in link couldn’t be made. Try again." />
+                    )
+                  ) : (
+                    <>
+                      <Text type="secondary">Their password stops working and they’re signed out. You get a link to send them.</Text>
+                      <Space wrap>
+                        <Button type="primary" loading={busy} onClick={() => void resetWithLink()}>
+                          Reset and create sign-in link
+                        </Button>
+                        <Button disabled={busy} onClick={() => setPanel("")}>
+                          Cancel
+                        </Button>
+                      </Space>
+                    </>
+                  )}
+                </div>
+              )}
+              {panel === "password" && !links && (
+                <div className="hz-person-panel">
+                  {shown ? (
+                    <OneTimePassword password={shown} />
+                  ) : (
+                    <>
+                      <PasswordField id="reset-password" value={password} onChange={setPassword} touched={touched} />
+                      <Space wrap>
+                        <Button type="primary" loading={busy} onClick={() => void resetPassword()}>
+                          Set password
+                        </Button>
+                        <Button disabled={busy} onClick={() => { setPanel(""); setPassword(""); }}>
+                          Cancel
+                        </Button>
+                      </Space>
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          <section>
+            <Title level={5} className="hz-facts-head">Access by agent</Title>
             {access.length === 0 && <Text type="secondary">No access to any agent you manage.</Text>}
             <div className="access-by-agent">
               {access.map(([h, perms]) => (
@@ -913,7 +923,7 @@ function PersonDrawer({
               <Select
                 aria-label="Add an agent"
                 placeholder="Add an agent"
-                style={{ width: "100%", marginTop: 8 }}
+                style={{ width: "100%", marginTop: 12 }}
                 value={null}
                 options={addable.map((h) => ({ value: h.key, label: h.name }))}
                 onChange={(k) => {
@@ -930,7 +940,7 @@ function PersonDrawer({
                   : "Blocked. An Administrator can reactivate them."}
               </Paragraph>
             )}
-          </div>
+          </section>
         </div>
       )}
     </Drawer>

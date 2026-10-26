@@ -3381,7 +3381,7 @@
 .console-embed .row-chevron { color: var(--hz-mute); vertical-align: middle; }
 .console-embed tr.clickable:hover .row-chevron { color: var(--hz-ink); }
 .console-embed .row-name { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--hz-ink); text-align: left; cursor: pointer; }
-.console-embed .row-name:hover { text-decoration: underline; }
+.console-embed .row-name:hover { color: var(--hz-accent-text); }
 .console-embed .row-name:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: 2px; border-radius: 4px; }
 .console-embed tr.clickable:focus-visible > td { background: var(--hz-hover); }
 .console-embed tr.clickable:focus-visible { outline: 2px solid var(--hz-focus); outline-offset: -2px; }
@@ -3395,7 +3395,7 @@
 .hz-set-main:has(.hz-agent-head) { max-width: none; }
 /* A person's name reads the same in every list: the name, not a coloured link. */
 .console-embed .person-cell a { font-weight: 600; color: var(--hz-ink); }
-.console-embed .person-cell a:hover { text-decoration: underline; }
+.console-embed .person-cell a:hover { color: var(--hz-accent-text); }
 
 /* Rating an answer (chat/feedback.tsx): the form fits a phone beside the answer. */
 .hz-feedback-form {
@@ -3508,13 +3508,27 @@
 :root[data-theme="dark"] .hz-connection-list .logo.ink-dark,
 :root[data-theme="oled"] .hz-connection-list .logo.ink-dark { color: var(--hz-ink) !important; }
 
-/* A row that opens something: its name turns orange on hover (founder review). */
+/* One row style everywhere (founder review): a row that opens something shows
+   a pointer and its name (.hz-row-name) turns orange on hover, as on Agents.
+   Table rows carry .clickable (ROW_OPENS in components/common.tsx); list rows
+   that aren't tables carry .hz-row-link. The name is ink and bold at rest, a
+   name rather than a coloured link. */
+.hz-row-name, .hz-agent-name { transition: color 120ms ease; }
+.console-embed .hz-row-name, .hz-set-main .hz-row-name,
+.console-embed .person-cell a.hz-row-name, .console-embed .row-name.hz-row-name { color: var(--hz-ink); font-weight: 600; text-decoration: none; }
 .hz-agent-row:not(.is-head):hover .hz-agent-name,
-.people-table tr.clickable:hover .person-cell > strong,
-.people-table tr.clickable:hover .person-cell > a,
-.people-table tr.clickable:hover .person-cell > .ant-typography strong,
-.hz-workflow-table .hz-workflow-name:hover { color: var(--hz-accent-text); }
-.hz-agent-name, .hz-workflow-table .hz-workflow-name { transition: color 120ms ease; }
+tr.clickable:hover .hz-row-name, .console-embed tr.clickable:hover .hz-row-name,
+.console-embed tr.clickable:hover .person-cell a.hz-row-name, .console-embed tr.clickable:hover .row-name.hz-row-name,
+.hz-row-link:hover .hz-row-name, .console-embed .hz-row-link:hover .person-cell a.hz-row-name,
+.hz-row-name:hover, .console-embed .person-cell a.hz-row-name:hover,
+.hz-usage-row:hover .hz-usage-name,
+a.hz-inbox-row:hover .hz-inbox-title, button.hz-inbox-row:hover .hz-inbox-title,
+.hz-inbox-row[role="link"]:hover .hz-inbox-title {
+  /* !important: `.console-embed td a` keeps links in tables ink with !important. */
+  color: var(--hz-accent-text) !important; text-decoration: none;
+}
+.hz-usage-name, .hz-inbox-title { transition: color 120ms ease; }
+.hz-row-link { cursor: pointer; }
 
 /* A drawer's facts: a fixed label column, even rows, a line between (founder review). */
 .hz-facts .ant-descriptions-item { padding-bottom: 0 !important; }
@@ -3522,6 +3536,25 @@
 .hz-facts .ant-descriptions-item-label { flex: 0 0 96px !important; width: 96px; color: var(--hz-mute) !important; }
 .hz-facts .ant-descriptions-item-content { min-width: 0; overflow-wrap: anywhere; }
 .hz-facts-head.ant-typography { margin: 24px 0 4px !important; }
+
+/* A person's details (People): who in the header, then Account, Sign-in and
+   security, Access by agent, each a titled section with the same row lines
+   (founder review: the old list mixed facts and buttons). */
+.hz-person-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hz-person-who { min-width: 0; }
+.hz-person-name { font-size: 16px; font-weight: 600; line-height: 1.3; color: var(--hz-ink); }
+.hz-person-email { font-size: 12.5px; font-weight: 400; color: var(--hz-mute); overflow-wrap: anywhere; }
+.drawer-body.hz-person { gap: 8px; }
+.hz-person > section:first-of-type .hz-facts-head.ant-typography,
+.hz-person > .ant-alert + section .hz-facts-head.ant-typography { margin-top: 4px !important; }
+.hz-person .hz-facts .ant-descriptions-item-label { flex-basis: 112px !important; width: 112px; }
+/* Access by agent reads as rows like the sections above, not boxes. */
+.hz-person .access-by-agent { gap: 0; }
+.hz-person .access-by-agent > .agent-access { padding: 12px 0; border: 0; border-bottom: 1px solid var(--hz-line-soft); border-radius: 0; }
+
+/* Roles: Administrator stands out (.hz-tag-accent, the information pair),
+   User stays neutral. */
+.ant-tag.hz-role-badge.is-admin > svg { color: currentColor; }
 .hz-mono-sm { font: 12px var(--hz-mono, ui-monospace, Menlo, monospace); }
 .hz-run-item { flex-direction: column; align-items: stretch !important; gap: 2px; padding: 10px 0 !important; }
 .hz-run-item-main { display: flex; align-items: center; gap: 10px; }
@@ -3529,3 +3562,46 @@
 
 /* Back to chat hovers like a menu item: the full row, the same height and corners (founder review). */
 .hz-set-backlink { display: flex !important; width: 100%; height: 32px !important; border-radius: 8px !important; padding: 0 8px !important; margin: 0 0 12px !important; }
+
+/* What you can use (Settings, Account): the person's agents, each a row that
+   opens a chat (name, one line of what it does), then one line of chat
+   features (founder review: capability pills were information, not actions). */
+.hz-my-access { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.hz-my-list { list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid var(--hz-line-soft); }
+.hz-my-list > li { border-bottom: 1px solid var(--hz-line-soft); }
+.hz-my-agent-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; color: inherit; text-decoration: none; min-width: 0; }
+.hz-my-agent-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.hz-my-agent { font-weight: 600; color: var(--hz-ink); }
+.hz-my-agent-desc { font-size: 12.5px; color: var(--hz-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hz-my-cap {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 11px; flex-shrink: 0;
+  font-size: 12px; white-space: nowrap; background: var(--hz-sunken); color: var(--hz-secondary);
+}
+.hz-my-cap.is-manage { background: var(--hz-info-soft); color: var(--hz-info); }
+
+/* Workflow permissions as a table (founder review): the same header, row
+   lines and padding as the antd tables in Settings, a row per workflow. */
+.hz-wa-scroll { max-width: 100%; overflow-x: auto; }
+.hz-wa-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 0.9286rem; }
+.hz-wa-table th {
+  padding: 10px 12px; text-align: left; white-space: nowrap;
+  font-size: 0.8571rem; font-weight: 500; color: var(--hz-mute); border-bottom: 1px solid var(--hz-line);
+}
+.hz-wa-table td { padding: 14px 12px; vertical-align: top; border-bottom: 1px solid var(--hz-line-soft); }
+.hz-wa-table tbody tr:last-child td { border-bottom-color: var(--hz-line); }
+.hz-wa-table .hz-wa-name { width: 34%; }
+.hz-wa-table .hz-wa-name .hz-row-name { font-weight: 600; color: var(--hz-ink); }
+.hz-wa-table .hz-wa-cell-action { width: 1%; text-align: right; white-space: nowrap; }
+.hz-wa-table .hz-wa-formrow td { padding-top: 0; background: var(--hz-sunken); }
+.hz-wa-table .hz-wa-formrow td > .hz-wa-add { padding-top: 14px; }
+.hz-wa-who { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hz-wa-who > li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+.hz-wa-person { color: var(--hz-ink); overflow-wrap: anywhere; }
+.hz-wa-who > li.is-earlier .hz-wa-person { color: var(--hz-secondary); }
+.hz-wa-acts { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.hz-wa-act {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px;
+  font-size: 11.5px; background: var(--hz-sunken); color: var(--hz-secondary);
+}
+.hz-wa-source { font-size: 12px; color: var(--hz-mute); }
+.hz-person-panel { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding: 12px; border: 1px solid var(--hz-line-soft); border-radius: 8px; }

@@ -10,7 +10,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ShieldCheck, Sparkle, Workflow, CircleHelp } from "lucide-react";
+import { ShieldCheck, Sparkle, UserRound, Workflow, CircleHelp } from "lucide-react";
 import { signedOut, signInHref, type Permission } from "../api";
 import { useUnderTabs } from "../lib/underTabs";
 import {
@@ -234,7 +234,7 @@ export function PersonCell({
     <Space align="center">
       <PersonAvatar subject={subject} display={display} />
       <div className="person-cell">
-        {link ? <a href={link}>{name}</a> : <Text strong>{name}</Text>}
+        {link ? <a className="hz-row-name" href={link}>{name}</a> : <Text strong className="hz-row-name">{name}</Text>}
         {name !== subject && (
           <div>
             <Text type="secondary" className="identity">
@@ -268,6 +268,20 @@ export function RoleBadge({ children }: { children: ReactNode }) {
   );
 }
 
+export type Role = "admin" | "user" | "reader" | "service";
+
+/** A person's role as one badge wherever roles show (People, a person's
+ *  details): Administrator stands out, User is neutral (founder review). */
+export function RoleTag({ role }: { role: Role }) {
+  const label = { admin: "Administrator", user: "User", reader: "Reader", service: "Service" }[role];
+  const Icon = role === "admin" ? ShieldCheck : role === "service" ? Workflow : UserRound;
+  return (
+    <Tag className={`hz-role-badge is-${role}${role === "admin" ? " hz-tag-accent" : ""}`} icon={<Icon size={12} aria-hidden />}>
+      {label}
+    </Tag>
+  );
+}
+
 export function When({ value }: { value: number | string | null | undefined }) {
   return (
     <Tooltip title={formatTime(value)}>
@@ -282,7 +296,9 @@ export function SentenceText({ sentence }: { sentence: Sentence }) {
       <div>
         {sentence.parts.map((part, i) =>
           part.kind ? (
-            <Text key={i} strong={part.kind !== "capability"} code={part.kind === "tool"}>
+            // The first named part (who acted) is the row's name in Activity.
+            <Text key={i} strong={part.kind !== "capability"} code={part.kind === "tool"}
+              className={i === sentence.parts.findIndex((p) => p.kind && p.kind !== "capability" && p.kind !== "tool") ? "hz-row-name" : undefined}>
               {part.text}
             </Text>
           ) : (

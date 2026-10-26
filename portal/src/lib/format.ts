@@ -189,6 +189,7 @@ export function groupCapabilities(permissions: Permission[], held: string[]) {
 /** Sub-headings inside a group, in display order after the unsectioned rows
  *  (hubzoid/capabilities.py SECTIONS). Presentation only, like the groups. */
 export const CAPABILITY_SECTIONS = [
+  { key: "chat", title: "Chat features" },
   { key: "workflows", title: "Workflows" },
   { key: "access", title: "Access control" },
 ] as const;

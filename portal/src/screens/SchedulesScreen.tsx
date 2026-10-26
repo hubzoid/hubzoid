@@ -38,6 +38,7 @@ import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
 import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, StatusDot, When, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { formatDuration } from "../lib/format";
 import { displayName } from "../app/lib/format";
 
@@ -148,7 +149,7 @@ function MineReports() {
             columns={[
               {
                 title: "Report", key: "title",
-                render: (_, r) => <><a className="row-name" href={r.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.title} ↗</a>
+                render: (_, r) => <><a className="row-name hz-row-name" href={r.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.title} ↗</a>
                   {agents.length > 1 && <div><Text type="secondary">{name(r.hub)}</Text></div>}</>,
               },
               {
@@ -249,7 +250,7 @@ function SchedulesTable({
           ...(agentName ? [{ title: "Agent", key: "agent", render: (_: unknown, s: Row) => agentName(s.hub) }] : []),
           {
             title: "Schedule", key: "name",
-            render: (_, s) => <><button type="button" className="row-name" onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</button>
+            render: (_, s) => <><button type="button" className="row-name hz-row-name" onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</button>
               <div style={{ marginTop: 2 }}><Dot tone={STATE_TAG[s.state] ?? "default"} label={s.state_label} /></div></>,
           },
           {
@@ -491,17 +492,50 @@ function LiveReports({ hub }: { hub: Hub }) {
   );
 }
 
+/** A chat with the report's agent, the request typed in and not yet sent
+ *  (the composer takes `share_text`, as for the install share target). */
+function runInChat(chat: string | null | undefined, title: string) {
+  if (!chat) return null;
+  return `${chat}${chat.includes("?") ? "&" : "?"}share_text=${encodeURIComponent(`Run ${title} for me`)}`;
+}
+
+/** Reports to run: one row each, like the other tables; Run in chat opens the
+ *  agent with the request ready (founder review: the stacked list was long). */
 function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catalog"]>; agents: MyAgent[] }) {
+  const [search, setSearch] = useState("");
+  const screens = Grid.useBreakpoint();
   if (!catalog.length) return null;
-  return <Section title="Reports you can run" help="Reports this agent offers with your current access. Open chat and use the suggested request.">
-    <List dataSource={catalog} renderItem={(r) => <List.Item>
-      <Space direction="vertical" style={{ width: "100%" }}>
-        <Text strong>{r.title}</Text><Text type="secondary">{displayName(agents.find((a) => a.key === r.hub)?.name ?? r.hub)} · {r.schedulable ? "Run once or schedule" : "Run once"}</Text>
-        <Text copyable={{ text: `Run ${r.title} for me` }}>Ask in chat: “Run {r.title} for me”</Text>
-        {r.schema && Object.keys(r.schema.properties).length > 0 && <Text type="secondary">The agent asks for: {Object.entries(r.schema.properties).map(([k, p]) => (p as { title?: string }).title || k.replace(/_/g, " ")).join(", ")}</Text>}
-        <Button href={agents.find((a) => a.key === r.hub)?.chat ?? "/"}>Open chat ↗</Button>
-      </Space>
-    </List.Item>} />
+  const agentName = (hub: string) => displayName(agents.find((a) => a.key === hub)?.name ?? hub);
+  const q = search.trim().toLowerCase();
+  const rows = q ? catalog.filter((r) => `${r.title} ${agentName(r.hub)}`.toLowerCase().includes(q)) : catalog;
+  const asks = (r: (typeof catalog)[number]) =>
+    r.schema ? Object.entries(r.schema.properties).map(([k, f]) => (f as { title?: string }).title || k.replace(/_/g, " ")) : [];
+  return <Section title="Reports you can run" help="Reports your agents offer with your current access. Run in chat opens the agent with the request typed in; it asks for anything it needs."
+    extra={catalog.length > 8 && <Input.Search allowClear placeholder="Search reports" aria-label="Search reports"
+      value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />}>
+    {!screens.md ? <List dataSource={rows} pagination={rows.length > PAGED.pageSize ? PAGED : false} renderItem={(r) => {
+      // A phone: one line each, name and agent, then Run in chat.
+      const href = runInChat(agents.find((a) => a.key === r.hub)?.chat, r.title);
+      return <List.Item actions={href ? [<Button key="run" size="small" href={href}>Run in chat</Button>] : []}>
+        <List.Item.Meta title={r.title} description={agentName(r.hub)} />
+      </List.Item>;
+    }} /> : <Table {...ROW_OPENS} rowKey={(r) => `${r.hub}:${r.workflow}`} size="middle" dataSource={rows} pagination={PAGED}
+      columns={[
+        { title: "Report", key: "title", render: (_, r) => {
+          const href = runInChat(agents.find((a) => a.key === r.hub)?.chat, r.title);
+          return <>{href ? <a className="hz-row-name" href={href}>{r.title}</a> : <Text strong>{r.title}</Text>}
+            {r.schedulable && <Tag style={{ marginLeft: 8 }}>Can schedule</Tag>}</>;
+        } },
+        { title: "Agent", key: "agent", width: 160, render: (_, r) => agentName(r.hub) },
+        { title: "Asks for", key: "asks", render: (_, r) => {
+          const list = asks(r);
+          return list.length ? <Tooltip title={list.join(", ")}><Text type="secondary">{list.slice(0, 3).join(", ")}{list.length > 3 ? ` +${list.length - 3}` : ""}</Text></Tooltip> : <Text type="secondary">Nothing</Text>;
+        } },
+        { title: "", key: "run", width: 130, align: "right", render: (_, r) => {
+          const href = runInChat(agents.find((a) => a.key === r.hub)?.chat, r.title);
+          return href ? <Button size="small" href={href}>Run in chat</Button> : null;
+        } },
+      ]} />}
   </Section>;
 }
 

@@ -103,10 +103,21 @@ def tool_permission(name: str) -> str:
     return "wf_" + name.lower()
 
 
+#: Words a name keeps in their usual spelling ("pr_sweep" -> "PR sweep").
+_SPELLED = {"pr": "PR", "prs": "PRs", "github": "GitHub", "gitlab": "GitLab", "api": "API", "erp": "ERP",
+            "url": "URL", "id": "ID", "ai": "AI", "csv": "CSV", "pdf": "PDF", "sla": "SLA", "mcp": "MCP",
+            "llm": "LLM", "ci": "CI", "crm": "CRM", "sql": "SQL", "kpi": "KPI"}
+
+
 def title_for(name: str, doc: str = "") -> str:
-    """A workflow's name for people: "program_report" -> "Program report"."""
-    words = name.replace("_", " ").replace("-", " ").strip()
-    return (words[:1].upper() + words[1:]) if words else name
+    """A workflow's name for people: "program_report" -> "Program report",
+    "github_events" -> "GitHub events"."""
+    words = name.replace("_", " ").replace("-", " ").split()
+    if not words:
+        return name
+    words = [_SPELLED.get(w.lower(), w) for w in words]
+    first = words[0]
+    return " ".join([first[:1].upper() + first[1:], *words[1:]])
 
 
 def _app_name(hub_name: str) -> str:

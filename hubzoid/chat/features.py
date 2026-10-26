@@ -30,8 +30,9 @@ FEATURES = {
 }
 
 for _perm, (_label, _desc) in FEATURES.items():
-    caps.register(caps.Capability(permission=_perm, label=_label, group="tools", description=_desc,
-                                  surfaces=("chat",)))
+    # Their own heading in the access editor: chat features, not agent tools.
+    caps.register(caps.Capability(permission=_perm, label=_label, group="tools", section="chat",
+                                  description=_desc, surfaces=("chat",)))
 
 
 def for_person(hub_dir: Path, email: str) -> dict[str, bool]:

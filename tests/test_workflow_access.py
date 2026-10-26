@@ -122,3 +122,13 @@ def test_unknown_people_and_suspended_accounts_get_nothing(hub):
     wf.apply(hub, POLICY.replace("ana@example.org", "everyone"), expected_revision=0, actor="owner@example.org")
     assert wf.authorize(hub, "ana@example.org", "weekly_report", "run").allowed
     assert not wf.authorize(hub, "stranger@example.org", "weekly_report", "run").allowed  # no hub access
+
+
+def test_workflow_names_keep_their_usual_spelling():
+    """Settings lists workflows by title: "pr_sweep" reads "PR sweep", not "Pr sweep"."""
+    from hubzoid.workflows.runtime import title_for
+
+    assert title_for("pr_sweep") == "PR sweep"
+    assert title_for("github_events") == "GitHub events"
+    assert title_for("weekly-digest") == "Weekly digest"
+    assert title_for("") == ""

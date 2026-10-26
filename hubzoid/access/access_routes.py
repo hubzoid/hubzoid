@@ -27,7 +27,7 @@ def my_access(hub_dir: Path, user) -> dict:
     """The person's agents and chat features, with plain reasons, and who to ask."""
     from .. import capabilities
     from ..chat import features
-    from ..webapp_gateway import agents_for
+    from ..webapp_gateway import agents_for, hub_path
     from . import store_for
 
     agents = agents_for(hub_dir, user.email)
@@ -36,7 +36,9 @@ def my_access(hub_dir: Path, user) -> dict:
     out_agents = []
     for card in agents:
         hub = normalize(card.get("hub") or "")
-        path = Path(card.get("path") or hub_dir) if card.get("path") else hub_dir
+        # Each agent's labels come from its own folder: in a deployment this
+        # process is one hub of several (it used to read only its own).
+        path = hub_path(hub_dir, hub)
         try:
             granted = sorted(store_for(hub_dir).permissions_for(normalize(user.email), hub))
         except Exception:  # noqa: BLE001 - shown as unknown, never as more
@@ -56,8 +58,8 @@ def my_access(hub_dir: Path, user) -> dict:
         feats = features.for_person(hub_dir, user.email)
     except Exception:  # noqa: BLE001
         feats = {}
-    feature_list = [{"key": key, "label": label, "on": bool(feats.get(key))}
-                    for key, (label, _desc) in features.FEATURES.items()]
+    feature_list = [{"key": key, "label": label, "description": desc, "on": bool(feats.get(key))}
+                    for key, (label, desc) in features.FEATURES.items()]
     contact = _admin_contact(hub_dir)
     return {"agents": out_agents, "features": feature_list, "contact": contact,
             "role": user.role, "via_key": user.via_key}

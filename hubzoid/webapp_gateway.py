@@ -70,6 +70,15 @@ def _manifest(hub_dir: Path) -> dict:
     return deployment.read(Path(hub_dir)) or {}
 
 
+def hub_path(hub_dir: Path, key: str) -> Path:
+    """The folder of agent `key` in this deployment; this hub when it runs alone
+    or `key` isn't registered. Agent cards never carry paths (they go to browsers)."""
+    for entry in _manifest(Path(hub_dir)).get("hubs") or []:
+        if normalize(entry["key"]) == normalize(key):
+            return Path(entry["path"])
+    return Path(hub_dir)
+
+
 def _hub_slug(entry: dict) -> str:
     return entry.get("slug") or _slugify(Path(entry["path"]).name)
 

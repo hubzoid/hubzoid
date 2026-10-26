@@ -1018,12 +1018,25 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   min-width: 0;
   flex: 1;
 }
+/* One field and Continue on one row, as an invite field (founder review). */
+.pick-person .pick-input-row {
+  display: flex;
+  gap: 8px;
+}
+.pick-person .pick-input-row .ant-input-affix-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+.pick-person .pick-row {
+  padding: 8px 10px;
+  gap: 10px;
+}
 .pick-new {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex: none;
   border-radius: 50%;
   border: 1px dashed currentColor;
@@ -1227,3 +1240,20 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 /* HUB-140 F20: an icon stays on the line of its text. */
 .field-help.hz-inline-help { display: flex; align-items: flex-start; gap: 6px; }
 .field-help.hz-inline-help svg { flex: none; margin-top: 2px; }
+
+/* Capabilities not set up in this agent: one quiet line that reveals them. */
+.hz-cap-unset {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-top: 1px solid var(--subtle-border);
+  background: transparent;
+  color: var(--mute, #6b6b6b);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.hz-cap-unset:hover { color: var(--ink, inherit); }

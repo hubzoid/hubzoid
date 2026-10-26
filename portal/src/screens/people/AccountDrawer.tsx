@@ -212,7 +212,7 @@ export function NewUserSignIn({
             </Button>
           </Space.Compact>
           <Text type={problem ? "danger" : "secondary"} className="field-help">
-            {problem ?? "Shown once after saving so you can share it. It isn't stored."}
+            {problem ?? "After saving, copy their sign-in details to send them."}
           </Text>
         </>
       )}

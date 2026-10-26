@@ -10,6 +10,31 @@ All notable changes to Hubzoid. Versions follow the package version in
   new name and prints `git clone https://github.com/hubzoid/engineering-desk-hub
   engineering-desk`. `hubzoid init --template gitzoid` names the new repo. The
   old `gitzoid-hub` address still redirects.
+- **Settings: one table style.** In every table and row list, a row that
+  opens something is the whole click target and its name turns orange on
+  hover, as on Agents and People.
+- **People.** A Role column (Administrator or User), and a person's details
+  in three sections: Account, Sign-in (buttons only; Reset two-step sign-in
+  shows only when it is on) and Access by agent.
+- **Add user from an agent's Access tab** uses one field: type an email (a new
+  one creates the account) or search by name. A new account gets a one-time
+  sign-in link, as from People; the manager no longer sets its password.
+  Capabilities not set up in the agent sit behind one line, chat features have
+  their own heading, and the review is shorter.
+- **Account → What you can use** lists your agents, each opening a chat, and
+  the chat features on for you, in one line.
+- **Agents** open on Access. Instructions moved under Configuration and shows
+  only while in-app editing is on.
+- **Workflow permissions** is a table, one row per workflow. Workflow names
+  keep their usual spelling ("PR sweep", "GitHub events").
+- **My schedules → Reports you can run** is a table; Run in chat opens the
+  agent with the request typed in.
+
+### Fixed
+- In a deployment of several agents, an agent's Instructions showed the
+  first agent's files, so an edit there could change the wrong agent.
+- What you can use showed another agent's capabilities as raw ids
+  (`desk_bindings`): labels came from the first agent's catalog.
 
 ## [2.0.3]
 

@@ -8,6 +8,7 @@ import { RefreshCw } from "lucide-react";
 import { hubRequest } from "../api";
 import type { Hub } from "../api";
 import { InfoHelp, LoadState, PAGED } from "../components/common";
+import { ROW_OPENS } from "../lib/rows";
 import { errorText } from "../hooks/useData";
 import { href, useHashQuery } from "../hooks/useRoute";
 
@@ -152,11 +153,13 @@ function ChannelList({ hub }: { hub: Hub }) {
         <Empty description="No channels yet. Add a channel file below, or ask your assistant to set one up with hubzoid channels apply." />
       ) : (
         <Table<Connection>
+          {...ROW_OPENS}
           rowKey="id"
+          size="middle"
           dataSource={items}
           pagination={PAGED}
           columns={[
-            { title: "Channel", dataIndex: "id", render: (id: string) => <a href={channelHref(hub, id)}>{id}</a> },
+            { title: "Channel", dataIndex: "id", render: (id: string) => <a className="hz-row-name" href={channelHref(hub, id)}>{id}</a> },
             { title: "Provider", dataIndex: "provider" },
             { title: "Status", dataIndex: "status", render: (s: string) => tag(STATUS, s) },
             { title: "Revision", dataIndex: "revision" },
