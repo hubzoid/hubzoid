@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "2.0.4"
+version = "2.0.5"
 description = "Hubzoid is an open-source platform for internal AI agents. Give it your team's knowledge, rules and tools once, then use them in chat, workflows and the AI assistants you already use."
 readme = "README.md"
 license = "Apache-2.0"
