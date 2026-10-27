@@ -1,4 +1,4 @@
-"""The Claude Code plugin in plugins/hubzoid-builder ships the builder skill.
+"""The Claude Code plugin in plugins/hubzoid ships the builder skill as build-hub.
 
 skills/builder/SKILL.md stays the source: the website's setup prompt and the
 docs link to it on main. The plugin carries an exact copy, because Anthropic's
@@ -10,15 +10,15 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN = ROOT / "plugins" / "hubzoid-builder"
+PLUGIN = ROOT / "plugins" / "hubzoid"
 
 
 def test_plugin_skill_matches_builder_skill():
     source = (ROOT / "skills" / "builder" / "SKILL.md").read_text(encoding="utf-8")
-    copy = (PLUGIN / "skills" / "hubzoid-builder" / "SKILL.md").read_text(encoding="utf-8")
+    copy = (PLUGIN / "skills" / "build-hub" / "SKILL.md").read_text(encoding="utf-8")
     assert copy == source, (
         "Copy skills/builder/SKILL.md to "
-        "plugins/hubzoid-builder/skills/hubzoid-builder/SKILL.md"
+        "plugins/hubzoid/skills/build-hub/SKILL.md"
     )
 
 
@@ -26,7 +26,7 @@ def test_marketplace_points_at_the_plugin_folder():
     marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
     (entry,) = marketplace["plugins"]
-    assert entry["name"] == manifest["name"] == "hubzoid-builder"
+    assert entry["name"] == manifest["name"] == "hubzoid"
     assert (ROOT / entry["source"]).resolve() == PLUGIN
 
 

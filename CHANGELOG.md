@@ -6,15 +6,26 @@ All notable changes to Hubzoid. Versions follow the package version in
 ## [Unreleased]
 
 ### Changed
-- **Claude Code plugin.** The `hubzoid-builder` plugin now lives in its own
-  folder, `plugins/hubzoid-builder`, with a manifest, README and license, and
-  carries a copy of the builder skill. Installing it copies a few files instead
-  of the whole repository. The install command is unchanged. The quickstart and
-  `skills/README.md` mention it.
+- **Claude Code plugin `hubzoid`.** The plugin lives in its own folder,
+  `plugins/hubzoid`, with a manifest, README, license and a copy of the builder
+  skill, so installing it copies a few files instead of the whole repository.
+  Install it with `/plugin install hubzoid --marketplace hubzoid/hubzoid`. The
+  builder skill inside is `build-hub` (`/hubzoid:build-hub`). It was briefly
+  named `hubzoid-builder`, and the marketplace maps that name to `hubzoid`, so
+  existing installs move over. The README lists what is sent to the model, what
+  is stored locally and what reaches a connector or observability endpoint only
+  when you set one up. The manifest sets the icon, documentation and support
+  links for Anthropic's directory. The quickstart and `skills/README.md`
+  mention it.
 - **Builder skill.** New connections start read-only, with writes behind an
   approval or saved as drafts until the person says otherwise. Knowledge files
   name who owns each source and when it goes stale. Evals also cover a request
   the agent should refuse and one its material cannot answer.
+
+### Removed
+- **`plugins/claude/hubzoid`.** The local template that only held an MCP
+  connection. Connect an assistant with `claude mcp add`, as in
+  `docs/mcp-oauth-claude.md`.
 
 ## [2.0.5]
 

@@ -1,5 +1,5 @@
 ---
-name: hubzoid-builder
+name: build-hub
 description: Build a working Hubzoid hub from a person's task, material and rules, with hub files, the hubzoid CLI and its local API. Use when someone asks Claude Code or Codex to set up Hubzoid, make an agent or hub for their work or team, add knowledge, a skill, a workflow, approvals (hitl.yaml), usage limits, MCP or evals, or give a teammate access.
 ---
 
