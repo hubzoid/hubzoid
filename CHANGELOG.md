@@ -21,6 +21,10 @@ All notable changes to Hubzoid. Versions follow the package version in
   approval or saved as drafts until the person says otherwise. Knowledge files
   name who owns each source and when it goes stale. Evals also cover a request
   the agent should refuse and one its material cannot answer.
+  It handles an existing hub without starting over, keeps the business rules a
+  document states while ignoring text addressed to the assistant, installs the
+  latest release unless a version is named, and uses token and turn limits with
+  a Codex sign-in, which a dollar limit refuses.
 
 ### Removed
 - **`plugins/claude/hubzoid`.** The local template that only held an MCP
