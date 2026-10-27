@@ -8,7 +8,8 @@ All notable changes to Hubzoid. Versions follow the package version in
 ## [2.0.6]
 
 2.0.5 was tagged but never published: its release checks found the restart
-race fixed here. 2.0.6 is 2.0.5 plus this fix.
+race fixed here. 2.0.6 is 2.0.5 plus this fix and the Claude Code plugin
+changes below.
 
 ### Fixed
 - A stop or restart waits for a reply that is finished and still saving its
@@ -16,6 +17,32 @@ race fixed here. 2.0.6 is 2.0.5 plus this fix.
   restart: its queued follow-ups were held back, and a channel thread got an
   error instead of the answer. `hubzoid restart` now also counts such a reply
   as busy before it stops the process.
+
+### Changed
+- **Claude Code plugin `hubzoid`.** The plugin lives in its own folder,
+  `plugins/hubzoid`, with a manifest, README, license and a copy of the builder
+  skill, so installing it copies a few files instead of the whole repository.
+  Install it with `/plugin install hubzoid --marketplace hubzoid/hubzoid`. The
+  builder skill inside is `build-hub` (`/hubzoid:build-hub`). It was briefly
+  named `hubzoid-builder`, and the marketplace maps that name to `hubzoid`, so
+  existing installs move over. The README lists what is sent to the model, what
+  is stored locally and what reaches a connector or observability endpoint only
+  when you set one up. The manifest sets the icon, documentation and support
+  links for Anthropic's directory. The quickstart and `skills/README.md`
+  mention it.
+- **Builder skill.** New connections start read-only, with writes behind an
+  approval or saved as drafts until the person says otherwise. Knowledge files
+  name who owns each source and when it goes stale. Evals also cover a request
+  the agent should refuse and one its material cannot answer.
+  It handles an existing hub without starting over, keeps the business rules a
+  document states while ignoring text addressed to the assistant, installs the
+  latest release unless a version is named, and uses token and turn limits with
+  a Codex sign-in, which a dollar limit refuses.
+
+### Removed
+- **`plugins/claude/hubzoid`.** The local template that only held an MCP
+  connection. Connect an assistant with `claude mcp add`, as in
+  `docs/mcp-oauth-claude.md`.
 
 ## [2.0.5]
 
