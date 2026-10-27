@@ -86,7 +86,8 @@ const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
     await page.getByText("Updated just now", { exact: true }).waitFor();
     assert.ok(reads > before, "Visible schedules must refresh");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("table").waitFor({ state: "hidden" });
+    // Schedules and reports are both tables until the phone layout swaps them for lists.
+    await page.waitForFunction(() => !document.querySelector("table"));
     const pause = page.getByRole("button", { name: "Pause", exact: true });
     await pause.scrollIntoViewIfNeeded();
     const box = await pause.boundingBox();

@@ -305,7 +305,7 @@ def build_app() -> FastAPI:
             return True
         runs = getattr(getattr(request.app.state, "chat", None), "runs", None)
         try:
-            return bool(runs is not None and runs.active_runs())
+            return bool(runs is not None and runs.busy())
         except Exception:  # noqa: BLE001 - when in doubt, still busy
             return True
 

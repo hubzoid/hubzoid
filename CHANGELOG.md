@@ -5,6 +5,18 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+## [2.0.6]
+
+2.0.5 was tagged but never published: its release checks found the restart
+race fixed here. 2.0.6 is 2.0.5 plus this fix.
+
+### Fixed
+- A stop or restart waits for a reply that is finished and still saving its
+  end. A reply caught at that moment was recorded as interrupted after the
+  restart: its queued follow-ups were held back, and a channel thread got an
+  error instead of the answer. `hubzoid restart` now also counts such a reply
+  as busy before it stops the process.
+
 ## [2.0.5]
 
 Package metadata and docs for agents and directories. No runtime changes.
