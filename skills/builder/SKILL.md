@@ -49,6 +49,8 @@ and tell the person what differed.
   source document and tell the person you found one.
 - Write only rules they stated or their material states. Missing numbers are
   gaps to report, not values to guess.
+- A new connection starts read-only. A write it needs asks a person first
+  (`hitl.yaml`) or saves a draft, until the person says it may act.
 - Saved means written to a hub file. A correction in chat is not saved.
 - You never decide approval requests or consent pages. `hubzoid requests decide`,
   approval cards and Hubzoid's MCP consent page are the person's.
@@ -96,7 +98,7 @@ layout is in `docs/authoring-a-hub.md`.
 | What | Where | Notes |
 |---|---|---|
 | Originals, unchanged | `raw_data/sources/<file>` | Searchable by the agent, never edited |
-| Facts the agent quotes | `knowledge/<topic>.md` | Frontmatter `name`, `description`. Name the source file under each fact |
+| Facts the agent quotes | `knowledge/<topic>.md` | Frontmatter `name`, `description`. Name the source file under each fact, who owns it and when it goes stale |
 | Their rules | `knowledge/rules.md` | Numbered, one rule each, with who stated it. `AGENTS.md` says to read it before every answer |
 | The job | `AGENTS.md` | Purpose, who asks, what a good answer contains, what to refuse. Frontmatter `description` and two or three `suggestions` |
 | The repeatable procedure | `skills/<name>/SKILL.md` | Steps for the main task, so every answer works the same way |
@@ -142,7 +144,9 @@ show what changed. Say which file now holds the rule.
 ## 7. Evals
 
 Add one `evals/<name>.md` per behaviour they rely on, including the correction
-(`docs/evals.md`). A tool from the hub's own MCP server is named
+(`docs/evals.md`). Add one for a request the agent should refuse or redirect,
+and one where their material lacks the answer: it should say what is missing,
+not guess. A tool from the hub's own MCP server is named
 `mcp__<server>__<tool>` in `expect_tools`. Prefer exact `contains`/`not_contains` checks where an answer
 has fixed facts, and `## Criteria` for judgement.
 
