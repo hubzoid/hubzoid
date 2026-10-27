@@ -285,6 +285,46 @@ async def test_shutdown_stops_and_saves_replies(hub, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_shutdown_waits_for_a_finished_reply_to_record_its_end(hub, monkeypatch):
+    """A reply the model has finished still saves and records its end. A stop
+    or restart then waits for it too: a run left open is later recorded as
+    interrupted, and a channel posts an error instead of the answer."""
+    import time
+
+    import sqlalchemy as sa
+
+    from hubzoid.chat import graph as g
+    from hubzoid.chat.engine import ChatEngine
+
+    real = ChatEngine.run_finished
+
+    def slow(self, *a, **k):
+        time.sleep(0.5)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(ChatEngine, "run_finished", slow)
+    app = build_app()
+    agent = app.state.chat.model_label
+    runs = app.state.chat.runs
+
+    def recorded():
+        with app.state.chat.engine.engine.connect() as c:
+            return c.execute(sa.select(g.runs.c.status).where(g.runs.c.message_id == "m_asst00002")).scalar()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        task = asyncio.create_task(client.post("/api/chat", headers=ORIGIN, json=chat_body(
+            "c_down00002", "hello", agent=agent, message_id="m_user00002",
+            assistant_id="m_asst00002")))
+        await _until(lambda: (r := runs._runs.get("m_asst00002")) is not None and r.finished)
+        assert runs.busy()      # what drain asks before the supervisor stops the process
+        await runs.shutdown(timeout=5)
+        # The process may stop from here on: the end is already recorded.
+        assert not runs.busy() and recorded() == "complete"
+        await asyncio.wait_for(task, timeout=5)
+
+
+@pytest.mark.asyncio
 async def test_idle_streams_send_keepalives_and_leaving_unsubscribes(monkeypatch):
     from types import SimpleNamespace
 

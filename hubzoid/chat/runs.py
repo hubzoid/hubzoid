@@ -139,6 +139,10 @@ class RunManager:
     def active_runs(self) -> list[Run]:
         return [r for r in list(self._runs.values()) if not r.finished]
 
+    def busy(self) -> bool:
+        """A reply is being written, or is done and still saving its end."""
+        return any(not r.closed for r in list(self._runs.values()))
+
     def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
               title: str | None = None, run_id: str | None = None, branch_id: str | None = None,
               fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None,
@@ -244,12 +248,15 @@ class RunManager:
         return True
 
     async def shutdown(self, timeout: float = 10.0) -> None:
-        """Stop every reply (the bridge is stopping) and wait for them to be saved."""
-        running = [r for r in self._runs.values() if not r.finished and r.task is not None]
-        for run in running:
-            run.task.cancel()
-        if running:
-            await asyncio.wait([r.task for r in running], timeout=timeout)
+        """Stop every reply (the bridge is stopping) and wait for them to be saved,
+        a reply already done too: until its end is recorded, its run stays open
+        and is recorded as interrupted after the restart."""
+        pending = [r for r in self._runs.values() if r.task is not None and not r.task.done()]
+        for run in pending:
+            if not run.finished:
+                run.task.cancel()
+        if pending:
+            await asyncio.wait([r.task for r in pending], timeout=timeout)
 
     # -- the run -----------------------------------------------------------------
     async def _execute(self, run: Run, prompt: str) -> None:
