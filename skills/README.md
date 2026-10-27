@@ -16,7 +16,8 @@ Plain-markdown skills for coding agents. Any tool (Claude Code, Cursor, Codex,
 
 In Claude Code, install it as a plugin:
 `/plugin install hubzoid --marketplace hubzoid/hubzoid`, then `/hubzoid:build-hub`
-([plugins/hubzoid](../plugins/hubzoid/README.md) carries a copy).
+([plugins/hubzoid](../plugins/hubzoid/README.md) carries a copy). In Codex:
+`codex plugin marketplace add hubzoid/hubzoid`, then `codex plugin add hubzoid@hubzoid`.
 Or put it where your assistant finds project skills, or ask it to read the file:
 
 ```bash

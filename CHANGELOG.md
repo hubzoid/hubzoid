@@ -5,6 +5,13 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Added
+- **Codex install for the `hubzoid` plugin.** `codex plugin marketplace add
+  hubzoid/hubzoid`, then `codex plugin add hubzoid@hubzoid`. The plugin gains a
+  root `plugin.json` in the Agent Plugins format with the listing fields
+  OpenAI's plugin directory reads. Claude Code still reads
+  `.claude-plugin/plugin.json`.
+
 ## [2.0.6]
 
 2.0.5 was tagged but never published: its release checks found the restart

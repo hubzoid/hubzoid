@@ -1,7 +1,7 @@
 # Hubzoid
 
 Build and run internal AI agents with [Hubzoid](https://hubzoid.com), the
-open-source platform for internal AI agents, from Claude Code. You describe a
+open-source platform for internal AI agents, from Claude Code or Codex. You describe a
 task, point to your material and state your rules. The plugin's `build-hub`
 skill turns them into a Hub, a folder of plain files, then tests it, saves a
 correction you choose and runs it on your machine.
@@ -22,6 +22,15 @@ claude plugin install hubzoid@hubzoid
 ```
 
 Then ask "Set up a Hubzoid hub for my work", or run `/hubzoid:build-hub`.
+
+In Codex:
+
+```bash
+codex plugin marketplace add hubzoid/hubzoid
+codex plugin add hubzoid@hubzoid
+```
+
+Then ask Codex to set up a Hubzoid hub for your work.
 
 ## What it does
 
