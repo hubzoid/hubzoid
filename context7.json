@@ -9,6 +9,7 @@
     "docs/parity",
     "docs/mcp-upgrade",
     "docs/release-notes",
+    "plugins",
     "proposals",
     "tests"
   ],
