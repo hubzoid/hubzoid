@@ -5,6 +5,17 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Changed
+- **Claude Code plugin.** The `hubzoid-builder` plugin now lives in its own
+  folder, `plugins/hubzoid-builder`, with a manifest, README and license, and
+  carries a copy of the builder skill. Installing it copies a few files instead
+  of the whole repository. The install command is unchanged. The quickstart and
+  `skills/README.md` mention it.
+- **Builder skill.** New connections start read-only, with writes behind an
+  approval or saved as drafts until the person says otherwise. Knowledge files
+  name who owns each source and when it goes stale. Evals also cover a request
+  the agent should refuse and one its material cannot answer.
+
 ## [2.0.5]
 
 Package metadata and docs for agents and directories. No runtime changes.
