@@ -33,3 +33,14 @@ def test_marketplace_points_at_the_plugin_folder():
 def test_plugin_folder_has_readme_and_license():
     assert len((PLUGIN / "README.md").read_text().split()) >= 40
     assert (PLUGIN / "LICENSE").read_text() == (ROOT / "LICENSE").read_text()
+
+
+def test_openai_manifest_matches_the_claude_manifest():
+    claude = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+    openai = json.loads((PLUGIN / "plugin.json").read_text())
+    assert openai["name"] == claude["name"]
+    ui = openai["extensions"]["com.openai"]["interface"]
+    assert len(ui["displayName"]) <= 30 and len(ui["shortDescription"]) <= 30
+    for key in ("composerIcon", "logo"):
+        assert (PLUGIN / ui[key]).is_file()
+    assert (PLUGIN / openai["extensions"]["com.openai"]["onboardingSkill"]).is_file()

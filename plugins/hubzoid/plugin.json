@@ -1,0 +1,42 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hubzoid",
+  "version": "1.0.0",
+  "description": "Build and run internal AI agents with Hubzoid. Turn your task, material and rules into a working Hub, test it, save a correction and share it with your team.",
+  "author": {
+    "name": "Hubzoid",
+    "url": "https://hubzoid.com"
+  },
+  "homepage": "https://hubzoid.com",
+  "repository": "https://github.com/hubzoid/hubzoid",
+  "license": "Apache-2.0",
+  "keywords": ["hubzoid", "ai-agents", "internal-ai-agents", "mcp", "skills"],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/build-hub/SKILL.md",
+      "interface": {
+        "displayName": "Hubzoid",
+        "shortDescription": "Build internal AI agents",
+        "longDescription": "Hubzoid is an open-source platform for internal AI agents. This plugin's build-hub skill turns your task, material and rules into a Hub, a folder of plain files, then tests it, saves a correction you choose and runs it on your machine. It installs Hubzoid from PyPI into a virtual environment and uses the hubzoid command line. Your material and requests go only to the model you choose. The Hub stores its files and history locally. It asks before turning on sign-in, granting access, enabling a schedule or reaching outside your machine. It needs a terminal, Python 3.11 or 3.12, and a signed-in Codex or a model API key.",
+        "developerName": "Hubzoid",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://hubzoid.com",
+        "supportURL": "https://github.com/hubzoid/hubzoid/issues",
+        "privacyPolicyURL": "https://hubzoid.com/legal/privacy",
+        "termsOfServiceURL": "https://hubzoid.com/legal/terms",
+        "defaultPrompt": [
+          "Set up a Hubzoid hub for my work",
+          "Add a rule to my Hubzoid hub and test it",
+          "Give a teammate access to my Hubzoid hub"
+        ],
+        "brandColor": "#E5572A",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      },
+      "publication": {
+        "release_notes": "First release: the build-hub skill builds, tests, corrects and runs a Hubzoid Hub from your task, material and rules."
+      }
+    }
+  }
+}
