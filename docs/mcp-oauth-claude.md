@@ -104,13 +104,13 @@ keys, including Open WebUI (1.x) keys, are rejected on MCP, and the old
 `MCP_AUTH_MODE` switch is gone. Clients obtain short-lived access tokens through
 sign-in and consent rather than asking people to paste a permanent key.
 
-## Plugin location
+## Claude Code plugin
 
-An optional local Claude Code plugin is at `plugins/claude/hubzoid`. It holds only
-MCP configuration. Set `HUBZOID_MCP_URL` and launch with `claude --plugin-dir ...`;
-see its README. Installing a plugin still requires each user's login and consent.
-The SDK code and hub data remain on your Hubzoid server. Marketplace publication
-and a separate OpenAI/Codex plugin package are outside this minimal release.
+The `hubzoid` Claude Code plugin (`plugins/hubzoid`) builds and runs a Hub. It
+does not hold a connection to a hosted Hub, because each Hub has its own MCP
+address. Connect with `claude mcp add` as in step 2. Each person still signs in
+and approves the connection. The local plugin template that used to be at
+`plugins/claude/hubzoid` was removed in favour of that command.
 
 ## Scope and operational limits
 

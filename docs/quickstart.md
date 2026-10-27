@@ -155,7 +155,7 @@ The hub's tools and knowledge are then available there under your access. See
 With Claude Code or Codex, the [builder skill](../skills/builder/SKILL.md)
 does these steps from your task, material and rules, with no clicks in Settings.
 In Claude Code you can install it as a plugin:
-`/plugin install hubzoid-builder --marketplace hubzoid/hubzoid`.
+`/plugin install hubzoid --marketplace hubzoid/hubzoid`.
 
 1. Edit `my-hub/AGENTS.md` to describe a real task and the expected result.
    Its `suggestions:` become the buttons on the empty chat screen.

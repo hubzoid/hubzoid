@@ -25,10 +25,8 @@ sign-in page, then Hubzoid consent, then returns to Claude. An existing
 sign-in skips the form, never the consent. Static API keys are not accepted.
 
 See [the complete Claude setup guide](mcp-oauth-claude.md) for deployment,
-gateway discovery, remote Claude connectors, migration and revocation. An
-optional [Claude Code plugin](../plugins/claude/hubzoid/README.md) packages this
-connection; it does not replace login or consent. Other clients must support
-OAuth with PKCE and Streamable HTTP.
+gateway discovery, remote Claude connectors, migration and revocation. Other
+clients must support OAuth with PKCE and Streamable HTTP.
 
 ## Identity & access
 

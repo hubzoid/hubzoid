@@ -7,13 +7,16 @@
   },
   "plugins": [
     {
-      "name": "hubzoid-builder",
-      "source": "./plugins/hubzoid-builder",
-      "description": "Build a working Hubzoid Hub from your task, material and rules with files and the hubzoid CLI, then test it, correct a rule and share it with your team.",
-      "homepage": "https://hubzoid.com/docs/getting-started/quickstart",
+      "name": "hubzoid",
+      "source": "./plugins/hubzoid",
+      "description": "Build and run internal AI agents with Hubzoid from Claude Code. Turn your task, material and rules into a working Hub, test it, save a correction and share it with your team.",
+      "homepage": "https://hubzoid.com",
       "repository": "https://github.com/hubzoid/hubzoid",
       "license": "Apache-2.0",
       "keywords": ["hubzoid", "ai-agents", "internal-ai-agents", "mcp", "skills"]
     }
-  ]
+  ],
+  "renames": {
+    "hubzoid-builder": "hubzoid"
+  }
 }
