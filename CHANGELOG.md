@@ -38,6 +38,12 @@ agents make Excel, PDF and Word files (#136).
   Existing file ids, references and chat folders are unchanged.
 
 ### Added
+- **Agents read Excel and Word attachments.** `read_upload` returns each sheet's
+  first 50 rows as comma-separated values (cell values, never formulas) and a
+  Word document's text, headings and tables; `read_upload_full` returns all of
+  it, and a PDF's text instead of its raw bytes. Office files that expand past
+  100 MiB are refused. Uses the openpyxl and python-docx added by #136. Before,
+  the agent got a binary preview and could not read them.
 - **Agents make Excel, PDF and Word files** (#136): `make_excel` (typed sheets,
   text stays text), `make_pdf` and `make_word` (a Markdown subset, never reading
   disk or network). Files land in the chat's artifacts folder and download from

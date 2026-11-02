@@ -162,8 +162,9 @@ def make(ctx) -> list:
         """Read the entire text content of an uploaded file.
 
         Use after a `read_upload` preview when you specifically need the
-        whole file. Refuses binary uploads (images, generic blobs) — use
-        a different tool for those. Caps at 250,000 characters; oversized
+        whole file: every row of an Excel workbook, all of a Word document
+        or PDF, or the whole text. Refuses binary uploads (images, generic
+        blobs). Caps at 250,000 characters; oversized
         files come through with a `[truncated]` marker.
 
         Args:
@@ -187,7 +188,9 @@ def make(ctx) -> list:
         (whole file if small); JSON returns a structural summary plus the
         pretty head; CSV returns the header + first 20 rows + total count;
         PDFs extract the first 5 pages of text (use `pages` to page);
-        images return metadata only; unknown binaries return a hex preview.
+        Excel returns every sheet's first 50 rows as comma-separated values;
+        Word returns its text, headings and tables; images return metadata
+        only; unknown binaries return a hex preview.
 
         Args:
             filename: Bare filename of the upload, e.g. "spec.pdf".
@@ -232,11 +235,20 @@ def _read_upload_full_impl(hub_dir: Path, filename: str) -> str:
 
     payload = target.read_bytes()
     meta = uploads_lib.read_meta(upload_dir, safe_name)
+    mime = (meta or {}).get("mime") or uploads_lib.guess_mime(safe_name)
     if meta and isinstance(meta.get("kind"), str):
         kind = meta["kind"]
     else:
-        mime = uploads_lib.guess_mime(safe_name)
         kind = uploads_lib.classify(mime, payload)
+    if kind == "binary" and mime in (uploads_lib.XLSX, uploads_lib.DOCX):
+        kind = uploads_lib.classify(mime, payload)
+    cap = upload_previews.READ_FULL_MAX_CHARS
+    if kind == "xlsx":
+        return upload_previews.xlsx_text(payload, max_rows=None, max_chars=cap)
+    if kind == "docx":
+        return upload_previews.docx_text(payload, max_chars=cap)
+    if kind == "pdf":
+        return upload_previews.pdf_preview(payload, pages="1-100000")[:cap]
     if kind in ("binary", "image"):
         return (
             f"[read_upload_full refused: {safe_name!r} is a {kind} file. "
@@ -244,7 +256,6 @@ def _read_upload_full_impl(hub_dir: Path, filename: str) -> str:
         )
 
     text = payload.decode("utf-8", errors="replace")
-    cap = upload_previews.READ_FULL_MAX_CHARS
     if len(text) > cap:
         text = (
             text[:cap]
@@ -289,6 +300,8 @@ def _read_upload_impl(
     else:
         mime = uploads_lib.guess_mime(safe_name)
         kind = uploads_lib.classify(mime, payload)
+    if kind == "binary" and mime in (uploads_lib.XLSX, uploads_lib.DOCX):
+        kind = uploads_lib.classify(mime, payload)   # a sidecar written before Office files were read
 
     if kind == "image":
         # image_preview already includes the path.
@@ -301,6 +314,11 @@ def _read_upload_impl(
     # validate_template, etc.) without an extra discovery step.
     if kind == "pdf":
         body = upload_previews.pdf_preview(payload, pages=pages)
+    elif kind == "xlsx":
+        body = upload_previews.xlsx_text(payload, max_rows=upload_previews.XLSX_PREVIEW_ROWS,
+                                         max_chars=upload_previews.READ_FULL_MAX_CHARS)
+    elif kind == "docx":
+        body = upload_previews.docx_text(payload, max_chars=upload_previews.READ_FULL_MAX_CHARS)
     elif kind == "json":
         body = upload_previews.json_preview(payload)
     elif kind == "csv":

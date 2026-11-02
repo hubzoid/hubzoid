@@ -16,6 +16,8 @@ import mimetypes
 from pathlib import Path
 
 SIDECAR_SUFFIX = ".hubzoid.json"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def classify(mime: str, payload: bytes) -> str:
@@ -29,6 +31,10 @@ def classify(mime: str, payload: bytes) -> str:
         return "json"
     if m in ("text/csv", "text/tab-separated-values"):
         return "csv"
+    if m == XLSX:
+        return "xlsx"
+    if m == DOCX:
+        return "docx"
     if m.startswith("text/"):
         return "text"
     # Generic mime: fall back to a peek. UTF-8 decodability over the

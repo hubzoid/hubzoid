@@ -285,3 +285,104 @@ def test_pdf_preview_includes_absolute_path(ctx):
     _put(ctx, "c", "doc.pdf", payload, mime="application/pdf")
     out = _read(ctx, "c", filename="doc.pdf")
     _assert_path_in_preview(out, "doc.pdf")
+
+
+# ---------------------------------------------------------------------------
+# Excel and Word: read as text (openpyxl, python-docx), never formulas or macros
+# ---------------------------------------------------------------------------
+def _xlsx(rows_per_sheet: dict) -> bytes:
+    import io as _io
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    for title, rows in rows_per_sheet.items():
+        ws = wb.create_sheet(title)
+        for row in rows:
+            ws.append(row)
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _docx() -> bytes:
+    import io as _io
+
+    from docx import Document
+
+    d = Document()
+    d.add_heading("Delivery note", 1)
+    d.add_paragraph("Courier: Synthetic Freight. Tracking TRK-90817.")
+    t = d.add_table(rows=2, cols=2)
+    t.cell(0, 0).text, t.cell(0, 1).text = "sku", "qty"
+    t.cell(1, 0).text, t.cell(1, 1).text = "SYN-1", "40"
+    buf = _io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+def _read_full(ctx: _Ctx, chat_id: str, filename: str) -> str:
+    full = _by_name(files_mod.make(ctx), "read_upload_full")
+    with _request_ctx.chat_scope(chat_id):
+        return _call(full, filename=filename)
+
+
+def test_excel_every_sheet_as_rows_with_a_bounded_preview(ctx):
+    data = _xlsx({"Stock": [["sku", "on_hand"], ["SYN-1", 40], ["SYN-2", 25]],
+                  "Big": [["n"]] + [[i] for i in range(120)]})
+    _put(ctx, "c", "stock.xlsx", data, mime=uploads_lib.XLSX)
+    out = _read(ctx, "c", filename="stock.xlsx")
+    assert "Excel workbook: 2 sheet(s): Stock, Big" in out
+    assert "sku,on_hand\nSYN-1,40\nSYN-2,25" in out
+    assert "Showing the first 50 of 121 rows" in out and "\n119" not in out
+    full = _read_full(ctx, "c", "stock.xlsx")
+    assert "\n119" in full and "Showing the first" not in full
+
+
+def test_excel_shows_values_not_formulas(ctx):
+    data = _xlsx({"S": [["a", "b", "sum"], [2, 3, "=A2+B2"]]})
+    _put(ctx, "c", "calc.xlsx", data, mime=uploads_lib.XLSX)
+    out = _read(ctx, "c", filename="calc.xlsx")
+    assert "a,b,sum\n2,3," in out and "=A2+B2" not in out   # never the formula (no cached value: empty)
+
+
+def test_word_text_headings_and_tables(ctx):
+    _put(ctx, "c", "note.docx", _docx(), mime=uploads_lib.DOCX)
+    out = _read(ctx, "c", filename="note.docx")
+    assert "# Delivery note" in out and "Tracking TRK-90817" in out
+    assert "sku | qty\nSYN-1 | 40" in out
+    assert "TRK-90817" in _read_full(ctx, "c", "note.docx")
+
+
+def test_office_files_from_before_still_read(ctx):
+    """A sidecar written before Office files were read says "binary"."""
+    path = _put(ctx, "c", "old.xlsx", _xlsx({"S": [["x"], [7]]}), mime=uploads_lib.XLSX)
+    (path.parent / "old.xlsx.hubzoid.json").write_text(json.dumps(
+        {"mime": uploads_lib.XLSX, "size": path.stat().st_size, "kind": "binary"}))
+    assert "x\n7" in _read(ctx, "c", filename="old.xlsx")
+
+
+def test_an_office_zip_bomb_is_refused(ctx, monkeypatch):
+    from hubzoid import upload_previews
+
+    monkeypatch.setattr(upload_previews, "OFFICE_MAX_EXPANDED_BYTES", 100)
+    _put(ctx, "c", "bomb.docx", _docx(), mime=uploads_lib.DOCX)
+    out = _read(ctx, "c", filename="bomb.docx")
+    assert "can't read this document" in out and "limit" in out
+    _put(ctx, "c", "fake.xlsx", b"not a zip", mime=uploads_lib.XLSX)
+    assert "not a valid Office file" in _read(ctx, "c", filename="fake.xlsx")
+
+
+def test_read_upload_full_returns_a_pdfs_text_not_its_bytes(ctx):
+    import io as _io
+
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=72, height=72)
+    buf = _io.BytesIO()
+    w.write(buf)
+    _put(ctx, "c", "blank.pdf", buf.getvalue(), mime="application/pdf")
+    out = _read_full(ctx, "c", "blank.pdf")
+    assert out.startswith("[PDF: 1 pages") and "%PDF" not in out
