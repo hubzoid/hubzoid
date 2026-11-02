@@ -30,8 +30,8 @@ from . import names, store
 SOURCE_LABELS = {
     cs.L_ENV: "Deployment environment",
     cs.L_DEPLOYMENT_SECRET: "Deployment secret",
-    cs.L_HUB: "Hub .env",
-    cs.L_HUB_SECRET: "Hub secret",
+    cs.L_HUB: "Agent .env",
+    cs.L_HUB_SECRET: "Agent secret",
     cs.L_RESTRICTED: "Restricted file",
     cs.L_RESTRICTED_SECRET: "Restricted secret",
 }
@@ -39,8 +39,8 @@ STORE_LABEL = "Stored"
 _LOCK_REASONS = {
     cs.L_ENV: "Set in the deployment environment. Remove it there to manage it here.",
     cs.L_DEPLOYMENT_SECRET: "Set in the deployment's AWS secret. Remove it there to manage it here.",
-    cs.L_HUB: "Set in the hub .env file. Remove the line there to manage it here.",
-    cs.L_HUB_SECRET: "Set in the hub's AWS secret. Remove it there to manage it here.",
+    cs.L_HUB: "Set in the agent's .env. Remove it there to manage it here.",
+    cs.L_HUB_SECRET: "Set in the agent's AWS secret. Remove it there to manage it here.",
     cs.L_RESTRICTED: "Set in restricted/.env. Remove the line there to manage it here.",
     cs.L_RESTRICTED_SECRET: "Set in the restricted AWS secret. Remove it there to manage it here.",
 }

@@ -102,8 +102,8 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
     <div>
       {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Sandboxes</Title>}
       <Paragraph type="secondary">
-        Isolated workspaces where the agent runs commands, removed when the work is done.
-        <InfoHelp text="Each belongs to one agent call and runs offline after its reviewed setup. Your hub's files and outputs are never touched by cleanup. The same controls are in hubzoid sandbox." />
+        Where the agent runs commands, isolated.
+        <InfoHelp text="One per agent call, offline after setup. Cleanup never touches the agent's files. Turn on with enabled: true and a Docker provider in sandbox.yaml. CLI: hubzoid sandbox." />
       </Paragraph>
       <Space wrap style={{ marginBottom: 16 }}>
         {hubs.length > 1 && (
@@ -150,12 +150,9 @@ export function SandboxesScreen({ hubs }: { hubs: HubOption[] }) {
       ) : list.loading ? (
         <Spin />
       ) : !list.data?.enabled && (list.data?.sandboxes.length ?? 0) === 0 ? (
-        <Empty description="Sandboxes are off for this agent.">
-          <Text type="secondary">Add <Text code>sandbox.yaml</Text> with <Text code>enabled: true</Text> and a Docker
-            provider, then run <Text code>hubzoid sandbox doctor</Text>.</Text>
-        </Empty>
+        <Empty description="Sandboxes are off for this agent." />
       ) : (list.data?.sandboxes.length ?? 0) === 0 ? (
-        <Empty description={state ? "No sandboxes in this state." : "No sandboxes yet. One starts when an agent with a sandbox runs."} />
+        <Empty description={state ? "No sandboxes in this state." : "No sandboxes yet."} />
       ) : (
         <Table<Sandbox>
           rowKey="id" size="middle" pagination={PAGED} dataSource={list.data?.sandboxes}

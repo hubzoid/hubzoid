@@ -21,10 +21,10 @@ const STATUS: Record<SecretRow["status"], { label: string; color: string }> = {
   rebind: { label: "Set again for this destination", color: "red" },
 };
 const WHY: Record<string, string> = {
-  model: "Needed by this agent's model",
-  webhook: "Needed to verify a webhook",
-  declared: "Listed in the agent's .env.example",
-  setting: "Declared in the agent's settings.yaml",
+  model: "Used by the model",
+  webhook: "Verifies a webhook",
+  declared: "Expected by this agent",
+  setting: "Used by a setting",
 };
 
 type Editing = { mode: "add" } | { mode: "set"; row: SecretRow } | null;
@@ -56,7 +56,7 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
     if (!row.stored) return;
     try {
       await secretsRequest(`${target(row)}?expected_revision=${row.stored.revision}`, "DELETE");
-      setNotice({ type: "success", text: `${row.name} removed. The agent stops using it after it restarts.` });
+      setNotice({ type: "success", text: `${row.name} removed. Applies after a restart.` });
     } catch (e) {
       setNotice({ type: "error", text: errorText(e) });
     }
@@ -70,11 +70,11 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
     <div className="panel">
       <Title level={2}>
         Secrets
-        <InfoHelp text="API keys and tokens this agent uses. The same list as hubzoid secrets list." />
+        <InfoHelp text={`API keys and tokens this agent uses. CLI: hubzoid secrets list ${hub.key}, hubzoid secrets set ${hub.key} --name NAME.`} />
       </Title>
       <Text type="secondary" className="hint">
-        Set keys in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent. Values are never shown here.
-        <InfoHelp text="Hubzoid stores only keys it obtains itself, such as a connection's sign-in. A value set in the environment, a .env file or an AWS secret shows as locked." />
+        Values stay hidden. Set on the server, then restart.
+        <InfoHelp text={`Keys set on the server (environment, ${hub.key}/.env, AWS) show as locked. Hubzoid stores only keys it gets itself, like a sign-in.`} />
       </Text>
       {restricted_hidden > 0 && (
         <Text type="secondary" className="hint">
@@ -90,7 +90,7 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
         size="small"
         pagination={PAGED}
         dataSource={secrets}
-        locale={{ emptyText: "No secrets are set or expected for this agent. List the names it needs in .env.example." }}
+        locale={{ emptyText: "No secrets set or needed." }}
         columns={[
           {
             title: "Name",
@@ -162,7 +162,7 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
                         {r.stored && (
                           <Popconfirm
                             title={`Remove ${r.name}?`}
-                            description="The agent stops using it after it restarts."
+                            description="Applies after a restart."
                             okText="Remove"
                             okButtonProps={{ danger: true }}
                             onConfirm={() => remove(r)}
@@ -177,18 +177,14 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
             : []),
         ]}
       />
-      <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-        From a terminal: <Text code>hubzoid secrets list {hub.key}</Text>
-      </Text>
       {editing && (
         <SecretEditor
-          hub={hub}
           editing={editing}
           urlFor={target}
           onClose={(saved) => {
             setEditing(null);
             if (saved) {
-              setNotice({ type: "success", text: `${saved} saved. It applies after the agent restarts.` });
+              setNotice({ type: "success", text: `${saved} saved. Applies after a restart.` });
               reload();
             }
           }}
@@ -199,12 +195,10 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
 }
 
 function SecretEditor({
-  hub,
   editing,
   urlFor,
   onClose,
 }: {
-  hub: Hub;
   editing: Exclude<Editing, null>;
   urlFor: (row: { name: string; level: SecretLevel; stored?: SecretRow["stored"] }) => string;
   onClose: (saved?: string) => void;
@@ -232,7 +226,7 @@ function SecretEditor({
       onClose(name);
     } catch (e) {
       setError(e instanceof ApiError && e.code === "revision_conflict"
-        ? "Someone changed this secret since you opened it. Close this and try again."
+        ? "Changed by someone else. Close and try again."
         : errorText(e));
     } finally {
       setSaving(false);
@@ -257,7 +251,7 @@ function SecretEditor({
               name="name"
               label="Name"
               rules={[
-                { required: true, message: "Enter the name the agent reads, for example OPENAI_API_KEY." },
+                { required: true, message: "Enter a name." },
                 { pattern: /^[A-Za-z_][A-Za-z0-9_]*$/, message: "Use letters, digits and underscores." },
               ]}
             >
@@ -279,9 +273,6 @@ function SecretEditor({
           <Input.Password autoComplete="new-password" visibilityToggle={false} />
         </Form.Item>
       </Form>
-      <Text type="secondary">
-        From a terminal: <Text code>hubzoid secrets set {hub.key} --name {row?.name ?? "NAME"}</Text>
-      </Text>
     </Modal>
   );
 }

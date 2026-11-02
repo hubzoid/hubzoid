@@ -202,7 +202,7 @@ def test_configuration_status_is_by_name_and_never_exposes_values(api, register,
 
     assert status("zz_switched") == (True, "")
     hub_env.write_text("HZ_PROBE_ON=false\n")
-    assert status("zz_switched") == (False, "Disabled for this hub")
+    assert status("zz_switched") == (False, "Turned off for this agent")
     hub_env.write_text(f"HZ_PROBE_ON=true\nHZ_PROBE_KEY={FAKE_SECRET}\n")
     assert status("zz_switched") == (True, "")
 
@@ -340,7 +340,7 @@ def test_probe_says_why_a_capability_cannot_run_in_this_hub(api, register):
         "zz_probed": (False, "No workflows in this agent"),
         "zz_probe_ok": (True, ""),
         "zz_probe_err": (None, "Not checked"),
-        "zz_probe_off": (False, "Disabled for this hub"),  # the switch wins; probe not asked
+        "zz_probe_off": (False, "Turned off for this agent"),  # the switch wins; probe not asked
     }
     assert asked and asked[0] == api.dirs["finance"]
 
@@ -351,7 +351,7 @@ def test_any_named_switch_turns_a_capability_off(api, register):
     hub_env = api.dirs["finance"] / ".env"
     assert _by_id(api.svc.catalog("finance"))["zz_two"]["available"] is True
     hub_env.write_text("HZ_PROBE_KEY=off\n")
-    assert _by_id(api.svc.catalog("finance"))["zz_two"]["status"] == "Disabled for this hub"
+    assert _by_id(api.svc.catalog("finance"))["zz_two"]["status"] == "Turned off for this agent"
     assert capabilities.switched_off(cap, {"HZ_PROBE_ON": "false"})
     assert capabilities.switched_off(cap, {"HZ_PROBE_ON": "true", "HZ_PROBE_KEY": "0"})
     assert not capabilities.switched_off(cap, {"HZ_PROBE_ON": "true"})

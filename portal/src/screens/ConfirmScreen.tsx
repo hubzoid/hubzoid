@@ -44,7 +44,7 @@ export function ConfirmScreen({ id, hubs }: { id: string; hubs: Hub[] }) {
             type="warning"
             showIcon
             title="This change request isn’t available"
-            description="It doesn’t exist, or it was proposed by someone else. Only the person who asked for a change can confirm it. Ask the agent again if you still need it."
+            description="Only the person who asked can confirm it. Ask the agent again if needed."
           />
         ) : (
           <LoadState error={data.error} retry={data.reload} />

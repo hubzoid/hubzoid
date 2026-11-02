@@ -426,7 +426,8 @@ function EventDetail({
           { key: "agent", label: "Agent", children: <Text>{agentLabel}</Text> },
           {
             key: "cap",
-            label: "Capability",
+            // Control-plane events keep a short JSON summary here instead.
+            label: (row.permission ?? "").trimStart().startsWith("{") ? "Details" : "Capability",
             children: code(row.permission),
           },
         ]

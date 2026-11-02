@@ -763,10 +763,15 @@ container platform restarts the deployment.
 Changing an agent's files from the browser is **Beta and off by default**.
 That covers proposing and approving hub changes (instructions, knowledge,
 skills), the agent's `remember` and `propose_hub_change` tools, and saving
-connectors, channels, settings, approval rules and budgets in Settings. People
-still read connectors, channels, settings and approval rules there, and the CLI
-and your editor work as before. An agent's instruction files show in Settings
-only while it is on, under **Configuration → Instructions**.
+channels, settings, approval rules and budgets in Settings. People still read
+channels, settings and approval rules there, and the CLI and your editor work
+as before. An agent's instruction files show in Settings only while it is on,
+under **Configuration → Instructions**.
+
+Connectors are the exception: organization administrators add, edit, offer and
+delete them on an agent's **Connectors** tab with the switch off too. Each one
+is a YAML file under `connectors/`, so on a server checkout commit the new file
+(or add it in the repository) before the next pull or deploy.
 
 ```yaml
 in_app_editing: true      # in hubzoid.yaml, or HUBZOID_IN_APP_EDITING=true

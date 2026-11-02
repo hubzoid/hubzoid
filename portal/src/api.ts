@@ -675,6 +675,8 @@ export const hubRequest = secretsRequest;
 export type SettingProblem = { key?: string; code: string; message: string; file?: string; line?: number };
 export type HubSetting = {
   name: string;
+  /** settings.yaml `label`, when the agent gives one (2.0.7+). */
+  label?: string | null;
   type: "string" | "integer" | "number" | "boolean" | "string_list";
   required: boolean;
   secret: boolean;

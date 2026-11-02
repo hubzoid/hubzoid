@@ -199,9 +199,9 @@ def browser_routes(provider):
             )
         if not allowed(provider.hub_dir, who["email"]):
             return _notice(
-                "Hub access needed",
-                f"{who['email']} does not have access to {_agent_name(provider.hub_dir)}. "
-                "Ask an administrator for access, then reconnect from your assistant.",
+                "Access needed",
+                f"{who['email']} can't use {_agent_name(provider.hub_dir)}. "
+                "Ask an administrator, then reconnect.",
                 403,
             )
         client = await provider.get_client(pending["client_id"])

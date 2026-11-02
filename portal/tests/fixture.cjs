@@ -70,7 +70,7 @@ function createFixture() {
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
         // Workflow tools switched off for this agent (HUBZOID_WORKFLOW_TOOLS=false).
-        ...agentTools({ status: "Disabled for this hub", available: false }),
+        ...agentTools({ status: "Turned off for this agent", available: false }),
         perm("tickets", "Work tickets", "Read and update helpdesk tickets."),
         perm("refunds", "Issue refunds", "Refund customer payments.", true),
       ],
@@ -132,6 +132,9 @@ function createFixture() {
       // A run started with an agent tool: the workflow in permission, the run id as subject.
       row(NOW - 3 * HOUR, "aisha.rahman@example.org", "run_start", "mc-2026-10-01", "finance", "monthly_close", "mcp"),
       row(NOW - 5 * HOUR, "admin@example.org", "suspend", "tomas.herrera@example.org", ORG, null),
+      // Health checks: a report id as subject and a JSON summary in permission.
+      row(NOW - 6 * HOUR, "admin@example.org", "diagnostic.requested", "d8846706-b3cf-418c-88a5-0c3e3eae4cd2", "finance", '{"profile":"passive","checks":16}', "admin"),
+      row(NOW - 6 * HOUR + 5, "admin@example.org", "diagnostic.completed", "d8846706-b3cf-418c-88a5-0c3e3eae4cd2", "finance", '{"status":"completed"}', "admin"),
       row(NOW - 26 * HOUR, "admin@example.org", "grant", EVERYONE, "support", USE_HUB),
       row(NOW - 3 * 24 * HOUR, "bootstrap", "grant", "admin@example.org", ORG, MANAGE_ACCESS),
       row(NOW - 3 * 24 * HOUR, "bootstrap", "activate", null, "finance", null),

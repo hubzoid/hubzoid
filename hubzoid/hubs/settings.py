@@ -1,7 +1,7 @@
 """Settings a hub declares, and their values.
 
-    <hub>/settings.yaml        declarations: name, type, required, default, example,
-                               secret, regex, enum, minimum, maximum, env
+    <hub>/settings.yaml        declarations: name, label, type, required, default,
+                               example, secret, regex, enum, minimum, maximum, env
     <hub>/hub.settings.yaml    values: `values.KEY` for settings, `secrets.KEY_ref`
                                for secret references (secret:... or env:...)
 
@@ -55,6 +55,7 @@ class Declaration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    label: str | None = Field(default=None, max_length=80)
     description: str = ""
     required: bool = False
     type: Literal["string", "integer", "number", "boolean", "string_list"] = "string"
@@ -139,7 +140,7 @@ class Resolved:
 
     def public(self) -> dict:
         d = self.decl
-        out = {"name": d.name, "type": d.type, "required": d.required, "secret": d.secret,
+        out = {"name": d.name, "label": d.label, "type": d.type, "required": d.required, "secret": d.secret,
                "description": d.description, "example": d.example if not d.secret else None,
                "enum": d.enum, "source": self.source,
                "status": ("invalid" if any(p.blocking for p in self.problems)

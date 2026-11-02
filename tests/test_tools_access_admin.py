@@ -110,7 +110,7 @@ def test_kill_switches_remove_the_tools(dep, monkeypatch, switch):
     monkeypatch.setenv(switch, "false")
     assert access_admin.make(SimpleNamespace(hub_dir=dep.hub_dir)) == []
     row = {e["permission"]: e for e in dep.svc.catalog("finance")}["access_tools"]
-    assert (row["available"], row["status"]) == (False, "Disabled for this hub")
+    assert (row["available"], row["status"]) == (False, "Turned off for this agent")
 
 
 def test_legacy_flag_warns_once(dep, monkeypatch, caplog):

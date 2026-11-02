@@ -126,7 +126,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
       <div className="panel-heading">
         <div>
           {!underTabs && <Title level={2}>Workflows</Title>}
-          <Text type="secondary">Work this agent does on a timetable, on a webhook or when started.</Text>
+          <Text type="secondary">Work on a timetable, webhook or request.</Text>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
           Refresh
@@ -145,7 +145,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
             <Empty
               description={
                 <>
-                  <div>No workflows yet <Help text="Use a Markdown task for a plain-language brief, or create a Python workflow with the server command." /></div>
+                  <div>No workflows yet <Help text="Write a Markdown task, or copy the command for a Python workflow." /></div>
                   <Space><Button href="https://hubzoid.com/docs/guides/markdown-tasks" target="_blank" rel="noopener noreferrer">Guide</Button>
                   <CopyCommand label="Copy create command" command={createWorkflowCommand(hub.path || hub.key)} /></Space>
                 </>
@@ -214,7 +214,7 @@ function WorkflowList({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               ),
           },
           {
-            title: <span style={{ whiteSpace: "nowrap" }}>In chat <Help text="People given this workflow in Access can run it in chat for themselves. Schedule: they can also save a personal schedule, if allowed to schedule reports." /></span>,
+            title: <span style={{ whiteSpace: "nowrap" }}>In chat <Help text="People given this workflow in Access can run it in chat. Schedule: they can also schedule it for themselves." /></span>,
             key: "chat",
             render: (_, w) =>
               w.as_tool ? (
@@ -265,28 +265,28 @@ function shortTime(value: string | number): string {
 
 /** One line that says whether a workflow will run, and what to do if not. */
 function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "warning" } {
-  const when = w.webhook ? "when its webhook receives an event"
+  const when = w.webhook ? "for each webhook event"
     : w.schedule ? `${(w.schedule_text ?? describeCron(w.schedule)).replace(/^./, (c) => c.toLowerCase())} (${w.timezone})` : "";
-  const file = w.source ? <Text code>{w.source}</Text> : "its file";
+  // The file, setting or command that changes it shows on hover.
+  const hint = (text: string, title: string) => <span title={title}>{text}</span>;
   switch (w.state) {
     case "definition-disabled":
-      return { text: <>Off. Turn it on with <Text code>enabled: true</Text> in {file}.</> };
+      return { text: hint("Off.", `Turn on with enabled: true in ${w.source ?? "its file"}.`) };
     case "schedules_off":
-      return { text: <>Schedules are off on this machine (<Text code>HUBZOID_SCHEDULES</Text>), so it won't run {when}.</>, tone: "warning" };
     case "disabled":
-      return { text: <>Schedules are off here. Set <Text code>HUBZOID_SCHEDULES=1</Text> to run it {when}.</>, tone: "warning" };
+      return { text: hint("Off: schedules are off on this server.", "Set HUBZOID_SCHEDULES=1."), tone: "warning" };
     case "paused":
-      return { text: <>Paused. Resume it with <Text code>hubzoid schedule resume</Text>.</>, tone: "warning" };
+      return { text: hint("Paused.", "Resume: hubzoid schedule resume."), tone: "warning" };
     case "stale":
-      return { text: "The scheduler stopped. Restart the agent to run it again.", tone: "danger" };
+      return { text: "The scheduler stopped. Restart the agent.", tone: "danger" };
     case "error":
       return { text: <>Can't run: {w.error}</>, tone: "danger" };
     case "event":
-      return { text: `On. Runs ${when}.` };
+      return { text: `On, ${when}.` };
     case "manual":
-      return { text: "Runs when someone starts it." };
+      return { text: "Runs when started." };
     default:
-      return { text: <>On. Runs {when}.{w.next_run ? <> Next run <span title={formatTime(w.next_run)}>{shortTime(w.next_run)}</span>.</> : null}</> };
+      return { text: <>On, {when}.{w.next_run ? <> Next: <span title={formatTime(w.next_run)}>{shortTime(w.next_run)}</span>.</> : null}</> };
   }
 }
 
@@ -709,7 +709,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
           <WorkflowResult output={r.output} />
         ) : r.redacted ? (
           <Text type="secondary">
-            Private <Help text={`Only ${r.run_as || "the account the run acted as"} can see this result. Managing the hub does not grant access.`} />
+            Private <Help text={`Only ${r.run_as || "the account the run acted as"} can see this result. Managing the agent does not grant access.`} />
           </Text>
         ) : (
           <Text type="secondary">
