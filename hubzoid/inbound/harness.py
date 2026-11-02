@@ -49,7 +49,7 @@ from .dedup import Dedup
 from .dispatch import dispatch as default_dispatch
 from .history import DEFAULT_MAX_MESSAGES, History
 from .render import strip_thinking, strip_tool_calls
-from .uploads import push_upload
+from .uploads import push_upload, with_files
 from .webhook import WebhookConfig
 
 log = logging.getLogger("hubzoid.inbound")
@@ -155,25 +155,28 @@ def _chat_lock(chat_id: str) -> "threading.Lock":
         return lk
 
 
-def _with_attachments(text: str, markers: "list[str]") -> str:
-    """Prepend attachment markers to the user's text so the model sees the file
-    (images via vision_inject, other files via read_upload) alongside any caption.
-    The marker-augmented text is what gets stored in history too, so the reference
-    re-expands on later turns — Slack/OWUI parity."""
-    if not markers:
-        return text
-    joined = "\n\n".join(markers)
-    return f"{joined}\n\n{text}".strip() if text else joined
+def _text_only(content) -> str:
+    """The words of a user message (its text parts when it carries files)."""
+    if isinstance(content, str):
+        return content
+    return "\n\n".join(p.get("text", "") for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+
+
+def _with_attachments(text: str, file_ids: "list[str]"):
+    """The user's message: the caption alone, or the caption plus a file part
+    per attachment (``inbound.uploads.with_files``). The parts are stored in
+    history too, so the bridge shows the same files on later turns."""
+    return with_files(text, file_ids)
 
 
 # Per-surface "media id/file id -> bytes" downloaders. The rest of the ingest
-# path (POST to the bridge, build the marker) is shared in `push_upload`.
+# path (upload to the bridge, get the file id) is shared in `push_upload`.
 _MEDIA_FETCHERS = {"whatsapp": wa_media.fetch, "telegram": tg_media.fetch}
 
 
 def _make_default_ingest(bridge_url, api_key, max_upload_bytes):
     """Build the real media-ingest fn: download each attachment from the surface
-    and push it to the bridge's uploads dir, returning the markers to stitch.
+    and upload it to the bridge, returning the stored file ids.
     Injectable in tests so the harness never touches real HTTP."""
     import httpx
 
@@ -181,7 +184,7 @@ def _make_default_ingest(bridge_url, api_key, max_upload_bytes):
         fetch = _MEDIA_FETCHERS.get(surface)
         if not media or fetch is None:
             return []
-        markers: "list[str]" = []
+        file_ids: "list[str]" = []
         with httpx.Client(timeout=30.0) as http:
             for ref in media:
                 try:
@@ -191,14 +194,14 @@ def _make_default_ingest(bridge_url, api_key, max_upload_bytes):
                     continue
                 if not content:
                     continue
-                marker = push_upload(
-                    http=http, bridge_url=bridge_url, api_key=api_key, chat_id=chat_id,
+                file_id = push_upload(
+                    http=http, bridge_url=bridge_url, api_key=api_key,
                     name=ref.name, mime=ref.mime or "application/octet-stream",
                     content=content, max_upload_bytes=max_upload_bytes,
                 )
-                if marker:
-                    markers.append(marker)
-        return markers
+                if file_id:
+                    file_ids.append(file_id)
+        return file_ids
 
     return ingest
 
@@ -411,8 +414,8 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
         chat_id = f"whatsapp-{m.handle}"
         user_text = m.text
         if m.media:
-            markers = ingest(surface="whatsapp", token=wa.token, media=m.media, chat_id=chat_id)
-            user_text = _with_attachments(m.text, markers)
+            file_ids = ingest(surface="whatsapp", token=wa.token, media=m.media, chat_id=chat_id)
+            user_text = _with_attachments(m.text, file_ids)
         # Serialize this chat's turns so a rapid second message waits for this one
         # and then sees it in history (ordering + context). Media download above
         # stays outside the lock, so a queued message fetches while it waits.
@@ -448,7 +451,7 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
             text = wa_render_final(reply)
             if hub_dir is not None:
                 extra = _journey_after_turn(hub_dir, email=email, chat_id=chat_id,
-                                            since=turn_started, user_text=user_text,
+                                            since=turn_started, user_text=_text_only(user_text),
                                             reply=reply or "")
                 if extra:
                     text = f"{text.rstrip()}\n\n{extra}" if text.strip() else extra
@@ -528,9 +531,9 @@ def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url
             chat_id = f"telegram-{p.handle}"
             user_text = p.text
             if p.media:
-                markers = ingest(surface="telegram", token=tg.bot_token, media=p.media,
+                file_ids = ingest(surface="telegram", token=tg.bot_token, media=p.media,
                                  chat_id=chat_id)
-                user_text = _with_attachments(p.text, markers)
+                user_text = _with_attachments(p.text, file_ids)
             # Serialize this chat's turns (see the WhatsApp handler); media download
             # above stays outside the lock so a queued message fetches while it waits.
             with _chat_lock(chat_id):

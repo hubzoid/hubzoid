@@ -1,15 +1,13 @@
 """``hubzoid files`` and ``hubzoid artifacts`` (local mode).
 
 The same service as ``/api/chat/files`` and ``/api/chat/artifacts``, acting as
-one account (``--user EMAIL``, default the local owner). ``files upload`` sends
-the file in resumable chunks exactly as the API does, then waits for the type
-check unless ``--no-wait``.
+one account (``--user EMAIL``, default the local owner). ``files upload``
+stores the file with ``hubzoid.attachments.save``, as ``POST /api/chat/files``
+does, and attaches it to ``--conversation`` when given.
 """
 from __future__ import annotations
 
-import hashlib
 import time
-import uuid
 from pathlib import Path
 
 import typer
@@ -30,29 +28,21 @@ def _svc(loc):
 @files_app.command("upload")
 def f_upload(path: Path = typer.Argument(..., help="The file to upload."), hub: Path = typer.Option(Path("."), "--hub"),
              conversation: str = typer.Option(None, "--conversation", help="Attach it to this conversation."),
-             mime: str = typer.Option(None, "--mime-type"), no_wait: bool = typer.Option(False, "--no-wait"),
-             key: str = typer.Option(None, "--idempotency-key"), user: str = USER, as_json: bool = JSON) -> None:
+             mime: str = typer.Option(None, "--mime-type"), user: str = USER, as_json: bool = JSON) -> None:
+    from .. import attachments
+
     loc = _local(hub, as_json, user)
     if not path.is_file():
         cc.fail(400, "invalid_request", f"{path} is not a file.", as_json)
-    data = path.read_bytes()
-    svc = _svc(loc)
+    _svc(loc)   # the store, bound to this engine before save and attach use it
     with loc.guard():
-        up = svc.start_upload(loc.actor_obj, {"name": path.name, "size_bytes": len(data), "mime_type": mime or "",
-                                              "conversation_id": conversation,
-                                              "content_sha256": hashlib.sha256(data).hexdigest()},
-                              key=key or str(uuid.uuid4()))
-        offset = up["offset"]
-        while offset < len(data):
-            chunk = data[offset:offset + up["chunk_bytes"]]
-            offset = svc.put_chunk(loc.actor_obj, up["upload_id"], offset, chunk,
-                                   hashlib.sha256(chunk).hexdigest())["offset"]
-        desc = svc.complete(loc.actor_obj, up["upload_id"], hashlib.sha256(data).hexdigest())
+        desc = attachments.save(loc.hub, path.read_bytes(), path.name, mime or "", loc.actor_obj.id)
         if conversation:
-            desc = {**desc, "attached": svc.attach(loc.actor_obj, desc["file_id"], conversation)} \
-                if _wait(svc, loc, desc["file_id"], 30)["state"] == "ready" else desc
-        elif not no_wait:
-            desc = _wait(svc, loc, desc["file_id"], 30)
+            try:
+                desc = {**desc, "attached": attachments.attach_conversation(loc.hub, loc.actor_obj, desc["file_id"],
+                                                                            conversation)}
+            except attachments.AttachmentError as exc:
+                cc.fail(exc.status, exc.code, exc.message, as_json)
     cc.emit(desc, as_json)
 
 
@@ -113,9 +103,15 @@ def f_download(file_id: str, output: Path = typer.Option(..., "--output"), hub: 
 @files_app.command("attach")
 def f_attach(file_id: str, conversation: str = typer.Option(..., "--conversation"),
              hub: Path = typer.Option(Path("."), "--hub"), user: str = USER, as_json: bool = JSON) -> None:
+    from .. import attachments
+
     loc = _local(hub, as_json, user)
+    _svc(loc)
     with loc.guard():
-        cc.emit(_svc(loc).attach(loc.actor_obj, file_id, conversation), as_json)
+        try:
+            cc.emit(attachments.attach_conversation(loc.hub, loc.actor_obj, file_id, conversation), as_json)
+        except attachments.AttachmentError as exc:
+            cc.fail(exc.status, exc.code, exc.message, as_json)
 
 
 @files_app.command("references")

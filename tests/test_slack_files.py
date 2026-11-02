@@ -2,10 +2,10 @@
 
 When a Slack message has a `files` array, the adapter must:
   1. Fetch each file via `url_private_download` with the bot token.
-  2. POST it to the bridge's `/uploads/{chat_id}/{filename}` route (which
-     applies the same size cap + sidecar metadata as data-URL uploads).
-  3. Append a `[User attached file: X. Read with read_upload('X').]` note
-     to that message so the bridge's prompt flatten carries it through.
+  2. Upload it to the bridge's `POST /api/chat/files` (the one upload route,
+     `inbound.uploads.push_upload`) and keep the stored file id.
+  3. Put a file part with that id on the message, which the bridge attaches
+     to the thread's chat.
 
 Files larger than the bridge's cap, or whose download fails, are skipped
 with a warning rather than crashing the turn.
@@ -55,7 +55,8 @@ def test_download_uploads_each_file_to_bridge():
 
     http = MagicMock()
     slack_get = MagicMock(status_code=200, content=payload, headers={"content-type": "application/pdf"})
-    bridge_post = MagicMock(status_code=200)
+    bridge_post = MagicMock(status_code=201)
+    bridge_post.json.return_value = {"file_id": "stored-spec"}
     http.get.return_value = slack_get
     http.post.return_value = bridge_post
 
@@ -75,15 +76,14 @@ def test_download_uploads_each_file_to_bridge():
     assert "files.slack.com" in slack_call.args[0]
     assert slack_call.kwargs["headers"]["Authorization"] == "Bearer xoxb-fake"
 
-    # POST went to the bridge /uploads route with the bridge api key.
+    # The upload went to the one upload route with the bridge api key.
     bridge_call = http.post.call_args
-    assert bridge_call.args[0].endswith("/uploads/slack-1700000001.000100/spec.pdf")
+    assert bridge_call.args[0] == "http://127.0.0.1:8000/api/chat/files"
     assert bridge_call.kwargs["headers"]["Authorization"] == "Bearer dev"
-    assert bridge_call.kwargs["headers"].get("Content-Type") == "application/pdf"
-    assert bridge_call.kwargs["content"] == payload
+    assert bridge_call.kwargs["files"]["file"] == ("spec.pdf", payload, "application/pdf")
 
-    # Result maps the message's ts to the filenames that succeeded.
-    assert result == {"1700000001.000100": ["spec.pdf"]}
+    # Result maps the message's ts to the stored file ids.
+    assert result == {"1700000001.000100": ["stored-spec"]}
 
 
 def test_download_skips_files_over_size_cap():
@@ -160,7 +160,8 @@ def test_download_multiple_files_in_one_message():
     ]
     http = MagicMock()
     http.get.return_value = MagicMock(status_code=200, content=b"x", headers={})
-    http.post.return_value = MagicMock(status_code=200)
+    http.post.side_effect = [MagicMock(status_code=201, json=MagicMock(return_value={"file_id": "fa"})),
+                             MagicMock(status_code=201, json=MagicMock(return_value={"file_id": "fb"}))]
     history = [
         {
             "ts": "t1",
@@ -178,26 +179,27 @@ def test_download_multiple_files_in_one_message():
         bot_token="xoxb",
         max_upload_bytes=10 * 1024 * 1024,
     )
-    assert result == {"t1": ["a.txt", "b.json"]}
+    assert result == {"t1": ["fa", "fb"]}
 
 
 # ---------------------------------------------------------------------------
 # messages_from_thread: attaches notes to the right message
 # ---------------------------------------------------------------------------
-def test_messages_from_thread_appends_attachment_notes_to_matching_ts():
+def test_messages_from_thread_puts_file_parts_on_the_matching_ts():
     history = [
         {"user": "U1", "ts": "t1", "text": "look at this"},
         {"user": "U1", "ts": "t2", "text": "and this one too"},
+        {"user": "U2", "ts": "t3", "text": ""},
     ]
     out = messages_from_thread(
         history,
         bot_user_id="UBOT",
-        attached_files_by_ts={"t1": ["a.txt"], "t2": ["b.json", "c.csv"]},
+        attached_files_by_ts={"t1": ["fa"], "t2": ["fb", "fc"], "t3": ["fd"]},
     )
-    assert "look at this" in out[0]["content"]
-    assert "read_upload('a.txt')" in out[0]["content"]
-    assert "read_upload('b.json')" in out[1]["content"]
-    assert "read_upload('c.csv')" in out[1]["content"]
+    assert out[0]["content"] == [{"type": "text", "text": "look at this"},
+                                 {"type": "file", "file": {"file_id": "fa"}}]
+    assert [p.get("file", {}).get("file_id") for p in out[1]["content"]] == [None, "fb", "fc"]
+    assert out[2]["content"] == [{"type": "file", "file": {"file_id": "fd"}}]   # a file with no words
 
 
 def test_messages_from_thread_without_files_map_unchanged():

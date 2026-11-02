@@ -17,7 +17,6 @@ Path defaults to `.` (the current directory) everywhere.
 """
 from __future__ import annotations
 
-import base64
 import importlib.resources as resources
 import json
 import logging
@@ -2443,57 +2442,22 @@ def audit(
 _TEST_CHAT_ID = "cli-test"
 
 
-def _attachment_blocks(files: list[Path]) -> list[dict]:
-    """Encode local files as the data-URL content blocks the bridge parses.
+def _stage_test_attachments(hub: Path, chat_id: str, files: list[Path], prompt: str, *,
+                            max_upload_bytes: int) -> tuple[str, list[str]]:
+    """Save and attach `files` to the chat (``hubzoid.attachments``), the same
+    two steps every surface uses; return the prompt with their notes and the
+    images to show the model. Every file is saved before any is attached, so
+    a refused file (too large, type not allowed) leaves the chat untouched."""
+    from . import attachments
 
-    `_persist_attachments` speaks data URLs because that is what arrives
-    over HTTP. Re-encoding bytes we just read costs a base64 round-trip,
-    and buys attachment handling identical to real traffic — same
-    safe-naming, same sidecars, same notes — with no logic duplicated here.
-    """
-    blocks: list[dict] = []
-    for path in files:
-        payload = path.read_bytes()
-        mime = uploadslib.guess_mime(path.name)
-        b64 = base64.b64encode(payload).decode("ascii")
-        blocks.append({
-            "type": "file",
-            "name": path.name,
-            "data": f"data:{mime};base64,{b64}",
-        })
-    return blocks
-
-
-def _stage_test_attachments(
-    hub: Path,
-    chat_id: str,
-    files: list[Path],
-    prompt: str,
-    *,
-    max_upload_bytes: int,
-) -> str:
-    """Stage `files` into the chat's uploads dir; return the annotated prompt.
-
-    Delegates to the bridge's own handler, so the agent sees exactly what it
-    would see from Open WebUI or Slack: `[Image: x]` for images (expanded by
-    `vision_inject` at model-call time) and a `read_upload('x')` pointer for
-    everything else.
-
-    Raises HTTPException(413) if any file exceeds the cap; nothing is written
-    in that case — a half-staged set is worse than a refused one.
-    """
     if not files:
-        return prompt
-
-    from .server import _persist_attachments
-
-    messages = [{"role": "user", "content": _attachment_blocks(files)}]
-    notes = _persist_attachments(
-        hub, chat_id, messages, max_upload_bytes=max_upload_bytes
-    )
-    if not notes:
-        return prompt
-    return "\n\n".join(notes) + "\n\n" + prompt
+        return prompt, []
+    owner = f"cli:{chat_id}"   # the terminal run, never a person
+    saved = [attachments.save(hub, path.read_bytes(), path.name, uploadslib.guess_mime(path.name), owner,
+                              limit=max_upload_bytes) for path in files]
+    parts = [attachments.attach(hub, f["file_id"], chat_id, owner=owner) for f in saved]
+    notes, images = attachments.describe_parts(hub, chat_id, parts)
+    return "\n\n".join(notes) + "\n\n" + prompt, images
 
 
 @app.command("test")
@@ -2521,21 +2485,18 @@ def test_hub(
     import asyncio
     from contextlib import nullcontext
 
-    from fastapi import HTTPException
-
     hub = hub.resolve()
     files = list(file or [])
 
     # Stage before building the runtime: an over-cap attachment should fail
     # fast, not after paying for model/MCP init.
+    images: list[str] = []
     if files:
         try:
-            prompt = _stage_test_attachments(
-                hub, _TEST_CHAT_ID, files, prompt,
-                max_upload_bytes=settingslib.load(hub).max_upload_bytes,
-            )
-        except HTTPException as exc:
-            console.print(f"[red]{exc.detail}[/red]")
+            prompt, images = _stage_test_attachments(
+                hub, _TEST_CHAT_ID, files, prompt, max_upload_bytes=settingslib.load(hub).max_upload_bytes)
+        except Exception as exc:  # noqa: BLE001 - too large, type not allowed: say which and stop
+            console.print(f"[red]{getattr(exc, 'message', None) or exc}[/red]")
             raise typer.Exit(2) from exc
 
     from . import _request_ctx
@@ -2558,7 +2519,14 @@ def test_hub(
 
     # ContextVars set here are visible inside asyncio.run(): the task it
     # creates copies the context at creation time, i.e. inside this block.
-    scope = _request_ctx.chat_scope(_TEST_CHAT_ID) if files else nullcontext()
+    if files:
+        from contextlib import ExitStack
+
+        scope = ExitStack()
+        scope.enter_context(_request_ctx.chat_scope(_TEST_CHAT_ID))
+        scope.enter_context(_request_ctx.image_scope(images))
+    else:
+        scope = nullcontext()
     if as_json:
         from . import run_events
 

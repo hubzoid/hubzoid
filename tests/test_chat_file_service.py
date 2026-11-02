@@ -31,21 +31,16 @@ def client(hub):
         yield c
 
 
-def upload(client, data: bytes, name="orders.csv", mime="text/csv", conversation=None, headers=ORIGIN, chunk=None):
-    up = client.post("/api/chat/files/uploads", headers=h(headers), json={
-        "name": name, "mime_type": mime, "size_bytes": len(data), "conversation_id": conversation}).json()
-    step = chunk or up["chunk_bytes"]
-    off = 0
-    while off < len(data):
-        part = data[off:off + step]
-        r = client.put(f"/api/chat/files/uploads/{up['upload_id']}/bytes", headers={
-            **headers, "Upload-Offset": str(off), "Upload-Chunk-SHA256": hashlib.sha256(part).hexdigest()}, content=part)
-        assert r.status_code == 200, r.text
-        off = r.json()["offset"]
-    done = client.post(f"/api/chat/files/uploads/{up['upload_id']}/complete", headers=headers,
-                       json={"content_sha256": hashlib.sha256(data).hexdigest()})
-    assert done.status_code == 202, done.text
-    return ready(client, done.json()["file_id"], headers)
+def upload(client, data: bytes, name="orders.csv", mime="text/csv", conversation=None, headers=ORIGIN):
+    """One request (POST /api/chat/files), attached to ``conversation`` when given."""
+    r = client.post("/api/chat/files", headers=h(headers), files={"file": (name, data, mime)})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    if conversation:
+        att = client.post(f"/api/conversations/{conversation}/files/reuse", headers=h(headers),
+                          json={"file_id": d["file_id"]})
+        assert att.status_code == 201, att.text
+    return ready(client, d["file_id"], headers)
 
 
 def ready(client, file_id, headers=ORIGIN):
@@ -58,29 +53,9 @@ def ready(client, file_id, headers=ORIGIN):
     raise AssertionError("still validating")
 
 
-def test_resumable_upload_offsets_replay_and_ranges(client):
+def test_one_request_upload_ranges_and_preview(client):
     data = b"id,qty\n" + b"1,2\n" * 50
-    up = client.post("/api/chat/files/uploads", headers=h(), json={"name": "orders.csv", "mime_type": "text/csv",
-                                                                    "size_bytes": len(data)}).json()
-    url = f"/api/chat/files/uploads/{up['upload_id']}/bytes"
-    first = data[:100]
-    assert client.put(url, headers={**ORIGIN, "Upload-Offset": "0"}, content=first).json()["offset"] == 100
-    again = client.put(url, headers={**ORIGIN, "Upload-Offset": "0"}, content=first)  # a retry of a lost reply
-    assert again.status_code == 200 and again.json()["offset"] == 100
-    gap = client.put(url, headers={**ORIGIN, "Upload-Offset": "150"}, content=data[150:])
-    assert gap.status_code == 409 and gap.json()["detail"]["offset"] == 100
-    bad = client.put(url, headers={**ORIGIN, "Upload-Offset": "100", "Upload-Chunk-SHA256": "0" * 64}, content=data[100:])
-    assert bad.status_code == 409 and bad.json()["detail"]["code"] == "checksum_mismatch"
-    early = client.post(f"/api/chat/files/uploads/{up['upload_id']}/complete", headers=ORIGIN, json={})
-    assert early.status_code == 409
-    client.put(url, headers={**ORIGIN, "Upload-Offset": "100"}, content=data[100:])
-    wrong = client.post(f"/api/chat/files/uploads/{up['upload_id']}/complete", headers=ORIGIN,
-                        json={"content_sha256": "1" * 64})
-    assert wrong.status_code == 409
-    done = client.post(f"/api/chat/files/uploads/{up['upload_id']}/complete", headers=ORIGIN,
-                       json={"content_sha256": hashlib.sha256(data).hexdigest()}).json()
-    assert done["state"] in ("validating", "ready")
-    d = ready(client, done["file_id"])
+    d = upload(client, data)
     assert d["state"] == "ready" and d["content_sha256"] == hashlib.sha256(data).hexdigest()
     part = client.get(f"/api/chat/files/{d['file_id']}/content", headers={"Range": "bytes=0-5"})
     assert part.status_code == 206 and part.content == data[:6] and part.headers["content-range"].endswith(f"/{len(data)}")
@@ -90,15 +65,15 @@ def test_resumable_upload_offsets_replay_and_ranges(client):
     assert "qty" in client.get(f"/api/chat/files/{d['file_id']}/preview").json()["text"]
 
 
-def test_types_limits_and_quarantine(client):
-    r = client.post("/api/chat/files/uploads", headers=h(), json={
-        "name": "macro.xlsm", "mime_type": "application/vnd.ms-excel.sheet.macroEnabled.12", "size_bytes": 10})
+def test_types_limits_and_refused_bytes(client):
+    r = client.post("/api/chat/files", headers=h(), files={"file": (
+        "macro.xlsm", b"PK\x03\x04", "application/vnd.ms-excel.sheet.macroEnabled.12")})
     assert r.status_code == 415
-    r = client.post("/api/chat/files/uploads", headers=h(), json={"name": "big.csv", "mime_type": "text/csv",
-                                                                   "size_bytes": 10**9})
+    r = client.post("/api/chat/files", headers={**h(), "Content-Length": str(10**9)}, content=b"x")
     assert r.status_code == 413
-    fake = upload(client, b"<html><script>alert(1)</script></html>", name="pic.png", mime="image/png")
-    assert fake["state"] == "quarantined" and fake["processing_error"]
+    r = client.post("/api/chat/files", headers=h(), files={"file": (
+        "pic.png", b"<html><script>alert(1)</script></html>", "image/png")})
+    assert r.status_code == 415 and r.json()["detail"]["code"] == "type_mismatch"
 
 
 def test_reuse_follows_conversation_access_and_delete_needs_no_references(client, monkeypatch):
@@ -129,13 +104,28 @@ def test_reuse_follows_conversation_access_and_delete_needs_no_references(client
     assert client.get(f"/api/chat/files/{d['file_id']}/content").status_code == 404
 
 
-def test_legacy_upload_gets_a_lasting_id(client):
+def test_the_upload_id_is_the_file_id_and_attaching_references_it(client):
     cid, _ = new_conv(client)
-    r = client.post(f"/api/conversations/{cid}/files", headers=ORIGIN,
-                    files={"file": ("notes.txt", b"hello", "text/plain")}).json()
-    assert r["file_id"] == "notes.txt" and r["id"]
-    assert client.get(f"/api/chat/files/{r['id']}/content").content == b"hello"
-    assert [f["file_id"] for f in client.get("/api/chat/files", params={"conversation_id": cid}).json()["items"]] == [r["id"]]
+    d = upload(client, b"hello", name="notes.txt", mime="text/plain", conversation=cid)
+    assert client.get(f"/api/chat/files/{d['file_id']}/content").content == b"hello"
+    items = client.get("/api/chat/files", params={"conversation_id": cid}).json()["items"]
+    assert [f["file_id"] for f in items] == [d["file_id"]]
+
+
+def test_a_file_deleted_from_the_store_stays_readable_in_old_chats(client):
+    from hubzoid import memory as memlib
+    from hubzoid.chat.store import chat_key
+
+    cid, _ = new_conv(client)
+    d = upload(client, b"sku,qty\nA1,4\n", conversation=cid)
+    folder = memlib.chat_upload_dir(client.app.state.chat.hub_dir,
+                                    chat_key(client.app.state.chat.store.get_conversation(cid)))
+    for r in client.get(f"/api/chat/files/{d['file_id']}/references").json()["items"]:
+        client.delete(f"/api/chat/files/{d['file_id']}/references/{r['reference_id']}", headers=ORIGIN)
+    gone = client.request("DELETE", f"/api/chat/files/{d['file_id']}", headers=ORIGIN, json={})
+    assert gone.status_code == 202
+    assert client.get(f"/api/chat/files/{d['file_id']}/content").status_code == 404
+    assert (folder / "orders.csv").read_bytes() == b"sku,qty\nA1,4\n"   # the chat's own link keeps the bytes
 
 
 def test_artifacts_capture_versions_and_conflicting_edit(client):
@@ -179,67 +169,39 @@ def test_artifact_frame_is_locked_down(client):
     assert json.dumps(CHILD_CSP) in r.text  # the child's policy is a JSON string inside the script and "connect-src 'none'" in r.text and 'sandbox="allow-scripts"' in r.text
 
 
-def test_storage_settings_and_s3_adapter(monkeypatch, tmp_path):
+def test_storage_is_local_and_s3_files_fail_one_by_one(client, tmp_path):
+    import uuid
+
     from pydantic import ValidationError
 
     from hubzoid.chat import storage as st
-    from hubzoid.chat.file_service import FilesSettings
+    from hubzoid.chat.file_service import FilesSettings, files, storage_configs
 
-    with pytest.raises(ValidationError):
-        FilesSettings.model_validate({"storage": {"adapter": "s3"}})
-    with pytest.raises(ValidationError):
-        FilesSettings.model_validate({"storage": {"adapter": "s3", "bucket": "b", "credential_ref": "AKIA123:secret"}})
+    # Older settings documents still validate; nothing writes to S3 any more.
     with pytest.raises(ValidationError):
         FilesSettings.model_validate({"storage": {"adapter": "local", "bucket": "b"}})
-    FilesSettings.model_validate({"storage": {"adapter": "s3", "bucket": "b", "endpoint": "http://127.0.0.1:9000",
-                                              "credential_ref": "env:HZ_S3"}})
-    objects: dict = {}
-
-    class Body:
-        def __init__(self, b):
-            self.b = b
-
-        def read(self):
-            return self.b
-
-    class Fake:
-        def put_object(self, Bucket, Key, Body, ChecksumSHA256):
-            import base64
-
-            assert base64.b64decode(ChecksumSHA256) == hashlib.sha256(Body).digest()
-            objects[(Bucket, Key)] = Body
-
-        def get_object(self, Bucket, Key, Range=None):
-            data = objects[(Bucket, Key)]
-            if Range:
-                a, _, b = Range[6:].partition("-")
-                data = data[int(a):int(b) + 1 if b else None]
-            return {"Body": Body(data)}
-
-        def head_object(self, Bucket, Key):
-            from botocore.exceptions import ClientError
-
-            if (Bucket, Key) not in objects:
-                raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
-            return {"ContentLength": len(objects[(Bucket, Key)])}
-
-        def delete_object(self, Bucket, Key):
-            objects.pop((Bucket, Key), None)
-
-    import boto3
-
-    monkeypatch.setenv("HZ_S3", "AKIA:secret")
-    monkeypatch.setattr(boto3, "client", lambda *a, **k: Fake())
-    s3 = st.S3Storage(bucket="b", endpoint=None, region="us-east-1", prefix="hz", credential_ref="env:HZ_S3")
-    s3.put("ab/key", b"hello world")
-    assert ("b", "hz/ab/key") in objects and s3.read("ab/key", 6, 10) == b"world" and s3.size("ab/key") == 11
-    s3.delete("ab/key")
-    assert not s3.exists("ab/key")
+    FilesSettings.model_validate({"storage": {"adapter": "s3", "bucket": "b", "credential_ref": "env:HZ_S3"}})
+    with pytest.raises(st.StorageError):
+        st.for_settings(tmp_path, {"adapter": "s3", "bucket": "b"})
     local = st.LocalStorage(tmp_path)
     local.put("x/y", b"z")
     assert local.read("x/y") == b"z"
     with pytest.raises(st.StorageError):
         local.put("../escape", b"no")
+    # A file an older release stored in S3: that file answers 503, the hub keeps working.
+    svc = client.app.state.chat.files
+    d = upload(client, b"a,b\n")
+    with svc.engine.begin() as conn:
+        conn.execute(storage_configs.insert().values(id="sc_olds3", adapter="s3", created_at=0,
+                                                     config_json=json.dumps({"adapter": "s3", "bucket": "b"})))
+        fid = str(uuid.uuid4())
+        row = dict(conn.execute(files.select().where(files.c.file_id == d["file_id"])).first()._mapping)
+        conn.execute(files.insert().values({**row, "file_id": fid, "storage_config_id": "sc_olds3"}))
+    r = client.get(f"/api/chat/files/{fid}/content")
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "storage_unavailable"
+    assert client.get(f"/api/chat/files/{d['file_id']}/content").content == b"a,b\n"
+    assert svc.unreadable_files() == 1
+    assert any(c["check"] == "s3_files" and not c["ok"] for c in svc.doctor(write_probe=False)["checks"])
 
 
 def test_restart_recovers_files_left_validating_and_syncs_left_running(client):

@@ -78,6 +78,32 @@ send, branch, share) and `/api/chat/files`, `/api/chat/artifacts` and
 `/api/chat/search`. They are the person's own chats, the same ones they see in
 the web app. The reference at `/docs` gives each route's body and answers.
 
+## Attachments
+
+Every caller attaches files the same way: upload each one, then name it in the
+message.
+
+1. `POST /api/chat/files` with the file as the multipart field `file` returns
+   the stored file (`file_id`, `name`, `mime`, `size`). One request per file,
+   up to `HUBZOID_MAX_UPLOAD_BYTES` (25 MiB by default). No conversation is
+   needed, so the first message can carry files.
+2. Send the message with a file part per file. On `/v1/chat/completions`
+   that is OpenAI's file part, `{"type": "file", "file": {"file_id": "..."}}`.
+   In the chat API it is `{"type": "file", "file_id": "..."}`.
+
+```bash
+id=$(curl -s -H "Authorization: Bearer $KEY" -F file=@orders.csv \
+  https://hub.example.com/api/chat/files | jq -r .file_id)
+curl -s -H "Authorization: Bearer $KEY" https://hub.example.com/v1/chat/completions \
+  -d '{"messages":[{"role":"user","content":[{"type":"text","text":"Total the orders"},
+       {"type":"file","file":{"file_id":"'"$id"'"}}]}]}'
+```
+
+Images are shown to the model directly (`HUBZOID_VISION`, on by default).
+Other files get a short note and the agent reads them with `read_upload`.
+Base64 data URLs in a message are refused with a message saying how to upload.
+A key can name only files it uploaded.
+
 ## Approvals and questions
 
 `GET /api/requests` lists the approvals and questions waiting for the person,

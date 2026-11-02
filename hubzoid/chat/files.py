@@ -1,14 +1,14 @@
-"""Attachments: upload a file into a conversation, download it again.
+"""A conversation's attachments: names, the uploads folder, downloads.
 
-  POST /api/conversations/{id}/files            multipart ``file`` -> 201 {file_id, name, size, mime, kind}
-  GET  /api/conversations/{id}/files/{file_id}  the file (the conversation's owner only)
+  GET  /api/conversations/{id}/files/{file}     the file (the conversation's owner only)
+  POST /api/conversations/{id}/files            410: upload to POST /api/chat/files instead
 
-Files are written with ``uploads.write_with_meta`` into the conversation's own
-uploads folder (``memory.chat_upload_dir`` of its ``store.chat_key``, the chat
-scope of its runs), the same store ``read_upload`` and image vision read, so the
-agent sees them with no copy. ``file_id`` is the
-stored file name: the uploaded name made safe and unique in the folder, which is
-also the name the agent is told.
+Uploads go to ``POST /api/chat/files`` (``chat.file_routes``), and the message
+names the returned file id; ``hubzoid.attachments.attach`` then puts the file
+in the conversation's own uploads folder (``memory.chat_upload_dir`` of its
+``store.chat_key``, the chat scope of its runs), which ``read_upload`` and
+image vision read. ``{file}`` is the store id, or the file's name in the folder
+(messages stored before the store id was the file id).
 
 The body is capped while it is received (``settings.max_upload_bytes`` per file,
 25 MiB by default), not after, so an oversized upload never fills the disk.
@@ -24,13 +24,13 @@ import unicodedata
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 
 from .. import memory as memlib
 from .. import uploads as uploads_lib
 from .common import ChatContext, db, error, not_found
-from .history import RASTER_IMAGES
+from ..attachments import RASTER_IMAGES
 from .store import chat_key
 
 # Multipart framing around the one file (boundaries, part headers, small fields).
@@ -151,17 +151,6 @@ def file_part(hub_dir: Path, key: str, file_id: str) -> dict | None:
     return {"type": kind_of(mime), "file_id": file_id, "name": file_id, "mime": mime, "size": size}
 
 
-def _save(hub_dir: Path, key: str, name: str, payload: bytes, mime: str) -> str:
-    folder = upload_dir(hub_dir, key)
-    final = reserve_name(folder, name)
-    try:
-        uploads_lib.write_with_meta(folder, final, payload, mime=mime)
-    except BaseException:
-        (folder / final).unlink(missing_ok=True)
-        raise
-    return final
-
-
 def _capped_receive(receive, cap: int, limit: int):
     received = 0
 
@@ -195,49 +184,36 @@ def _is_active(mime: str) -> bool:
     return any(marker in mime for marker in _ACTIVE_MARKERS)
 
 
-def register(app: FastAPI, ctx: ChatContext) -> None:
-    @app.post("/api/conversations/{conv_id}/files", status_code=201)
-    async def upload_file(conv_id: str, request: Request):
-        user = await ctx.mutation(request)
-        conv = await ctx.owned(user, conv_id)
-        ctx.this_hub(conv)
-        await ctx.may_use_hub(user)
-        limit = int(ctx.settings.max_upload_bytes)
-        declared = request.headers.get("content-length", "")
-        if declared.isdigit() and int(declared) > limit + _MULTIPART_SLACK:
-            raise too_large(limit)
-        capped = Request(request.scope, _capped_receive(request.receive,
-                                                        limit + _MULTIPART_SLACK, limit))
-        try:
-            form = await capped.form(max_files=1, max_fields=8)
-        except Exception as exc:  # noqa: BLE001 — a malformed body is the client's error
-            if getattr(exc, "status_code", None) == 413:
-                raise
-            raise error(400, "invalid_upload", "The upload could not be read. Try again.") from exc
-        try:
-            item = form.get("file")
-            if not isinstance(item, UploadFile):
-                raise error(400, "file_required", "Choose a file to upload.")
-            payload = await _read_capped(item, limit)
-            name = safe_upload_name(item.filename)
-            mime = _mime(item.content_type, name)
-        finally:
-            await form.close()
-        stored = await db(_save, ctx.hub_dir, chat_key(conv), name, payload, mime)
-        out = {"file_id": stored, "name": stored, "size": len(payload), "mime": mime, "kind": kind_of(mime)}
-        svc = getattr(ctx, "files", None)
-        if svc is not None:
-            # The same bytes as a file with lasting identity, referenced by this
-            # conversation (its working copy above is what the agent reads).
-            try:
-                desc = await db(svc.register_bytes, user.id, stored, mime, payload, conversation_id=conv_id,
-                                local_name=stored, check_type=False)
-                out.update(id=desc["file_id"], content_sha256=desc["content_sha256"])
-            except Exception:  # noqa: BLE001 - the attachment works without it; reuse won't
-                import logging
+async def receive_one(request: Request, limit: int) -> tuple[str, str, bytes]:
+    """(safe name, type, bytes) of the one multipart ``file``, capped while it
+    is received. Raises HTTPException (400, 413)."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit + _MULTIPART_SLACK:
+        raise too_large(limit)
+    capped = Request(request.scope, _capped_receive(request.receive, limit + _MULTIPART_SLACK, limit))
+    try:
+        form = await capped.form(max_files=1, max_fields=8)
+    except Exception as exc:  # noqa: BLE001 — a malformed body is the client's error
+        if getattr(exc, "status_code", None) == 413:
+            raise
+        raise error(400, "invalid_upload", "The upload could not be read. Try again.") from exc
+    try:
+        item = form.get("file")
+        if not isinstance(item, UploadFile):
+            raise error(400, "file_required", "Choose a file to upload (multipart field 'file').")
+        payload = await _read_capped(item, limit)
+        name = safe_upload_name(item.filename)
+        mime = _mime(item.content_type, name)
+    finally:
+        await form.close()
+    return name, mime, payload
 
-                logging.getLogger("hubzoid.chat.files").warning("files: could not register %s", stored, exc_info=True)
-        return JSONResponse(status_code=201, content=out)
+
+def register(app: FastAPI, ctx: ChatContext) -> None:
+    @app.post("/api/conversations/{conv_id}/files")
+    async def upload_file_gone(conv_id: str):
+        raise error(410, "upload_route_gone", "Upload each file to POST /api/chat/files, then send its file_id "
+                                              "in the message.")
 
     @app.get("/api/conversations/{conv_id}/files/{file_id}")
     async def download_file(conv_id: str, file_id: str, request: Request):
@@ -246,9 +222,14 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
         ctx.this_hub(conv)
         key = chat_key(conv)
         part = await db(file_part, ctx.hub_dir, key, file_id)
+        svc = getattr(ctx, "files", None)
+        if part is None and svc is not None:
+            # A store id: the conversation's own copy of that file.
+            local = await db(svc.local_for, conv_id, file_id)
+            part = await db(file_part, ctx.hub_dir, key, local) if local else None
         if part is None:
             raise not_found("file")
-        target = stored_file(ctx.hub_dir, key, file_id)
+        target = stored_file(ctx.hub_dir, key, part["name"])
         if target is None:
             raise not_found("file")
         mime = part["mime"]

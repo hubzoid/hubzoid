@@ -1217,9 +1217,9 @@ class ClaudeRuntime:
         # tool_use_id -> short name, to name each result block.
         tool_use_names: dict[str, str] = {}
         answered_by: str | None = None
-        # Native image vision: expand any [Image: name] reference in the prompt
-        # into a multimodal message (text + Anthropic image blocks). Returns the
-        # plain string unchanged when there is nothing to inject.
+        # Native image vision: the turn's images (``_request_ctx.turn_images``)
+        # join the prompt as one multimodal message (text + Anthropic image
+        # blocks). The plain string when there are none.
         # Tell the model who the real end user is. `claude -p` authenticates via
         # the box's subscription account, so with no other signal it assumes it
         # *is* that account holder. We prepend the resolved caller
@@ -1243,7 +1243,7 @@ class ClaudeRuntime:
             # credential attempt instead of retrying an already consumed iterator.
             qprompt = lambda: vision_inject.claude_prompt(
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
-                enabled=enabled, max_edge=max_edge, max_images=max_images,
+                enabled=enabled, max_edge=max_edge, max_images=max_images, resuming=resuming,
             )
         messages = None
         stderr = _StderrTail()

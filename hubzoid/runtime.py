@@ -328,8 +328,8 @@ class OpenAIAgentsRuntime:
 
         ident = current_identity()
         prompt = f"[Session context] Caller: {ident.user or 'automated run'}; surface: {ident.surface}.\n\n" + prompt
-        # Native image vision: expand any [Image: name] reference into an input
-        # list (text + input_image blocks). Plain string when nothing to inject.
+        # Native image vision: the turn's images become an input list (text +
+        # input_image blocks). Plain string when there are none.
         run_input = prompt
         if self._hub_dir is not None:
             from . import vision_inject

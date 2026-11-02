@@ -119,6 +119,31 @@ def get_chat_id() -> str | None:
     return _current_chat_id.get()
 
 
+# The images of this turn, as names in the chat's uploads folder, oldest first
+# (``hubzoid.attachments``). Whoever builds the prompt from message parts sets
+# them; ``vision_inject`` shows them to the model. Nothing reads them back out
+# of the prompt text.
+_current_images: ContextVar[tuple[str, ...]] = ContextVar("hubzoid_images", default=())
+
+
+@contextmanager
+def image_scope(names) -> Iterator[None]:
+    token = _current_images.set(tuple(n for n in (names or ()) if n))
+    try:
+        yield
+    finally:
+        _current_images.reset(token)
+
+
+def turn_images(*, resuming: bool = False) -> list[str]:
+    """The images for this model call: a chat run's own (``SessionSlot``; only
+    the new turn's when a runtime resumes its session), else the scope's."""
+    slot = _current_session_slot.get()
+    if slot is not None and slot.images is not None:
+        return list(slot.delta_images if resuming else slot.images)
+    return list(_current_images.get())
+
+
 def set_chat_id(chat_id: str | None) -> None:
     _current_chat_id.set(chat_id)
 
@@ -343,9 +368,13 @@ class SessionSlot:
     other runtime ignores the slot and uses the full prompt. ``session_id``
     goes out: the session the run ended in, for the next turn of the branch."""
 
-    def __init__(self, resume_id: str | None = None, delta_prompt: str | None = None):
+    def __init__(self, resume_id: str | None = None, delta_prompt: str | None = None,
+                 images: list[str] | None = None, delta_images: list[str] | None = None):
         self.resume_id = resume_id
         self.delta_prompt = delta_prompt
+        #: the branch's images (``delta_images``: the new turn's only), see ``turn_images``.
+        self.images = images
+        self.delta_images = delta_images or []
         self.session_id: str | None = None
         self.resumed = False
         self.runtime: str | None = None

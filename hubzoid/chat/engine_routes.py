@@ -186,12 +186,15 @@ class Orchestrator:
                                    credential=plan.credential, credential_id=plan.credential_id,
                                    hubs=plan.key_hubs)
             from .. import _request_ctx
-            from .history import user_text
+            from .history import branch_images, message_images, user_text
 
             resume = await db(self.engine.binding_for, plan, self.config_digest(plan.actor_id))
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
-                if resume and path else None)
+                if resume and path else None,
+                images=await db(branch_images, self.ctx.hub_dir, key, path),
+                delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
+                if path else [])
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
             opts = plan.options or {}

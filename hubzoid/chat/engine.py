@@ -200,8 +200,8 @@ class ChatEngine:
         self.engine = store.engine
         self.hub = hub
         self.deployment_id = deploy.deployment_id(self.hub_dir)
-        #: (conversation, raw content) -> validated parts (files resolved); defaults to text only.
-        self.part_validator = part_validator or (lambda conv, content: _text_parts(content))
+        #: (conversation, raw content, actor) -> validated parts (files attached); defaults to text only.
+        self.part_validator = part_validator or (lambda conv, content, actor=None: _text_parts(content))
         self.groups_for = groups_for or (lambda email: frozenset())
         #: called (from any thread) after an event commits: notify(conversation_id)
         self.notify = lambda conversation_id: None
@@ -512,8 +512,8 @@ class ChatEngine:
         with self.engine.connect() as conn:
             conv, _ = self._readable(conn, conversation_id, actor)
         validated = None
-        if kind in ("send", "synthesize") and "content" in op:
-            validated = self.part_validator(conv, op.get("content"))
+        if kind in ("send", "synthesize", "revise") and "content" in op:
+            validated = self.part_validator(conv, op.get("content"), actor)
         operation_id = str(uuid.uuid4())
         plan_box: list[RunPlan] = []
         handler = getattr(self, f"_op_{kind}")
@@ -707,8 +707,8 @@ class ChatEngine:
             if not placed:
                 new_content.append({"type": "text", "text": text})
             parts = new_content
-        else:
-            parts = self.part_validator(conv, op.get("content"))
+        elif parts is None:
+            parts = self.part_validator(conv, op.get("content"), actor)
         branch = g.create_branch(conn, conv["id"], actor.id, target.get("parent_id"))
         nid = self._insert(conn, conv_id=conv["id"], mid=None, parent_id=target.get("parent_id"),
                            role=target["role"], content=parts, branch_id=branch["id"], actor=actor,
@@ -1146,7 +1146,7 @@ class ChatEngine:
             raise Err(400, "invalid_operation", "lane is steer or queue.")
         with self.engine.connect() as conn:
             conv, _ = self._writable(conn, conversation_id, actor)
-        parts = self.part_validator(conv, body.get("content"))
+        parts = self.part_validator(conv, body.get("content"), actor)
         plan_box: list[RunPlan] = []
         operation_id = str(uuid.uuid4())
 
@@ -1219,7 +1219,7 @@ class ChatEngine:
             raise Err(400, "invalid_operation", "action is edit, move, remove or rebase.")
         with self.engine.connect() as conn:
             conv, _ = self._writable(conn, conversation_id, actor)
-        parts = self.part_validator(conv, body.get("content")) if action == "edit" else None
+        parts = self.part_validator(conv, body.get("content"), actor) if action == "edit" else None
         with self.engine.begin() as conn:
             self._writable(conn, conversation_id, actor)
             it = conn.execute(sa.select(g.queue).where(g.queue.c.id == item_id).with_for_update()).first()

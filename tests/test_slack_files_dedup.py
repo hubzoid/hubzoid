@@ -26,7 +26,7 @@ def _info(file_id: str, name: str = "doc.txt") -> dict:
 def _ok_http():
     http = MagicMock()
     http.get.return_value = MagicMock(status_code=200, content=b"abc", headers={})
-    http.post.return_value = MagicMock(status_code=200)
+    http.post.return_value = MagicMock(status_code=201, json=MagicMock(return_value={"file_id": "stored-1"}))
     return http
 
 
@@ -35,7 +35,7 @@ def test_already_seen_file_ids_are_skipped():
     slack_client = MagicMock()
     slack_client.files_info.return_value = _info("F1", "doc.txt")
     http = _ok_http()
-    seen = {"F1"}
+    seen = {"F1": "stored-0"}
     result = slack_files.download_message_files(
         history=[{"ts": "t1", "files": [{"id": "F1"}]}],
         slack_client=slack_client,
@@ -54,11 +54,11 @@ def test_already_seen_file_ids_are_skipped():
 
 
 def test_new_file_id_is_processed_and_added_to_seen_set():
-    """A file not in `already_seen` is uploaded and the set is mutated."""
+    """A file not in `already_seen` is uploaded and the map is updated."""
     slack_client = MagicMock()
     slack_client.files_info.return_value = _info("F2", "new.txt")
     http = _ok_http()
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     result = slack_files.download_message_files(
         history=[{"ts": "t1", "files": [{"id": "F2"}]}],
         slack_client=slack_client,
@@ -70,9 +70,9 @@ def test_new_file_id_is_processed_and_added_to_seen_set():
         max_upload_bytes=1024 * 1024,
         already_seen=seen,
     )
-    assert result == {"t1": ["new.txt"]}
-    # The caller's set is mutated so the next turn skips this file.
-    assert "F2" in seen
+    assert result == {"t1": ["stored-1"]}
+    # The caller's map is updated so the next turn skips this file.
+    assert seen == {"F2": "stored-1"}
 
 
 def test_failed_upload_is_not_added_to_seen_set():
@@ -84,7 +84,7 @@ def test_failed_upload_is_not_added_to_seen_set():
     http = MagicMock()
     http.get.return_value = MagicMock(status_code=200, content=b"abc", headers={})
     http.post.return_value = MagicMock(status_code=413)
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     slack_files.download_message_files(
         history=[{"ts": "t1", "files": [{"id": "F3"}]}],
         slack_client=slack_client,
@@ -118,5 +118,5 @@ def test_already_seen_default_none_preserves_old_behavior():
             bot_token="xoxb",
             max_upload_bytes=1024 * 1024,
         )
-        assert result == {"t1": ["z.txt"]}
+        assert result == {"t1": ["stored-1"]}
     assert slack_client.files_info.call_count == 2

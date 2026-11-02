@@ -5,6 +5,33 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
+### Fixed
+- **Tools mark only real required arguments as required.** Built-in tools used
+  a strict schema that listed optional arguments as required, so Claude, Codex
+  and MCP clients refused a call that left them out. The first `read_upload` of
+  a CSV failed this way. Every built-in tool is now made with `hubzoid.tool`
+  (non-strict). Hub authors use `from hubzoid import tool` too. A hub tool made
+  with `agents.function_tool` still loads, and `hubzoid doctor` names it.
+
+### Changed
+- **Attachments have one path** (`proposals/2026-11-02-attachments-one-path.md`).
+  Every surface uploads a file once to `POST /api/chat/files`, or calls
+  `hubzoid.attachments.save` in process, then names the file id in the message.
+  The file is stored once and appears in the chat's folder as a hard link. The
+  web app, the API, embedded chat, Slack, Telegram, WhatsApp and `hubzoid test -f`
+  all work this way. Embedded chat accepts files (AG-UI `binary` parts with the
+  file id). Every prompt is built from the stored message parts, and images go
+  to the runtime as a list: nothing is read back out of the prompt text.
+  `HUBZOID_VISION` still turns image sending off.
+
+### Removed
+- Base64 data URLs in `/v1/chat/completions` messages (refused with how to
+  upload), chunked resumable uploads (`/api/chat/files/uploads`, now 410),
+  `POST /api/conversations/{id}/files` (410), the bridge's `/uploads/{chat}/{name}`
+  route (410) and the S3 storage adapter. Files an older release stored in S3
+  answer 503 one by one and `hubzoid doctor` lists them; the hub keeps running.
+  Existing file ids, references and chat folders are unchanged.
+
 ### Added
 - **Codex install for the `hubzoid` plugin.** `codex plugin marketplace add
   hubzoid/hubzoid`, then `codex plugin add hubzoid@hubzoid`. The plugin gains a

@@ -277,20 +277,36 @@ def test_artifacts_route_rejects_path_traversal(client):
     assert r.status_code in (400, 404)
 
 
-def test_uploads_route_writes_to_chat_dir(client):
-    payload = b"hello upload"
+def test_a_channel_uploads_then_names_the_file_in_its_message(client):
+    """Slack, Telegram and WhatsApp: one upload with the bridge key, then a
+    file part on /v1/chat/completions. The file lands in the chat's folder,
+    its note joins the message, and an image goes to the runtime as a list."""
+    seen: dict = {}
+
+    async def capture(self, prompt):
+        seen["prompt"], seen["images"] = prompt, _request_ctx.turn_images()
+        return "ok"
+
+    key = {"Authorization": "Bearer test-bridge-key"}
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     try:
-        r = client.post(
-            "/uploads/chat-up/notes.md",
-            headers={"Authorization": "Bearer test-bridge-key"},
-            content=payload,
-        )
-        assert r.status_code == 200
-        body = r.json()
-        assert body["chat_id"] == "chat-up"
-        assert body["size"] == len(payload)
+        assert client.post("/uploads/chat-up/notes.md", headers=key, content=b"x").status_code == 410
+        notes = client.post("/api/chat/files", headers=key, files={"file": ("notes.md", b"hello upload",
+                                                                             "text/markdown")})
+        pic = client.post("/api/chat/files", headers=key, files={"file": ("pic.png", png, "image/png")})
+        assert notes.status_code == 201 and pic.status_code == 201, notes.text
+        with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
+            r = client.post("/v1/chat/completions", headers=caller(MINIMAL, key="test-bridge-key"), json={
+                "model": "testbot-label", "chat_id": "chat-up",
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "file", "file": {"file_id": notes.json()["file_id"]}},
+                    {"type": "file", "file": {"file_id": pic.json()["file_id"]}}]}]})
+        assert r.status_code == 200, r.text
         on_disk = MINIMAL / ".hubzoid/chats/chat-up/uploads/notes.md"
-        assert on_disk.read_bytes() == payload
+        assert on_disk.read_bytes() == b"hello upload"
+        assert "[User attached file: notes.md (12 bytes, text/markdown)." in seen["prompt"]
+        assert seen["images"] == ["pic.png"]
     finally:
         import shutil
         shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)
@@ -357,45 +373,19 @@ def test_chat_completion_falls_back_to_hash_of_first_message(client):
     assert seen["chat_id"] == cid
 
 
-def test_chat_completion_persists_data_url_attachment(client):
-    """An image_url with a data: url should land in the chat's uploads dir."""
-    seen_prompt: dict[str, str] = {}
-
-    async def capture(self, prompt):
-        seen_prompt["text"] = prompt
-        return "ok"
-
+def test_chat_completion_refuses_a_base64_data_url(client):
+    """Base64 in the message is refused with the way to upload instead."""
     payload = b"\x89PNG\r\n\x1a\n some bytes"
-    b64 = base64.b64encode(payload).decode("ascii")
-    data_url = f"data:image/png;base64,{b64}"
+    data_url = f"data:image/png;base64,{base64.b64encode(payload).decode('ascii')}"
     try:
-        with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
-            r = client.post(
-                "/v1/chat/completions",
-                headers=caller(MINIMAL, key="test-bridge-key"),
-                json={
-                    "model": "testbot-label",
-                    "chat_id": "with-upload",
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "look at this"},
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                        ],
-                    }],
-                },
-            )
-        assert r.status_code == 200
-        uploads = MINIMAL / ".hubzoid/chats/with-upload/uploads"
-        # Ignore the sidecar metadata file written alongside the payload.
-        files = [p for p in uploads.iterdir() if not p.name.endswith(".hubzoid.json")]
-        assert len(files) == 1
-        assert files[0].read_bytes() == payload
-        # An image attachment gets the canonical [Image: <name>] reference that
-        # hubzoid.vision_inject expands to a content block (native vision) —
-        # NOT a read_upload note (that is only for non-image files now).
-        assert "[Image: upload-1.png]" in seen_prompt["text"]
-        assert "read_upload" not in seen_prompt["text"]
+        r = client.post("/v1/chat/completions", headers=caller(MINIMAL, key="test-bridge-key"), json={
+            "model": "testbot-label", "chat_id": "with-upload",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image_url", "image_url": {"url": data_url}}]}]})
+        assert r.status_code == 400
+        assert r.json()["detail"]["code"] == "upload_first" and "/api/chat/files" in r.json()["detail"]["message"]
+        assert not (MINIMAL / ".hubzoid/chats/with-upload/uploads").exists()
     finally:
         import shutil
         shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)

@@ -311,7 +311,7 @@ def build_app(
         chat_id = f"slack-{channel}-{thread_ts}"
         bot_uid = bot_user_id or context.bot_user_id
         seen_map = seen_files_by_chat.setdefault(chat_id, {})
-        already_seen_ids = set(seen_map.keys())
+        already_seen_ids = {fid: stored for fid, (_, stored) in seen_map.items()}
         with httpx.Client(timeout=30.0) as http:
             download_message_files(
                 history=history,
@@ -324,26 +324,23 @@ def build_app(
                 max_upload_bytes=max_upload_bytes,
                 already_seen=already_seen_ids,
             )
-        # Walk this turn's history to backfill (file_id -> ts, filename) for
-        # everything the download succeeded on. `already_seen_ids` was
-        # mutated by download_message_files to include newly uploaded ids.
+        # Walk this turn's history to backfill (Slack file id -> ts, stored id)
+        # for everything the upload succeeded on. `already_seen_ids` was
+        # updated by download_message_files with the newly stored files.
         for msg in history:
             if not isinstance(msg, dict):
                 continue
             ts = msg.get("ts") or ""
             for f in (msg.get("files") or []):
-                if not isinstance(f, dict):
-                    continue
-                fid = f.get("id")
-                fname = f.get("name") or fid
+                fid = f.get("id") if isinstance(f, dict) else None
                 if fid and fid in already_seen_ids and fid not in seen_map:
-                    seen_map[fid] = (ts, fname)
-        # Rebuild full attached_files_by_ts from the complete memo so the
+                    seen_map[fid] = (ts, already_seen_ids[fid])
+        # Rebuild the files of each message from the complete memo so the
         # agent sees attachments on their original turn even after dedup
         # skips the re-download.
         attached: dict[str, list[str]] = {}
-        for ts, fname in seen_map.values():
-            attached.setdefault(ts, []).append(fname)
+        for ts, stored in seen_map.values():
+            attached.setdefault(ts, []).append(stored)
         msgs = messages_from_thread(
             history,
             bot_user_id=bot_uid,

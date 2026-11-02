@@ -129,7 +129,7 @@ def test_whatsapp_unknown_sender_gets_notice_and_no_dispatch(tmp_path):
     assert send.calls[-1]["to"] == "910000000000"  # got a canned notice
 
 
-def test_whatsapp_image_ingests_and_stitches_marker_into_dispatch(tmp_path):
+def test_whatsapp_image_is_sent_as_a_file_part(tmp_path):
     send = _recorder()
     disp = _dispatcher("ok")
     resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
@@ -137,7 +137,7 @@ def test_whatsapp_image_ingests_and_stitches_marker_into_dispatch(tmp_path):
 
     def fake_ingest(*, surface, token, media, chat_id):
         seen.append((surface, token, [r.key for r in media], chat_id))
-        return ["[Image: image-MID7.jpg]  (attached image, shown to you directly)"]
+        return ["file-MID7"]
 
     wa = WhatsAppConfig(verify_token="VT", app_secret="SEC", token="TKN",
                         phone_number_id="PNID", send_text=send)
@@ -150,8 +150,8 @@ def test_whatsapp_image_ingests_and_stitches_marker_into_dispatch(tmp_path):
     assert seen[-1] == ("whatsapp", "TKN", ["MID7"], "whatsapp-919800000001")
     # the dispatched user turn carries the image marker AND the caption
     content = disp.calls[-1]["messages"][-1]["content"]
-    assert "[Image: image-MID7.jpg]" in content
-    assert "look here" in content
+    # the stored file id as a file part, beside the caption
+    assert content == [{"type": "text", "text": "look here"}, {"type": "file", "file": {"file_id": "file-MID7"}}]
 
 
 def test_whatsapp_empty_reply_sends_fallback_not_silence(tmp_path):
@@ -257,7 +257,7 @@ def test_telegram_text_from_unverified_prompts_and_no_dispatch(tmp_path):
     assert send.calls[-1]["chat_id"] == "99"
 
 
-def test_telegram_photo_ingests_and_stitches_marker_into_dispatch(tmp_path):
+def test_telegram_photo_is_sent_as_a_file_part(tmp_path):
     send = _recorder()
     disp = _dispatcher("ok")
     binds = Bindings(tmp_path / "b")
@@ -267,7 +267,7 @@ def test_telegram_photo_ingests_and_stitches_marker_into_dispatch(tmp_path):
 
     def fake_ingest(*, surface, token, media, chat_id):
         seen.append((surface, token, [r.key for r in media], chat_id))
-        return ["[Image: photo-ub.jpg]  (attached image, shown to you directly)"]
+        return ["file-ub"]
 
     # Build directly (the _tg_app helper doesn't take an ingest fn).
     tg = TelegramConfig(secret_token="TS", bot_token="BOT", bindings=binds,
@@ -282,8 +282,7 @@ def test_telegram_photo_ingests_and_stitches_marker_into_dispatch(tmp_path):
                          headers={"X-Telegram-Bot-Api-Secret-Token": "TS"})
     assert seen[-1] == ("telegram", "BOT", ["big"], "telegram-42")
     content = disp.calls[-1]["messages"][-1]["content"]
-    assert "[Image: photo-ub.jpg]" in content
-    assert "my receipt" in content
+    assert content == [{"type": "text", "text": "my receipt"}, {"type": "file", "file": {"file_id": "file-ub"}}]
 
 
 def test_telegram_streaming_sends_placeholder_then_edits_with_final(tmp_path):

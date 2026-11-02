@@ -19,6 +19,7 @@ delete, chat, runs, files) must reach that hub's bridge (else 409
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -67,10 +68,18 @@ def _store_error(exc: StoreError):
     return error(409 if isinstance(exc, IdConflict) else 400, exc.code, exc.message)
 
 
-def _message_parts(ctx: ChatContext, key: str, message: dict, conversation_id: str | None = None) -> list[dict]:
-    """Validate a new user message's parts; files come from the server's own
-    upload records in the conversation's folder (its ``store.chat_key``).
+def _message_parts(ctx: ChatContext, key: str, message: dict, conversation_id: str | None = None,
+                   actor=None, *, check_only: bool = False) -> list[dict]:
+    """Validate a new user message's parts. A file part names a stored file
+    (its ``file_id`` from ``POST /api/chat/files``); it is attached to the
+    conversation (``attachments.attach``) and the part is the server's own
+    record, never the client's. ``key`` is the conversation's ``store.chat_key``.
+    A ``file_id`` that is a name in the conversation's folder (messages from
+    before the store id was the file id) is accepted as it is. ``check_only``
+    (before a new conversation exists) checks the files without attaching them.
     Raises HTTPException."""
+    from .. import attachments
+
     raw = message.get("content")
     if isinstance(raw, str):
         raw = [{"type": "text", "text": raw}]
@@ -100,12 +109,18 @@ def _message_parts(ctx: ChatContext, key: str, message: dict, conversation_id: s
                             f"Attach at most {_max_files()} files to one message.")
             stored = files_mod.file_part(ctx.hub_dir, key, file_id)
             if stored is None:
-                raise error(400, "file_not_found",
-                            f"The attached file {file_id!r} was not found. Upload it again.")
-            svc = getattr(ctx, "files", None)
-            blob = svc.file_for_local(conversation_id, file_id) if svc is not None and conversation_id else None
-            if blob:
-                stored["id"] = blob
+                if actor is None or getattr(ctx, "files", None) is None or (
+                        check_only and not attachments.readable(ctx.hub_dir, file_id, actor=actor)):
+                    raise error(400, "file_not_found",
+                                f"The attached file {file_id!r} was not found. Upload it again.")
+                if check_only:
+                    parts.append({"type": "file", "file_id": file_id})
+                    continue
+                try:
+                    stored = attachments.attach(ctx.hub_dir, file_id, key, actor=actor,
+                                                conversation_id=conversation_id)
+                except attachments.AttachmentError as exc:
+                    raise error(exc.status, exc.code, exc.message)
             parts.append(stored)
         else:
             raise error(400, "invalid_message", "Messages hold text and file parts only.")
@@ -144,9 +159,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     from . import engine_routes
     from .engine import ChatEngine
 
-    def validate_parts(conv: dict, content) -> list[dict]:
+    def validate_parts(conv: dict, content, actor=None) -> list[dict]:
         try:
-            return _message_parts(ctx, chat_key(conv), {"content": content}, conv["id"])
+            return _message_parts(ctx, chat_key(conv), {"content": content}, conv["id"], actor)
         except HTTPException as exc:
             from .graph import GraphError
 
@@ -340,7 +355,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             if message is None or parent_id is not None:
                 raise error(400, "invalid_parent", "A new conversation starts with a message.")
             # A message that will be refused must not leave an empty conversation.
-            await db(_message_parts, ctx, chat_key({"id": conv_id, "source": "web"}), message)
+            await db(functools.partial(_message_parts, check_only=True), ctx,
+                     chat_key({"id": conv_id, "source": "web"}), message, None,
+                     await db(ctx.engine.actor, user))
             for mid in (message["id"], assistant_id):
                 if await db(store.get_message, mid) is not None:
                     raise error(409, "id_conflict", "That message id is already in use.")

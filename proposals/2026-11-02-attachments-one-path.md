@@ -56,7 +56,7 @@ Two results. Each is complete and production ready on its own. Neither is a phas
 
 **Two steps, used everywhere.**
 
-- `save(bytes, name, mime, owner)` is the only function that stores a file. It checks size and type, stores the bytes once in the hub's local file store, and returns a file id with its record (name, type, size, SHA-256, owner). Email intake, Sources and artifact versions already use this store.
+- `save(bytes, name, mime, owner)` is the only function that stores a file. It checks the size and that the bytes are the type they claim (any type, as chat always took, except executables and Office files with macros; a deployment that sets its own type list restricts to it), stores the bytes once in the hub's local file store, and returns a file id with its record (name, type, size, SHA-256, owner). Email intake, Sources and artifact versions already use this store.
 - `attach(file_id, chat)` is the only function that puts a file in a chat. It checks the caller may read the file, adds the chat's reference, and makes the file appear in the chat's uploads folder under a safe unique name. Because storage is local only, the folder entry is a hard link to the same bytes, not a second copy (it copies only when the two sit on different disks). A hard link, not a symlink: deleting the file from the store leaves old chats readable instead of showing a broken attachment, and backups and exports see an ordinary file.
 
 **A message part keeps both names.** Each file part carries `file_id` (the store id) and `name` (the file's name in the chat folder). The note, the image loader and `read_upload` use `name` only. Today's web parts already have `file_id` equal to the folder name, so old messages keep working with no migration.
@@ -76,7 +76,7 @@ Two results. Each is complete and production ready on its own. Neither is a phas
 
 **Images stay on by default, with today's one switch.** `HUBZOID_VISION` (default on) turns image sending off for a text-only or cost-sensitive hub. `HUBZOID_VISION_MAX_EDGE` (1568 px) and `HUBZOID_VISION_MAX_IMAGES` (the latest 4) stay. With vision off, or beyond the limit, an image gets the same note as any other file. No per-message option.
 
-**Other files are read when needed.** The agent gets the note and reads the file with `read_upload`. It reads only what the task needs, and a long chat does not resend whole files every turn. Sending PDFs inline as well, as eve does, would add a converter per runtime and token cost for what `read_upload` already covers. The regex that finds `[Image: …]` in prompt text, the two duplicate note builders and the scripted runtime's regex go.
+**Other files are read when needed.** The agent gets the note and reads the file with `read_upload`. It reads only what the task needs, and a long chat does not resend whole files every turn. Sending PDFs inline as well, as eve does, would add a converter per runtime and token cost for what `read_upload` already covers. The regex that finds `[Image: …]` in prompt text and the two duplicate note builders go. (The scripted test runtime still reads its prompt the way a model does, to echo what was attached. It is not on any real path.)
 
 **Reading stays as it is.** `read_upload` and `read_upload_full` keep their names, now with correct schemas from Result 1. They read the chat's uploads folder, as today. They are needed because the runtimes' own file tools are off on purpose: claude-local allows only Hubzoid and MCP tools, with no `Read`, so `restricted/.env` can't be reached, and codex-local runs read-only in a temporary folder. `read_upload` is the one sandboxed way to read an attachment.
 
@@ -86,7 +86,7 @@ Two results. Each is complete and production ready on its own. Neither is a phas
 - The second copy of every web upload, and `POST /api/conversations/{id}/files`.
 - `server._persist_attachments` and base64 decoding.
 - The bridge's separate `/uploads/{chat}/{name}` route. Channels use the same upload route as API clients.
-- Three note builders down to one, and two prompt regexes down to none.
+- Three note builders down to one, and the image regex that read our own prompt.
 
 Estimated removal: around 1,500 of the roughly 5,000 lines involved today. This is an estimate from reading, not a measurement. The places an attachment bug can live go from about twelve to four: `save`, `attach`, the note, the read tool.
 

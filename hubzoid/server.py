@@ -5,7 +5,6 @@ Endpoints:
   GET  /v1/models                        [{ id, object, created, owned_by }]
   POST /v1/chat/completions              streaming SSE (OpenAI shape) + non-stream
   GET  /artifacts/{chat_id}/{filename}   download a file the agent wrote
-  POST /uploads/{chat_id}/{filename}     upload a file the agent can read
 
 The bridge is built around a single Runtime per process (one hub). The
 Runtime is selected based on `MODEL` in <hub>/.env — see `hubzoid/runtime.py`.
@@ -14,21 +13,20 @@ Per-chat scoping. Each `/v1/chat/completions` request derives a chat id
 (from `body.chat_id`, `body.metadata.chat_id`, the `X-Hubzoid-Chat-Id`
 header, the OpenAI `body.user` field, or a hash fallback) and stores it
 in a ContextVar so `write_artifact` and `read_upload` resolve their
-directory per chat instead of per process. Any data-URL attachments in
-the message body are persisted to the chat's uploads dir before the
-prompt is flattened.
+directory per chat instead of per process. A message's files are file parts
+naming a file id from `POST /api/chat/files` (`hubzoid.attachments`): each is
+attached to the chat's uploads dir, its note joins that message, and its
+images go to the runtime as a list. Base64 data URLs are refused.
 """
 from __future__ import annotations
 
 import asyncio
 
-import base64
 import hashlib
 import json
 import logging
 import mimetypes
 import os
-import re
 import time
 import uuid
 from pathlib import Path
@@ -38,14 +36,13 @@ from urllib.parse import unquote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import _request_ctx
+from . import _request_ctx, attachments
 from . import _signing
 from . import access
 from . import browser as browser_lib
 from . import memory as memlib
 from . import runtime as runtime_lib
 from . import settings as settingslib
-from . import uploads as uploads_lib
 
 log = logging.getLogger("hubzoid.server")
 
@@ -103,7 +100,6 @@ def build_app() -> FastAPI:
             "BRIDGE_API_KEYS includes the public default key 'dev'. Set a random "
             "key in the hub's .env for any shared or deployed install."
         )
-    max_upload_bytes = settings.max_upload_bytes
 
     # In-flight chat counter: the scheduler's idle gate. Scheduled tasks only
     # start when no chat request is being served (they then run concurrently
@@ -380,25 +376,19 @@ def build_app() -> FastAPI:
             if identity.user and hub_dir is not None:
                 identity = await asyncio.to_thread(_channel_identity, hub_dir, identity, chat_id)
 
-        # Extract content[] attachments (base64 image_url / input_file — Slack
-        # and direct-API uploads) into the canonical per-chat uploads store now;
-        # their notes are prepended after the prompt is assembled below.
-        attachment_notes = _persist_attachments(
-            hub_dir, chat_id, messages, max_upload_bytes=max_upload_bytes
-        )
+        # File parts name stored files (POST /api/chat/files): attached to this
+        # chat, a note in their own message, images to the runtime as a list.
+        owner = key_user.id if key_user is not None else attachments.BRIDGE_OWNER
+        messages, images = await asyncio.to_thread(_attach_parts, hub_dir, chat_id, messages, owner)
 
         prompt = _flatten_messages(messages)
         if not prompt:
             raise HTTPException(status_code=400, detail="empty prompt after flattening messages")
 
-        # Base64/Slack notes go on top of the prompt.
-        if attachment_notes:
-            prompt = "\n\n".join(attachment_notes) + "\n\n" + prompt
-
         if bool(body.get("stream", False)):
             return StreamingResponse(
                 _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir,
-                        plain=key_user is not None),
+                        plain=key_user is not None, images=images),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -406,7 +396,7 @@ def build_app() -> FastAPI:
         inflight.enter()
         started = time.monotonic()
         try:
-            with _request_ctx.chat_scope(chat_id):
+            with _request_ctx.chat_scope(chat_id), _request_ctx.image_scope(images):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
                     raw_usage = _request_ctx.drain_usage()
@@ -468,44 +458,12 @@ def build_app() -> FastAPI:
         )
 
     @app.post("/uploads/{chat_id}/{filename:path}")
-    async def post_upload(chat_id: str, filename: str, request: Request):
+    async def post_upload_gone(chat_id: str, filename: str, request: Request):
         _auth(request)
-        safe_chat = _require_safe_chat_id(chat_id)
-        safe_name = _safe_path_component(filename)
-        if not safe_name:
-            raise HTTPException(status_code=400, detail="invalid filename")
-        # Pre-flight on Content-Length so an oversized stream is rejected
-        # before we accumulate it in memory. The body-size guard below
-        # remains in place for clients that don't set Content-Length.
-        cl = request.headers.get("content-length")
-        if cl is not None:
-            try:
-                if int(cl) > max_upload_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"upload exceeds max_upload_bytes ({max_upload_bytes})",
-                    )
-            except ValueError:
-                pass
-        body = await request.body()
-        if len(body) > max_upload_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"upload exceeds max_upload_bytes ({max_upload_bytes})",
-            )
-        upload_dir = memlib.chat_upload_dir(hub_dir, safe_chat)
-        target = (upload_dir / safe_name).resolve()
-        if upload_dir.resolve() not in target.parents:
-            raise HTTPException(status_code=400, detail="filename escapes uploads dir")
-        # Pick the mime from Content-Type if the client provided one;
-        # otherwise sniff from the filename extension. The sidecar is the
-        # authoritative source for `read_upload`'s type-aware preview.
-        mime = (request.headers.get("content-type") or "").split(";")[0].strip()
-        if not mime or mime == "application/octet-stream":
-            mime = uploads_lib.guess_mime(safe_name, fallback=mime or "application/octet-stream")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        uploads_lib.write_with_meta(upload_dir, safe_name, body, mime=mime)
-        return JSONResponse({"chat_id": safe_chat, "filename": safe_name, "size": len(body)})
+        raise HTTPException(status_code=410, detail={
+            "code": "upload_route_gone",
+            "message": "Upload each file to POST /api/chat/files (multipart field 'file'), then send "
+                       "{\"type\": \"file\", \"file\": {\"file_id\": ...}} in the message."})
 
     # Published artifacts (viewer, sharing, public links) under /portal, so any
     # bridge serves them through the edge's /portal route. Before the portal's
@@ -566,7 +524,8 @@ class _InFlight:
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
                   inflight: _InFlight | None = None,
-                  identity=None, hub_dir: Path | None = None, *, plain: bool = False) -> AsyncIterator[bytes]:
+                  identity=None, hub_dir: Path | None = None, *, plain: bool = False,
+                  images: list[str] | None = None) -> AsyncIterator[bytes]:
     """The OpenAI-compatible stream. Every chunk of one answer carries the same
     id and created time. ``plain`` (an API client): the answer without the
     chat app's tool and thinking markup."""
@@ -602,7 +561,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         from .tool_events import THINKING, Status
 
-        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
+        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity), _request_ctx.image_scope(images):
             async for delta in rt.stream(prompt):
                 if isinstance(delta, Status):
                     # A running tool's line ("Running X…"), or None to clear it.
@@ -936,122 +895,61 @@ def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Attachment extraction
 # ---------------------------------------------------------------------------
-_DATA_URL_RE = re.compile(
-    r"^data:(?P<mime>[^;,]+)(?:;name=(?P<name>[^;,]+))?(?:;[^,]*)?;base64,(?P<data>.+)$",
-    re.DOTALL,
-)
+def _file_id_of(block: dict) -> str | None:
+    """The stored file a content part names: OpenAI's ``{"type": "file",
+    "file": {"file_id": ...}}``, or ``file_id`` on the part itself."""
+    inner = block.get("file") if isinstance(block.get("file"), dict) else {}
+    fid = inner.get("file_id") or block.get("file_id")
+    return fid if isinstance(fid, str) and fid else None
 
 
-def _attachment_note(safe_name: str, size: int, mime: str, target: Path) -> str:
-    """The one canonical prompt marker for an ingested upload, shared by the
-    base64/direct-API path and the Open WebUI path so both produce identical
-    downstream shape. Images get the `[Image: ...]` reference that
-    `hubzoid.vision_inject` expands into a multimodal content block at model-call
-    time (the model sees the image directly — no read_upload needed). Everything
-    else points the agent at `read_upload` AND carries the on-disk path, so
-    path-accepting tools and shell scripts (e.g. a hub's `test_template.py <file>`)
-    can be handed the file directly — that path was part of the old OWUI note and
-    some hubs depend on it."""
-    if mime.startswith("image/"):
-        return f"[Image: {safe_name}]  (attached image, shown to you directly)"
-    return (
-        f"[User attached file: {safe_name} ({size} bytes, {mime}). "
-        f"Read it with read_upload('{safe_name}'), or pass its on-disk path to a "
-        f"path-accepting tool or script: {target}]"
-    )
+def _is_inline_data(block: dict) -> bool:
+    for key in ("image_url", "file", "data", "url", "file_url", "file_data"):
+        val = block.get(key)
+        if isinstance(val, dict):
+            val = val.get("url") or val.get("file_data") or val.get("data")
+        if isinstance(val, str) and val.startswith("data:"):
+            return True
+    return False
 
 
-def _persist_attachments(
-    hub_dir: Path,
-    chat_id: str,
-    messages: list,
-    *,
-    max_upload_bytes: int,
-) -> list[str]:
-    """Scan message content for image/file attachments, write to uploads dir.
-
-    Returns a list of human-readable notes to prepend to the prompt so the
-    agent knows what was attached and how to read it.
-
-    Raises HTTPException(413) if any single attachment decodes to more than
-    `max_upload_bytes`. A partial write would leave the chat with a
-    half-attachment the agent could still call `read_upload` on; we'd
-    rather refuse the whole turn than let the model reason over corrupt
-    state.
-    """
-    # Decode + validate every attachment first; only commit to disk once
-    # we know all of them fit under the cap. Avoids creating the chat's
-    # uploads dir at all when the request is going to be rejected.
-    decoded: list[tuple[str, bytes, str]] = []  # (safe_name, payload, mime)
-    counter = 0
-
+def _attach_parts(hub_dir: Path, chat_id: str, messages: list, owner: str) -> tuple[list, list[str]]:
+    """Messages with each file part attached to the chat (``attachments.attach``)
+    and replaced by its note, and the images, oldest first. Raises
+    HTTPException 400 for a base64 data URL or a file the caller can't use."""
+    out: list = []
+    images: list[str] = []
     for msg in messages:
-        content = msg.get("content")
+        content = msg.get("content") if isinstance(msg, dict) else None
         if not isinstance(content, list):
+            out.append(msg)
             continue
+        parts, notes = [], []
         for block in content:
             if not isinstance(block, dict):
+                parts.append(block)
                 continue
-            kind = block.get("type")
-            data_url: str | None = None
-            suggested_name: str | None = None
-            if kind == "image_url":
-                url_obj = block.get("image_url") or {}
-                url = url_obj.get("url") if isinstance(url_obj, dict) else url_obj
-                if isinstance(url, str) and url.startswith("data:"):
-                    data_url = url
-            elif kind == "input_file" or kind == "file":
-                # Some clients use this shape. The actual url field name varies.
-                for key in ("data", "url", "file_url"):
-                    val = block.get(key)
-                    if isinstance(val, dict):
-                        val = val.get("url")
-                    if isinstance(val, str) and val.startswith("data:"):
-                        data_url = val
-                        break
-                suggested_name = block.get("name") or block.get("filename")
-
-            if not data_url:
+            if _is_inline_data(block):
+                raise HTTPException(status_code=400, detail={
+                    "code": "upload_first",
+                    "message": "Base64 data URLs are not accepted. Upload the file to POST /api/chat/files, "
+                               "then send {\"type\": \"file\", \"file\": {\"file_id\": ...}}."})
+            fid = _file_id_of(block) if block.get("type") in ("file", "input_file", "image") else None
+            if fid is None:
+                parts.append(block)
                 continue
-            match = _DATA_URL_RE.match(data_url)
-            if not match:
-                continue
-            mime = match.group("mime") or "application/octet-stream"
-            data_b64 = match.group("data")
-            # Cheap upper bound: base64 expands by ~4/3, so the decoded
-            # size is at most len(b64) * 3 / 4. If even that lower bound
-            # exceeds the cap, reject before decoding the (possibly huge)
-            # payload — protects against amplification.
-            if (len(data_b64) * 3) // 4 > max_upload_bytes:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"attachment exceeds max_upload_bytes ({max_upload_bytes})",
-                )
             try:
-                payload = base64.b64decode(data_b64, validate=True)
-            except Exception:  # noqa: BLE001
-                continue
-            if len(payload) > max_upload_bytes:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"attachment exceeds max_upload_bytes ({max_upload_bytes})",
-                )
-            counter += 1
-            ext = (mimetypes.guess_extension(mime) or "").lstrip(".") or "bin"
-            safe_name = _safe_path_component(suggested_name or match.group("name") or f"upload-{counter}.{ext}")
-            if not safe_name:
-                safe_name = f"upload-{counter}.{ext}"
-            decoded.append((safe_name, payload, mime))
-
-    if not decoded:
-        return []
-
-    upload_dir = memlib.chat_upload_dir(hub_dir, chat_id)
-    notes: list[str] = []
-    for safe_name, payload, mime in decoded:
-        uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        notes.append(_attachment_note(safe_name, len(payload), mime, upload_dir / safe_name))
-    return notes
+                part = attachments.attach(hub_dir, fid, chat_id, owner=owner)
+            except attachments.AttachmentError as exc:
+                raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message})
+            n, imgs = attachments.describe_parts(hub_dir, chat_id, [part])
+            notes += n
+            images += imgs
+        if notes:
+            text = "\n\n".join(notes)
+            parts = [{"type": "text", "text": text + "\n\n"}] + parts
+        out.append({**msg, "content": parts})
+    return out, images
 
 
 def _stringify_content(content: Any) -> str:
