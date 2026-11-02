@@ -56,7 +56,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
         <Stat label="Approx. cost" value={s ? usd(s.totals.cost_usd) : "—"} sub="Estimated from model prices" />
       </ul>
       <h3 className="hz-usage-sub">This month by agent</h3>
-      <p className="hz-usage-note">An agent stops at its limit. No limit, no stop.</p>
+      <p className="hz-usage-note">Each model call checks its agent's limit first. No limit, no stop.</p>
       <ul className="hz-usage-list">
         {hubs.map((h) => (
           <AgentUsage key={h.key} hub={h} open={open === h.key} toggle={() => setOpen(open === h.key ? null : h.key)} />

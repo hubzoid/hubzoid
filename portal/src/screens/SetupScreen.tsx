@@ -163,12 +163,14 @@ export function AgentSetup({ hub }: { hub: Hub }) {
           {secrets.length > 0 && (
             <>
               <Title level={4} style={{ marginTop: 24 }}>Secret settings</Title>
-              <Text type="secondary">Values stay hidden. Set on the server.</Text>
+              <Text type="secondary">Values stay hidden. Set on the server, then restart the agent.</Text>
               <Table<HubSetting>
                 rowKey="name" size="small" pagination={PAGED} style={{ marginTop: 8 }} dataSource={secrets}
                 columns={[
                   { title: "Name", key: "name", render: (_, s) =>
-                    <span title={`${s.name} · ${s.ref}`}>{s.label || settingLabel(s.name, prefix)}</span> },
+                    <Tooltip title={<>Set <code>{s.ref}</code> ({s.name})</>} trigger={["hover", "focus", "click"]}>
+                      <span tabIndex={0} className="hz-hint">{s.label || settingLabel(s.name, prefix)}</span>
+                    </Tooltip> },
                   { title: "Status", key: "status", render: (_, s) =>
                     <Tag color={s.available ? "green" : s.required ? "red" : "orange"}>{s.available ? "Available" : "Not set"}</Tag> },
                   { title: "", key: "why", render: (_, s) => <Text type="secondary">{s.description}</Text> },

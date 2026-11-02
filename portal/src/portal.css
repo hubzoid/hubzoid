@@ -1257,3 +1257,7 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   cursor: pointer;
 }
 .hz-cap-unset:hover { color: var(--ink, inherit); }
+
+/* A short line whose detail (a setting, file or command) opens on hover, focus or tap. */
+.hz-hint { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+.hz-hint:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }

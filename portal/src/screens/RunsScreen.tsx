@@ -267,8 +267,12 @@ function shortTime(value: string | number): string {
 function statusLine(w: Workflow): { text: React.ReactNode; tone?: "danger" | "warning" } {
   const when = w.webhook ? "for each webhook event"
     : w.schedule ? `${(w.schedule_text ?? describeCron(w.schedule)).replace(/^./, (c) => c.toLowerCase())} (${w.timezone})` : "";
-  // The file, setting or command that changes it shows on hover.
-  const hint = (text: string, title: string) => <span title={title}>{text}</span>;
+  // The file, setting or command that changes it opens on hover, focus or tap.
+  const hint = (text: string, title: string) => (
+    <Tooltip title={title} trigger={["hover", "focus", "click"]}>
+      <span tabIndex={0} className="hz-hint">{text}</span>
+    </Tooltip>
+  );
   switch (w.state) {
     case "definition-disabled":
       return { text: hint("Off.", `Turn on with enabled: true in ${w.source ?? "its file"}.`) };

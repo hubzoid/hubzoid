@@ -242,7 +242,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
                   {selected.status === "interrupted" && <Text type="secondary">{reportStatus("interrupted").hint}</Text>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Requested by">{selected.requested_by}</Descriptions.Item>
-                <Descriptions.Item label="Connected services">{selected.profile === "active" ? "Checked" : "Not checked"}</Descriptions.Item>
+                <Descriptions.Item label="Connected services">{selected.profile === "active" ? "Included" : "Not included"}</Descriptions.Item>
                 <Descriptions.Item label="Finished">{selected.completed_at ? <When value={selected.completed_at} /> : "—"}</Descriptions.Item>
               </Descriptions>
               {bundle && (
