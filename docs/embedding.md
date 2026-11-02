@@ -293,10 +293,10 @@ its own permissions as usual.
 **A tool in the hub** (`tools_local/app_lookup.py`) gets it with `app_token()`:
 
 ```python
-from agents import function_tool
+from hubzoid import tool
 from hubzoid.embed import app_token
 
-@function_tool
+@tool
 def app_lookup(query: str) -> str:
     """Look up records in the app for the signed-in person."""
     token = app_token()          # None unless this tool is in token_to and the reply is from your app

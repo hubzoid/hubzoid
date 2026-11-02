@@ -120,13 +120,18 @@ generic description is used.
 
 ```python
 # tools_local/my_tool.py
-from agents import function_tool
+from hubzoid import tool
 
-@function_tool
-def lookup_order(order_id: str) -> dict:
+@tool
+def lookup_order(order_id: str, include_items: bool = False) -> dict:
     """Look up an order by ID."""
     return {"id": order_id, "status": "shipped"}
 ```
+
+`@tool` makes only arguments without a default required, so every runtime
+(Claude, Codex, an API model, MCP clients) can leave the optional ones out.
+A tool written with `from agents import function_tool` still loads, but its
+schema marks every argument required. `hubzoid doctor` names such tools.
 
 Files starting with `_` are ignored. Reference the tool by its function name
 in a sub-agent's `tools:` list.

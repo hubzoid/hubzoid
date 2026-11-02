@@ -21,7 +21,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from agents import function_tool
+from .._tool import tool
 
 from .._fs import resolve_bucket
 from .files import _read_refusal
@@ -49,7 +49,7 @@ def make(ctx) -> list:
     hub_dir: Path = ctx.hub_dir
     output_dir: Path = ctx.output_dir
 
-    @function_tool
+    @tool
     def grep_data(pattern: str, path: str = "raw_data", context: int = 0) -> str:
         """Search inside <hub>/raw_data/ for a regex pattern.
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from agents import function_tool
+from .._tool import tool
 
 log = logging.getLogger("hubzoid")
 
@@ -46,7 +46,7 @@ def make(ctx) -> list:
         chat = _request_ctx.get_chat_id() or ""
         return chat[4:] if chat.startswith("web-") else None
 
-    @function_tool
+    @tool
     def search_sources(query: str, top_k: int = 6) -> str:
         """Search the person's own knowledge sources (the collections they can
         read) and return the most relevant passages.

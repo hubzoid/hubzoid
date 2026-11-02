@@ -57,6 +57,17 @@ def _hub_checks(hub: Path) -> list[Check]:
                              "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
+    try:
+        from .loaders import tools_local
+
+        tools_local.load_all(hub)
+        if tools_local.STRICT_TOOLS:
+            out.append(Check("tools.schemas", "warn",
+                             f"{len(tools_local.STRICT_TOOLS)} hub tool(s) mark optional arguments as required. "
+                             "Use `from hubzoid import tool` and `@tool` instead of `function_tool`",
+                             [f"{name} ({where})" for name, where in sorted(tools_local.STRICT_TOOLS.items())]))
+    except Exception:  # noqa: BLE001 - a broken tools file is reported by the build check
+        pass
 
     try:
         from . import scheduling as sch

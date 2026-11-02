@@ -33,7 +33,7 @@ import re
 import time
 from pathlib import Path
 
-from agents import function_tool
+from .._tool import tool
 
 from ..capabilities import Capability, register, switched_off
 
@@ -197,7 +197,7 @@ def make(ctx) -> list:
                          "then open the link again.")
         return "\n".join(lines)
 
-    @function_tool
+    @tool
     def my_management_scope() -> str:
         """List the agents whose access you manage and what you can grant in each.
 
@@ -222,7 +222,7 @@ def make(ctx) -> list:
         lines.append("Changes you propose apply only after you confirm them in Settings.")
         return "\n".join(lines)
 
-    @function_tool
+    @tool
     def who_has_access(hub: str) -> str:
         """List the people and services with access to one agent you manage.
 
@@ -262,7 +262,7 @@ def make(ctx) -> list:
         return "\n".join(lines)
 
     # Not strict: `hub` is optional, so a call naming only the person validates.
-    @function_tool(strict_mode=False)
+    @tool
     def explain_access(person: str, hub: str = "") -> str:
         """Explain one person's access in the agents you manage, and why they have it.
 
@@ -313,7 +313,7 @@ def make(ctx) -> list:
                              + ", ".join(_SOURCE_WORDS[s] for s in cap["sources"]))
         return "\n".join(lines)
 
-    @function_tool
+    @tool
     def propose_access_change(person: str, hub: str, grant: list[str] | None = None,
                               revoke: list[str] | None = None) -> str:
         """Propose granting or removing capabilities for one person in one agent.
@@ -338,7 +338,7 @@ def make(ctx) -> list:
             return f"[not proposed: {exc.message}]"
         return proposed(result, actor)
 
-    @function_tool
+    @tool
     def propose_new_account(email: str, name: str, hub: str,
                             grant: list[str] | None = None) -> str:
         """Propose creating a chat account for a new person with access to one agent.

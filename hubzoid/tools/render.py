@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import json
 
-from agents import function_tool
+from .._tool import tool
 from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 from jinja2.exceptions import TemplateError
 
 
 def make(ctx) -> list:  # noqa: ARG001
-    @function_tool
+    @tool
     def render_jinja(template: str, context_json: str = "{}") -> str:
         """Render a Jinja2 template with a JSON-encoded context.
 

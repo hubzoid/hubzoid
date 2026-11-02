@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
-from agents import function_tool
+from .._tool import tool
 
 from .. import _fs
 from .. import _request_ctx
@@ -45,7 +45,7 @@ def make(ctx) -> list:
     hub_dir: Path = ctx.hub_dir
     fallback_dir: Path = ctx.output_dir  # used when no chat is in scope
 
-    @function_tool
+    @tool
     def read_file(path: str, offset: int = 0, limit: int = 0) -> str:
         """Read a UTF-8 text file under the hub directory.
 
@@ -78,7 +78,7 @@ def make(ctx) -> list:
         )
         return body
 
-    @function_tool
+    @tool
     def list_files(glob: str = "**/*") -> str:
         """List files under the hub directory matching a glob (default: all).
 
@@ -110,7 +110,7 @@ def make(ctx) -> list:
             + "(e.g. 'raw_data/repo-a/src/**/*.py').]"
         )
 
-    @function_tool
+    @tool
     def write_artifact(filename: str, content: str) -> str:
         """Save a file the user can download.
 
@@ -146,7 +146,7 @@ def make(ctx) -> list:
             return f"Saved **{safe_name}** ({size_label})\n\n[Download {safe_name}]({url})"
         return f"Saved **{safe_name}** ({size_label}) at `{target}`"
 
-    @function_tool
+    @tool
     def list_artifacts() -> str:
         """List files saved in this chat so far."""
         target_dir = _artifact_dir(hub_dir, fallback_dir)
@@ -157,7 +157,7 @@ def make(ctx) -> list:
             return "(no artifacts yet)"
         return "\n".join(f"- {p.name} ({_format_size(p.stat().st_size)})" for p in files)
 
-    @function_tool
+    @tool
     def read_upload_full(filename: str) -> str:
         """Read the entire text content of an uploaded file.
 
@@ -174,7 +174,7 @@ def make(ctx) -> list:
         """
         return _read_upload_full_impl(hub_dir, filename)
 
-    @function_tool
+    @tool
     def read_upload(
         filename: str,
         offset: int = 1,

@@ -1,9 +1,9 @@
-"""Auto-discover @function_tool callables in <hub>/tools_local/*.py.
+"""Auto-discover tools (``@hubzoid.tool``, or ``@function_tool``) in <hub>/tools_local/*.py.
 
 We import every `.py` file under the hub's `tools_local/` (case/plural-flexible
 via _fs.resolve_bucket) and collect any module-level attributes that are
 `FunctionTool` instances. Naming convention: the attribute name is the tool
-name unless `@function_tool(name_override="...")` was used. A file that fails to
+name unless `@tool(name_override="...")` was used. A file that fails to
 import (a missing package, a syntax error) is skipped with an error naming it;
 the rest of the hub still loads.
 """
@@ -17,11 +17,14 @@ from pathlib import Path
 from agents.tool import FunctionTool
 
 from .._fs import resolve_bucket
+from .._tool import optional_marked_required
 
 log = logging.getLogger(__name__)
 
 #: tools_local files that failed to import at the last load: path -> reason.
 LOAD_ERRORS: dict[str, str] = {}
+#: Hub tools still made with a strict ``function_tool``: name -> file.
+STRICT_TOOLS: dict[str, str] = {}
 
 
 def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
@@ -30,6 +33,7 @@ def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
         return {}
 
     out: dict[str, FunctionTool] = {}
+    STRICT_TOOLS.clear()
     for path in sorted(tools_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue  # convention: underscore = private/example
@@ -55,6 +59,13 @@ def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
                         name, path,
                     )
                     continue
+                strict = optional_marked_required(obj)
+                if strict:
+                    log.warning("%s: tool %r marks optional arguments as required (%s), so Claude, "
+                                "Codex and MCP clients refuse calls that leave them out. In %s, use "
+                                "`from hubzoid import tool` and `@tool` instead of `function_tool`.",
+                                Path(hub_dir).name, name, ", ".join(strict), path.name)
+                    STRICT_TOOLS[name] = f"tools_local/{path.name}"
                 try:   # lets a station pin the code it ran (stations/tools.py: digest)
                     obj._hz_source = str(path)
                 except AttributeError:

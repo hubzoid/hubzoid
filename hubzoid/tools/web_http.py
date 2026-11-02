@@ -16,7 +16,7 @@ import re
 from urllib.parse import quote_plus, urlparse
 
 import httpx
-from agents import function_tool
+from .._tool import tool
 
 _DEFAULT_TIMEOUT = 15.0
 _TRUTHY = {"true", "1", "yes", "on"}
@@ -35,7 +35,7 @@ def _allowed(url: str) -> bool:
 
 
 def make(ctx) -> list:  # noqa: ARG001
-    @function_tool
+    @tool
     def http_get(url: str) -> str:
         """GET a URL and return the response body as text.
 
@@ -61,7 +61,7 @@ def make(ctx) -> list:  # noqa: ARG001
         except httpx.HTTPError as exc:
             return f"[http_get error: {exc}]"
 
-    @function_tool
+    @tool
     def web_search(query: str, limit: int = 5) -> str:
         """Search the web via DuckDuckGo and return top results.
 
