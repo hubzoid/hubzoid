@@ -66,6 +66,25 @@ When `description` reads like a "when" sentence, the main agent uses it to
 decide when to reach for this sub-agent. Make it specific to avoid wrong
 routing.
 
+### Files the agent can hand back
+
+Every agent can save files the user downloads from the chat. They land in the
+chat's documents, with versions, like anything else the agent writes.
+
+- `write_artifact(filename, content)`: text files, such as CSV, JSON, Markdown or HTML.
+- `make_excel(filename, sheets)`: an .xlsx. Each sheet is `{name, rows}` and the
+  first row is the header. Cells are text, numbers, true/false, null or
+  `{"date": "YYYY-MM-DD"}`. There are no formulas: text starting with `=` stays
+  text, so the agent works out totals itself.
+- `make_pdf(filename, markdown)` and `make_word(filename, markdown)`: a .pdf or
+  .docx from Markdown headings, paragraphs, lists, tables, **bold** and
+  *italic*. Images, links and HTML are shown as plain text. The PDF font
+  covers Latin text, including accents, €, £ and dashes. For other scripts,
+  such as Greek, Cyrillic, Devanagari or Arabic, `make_pdf` says so and the
+  agent uses `make_word` instead.
+
+None of these is offered over MCP, because an MCP call has no chat to save into.
+
 ### Sub-agent models (delegation)
 
 A sub-agent is loaded inline by the main agent (as a skill) by default. If

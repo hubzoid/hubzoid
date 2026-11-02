@@ -32,7 +32,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -989,6 +989,9 @@ def _stringify_content(content: Any) -> str:
 # ---------------------------------------------------------------------------
 # Static file serving
 # ---------------------------------------------------------------------------
+_DOWNLOAD_ONLY = frozenset({".pdf", ".xlsx", ".docx"})
+
+
 def _serve_chat_file(*, base: Path, filename: str, inline: bool) -> FileResponse:
     safe_name = _safe_path_component(unquote(filename))
     if not safe_name:
@@ -999,8 +1002,12 @@ def _serve_chat_file(*, base: Path, filename: str, inline: bool) -> FileResponse
     if not target.is_file():
         raise HTTPException(status_code=404, detail="not found")
     media_type, _ = mimetypes.guess_type(target.name)
+    if target.suffix.lower() in _DOWNLOAD_ONLY:
+        inline = False               # office files and PDFs: a real download, not a sandboxed page
     disp = "inline" if inline else "attachment"
-    headers = {"Content-Disposition": f'{disp}; filename="{safe_name}"'}
+    ascii_name = safe_name.encode("ascii", "replace").decode().replace('"', "_").replace("?", "_")
+    headers = {"Content-Disposition": f"{disp}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(safe_name, safe='')}",
+               "X-Content-Type-Options": "nosniff"}
     # Agent-authored artifacts (e.g. a dashboard HTML built by the `dashboard`
     # skill) are served inline and may be on the same origin as the web app
     # behind the edge proxy. Sandbox them: a CSP `sandbox` with NO
