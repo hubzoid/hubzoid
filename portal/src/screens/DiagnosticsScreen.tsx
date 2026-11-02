@@ -4,11 +4,12 @@
 // can produce a support bundle of metadata only. Same API as
 // `hubzoid admin diagnostics ...`.
 import { useUnderTabs } from "../lib/underTabs";
-import { PAGED } from "../components/common";
+import { PAGED, When } from "../components/common";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, App, Button, Card, Checkbox, Col, Descriptions, Empty, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { Hub } from "../api";
 import { control, ControlError, newKey } from "../lib/controlApi";
+import { checkStatus, relativeTime, reportStatus } from "../lib/format";
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -40,8 +41,7 @@ type Card_ = { value: number | string | null; availability: string; unpriced_tur
 type Overview = { interval_days: number; cards: Record<string, Card_> };
 type Bundle = { bundle_id: string; sha256: string; size_bytes: number; expires_at: number; download: string; manifest: { omitted: string[] } };
 
-const COLOURS: Record<string, string> = { ok: "green", info: "blue", warn: "gold", fail: "red", skipped: "default", timeout: "magenta" };
-const when = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
+const StatusTag = ({ p }: { p: { label: string; color: string } }) => <Tag color={p.color}>{p.label}</Tag>;
 
 function figure(card: Card_ | undefined, format?: (v: number) => string) {
   if (!card || card.value === null || card.value === undefined) return <Text type="secondary">Unknown</Text>;
@@ -133,12 +133,15 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
   };
 
   const c = overview?.cards;
+  const scope = (hubId: string | null) => (hubId ? hubs.find((h) => h.key === hubId)?.name ?? hubId : "Whole deployment");
   return (
     <div className="screen">
       {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Health</Title>}
-      <Paragraph type="secondary">
-        Run read-only checks and review reports.
-      </Paragraph>
+      {!underTabs && (
+        <Paragraph type="secondary">
+          Run read-only checks and review reports.
+        </Paragraph>
+      )}
       {error && (
         <Alert
           type={error.status === 403 ? "warning" : "error"}
@@ -202,9 +205,9 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
               onRow={(r) => ({ onClick: () => void open(r.report_id), style: { cursor: "pointer" } })}
               rowClassName={(r) => (r.report_id === selected?.report_id ? "ant-table-row-selected" : "")}
               columns={[
-                { title: "When", render: (_, r) => when(r.created_at) },
-                { title: "Scope", render: (_, r) => r.hub_id ?? "deployment" },
-                { title: "Status", render: (_, r) => <Tag color={r.status === "completed" ? "green" : r.status === "interrupted" ? "orange" : undefined}>{r.status}</Tag> },
+                { title: "When", render: (_, r) => <When value={r.created_at} /> },
+                { title: "Scope", render: (_, r) => scope(r.hub_id) },
+                { title: "Status", render: (_, r) => <StatusTag p={reportStatus(r.status)} /> },
               ]}
             />
           </Card>
@@ -217,7 +220,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
           ) : (
             <Card
               size="small"
-              title={`Report ${selected.report_id.slice(0, 8)}`}
+              title={selected.hub_id ? `Checks for ${scope(selected.hub_id)}` : "Checks for the whole deployment"}
               extra={
                 <Space>
                   {["queued", "running"].includes(selected.status) ? (
@@ -233,14 +236,14 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
                 </Space>
               }
             >
-              <Descriptions size="small" column={2} style={{ marginBottom: 12 }}>
+              <Descriptions size="small" column={2} colon={false} style={{ marginBottom: 12 }}>
                 <Descriptions.Item label="Status">
-                  <Tag>{selected.status}</Tag>
-                  {selected.status === "interrupted" && <Text type="secondary">The worker stopped. It was not rerun.</Text>}
+                  <StatusTag p={reportStatus(selected.status)} />
+                  {selected.status === "interrupted" && <Text type="secondary">{reportStatus("interrupted").hint}</Text>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Requested by">{selected.requested_by}</Descriptions.Item>
-                <Descriptions.Item label="Profile">{selected.profile}</Descriptions.Item>
-                <Descriptions.Item label="Finished">{when(selected.completed_at)}</Descriptions.Item>
+                <Descriptions.Item label="Connected services">{selected.profile === "active" ? "Checked" : "Not checked"}</Descriptions.Item>
+                <Descriptions.Item label="Finished">{selected.completed_at ? <When value={selected.completed_at} /> : "—"}</Descriptions.Item>
               </Descriptions>
               {bundle && (
                 <Alert
@@ -248,7 +251,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
                   showIcon
                   style={{ marginBottom: 12 }}
                   title={<a href={bundle.download}>Download support bundle ({Math.round(bundle.size_bytes / 1024)} KB)</a>}
-                  description={`SHA-256 ${bundle.sha256.slice(0, 16)}… · expires ${when(bundle.expires_at)} · leaves out ${bundle.manifest.omitted.join(", ")}`}
+                  description={`SHA-256 ${bundle.sha256.slice(0, 16)}… · expires ${relativeTime(bundle.expires_at)} · leaves out ${bundle.manifest.omitted.join(", ")}`}
                 />
               )}
               <Table<Check>
@@ -259,7 +262,7 @@ export function DiagnosticsScreen({ hubs, embedded = false }: { hubs: Hub[]; emb
                 locale={{ emptyText: ["queued", "running"].includes(selected.status) ? "Running…" : "No checks recorded." }}
                 columns={[
                   { title: "Check", dataIndex: "check_id", render: (v: string, ch) => <span title={v}>{ch.label ?? v}</span> },
-                  { title: "Status", dataIndex: "status", render: (s: string) => <Tag color={COLOURS[s]}>{s}</Tag> },
+                  { title: "Status", dataIndex: "status", render: (s: string) => <StatusTag p={checkStatus(s)} /> },
                   {
                     title: "Result",
                     render: (_, ch) => (

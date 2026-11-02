@@ -84,8 +84,8 @@ function ItemList({ hub }: { hub: Hub }) {
     <div className="panel">
       {!underTabs && <Title level={2}>Incoming messages</Title>}
       <Paragraph type="secondary">
-        Email and WhatsApp from outside, held until someone lets it through.
-        <InfoHelp text="A message from an allowed, verified sender starts its workflow. Everything else waits here, and no model reads it until it is released. The same list is in hubzoid intake list." />
+        Outside messages held for review.
+        <InfoHelp text="Email and WhatsApp. A verified, allowed sender starts its workflow; the rest wait here, unread by any model. CLI: hubzoid intake list." />
       </Paragraph>
       <Space style={{ marginBottom: 16 }} wrap>
         <Segmented
@@ -218,8 +218,7 @@ function ItemView({ hub, id }: { hub: Hub; id: string }) {
         <div style={{ marginTop: 24 }}>
           <Title level={3}>Decide</Title>
           <Paragraph type="secondary">
-            Releasing starts the work for this message, with you as the person who asked. It approves nothing the work
-            later wants to send: each reply waits for your approval when the hub requires it.
+            Releasing starts the work as if you asked. Replies still need approval where the agent requires it.
           </Paragraph>
           <Input.TextArea
             aria-label="Reason"

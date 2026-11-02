@@ -40,7 +40,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
       <div className="hz-usage-head">
         <div>
           <h2>Usage</h2>
-          <p>What your agents used, and the limits that keep spending in check.</p>
+          <p>What agents used, and their limits.</p>
         </div>
         <Segmented aria-label="Period" value={period} onChange={(v) => setQ({ period: v === "30d" ? undefined : String(v) })} options={PERIODS} />
       </div>
@@ -48,7 +48,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
         <Stat label="Messages" value={s ? s.totals.messages.toLocaleString() : "—"}
           sub={s ? `Across ${s.totals.chats.toLocaleString()} ${s.totals.chats === 1 ? "conversation" : "conversations"}` : undefined} />
         <Stat label="Users" value={s?.user_accounts?.accounts == null ? "—" : s.user_accounts.accounts.toLocaleString()}
-          sub={s?.user_accounts ? `Across ${s.user_accounts.hubs} ${s.user_accounts.hubs === 1 ? "hub" : "hubs"}` : undefined} />
+          sub={s?.user_accounts ? `Across ${s.user_accounts.hubs} ${s.user_accounts.hubs === 1 ? "agent" : "agents"}` : undefined} />
         <Stat label="Tokens used" value={s ? short(s.totals.input_tokens + s.totals.output_tokens) : "—"}
           sub={s ? `${short(s.totals.input_tokens)} in · ${short(s.totals.output_tokens)} out` : undefined} />
         <Stat label="Workflow runs" value={!s ? "—" : !s.has_workflows ? "0" : s.runs_available ? (s.totals.runs ?? 0).toLocaleString() : "—"}
@@ -56,7 +56,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
         <Stat label="Approx. cost" value={s ? usd(s.totals.cost_usd) : "—"} sub="Estimated from model prices" />
       </ul>
       <h3 className="hz-usage-sub">This month by agent</h3>
-      <p className="hz-usage-note">Each model call is checked against its agent's limits first. An agent with no limit is never stopped.</p>
+      <p className="hz-usage-note">An agent stops at its limit. No limit, no stop.</p>
       <ul className="hz-usage-list">
         {hubs.map((h) => (
           <AgentUsage key={h.key} hub={h} open={open === h.key} toggle={() => setOpen(open === h.key ? null : h.key)} />
@@ -142,9 +142,9 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
 }
 
 const FIELDS: { scope: string; key: string; label: string; help: string }[] = [
-  { scope: "month", key: "max_output_tokens", label: "Output tokens per month", help: "The agent stops answering until next month once this is used." },
-  { scope: "month", key: "max_cost_usd", label: "Dollars per month", help: "Estimated from model prices. A runtime without prices, like Codex, can't be capped in dollars." },
-  { scope: "run", key: "max_turns", label: "Turns per reply or run", help: "Stops one reply or workflow run that keeps going." },
+  { scope: "month", key: "max_output_tokens", label: "Output tokens per month", help: "Stops the agent until next month." },
+  { scope: "month", key: "max_cost_usd", label: "Dollars per month", help: "Estimated. Codex can't be capped in dollars." },
+  { scope: "run", key: "max_turns", label: "Turns per reply or run", help: "Stops a runaway reply or run." },
   { scope: "run", key: "max_output_tokens", label: "Output tokens per reply or run", help: "" },
 ];
 
@@ -223,7 +223,7 @@ function LimitsEditor({ base, status, saved }: { base: string; status: Status; s
     try {
       await request(base, { yaml: body, expected_revision: status.revision }, undefined, "PUT");
       setProblem(null);
-      message.success("Limits saved. The next model call is checked against them.");
+      message.success("Limits saved.");
       saved();
     } catch (e) {
       setProblem(errorMessage(e));
@@ -257,10 +257,10 @@ function LimitsEditor({ base, status, saved }: { base: string; status: Status; s
         <button type="button" className="hz-link-btn" onClick={switchMode}>
           {asFile ? "Edit as fields" : "Edit as file"}
         </button>
-        <span className="hz-usage-muted">Empty means no limit. Stored in the agent's budgets.yaml.</span>
+        <span className="hz-usage-muted">Empty means no limit.</span>
       </div>
       {!asFile && commented && (
-        <p className="hz-limits-help" style={{ marginTop: 10 }}>Saving these fields rewrites budgets.yaml without its comments. Edit as file to keep them.</p>
+        <p className="hz-limits-help" style={{ marginTop: 10 }}>Saving drops the file's comments. Edit as file keeps them.</p>
       )}
     </div>
   );
@@ -309,8 +309,7 @@ function Reservations({ base, items, released }: { base: string; items: Reservat
       </ul>
       <Modal open={releasing !== null} title="Release this reservation?" okText="Release"
         okButtonProps={{ disabled: !reason.trim(), loading: busy }} onOk={() => void release()} onCancel={() => setReleasing(null)}>
-        <p>Its call never reported its usage, so the amount it held still counts against your limits. Release it only
-          after checking what the model provider charged.</p>
+        <p>Its call never reported usage, so the hold still counts. Check the provider's charge first.</p>
         <Input.TextArea rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
           placeholder="What you checked. This is recorded." aria-label="Reason" />
       </Modal>

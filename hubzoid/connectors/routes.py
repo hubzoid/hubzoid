@@ -162,7 +162,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         """Register a connector, and with ``?hub=`` offer it in that agent."""
         user = admin(request)
         same_origin(request)
-        editing.check(hub_dir, "connectors")
+        editing.check(hub_dir, "connectors", always=True)
         if hub:
             _known_agent(hub)
         try:
@@ -176,7 +176,7 @@ def build_router(hub_dir: Path) -> APIRouter:
     def update_connector(connector_id: str, request: Request, body: Any = Depends(json_body)):
         user = admin(request)
         same_origin(request)
-        editing.check(hub_dir, "connectors")
+        editing.check(hub_dir, "connectors", always=True)
         try:
             c, _reset = registry.update(hub_dir, connector_id, body, actor=user.email)
         except ConnectorError as err:
@@ -188,7 +188,7 @@ def build_router(hub_dir: Path) -> APIRouter:
     def delete_connector(connector_id: str, request: Request, expected_revision: str | None = None):
         user = admin(request)
         same_origin(request)
-        editing.check(hub_dir, "connectors")
+        editing.check(hub_dir, "connectors", always=True)
         try:
             registry.delete(hub_dir, connector_id, actor=user.email, expected_revision=expected_revision)
         except ConnectorError as err:
@@ -200,7 +200,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         """Offer a registered connector in one agent."""
         user = admin(request)
         same_origin(request)
-        editing.check(hub_dir, "connectors")
+        editing.check(hub_dir, "connectors", always=True)
         _known_agent(hub)
         try:
             registry.offer(hub_dir, connector_id, hub, actor=user.email)
@@ -213,7 +213,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         """Stop offering a connector in one agent (its grants there go too)."""
         user = admin(request)
         same_origin(request)
-        editing.check(hub_dir, "connectors")
+        editing.check(hub_dir, "connectors", always=True)
         try:
             registry.withdraw(hub_dir, connector_id, hub, actor=user.email)
         except ConnectorError as err:

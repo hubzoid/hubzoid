@@ -224,7 +224,7 @@ def test_switch_removes_the_tools_and_marks_the_rows(dep, monkeypatch):
     monkeypatch.setenv("HUBZOID_WORKFLOW_TOOLS", "false")
     assert workflow_tools.make(SimpleNamespace(hub_dir=dep.hub_dir)) == []
     by = {e["permission"]: e for e in capabilities.catalog(dep.hub_dir)}
-    assert by["workflows_view"]["status"] == by["workflows_manage"]["status"] == "Disabled for this hub"
+    assert by["workflows_view"]["status"] == by["workflows_manage"]["status"] == "Turned off for this agent"
 
 
 def test_catalogue_rows_in_the_workflows_section(dep, monkeypatch):

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAgentEditing } from "../app/lib/editing";
+import { useUnderTabs } from "../lib/underTabs";
 import {
   Alert,
   App,
@@ -96,13 +97,18 @@ function SignInTag({ c }: { c: Connector }) {
  * read-only below.
  */
 export function AgentConnectors({ hub, me, embedded = false }: { hub: Hub; me: Me; embedded?: boolean }) {
+  const underTabs = useUnderTabs();
   if (!me.org_admin)
     return (
       <div className="panel">
-        <Title level={2}>
-          Connectors
-          <InfoHelp text="Organization administrators add connectors. Who may use each one is in this agent’s Access." />
-        </Title>
+        <div className="panel-heading">
+          <div>
+            {!underTabs && <Title level={2}>Connectors</Title>}
+            <Paragraph type="secondary">
+              Organization administrators add connectors. Who may use each one is in this agent’s Access.
+            </Paragraph>
+          </div>
+        </div>
         <HubFolderServers hub={hub} />
       </div>
     );
@@ -120,8 +126,8 @@ function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean })
   return (
     <div className={panel ? "panel hub-folder-servers" : "hub-folder-servers"} style={panel ? undefined : { marginTop: 20 }}>
       <Title level={4}>
-        From the hub folder
-        <InfoHelp text="Servers in connectors/.mcp.json. Everyone who can use this agent gets them. Change them in the hub folder." />
+        From the agent's files
+        <InfoHelp text="Servers in connectors/.mcp.json. Everyone who uses this agent gets them." />
       </Title>
       {warning && <Alert type="warning" showIcon title={warning} style={{ marginBottom: 8 }} />}
       <Table<HubMcpServer>
@@ -146,7 +152,7 @@ function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean })
               ) : s.env.every((e) => e.set) ? (
                 <Tag color="green">Ready</Tag>
               ) : (
-                <Tooltip title={`Missing in .env: ${s.env.filter((e) => !e.set).map((e) => e.name).join(", ")}`}>
+                <Tooltip title={`Missing: ${s.env.filter((e) => !e.set).map((e) => e.name).join(", ")}`}>
                   <Tag color="orange">Missing settings</Tag>
                 </Tooltip>
               ),
@@ -162,8 +168,11 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
   const data = useConnectors();
   const [offering, setOffering] = useState(false);
   const [editing, setEditing] = useState<Connector | "new" | null>(null);
-  // Off (the default), connectors are read here and changed in their files.
+  // Connectors change here even with in-app editing (Beta) off: adding one is
+  // how an agent reaches an app. Only files that come from an image are read-only.
   const files = useAgentEditing();
+  const canEdit = files.editable || (!!files.loaded && files.files_from !== "image");
+  const underTabs = useUnderTabs();
   const [test, setTest] = useState<TestRun | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
 
@@ -263,17 +272,20 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
 
   const list = data.data?.filter((c) => c.agents.includes(hub.key));
   const others = data.data?.filter((c) => !c.agents.includes(hub.key)) ?? [];
+  // One quiet line; the how-to sits behind the ? (the tab already names the page).
+  const help = "People also need “Connect …” or “Use …” in Access. Each connector is connectors/<id>.yaml in the deployment folder.";
   return (
     <>
-      <div className={embedded ? undefined : "panel"}>
+      <div className="panel">
         <div className="panel-heading">
           <div>
-            <Title level={2}>
-              Connectors
-              <InfoHelp text={`Remote MCP servers ${hub.name} can use. People also need “Connect …” or “Use …” in this agent’s Access.`} />
-            </Title>
+            {!underTabs && <Title level={2}>Connectors</Title>}
+            <Paragraph type="secondary">
+              {canEdit || !files.message ? `Remote MCP servers ${hub.name} can use.` : files.message}
+              <InfoHelp text={help} />
+            </Paragraph>
           </div>
-          {files.editable && <Space wrap>
+          {canEdit && <Space wrap>
             {others.length > 0 && (
               <Select
                 aria-label="Offer a connector another agent offers"
@@ -290,9 +302,6 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
             </Button>
           </Space>}
         </div>
-        <Paragraph type="secondary">{files.editable
-          ? "Add or edit connectors here, or edit their YAML files in the deployment folder. Both use the same settings."
-          : files.message ?? "Connectors are files under connectors/ in the deployment folder."}</Paragraph>
         {!list ? (
           <LoadState error={data.error} retry={data.reload} />
         ) : (
@@ -310,7 +319,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
               locale={{
                 emptyText: (
                   <Empty description="No connectors yet. Add one to give agents access to an app.">
-                    {files.editable && <Button onClick={() => setEditing("new")}>Add connector</Button>}
+                    {canEdit && <Button onClick={() => setEditing("new")}>Add connector</Button>}
                   </Empty>
                 ),
               }}
@@ -396,7 +405,7 @@ function ConnectorsScreen({ hub, embedded }: { hub: Hub; embedded: boolean }) {
                       <Button icon={<FlaskConical size={14} />} onClick={() => void runTest(c)}>
                         Test
                       </Button>
-                      {files.editable && <Dropdown
+                      {canEdit && <Dropdown
                         trigger={["click"]}
                         menu={{
                           items: [
@@ -695,7 +704,7 @@ function ConnectorDrawer({
         <CatalogPicker onPick={pick} />
       ) : (
       <div className="drawer-body">
-        <Paragraph type="secondary">Saved to <Text code>connectors/{id || "<id>"}.yaml</Text> in the deployment folder. Secrets are stored in <Text code>.env</Text>. Saving may reformat YAML and remove comments.</Paragraph>
+        <Paragraph type="secondary" title={`connectors/${id || "<id>"}.yaml; secrets in .env`}>Saved for this deployment. Saving drops YAML comments.</Paragraph>
         {creating && (
           <div>
             <Button type="link" size="small" icon={<ArrowLeft size={14} />} className="catalog-back" onClick={() => setPicking(true)}>
@@ -772,7 +781,7 @@ function ConnectorDrawer({
                 help={
                   existing?.has_shared_secret && !keyNeeded
                     ? "A key is stored. Leave empty to keep it."
-                    : "Saved in the deployment .env and never shown again."
+                    : "Stored on the server, never shown again."
                 }
               >
                 <Input.Password
@@ -834,8 +843,8 @@ function ConnectorDrawer({
                   problem={touched ? problems.secret : null}
                   help={
                     existing?.has_client_secret && !draft.dropSecret
-                      ? "A secret is stored. Leave empty to keep it. It is never shown again."
-                      : "Saved in the deployment .env and never shown again."
+                      ? "A secret is stored. Leave empty to keep it."
+                      : "Stored on the server, never shown again."
                   }
                 >
                   <Input.Password

@@ -62,7 +62,7 @@ REGISTRANTS: tuple[str, ...] = ("hubzoid.tools", "hubzoid.tools.curator", "hubzo
                                 "hubzoid.artifacts", "hubzoid.chat.features")
 
 NOT_CHECKED = "Not checked"
-DISABLED = "Disabled for this hub"
+DISABLED = "Turned off for this agent"
 NO_LONGER_AVAILABLE = "No longer available"
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")

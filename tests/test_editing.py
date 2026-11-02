@@ -20,13 +20,14 @@ def test_where_the_files_come_from_decides_the_message(tmp_path, monkeypatch):
     hub = tmp_path / "hub"
     hub.mkdir()
     assert editing.source(hub) == "local" and not editing.allowed(hub)
-    assert "on this computer" in editing.message(hub)
+    assert "Edit the files" in editing.message(hub)
     (tmp_path / ".git").mkdir()
-    assert editing.source(hub) == "git" and "your repository" in editing.message(hub)
+    assert editing.source(hub) == "git" and "in Git, then deploy" in editing.message(hub)
     monkeypatch.setenv(editing.ENV, "true")
     assert editing.allowed(hub) and editing.refusal(hub) is None
     monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))     # files from an image
     assert editing.source(hub) == "image" and not editing.allowed(hub)
+    assert "redeploy the image" in editing.message(hub)
 
 
 @pytest.fixture
@@ -102,7 +103,7 @@ def test_the_agent_does_not_offer_shared_changes_while_off(tmp_path, monkeypatch
     shown = visible_map({"read_hub_file": reads, "propose_hub_change": writes})
     assert shown == {"read_hub_file": True, "propose_hub_change": False}
     out = json.loads(asyncio.run(writes.on_invoke_tool(None, "{}")))
-    assert "from the browser is off" in out["error"]
+    assert "You can't change" in out["error"]
     monkeypatch.setenv(editing.ENV, "true")
     assert writes.is_enabled() is not False
 

@@ -9,6 +9,7 @@ optional: a hub without these files works as before.
 version: 1
 settings:
   - name: FACTORY_REPO
+    label: Repository      # optional; Settings shows it instead of the name
     description: Repository the factory works on
     required: true
     regex: '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'   # anchored; linear-time engine
@@ -26,7 +27,10 @@ settings:
 ```
 
 Names are `UPPER_CASE`. A secret setting has no default and its example is a
-reference, never a value.
+reference, never a value. Settings shows `label` where one is given. Without
+it, the name reads as words, without the first word most of the agent's
+settings share: `FACTORY_BRANCH_PREFIX` shows as "Branch prefix". A `label`
+needs Hubzoid 2.0.7 or later; older versions refuse the file.
 
 ## Set values: `hub.settings.yaml`
 
@@ -95,7 +99,8 @@ the revision on, so a stale editor is refused.
 
 Agents, then the agent, then **Configuration**, **Setup**. Saving the form there is Beta and off by default (see [DEPLOYING](DEPLOYING.md#in-app-editing)):
 
-- the settings form, with each value's source;
+- the settings form, each setting under its label (hover a label for its
+  name), with a note when the server's environment sets the value;
 - the secret settings and whether each is available;
 - a **Run checks** button.
 

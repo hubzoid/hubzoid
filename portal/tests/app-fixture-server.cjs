@@ -723,12 +723,16 @@ function createApp(options = {}) {
       return send(res, 200, { agents, default_agent: agents[0]?.id ?? null });
     }
     // Browser editing of agent files (Beta, off by default in Hubzoid): on in
-    // the fixture so the editors can be tested; flags.editing turns it off.
+    // the fixture so the editors can be tested; flags.editing turns it off, or
+    // "image" for files that come with an image (never written).
     if (pathname === "/api/editing" && method === "GET")
-      return send(res, 200, state.flags.editing
+      return send(res, 200, state.flags.editing === "image"
+        ? { in_app_editing: true, editable: false, files_from: "image",
+            message: "You can't change this agent's files here. Change them in Git, then redeploy the image." }
+        : state.flags.editing
         ? { in_app_editing: true, editable: true, files_from: "local", message: null }
         : { in_app_editing: false, editable: false, files_from: "local",
-            message: "Changing this agent's files from the browser is off. Edit the agent's files on this computer, or ask Claude Code or Codex." });
+            message: "You can't change this agent's files here. Edit the files, or ask Claude Code or Codex." });
     if (pathname === "/api/branding" && method === "GET")
       return send(
         res,

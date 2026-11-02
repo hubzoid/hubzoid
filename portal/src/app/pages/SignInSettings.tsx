@@ -11,6 +11,7 @@ import { useReauth } from "../components/Security";
 import { Section } from "./SettingsFrame";
 
 const D = t.directory;
+const SAML_DOCS = "https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md#company-sign-in-saml-and-scim";
 const P = t.peopleSecurity;
 
 type Provider = {
@@ -106,7 +107,14 @@ function Directories({ run }: { run: Run }) {
   };
   return (
     <div className="space-y-4 text-[13.5px]">
-      {!data.available && <Notice tone="warning">{D.unavailable} {data.why}</Notice>}
+      {/* Not an error, and no install command: the server's own reason stays in
+          its API answer and the docs say how (2.0.7 sweep). */}
+      {!data.available && (
+        <Notice tone="info">
+          {D.unavailable}{" "}
+          <a href={SAML_DOCS} target="_blank" rel="noopener noreferrer" className="underline">{D.unavailableHow}</a>
+        </Notice>
+      )}
       {token && (
         <Notice tone="success" title={D.tokenMade} onDismiss={() => setToken(null)}>
           <p className="m-0">{D.tokenOnce}</p>

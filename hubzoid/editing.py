@@ -12,7 +12,9 @@ where the files come from an image.
 Only the browser routes and the agent's own "propose a shared change" tools
 check this. The CLI's ``apply`` commands run where the builder works and keep
 working. Workflow permissions and secrets live in the database, not in files,
-and stay editable.
+and stay editable. Connectors are files too, but adding one is how an agent
+reaches an app, so an administrator adds and edits them from the browser with
+the switch off (``always=True``); only files from an image refuse.
 """
 from __future__ import annotations
 
@@ -52,29 +54,24 @@ def allowed(hub_dir: Path) -> bool:
 
 def message(hub_dir: Path, what: str = "this agent's files") -> str:
     """Why the browser can't change ``what``, and where to change it instead."""
+    tail = {"image": "Change them in Git, then redeploy the image.",
+            "git": "Change them in Git, then deploy."}.get(source(hub_dir), "Edit the files, or ask Claude Code or Codex.")
+    return f"You can't change {what} here. {tail}"
+
+
+def refusal(hub_dir: Path, what: str = "this agent's files", *, always: bool = False) -> dict | None:
+    """None when allowed, else the error body every route returns (409).
+    ``always``: allowed with the switch off too, unless the files come from an image."""
     where = source(hub_dir)
-    if where == "image":
-        return (f"You can't change {what} here: this agent's files come with its image. "
-                "Change them in Git and redeploy.")
-    if where == "git":
-        tail = "Change them in your repository (or ask Claude Code or Codex), then deploy."
-    else:
-        tail = "Edit the agent's files on this computer, or ask Claude Code or Codex."
-    return f"Changing {what} from the browser is off. {tail}"
-
-
-def refusal(hub_dir: Path, what: str = "this agent's files") -> dict | None:
-    """None when allowed, else the error body every route returns (409)."""
-    if allowed(hub_dir):
+    if allowed(hub_dir) or (always and where != "image"):
         return None
-    where = source(hub_dir)
     # Files from an image keep 2.0.1's code: the switch would not help there.
     return {"code": "hub_read_only" if where == "image" else CODE, "message": message(hub_dir, what), "source": where}
 
 
-def check(hub_dir: Path, what: str = "this agent's files") -> None:
+def check(hub_dir: Path, what: str = "this agent's files", *, always: bool = False) -> None:
     """Raise the 409 a browser route returns when the change isn't allowed."""
-    body = refusal(hub_dir, what)
+    body = refusal(hub_dir, what, always=always)
     if body is not None:
         from .control.http import error
 

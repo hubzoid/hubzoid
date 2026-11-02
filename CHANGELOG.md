@@ -5,37 +5,9 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [2.0.7]
 
-Attachments have one path, every tool's schema is right on every runtime, and
-agents make Excel, PDF and Word files (#136).
-
-### Fixed
-- **Tools mark only real required arguments as required.** Built-in tools used
-  a strict schema that listed optional arguments as required, so Claude, Codex
-  and MCP clients refused a call that left them out. The first `read_upload` of
-  a CSV failed this way. Every built-in tool is now made with `hubzoid.tool`
-  (non-strict). Hub authors use `from hubzoid import tool` too. A hub tool made
-  with `agents.function_tool` still loads, and `hubzoid doctor` names it.
-
-### Changed
-- **Attachments have one path** (`proposals/2026-11-02-attachments-one-path.md`).
-  Every surface uploads a file once to `POST /api/chat/files` (channels: the
-  bridge's internal `POST /v1/files` with the bridge key), or calls
-  `hubzoid.attachments.save` in process, then names the file id in the message.
-  The file is stored once and appears in the chat's folder as a hard link. The
-  web app, the API, embedded chat, Slack, Telegram, WhatsApp and `hubzoid test -f`
-  all work this way. Embedded chat accepts files (AG-UI `binary` parts with the
-  file id). Every prompt is built from the stored message parts, and images go
-  to the runtime as a list: nothing is read back out of the prompt text.
-  `HUBZOID_VISION` still turns image sending off. Backups archive a chat's
-  linked attachment as a plain file, and a forked chat keeps its attachments.
-
-### Removed
-- Base64 data URLs in `/v1/chat/completions` messages (refused with how to
-  upload), chunked resumable uploads (`/api/chat/files/uploads`, now 410),
-  `POST /api/conversations/{id}/files` (410), the bridge's `/uploads/{chat}/{name}`
-  route (410) and the S3 storage adapter. Files an older release stored in S3
-  answer 503 one by one and `hubzoid doctor` lists them; the hub keeps running.
-  Existing file ids, references and chat folders are unchanged.
+Attachments have one path, every tool's schema is right on every runtime,
+agents read and make Excel, PDF and Word files (#136), and Settings is reviewed
+with shorter text that says "agent" (#138).
 
 ### Added
 - **Agents read Excel and Word attachments.** `read_upload` returns each sheet's
@@ -53,6 +25,98 @@ agents make Excel, PDF and Word files (#136).
   root `plugin.json` in the Agent Plugins format with the listing fields
   OpenAI's plugin directory reads. Claude Code still reads
   `.claude-plugin/plugin.json`.
+
+### Fixed
+- **Tools mark only real required arguments as required.** Built-in tools used
+  a strict schema that listed optional arguments as required, so Claude, Codex
+  and MCP clients refused a call that left them out. The first `read_upload` of
+  a CSV failed this way. Every built-in tool is now made with `hubzoid.tool`
+  (non-strict). Hub authors use `from hubzoid import tool` too. A hub tool made
+  with `agents.function_tool` still loads, and `hubzoid doctor` names it.
+- **Agents list on laptop screens.** Below a 1600px-wide window, the list ran
+  off the right edge and Settings scrolled sideways, hiding Status and Chat.
+  Its columns now follow the list's own width: all of them from about 1360px,
+  without Spend and Last used below that, and one card per agent on a phone.
+- **An agent's header on a phone.** The name and description were squeezed to
+  one word a line beside View activity and Open chat; the buttons now wrap below.
+
+### Changed
+- **Attachments have one path** (`proposals/2026-11-02-attachments-one-path.md`).
+  Every surface uploads a file once to `POST /api/chat/files` (channels: the
+  bridge's internal `POST /v1/files` with the bridge key), or calls
+  `hubzoid.attachments.save` in process, then names the file id in the message.
+  The file is stored once and appears in the chat's folder as a hard link. The
+  web app, the API, embedded chat, Slack, Telegram, WhatsApp and `hubzoid test -f`
+  all work this way. Embedded chat accepts files (AG-UI `binary` parts with the
+  file id). Every prompt is built from the stored message parts, and images go
+  to the runtime as a list: nothing is read back out of the prompt text.
+  `HUBZOID_VISION` still turns image sending off. Backups archive a chat's
+  linked attachment as a plain file, and a forked chat keeps its attachments.
+- **Connectors are added from the browser by default.** An agent's
+  Connectors tab shows Add connector, Edit, Stop offering and Delete to
+  organization administrators with in-app editing off. Before, they appeared
+  only with `in_app_editing: true`, so one deployment had the button and
+  another did not. A connector's On switch also works there now; it answered
+  that in-app editing was off. Files that come from an image are still never
+  written.
+- **Settings: an agent's Access rows.** A person's name, and anywhere on the
+  row, opens their access to this agent; the separate Edit access button is
+  gone. The name used to open their page in People, which a laptop (sign-in
+  off) does not have. In the access drawer the person's name and View profile
+  open their profile: their page in People for organization administrators
+  with sign-in on, or your own Account when it is you (on a laptop, the local
+  owner).
+- **Settings: less space before the content.** Under an agent's tabs the line
+  that describes the tab sits beside its buttons and the list starts right
+  below it. The Connectors tab no longer repeats its own name as a heading.
+- **Settings: the audit log reads as sentences.** Health checks and support
+  bundles ("admin ran health checks for Starter Hub", "Health checks … finished"),
+  card settings and the parity ledger have their own sentences. An event without
+  one shows its name in words, never a report id or its JSON summary; those stay
+  in the event's details.
+- **Settings: company sign-in not installed.** The Sign-in tab says so in a
+  sentence with a link to the setup steps, instead of a `pip install` command.
+- **Settings: Organization.** Its four tabs keep one width. Chat defaults says
+  "Set in `hubzoid.yaml`" with the how-to behind the ?, like Brand and
+  Advanced; Brand says "Default brand" when none is set; Health drops its
+  description line.
+- **Settings: an agent's Setup shows labels, not keys.** "Mode" and "Company"
+  instead of `DESK_MODE` and `DESK_COMPANY`, choices such as "Sample" in
+  capitals, and check results as OK, Warning or Failed. Hover a label for the
+  setting's name. A setting's source shows only when the server's environment
+  sets it. `settings.yaml` takes an optional `label` (2.0.7 and later); without
+  one the name reads as words, without the first word most of the agent's
+  settings share.
+- **Settings: an agent with no evals.** The Evals tab says so in one sentence
+  with a link, instead of a sample case file and command-line steps.
+- **Settings: Health.** Reports show the agent's name instead of its folder,
+  "Finished" instead of `completed`, and times like "5 days ago" with the full
+  time on hover. A report is titled by what it checked instead of its id, and
+  check results read OK, Warning or Failed.
+- **Settings: shorter text, no file names or commands on the page.** Ledes,
+  empty states and notices say what something is in a few words. File names
+  and `hubzoid` commands moved behind each page's ?, or into a hover on the
+  line they explain (a workflow's "Off.", "Paused."). Advanced drops its
+  "See it with" column. Instructions and channel files still show their paths.
+- **Settings: the Agents list.** Under each name is the agent's description
+  instead of its folder name (still searchable, and on hover). "In its folder"
+  is now "Built with", and knowledge counts read as documents.
+- **"Agent" instead of "hub" in Settings and chat.** "Across 4 agents", "Using
+  this agent" in the access drawer, "Actions in other systems", "Changes to
+  review", a card's "Review" and "Open in Settings" links, secrets "Set in the
+  agent's .env", and a turned-off capability reads "Turned off for this agent".
+  The MCP sign-in page says "Access needed". The CLI, docs, files and URLs keep
+  "hub".
+- **Shorter read-only notice.** "You can't change this agent's files here."
+  plus where to change them, instead of two longer sentences.
+
+### Removed
+- Base64 data URLs in `/v1/chat/completions` messages (refused with how to
+  upload), chunked resumable uploads (`/api/chat/files/uploads`, now 410),
+  `POST /api/conversations/{id}/files` (410), the bridge's `/uploads/{chat}/{name}`
+  route (410) and the S3 storage adapter. Files an older release stored in S3
+  answer 503 one by one and `hubzoid doctor` lists them; the hub keeps running.
+  Existing file ids, references and chat folders are unchanged.
 
 ## [2.0.6]
 

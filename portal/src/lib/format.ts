@@ -140,7 +140,7 @@ export function capabilityLabel(
 
 /** Drawer sections in display order. Presentation only: grants never change. */
 export const CAPABILITY_GROUPS = [
-  { key: "hub", title: "Hub access" },
+  { key: "hub", title: "Using this agent" },
   { key: "restricted", title: "Restricted tools" },
   { key: "connectors", title: "Connectors" },
   { key: "workflows", title: "Workflows" },
@@ -225,14 +225,14 @@ export function capabilityNotes(p: Permission): string[] {
   if (p.obsolete) return notes;
   if (p.available === false)
     notes.push(
-      p.status === "Disabled for this hub"
-        ? "Disabled for this agent, so it has no effect until an operator enables it."
+      p.status === "Turned off for this agent"
+        ? "Off here until an operator turns it on."
         : p.default === "included"
-          ? `${p.status || "Not configured"}: it can’t run until an operator adds its settings.`
-          : `${p.status || "Not configured"}: it can be granted, but can’t run until an operator adds its settings.`,
+          ? `${p.status || "Not configured"}: can’t run until an operator adds its settings.`
+          : `${p.status || "Not configured"}: grantable, but can’t run until an operator adds its settings.`,
     );
   else if (p.available === null)
-    notes.push("Its settings may be in a secret Settings can’t read, so they weren’t checked.");
+    notes.push("Not checked: its settings may be in a secret.");
   return notes;
 }
 
@@ -288,29 +288,29 @@ export function personStatus(p: {
 
 export function workflowState(state: string): Presentation {
   switch (state) {
-    case "definition-disabled": return { label: "Disabled in file", color: "default", hint: "Enable this task in its schedule file when it is ready." };
+    case "definition-disabled": return { label: "Off", color: "default", hint: "Turned off in its file." };
     case "scheduled":
       return { label: "Scheduled", color: "green", hint: "The scheduler is running and will fire this on time." };
     case "manual":
-      return { label: "Manual", color: "default", hint: "No schedule; runs only when started explicitly." };
+      return { label: "Manual", color: "default", hint: "Runs only when started." };
     case "event":
       return { label: "On webhook", color: "green", hint: "Runs when its webhook receives an event." };
     case "paused":
       return {
         label: "Paused",
         color: "orange",
-        hint: "An operator paused this schedule. Resume it on the server with `hubzoid schedule resume`.",
+        hint: "Paused by an operator. CLI: hubzoid schedule resume.",
       };
     case "disabled":
-      return { label: "Schedules off", color: "default", hint: "Schedules are disabled for this deployment." };
+      return { label: "Schedules off", color: "default", hint: "Off for this deployment." };
     case "schedules_off":
-      return { label: "Schedules off on this machine", color: "orange",
-               hint: "This machine doesn't run timetables (HUBZOID_SCHEDULES). Webhooks and manual runs still work." };
+      return { label: "Schedules off", color: "orange",
+               hint: "This server runs no timetables (HUBZOID_SCHEDULES). Webhooks and manual runs work." };
     case "stale":
       return {
         label: "Scheduler stopped",
         color: "red",
-        hint: "No dispatcher heartbeat recently; scheduled runs will not fire until it restarts.",
+        hint: "Scheduled runs wait until it restarts.",
       };
     case "error":
       return { label: "Definition error", color: "red", hint: "The workflow could not be loaded." };
@@ -318,6 +318,53 @@ export function workflowState(state: string): Presentation {
       return { label: humanize(state), color: "default", hint: "" };
   }
 }
+
+/** A check's result in words (Setup checks and Health): "warn" reads "Warning". */
+export function checkStatus(status: string): Presentation {
+  const label = { ok: "OK", info: "Info", warn: "Warning", fail: "Failed", pending: "Pending", skipped: "Skipped",
+                  timeout: "Timed out" }[status];
+  const color = { ok: "green", info: "blue", warn: "gold", fail: "red", timeout: "magenta" }[status] ?? "default";
+  return { label: label ?? humanize(status), color, hint: "" };
+}
+
+/** A Health report's state in words. */
+export function reportStatus(status: string): Presentation {
+  switch (status) {
+    case "queued": return { label: "Queued", color: "blue", hint: "" };
+    case "running": return { label: "Running", color: "processing", hint: "" };
+    case "completed": return { label: "Finished", color: "green", hint: "" };
+    case "cancelled": return { label: "Cancelled", color: "default", hint: "" };
+    case "interrupted": return { label: "Interrupted", color: "orange", hint: "The worker stopped. It was not rerun." };
+    default: return { label: humanize(status), color: "default", hint: "" };
+  }
+}
+
+const ACRONYMS = new Set(["api", "id", "ids", "url", "urls", "erp", "ci", "mcp", "sla", "pr", "prs", "csv", "pdf", "smtp", "ui"]);
+
+/** A setting's name as a label: DESK_MAX_PAGES reads "Max pages" when most of
+ *  the agent's settings start with DESK_. `prefix` is that shared first word. */
+export function settingLabel(name: string, prefix?: string): string {
+  const words = name.toLowerCase().split("_").filter(Boolean);
+  if (prefix && words.length > 1 && words[0] === prefix) words.shift();
+  const text = words.map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w)).join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The first word most of these setting names share (DESK in DESK_MODE,
+ *  DESK_CLOCK…), or undefined when no word starts at least half of them. */
+export function settingPrefix(names: string[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const n of names) {
+    const first = n.toLowerCase().split("_")[0];
+    if (n.includes("_")) counts.set(first, (counts.get(first) ?? 0) + 1);
+  }
+  const [word, count] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? [];
+  return word && names.length > 1 && count * 2 >= names.length ? word : undefined;
+}
+
+/** A choice's value as a label: "sample" reads "Sample". */
+export const optionLabel = (v: string | number) =>
+  typeof v === "string" ? humanize(v).replace(/^./, (c) => c.toUpperCase()) : String(v);
 
 export function runStatus(status: string): Presentation {
   const s = status.toUpperCase();
@@ -389,6 +436,26 @@ function fromSurface(surface?: string | null) {
   if (!surface || surface === "system") return [];
   return [text(` ${RUN_CONTROL_SURFACES[surface] ?? `via ${humanize(surface)}`}`)];
 }
+
+/** A control-plane row (``hubzoid.control.audit``) keeps a short JSON summary
+ *  in `permission`; anything else gives an empty one. */
+function summaryOf(row: AuditRow): Record<string, unknown> {
+  try {
+    const v = JSON.parse(row.permission ?? "");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+const isJsonSummary = (row: AuditRow) => (row.permission ?? "").trimStart().startsWith("{");
+
+const DIAGNOSTIC_OUTCOMES: Record<string, string> = {
+  completed: " finished",
+  failed: " failed",
+  cancelled: " were cancelled",
+  interrupted: " were interrupted",
+};
 
 export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sentence {
   const who =
@@ -653,17 +720,70 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         detail: "Everyone’s connection to it was removed.",
       };
     }
-    default:
+    // Health checks and support bundles (Organization → Health). The subject
+    // is the report's or bundle's id, kept in the event's details.
+    case "diagnostic.requested": {
+      const checks = Number(summaryOf(row).checks) || 0;
+      return {
+        tone: "neutral", tag: "Health",
+        parts: [actor(who), text(" ran health checks"), ...(hubName ? [text(" for "), agent(hubName)] : [text(" for the whole deployment")])],
+        detail: checks ? `${checks} ${checks === 1 ? "check" : "checks"}.` : undefined,
+      };
+    }
+    case "diagnostic.completed": {
+      const status = String(summaryOf(row).status ?? "");
+      return {
+        tone: status === "completed" ? "neutral" : "negative", tag: "Health",
+        parts: [text("Health checks"), ...(hubName ? [text(" for "), agent(hubName)] : []), text(DIAGNOSTIC_OUTCOMES[status] ?? " ended")],
+      };
+    }
+    case "bundle.created":
+      return { tone: "neutral", tag: "Health", parts: [actor(who), text(" made a support bundle")] };
+    case "bundle.downloaded":
+      return { tone: "neutral", tag: "Health", parts: [actor(who), text(" downloaded a support bundle")] };
+    case "bundle.link_renewed":
+      return { tone: "neutral", tag: "Health", parts: [actor(who), text(" renewed a support bundle’s download link")] };
+    case "bundle.deleted":
+      return { tone: "negative", tag: "Health", parts: [actor(who), text(" deleted a support bundle")] };
+    // Cards (mcp-apps.yaml).
+    case "apps.apply":
+      return { tone: "neutral", tag: "Cards", parts: [actor(who), text(" changed the card settings"), ...inAgent(hubName)] };
+    case "apps.revoke": {
+      const reason = summaryOf(row).reason;
+      return {
+        tone: "negative", tag: "Cards",
+        parts: [actor(who), text(" removed a card"), ...inAgent(hubName)],
+        detail: typeof reason === "string" && reason ? reason : undefined,
+      };
+    }
+    // The parity ledger (Settings → Advanced).
+    case "parity_candidate.created":
+      return { tone: "neutral", tag: "Parity ledger", parts: [actor(who), text(" made a parity ledger candidate")] };
+    case "parity.reviewed": {
+      const decision = summaryOf(row).decision;
+      return {
+        tone: "neutral", tag: "Parity ledger",
+        parts: [actor(who), text(" reviewed a parity ledger candidate")],
+        detail: typeof decision === "string" && decision ? `Decision: ${humanize(decision)}.` : undefined,
+      };
+    }
+    case "parity.frozen":
+      return { tone: "neutral", tag: "Parity ledger", parts: [actor(who), text(" froze a parity ledger candidate")] };
+    // An action with no sentence of its own reads as its words. Ids and JSON
+    // summaries are not words: they stay in the event's details.
+    default: {
+      const named = row.subject && (row.subject.includes("@") || row.subject === EVERYONE || isService(row.subject)) ? subjectName : "";
       return {
         tone: "neutral",
         parts: [
           actor(who),
-          text(` ${humanize(row.action || "changed")} `),
-          ...(subjectName ? [person(subjectName)] : []),
-          ...(cap ? [text(" "), capability(cap)] : []),
-          ...(hubName ? [text(" in "), agent(hubName)] : []),
+          text(` ${humanize((row.action || "changed").replaceAll(".", " "))}`),
+          ...(named ? [text(" "), person(named)] : []),
+          ...(cap && !isJsonSummary(row) ? [text(" "), capability(cap)] : []),
+          ...inAgent(hubName),
         ],
       };
+    }
   }
 }
 

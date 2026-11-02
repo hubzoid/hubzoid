@@ -339,7 +339,8 @@ export default function SettingsPage({ section }: { section: string | null }) {
               )}
               <About />
             </nav>
-            <main className={cx("hz-set-main", active === "chat" && "hz-set-chat", tabs.length > 1 && "is-grouped")} aria-label={current?.label}>
+            <main className={cx("hz-set-main", active === "chat" && "hz-set-chat", tabs.length > 1 && "is-grouped")} aria-label={current?.label}
+              data-group={activeGroup?.id}>
               <button type="button" className="hz-set-back" onClick={() => {
                   history.replaceState(null, "", "/settings");
                   window.dispatchEvent(new HashChangeEvent("hashchange"));

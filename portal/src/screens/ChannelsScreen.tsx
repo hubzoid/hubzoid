@@ -134,23 +134,20 @@ function ChannelList({ hub }: { hub: Hub }) {
     <div className="panel">
       <Title level={2}>
         Channels
-        <InfoHelp text="Slack, GitHub, Linear, email and WhatsApp threads this agent answers in. The same list as hubzoid channels list." />
+        <InfoHelp text="Each channel is channels/<id>.yaml; credentials are secret references. CLI: hubzoid channels list, hubzoid channels apply." />
       </Title>
-      <Paragraph type="secondary">
-        Each channel is a file, <Text code>channels/&lt;id&gt;.yaml</Text>, in this agent's folder. Replies always go back to
-        the thread a request came from. Credentials are secret references, never values.
-      </Paragraph>
+      <Paragraph type="secondary">Threads this agent answers in. Replies go back to the same thread.</Paragraph>
       {not_applied.length > 0 && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
           title={`${not_applied.length} channel file(s) are not applied yet`}
-          description={not_applied.map((f) => f.file).join(", ") + ". Paste one below and apply it, or run hubzoid channels apply."}
+          description={not_applied.map((f) => f.file).join(", ") + ". Paste one below to apply it."}
         />
       )}
       {items.length === 0 ? (
-        <Empty description="No channels yet. Add a channel file below, or ask your assistant to set one up with hubzoid channels apply." />
+        <Empty description="No channels yet." />
       ) : (
         <Table<Connection>
           {...ROW_OPENS}
@@ -237,8 +234,7 @@ function ConfigEditor({ hub, onApplied, initial, cid, revision }: {
     <div style={{ marginTop: 24 }}>
       <Title level={4}>{cid ? "Change this channel" : "Add a channel"}</Title>
       <Paragraph type="secondary">
-        The same file your assistant writes. Applying saves it as <Text code>channels/&lt;id&gt;.yaml</Text> and makes it
-        active. {cid ? "It must still match the revision shown above." : "A new channel starts paused until enabled: true."}
+        Applying saves <Text code>channels/{cid || "<id>"}.yaml</Text>. {cid ? "" : "New channels start paused until enabled: true."}
       </Paragraph>
       <Input.TextArea
         aria-label="Channel file"
@@ -334,7 +330,7 @@ function ConnectionView({ hub, cid, tab }: { hub: Hub; cid: string; tab?: string
       {notice && <Alert style={{ marginBottom: 12 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
       {q.connected === "github" && (
         <Alert style={{ marginBottom: 12 }} type="success" showIcon title="Connected to GitHub."
-          description="Run the checks on the Overview tab, then give people Start work from this channel in Access." />
+          description="Run the checks on Overview, then grant Start work from this channel in Access." />
       )}
       {c.file_matches === false && (
         <Alert style={{ marginBottom: 12 }} type="warning" showIcon
@@ -454,7 +450,7 @@ function Deliveries({ url }: { url: string }) {
       </Space>
       {notice && <Alert style={{ marginBottom: 12 }} type="info" showIcon closable title={notice} onClose={() => setNotice(null)} />}
       {!data.data ? <LoadState error={data.error} retry={data.reload} /> : !data.data.items.length ? (
-        <Empty description="No deliveries yet. doctor reports webhook_delivery: unverified until the provider sends one." />
+        <Empty description="No deliveries yet." />
       ) : (
         <Table<Delivery>
           rowKey="id" size="small" dataSource={data.data.items} pagination={PAGED}
@@ -752,12 +748,11 @@ function GitHubPanel({ url }: { url: string }) {
     <div style={{ marginBottom: 16 }}>
       <Title level={4}>GitHub App</Title>
       <Paragraph type="secondary">
-        Your own App, owned by your account or organization. GitHub hands its private key and webhook secret to this
-        hub's secret store directly. Setup state: <Tag>{st}</Tag>
+        Your own App. GitHub sends its keys straight to this agent's secret store. Setup state: <Tag>{st}</Tag>
       </Paragraph>
       {notice && <Alert style={{ marginBottom: 8 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
       {(st === "none" || st === "failed") && !files.editable && (
-        <Paragraph type="secondary">Set up the App with <Text code>hubzoid channels github connect</Text>. {files.message}</Paragraph>
+        <Paragraph type="secondary" title="CLI: hubzoid channels github connect">{files.message}</Paragraph>
       )}
       {(st === "none" || st === "failed") && files.editable && (
         <Form form={form} layout="inline" onFinish={start} initialValues={{ type: "organization" }}>
@@ -833,8 +828,7 @@ function SlackPanel({ url }: { url: string }) {
     <div style={{ marginBottom: 16 }}>
       <Title level={4}>Slack app</Title>
       <Paragraph type="secondary">
-        Create the app in your own Slack workspace from this manifest (api.slack.com/apps, Create New App, From a manifest).
-        It holds no credentials. Store the tokens with hubzoid secrets set, never here.
+        Create it in your Slack workspace from this manifest (api.slack.com/apps → From a manifest). Store its tokens as secrets.
       </Paragraph>
       <Button onClick={get} loading={state.busy}>Download app manifest</Button>
       {state.error && <Alert style={{ marginTop: 8 }} type="error" showIcon title={state.error} />}

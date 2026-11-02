@@ -151,7 +151,7 @@ function step(name) {
     await totals.getByText("Workflow runs").waitFor();
     const usersCard = totals.getByRole("listitem").filter({ hasText: "Users" });
     await usersCard.getByText("42", { exact: true }).waitFor();
-    await usersCard.getByText("Across 3 hubs", { exact: true }).waitFor();
+    await usersCard.getByText("Across 3 agents", { exact: true }).waitFor();
     const boxes = await totals.getByRole("listitem").evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().top));
     assert.ok(boxes.every(y => y === boxes[0]), "Five totals fit on one desktop row");
     await page.getByText("7 days", { exact: true }).click();
@@ -597,7 +597,7 @@ function step(name) {
     await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
     assert.deepEqual(
       await drawer().locator(".capability-group-title").allTextContents(),
-      ["Hub access", "Restricted tools", "Administration", "Hubzoid tools", "No longer available"],
+      ["Using this agent", "Restricted tools", "Administration", "Hubzoid tools", "No longer available"],
       "groups in order; the empty Workflows group is hidden",
     );
     // Use this agent and removable leftovers stay in view; optional groups are closed.
@@ -611,7 +611,7 @@ function step(name) {
       assert.equal(await panel.count(), 1, `${name} names the panel it controls`);
       assert.equal(await panel.isHidden(), true);
     }
-    assert.equal(await group("Hub access").count(), 0, "Use this agent has no toggle");
+    assert.equal(await group("Using this agent").count(), 0, "Use this agent has no toggle");
     // Configuration is separate from permission: the included Email me is held
     // (with entry) but can't run, and the header says so while collapsed.
     assert.equal(await headerText("Hubzoid tools"), "Hubzoid tools · 1 not configured");
@@ -864,11 +864,10 @@ function step(name) {
     assert.equal(await hash(), "#/people");
     assert.equal(state.mutations.length, 0);
 
-    step("Access names and View profile open the person; unsaved edits ask first");
+    step("Access names open the person's access here, View profile opens the person; unsaved edits ask first");
     const priyaHref = `#/people/${encodeURIComponent(PRIYA)}`;
     await go("/agents/finance/access");
-    const priyaLink = rows().filter({ hasText: "Priya Natarajan" }).getByRole("link", { name: "Priya Natarajan" });
-    assert.equal(await priyaLink.getAttribute("href"), priyaHref);
+    assert.equal(await priyaRow.getByRole("link").count(), 0, "a name opens access to this agent, not People");
     assert.equal(await rows().filter({ hasText: "monthly_close" }).getByRole("link").count(), 0, "service identities stay plain text");
     await page.getByRole("button", { name: "Edit access for workflow:monthly_close" }).click();
     await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
@@ -878,6 +877,7 @@ function step(name) {
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     const viewProfile = drawer().getByRole("link", { name: "View profile" });
     assert.equal(await viewProfile.getAttribute("href"), priyaHref);
+    assert.equal(await drawer().getByRole("link", { name: "Priya Natarajan" }).getAttribute("href"), priyaHref, "the name opens the profile too");
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
     await viewProfile.click();
@@ -891,12 +891,16 @@ function step(name) {
     assert.equal(await hash(), priyaHref);
     assert.equal(state.mutations.length, 0);
     await go("/agents/finance/access");
-    await priyaLink.click();
-    await drawer().getByText(PRIYA, { exact: true }).waitFor();
-    assert.equal(await hash(), priyaHref);
+    // Anywhere on the row opens the same drawer as the name.
+    await priyaRow.getByText(PRIYA, { exact: true }).click();
+    await drawer().getByRole("link", { name: "View profile" }).waitFor();
+    assert.equal(await hash(), "#/agents/finance/access");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
     await go("/agents/support/access");
     await rows().filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
     assert.equal(await rows().filter({ hasText: "Everyone signed in" }).getByRole("link").count(), 0, "Everyone signed in stays plain text");
+    assert.equal(await page.getByRole("button", { name: "Edit access for Everyone signed in" }).count(), 0, "Everyone signed in has no access editor");
 
     step("Navigation is refused while a save is in flight");
     await go("/agents/finance/access");
@@ -950,8 +954,8 @@ function step(name) {
     await agentTab("Finance Assistant", "Workflows");
     const close = rows().filter({ hasText: "monthly_close" });
     // One plain status line per workflow (HUB-140 F31), with the schedule's zone.
-    await close.getByText(/^On\. Runs .*\(Asia\/Kolkata\)\./).waitFor();
-    await rows().filter({ hasText: "reissue_invoice" }).getByText("Runs when someone starts it.", { exact: true }).waitFor();
+    await close.getByText(/^On, .*\(Asia\/Kolkata\)\./).waitFor();
+    await rows().filter({ hasText: "reissue_invoice" }).getByText("Runs when started.", { exact: true }).waitFor();
     await close.getByRole("link", { name: "View runs" }).click();
     await page.getByRole("heading", { name: /Runs of monthly_close/ }).waitFor();
     await rows().filter({ hasText: "mc-2026-08-01" }).getByText("Failed").waitFor();
@@ -1204,6 +1208,13 @@ function step(name) {
     await rows().filter({ hasText: "an organization administrator" }).getByText("Sam Whitfield").first().waitFor();
     await go("/activity?person=tomas.herrera%40example.org");
     await rows().filter({ hasText: "blocked" }).getByText("Tomás Herrera").first().waitFor();
+    // Health checks read as sentences: no report id or JSON in the row.
+    await go("/activity?action=diagnostic.requested");
+    await rows().filter({ hasText: "ran health checks for Finance Assistant" }).first().waitFor();
+    assert.equal(await rows().filter({ hasText: /d8846706|"checks"|diagnostic\./ }).count(), 0, "no ids or JSON in audit sentences");
+    await go("/activity?action=diagnostic.completed");
+    await rows().filter({ hasText: "Health checks for Finance Assistant finished" }).first().waitFor();
+    assert.equal(await rows().filter({ hasText: /d8846706|"status"|diagnostic\./ }).count(), 0, "no ids or JSON in audit sentences");
     await go("/activity?actor=admin%40example.org&action=grant");
     await rows().filter({ hasText: "Everyone signed in" }).getByText("Support Assistant").first().waitFor();
     await go("/activity");

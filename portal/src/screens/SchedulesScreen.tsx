@@ -167,7 +167,7 @@ function MineReports() {
       )}
       <RecentRuns agents={agents} />
       {catalog.length === 0 && reports.length === 0 && (
-        <Empty description="No reports yet. Agents that offer reports list them here, with the request to type in chat." />
+        <Empty description="No reports yet." />
       )}
     </div>
   );
@@ -406,7 +406,7 @@ function PeopleSchedules({ hub }: { hub: Hub }) {
   const active = rows.filter(live).length;
   return (
     <Section title="People's schedules"
-      help="Saved from chat. Each runs as the person who saved it. Admins can pause and stop them, and resume only what they paused."
+      help="Saved from chat; each runs as its owner. Admins can resume only what they paused."
       extra={rows.length > 0 && <Text type="secondary">{active} of {rows.length} active</Text>}>
       <SchedulesTable
         rows={rows}
@@ -447,7 +447,7 @@ function LiveReports({ hub }: { hub: Hub }) {
   if (!reports.length) return null;
   return (
     <Section title="Live reports"
-      help="Each report's live link, which always shows the newest copy. A company link lets people at your company domain open it without using the agent. Personal reports stay with their owner; admins can only turn their link off."
+      help="Links that always show the newest copy. A company link opens for anyone at your domain. Admins can only turn off personal reports' links."
       extra={company.on ? <Tag className="hz-tag-accent">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}>
       {!company.on && <Alert className="notice" type="info" showIcon message={company.reason} />}
       <Table<Report>
@@ -510,7 +510,7 @@ function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catal
   const rows = q ? catalog.filter((r) => `${r.title} ${agentName(r.hub)}`.toLowerCase().includes(q)) : catalog;
   const asks = (r: (typeof catalog)[number]) =>
     r.schema ? Object.entries(r.schema.properties).map(([k, f]) => (f as { title?: string }).title || k.replace(/_/g, " ")) : [];
-  return <Section title="Reports you can run" help="Reports your agents offer with your current access. Run in chat opens the agent with the request typed in; it asks for anything it needs."
+  return <Section title="Reports you can run" help="Reports you can run now. Run in chat types the request for you."
     extra={catalog.length > 8 && <Input.Search allowClear placeholder="Search reports" aria-label="Search reports"
       value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />}>
     {!screens.md ? <List dataSource={rows} pagination={rows.length > PAGED.pageSize ? PAGED : false} renderItem={(r) => {
@@ -546,7 +546,7 @@ function RecentRuns({ agents }: { agents: MyAgent[] }) {
   const data = useData<{ runs: PersonalRun[] }>(agent ? `/my/runs${query({ hub: agent.key })}` : null);
   useVisibleRefresh(data.reload, data.refreshing || data.loading, !!agent);
   if (!agent) return null;
-  return <Section title="Recent requests" help="Your recent one-off reports and answers on one agent, including work that continued after chat stopped waiting. Pick the agent to see its requests.">
+  return <Section title="Recent requests" help="Your recent one-off reports and answers, per agent.">
     {usable.length > 1 && <Select aria-label="Recent requests agent" value={agent.key} onChange={setSelected}
       options={usable.map((a) => ({ value: a.key, label: displayName(a.name) }))} style={{ minWidth: 220 }} />}
     {data.data ? <List dataSource={data.data.runs} locale={{ emptyText: usable.length > 1
