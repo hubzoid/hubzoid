@@ -3,7 +3,10 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [Unreleased]
+## [2.0.7]
+
+Attachments have one path, every tool's schema is right on every runtime, and
+agents make Excel, PDF and Word files (#136).
 
 ### Fixed
 - **Tools mark only real required arguments as required.** Built-in tools used
@@ -35,6 +38,10 @@ All notable changes to Hubzoid. Versions follow the package version in
   Existing file ids, references and chat folders are unchanged.
 
 ### Added
+- **Agents make Excel, PDF and Word files** (#136): `make_excel` (typed sheets,
+  text stays text), `make_pdf` and `make_word` (a Markdown subset, never reading
+  disk or network). Files land in the chat's artifacts folder and download from
+  the chat. Not offered over MCP. Adds openpyxl, reportlab and python-docx.
 - **Codex install for the `hubzoid` plugin.** `codex plugin marketplace add
   hubzoid/hubzoid`, then `codex plugin add hubzoid@hubzoid`. The plugin gains a
   root `plugin.json` in the Agent Plugins format with the listing fields
