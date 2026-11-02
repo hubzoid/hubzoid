@@ -1,8 +1,9 @@
 """The one way a channel hands over a file it received.
 
 Slack, WhatsApp and Telegram each download the bytes from their provider, then
-`push_upload` sends them to the bridge's upload route (`POST /api/chat/files`,
-with the bridge key) and returns the stored file id. The channel puts that id
+`push_upload` sends them to the bridge's internal upload route (`POST /v1/files`,
+with the bridge key; the same `attachments.save` as `POST /api/chat/files`) and
+returns the stored file id. The channel puts that id
 in the message as a file part (`file_part`), and the bridge attaches it to the
 chat (`hubzoid.attachments`): images are shown to the model directly, any other
 file gets a note and is read with `read_upload`. Each channel runs as its own
@@ -21,11 +22,11 @@ _UPLOAD_TIMEOUT = 30.0
 
 
 def upload_url(bridge_url: str) -> str:
-    """The bridge's `POST /api/chat/files`. `bridge_url` is the `/v1` base (as
-    dispatch uses); strip that suffix without touching the rest — a naive
-    rstrip('/v1') would also eat a port ending in '1'."""
-    base = bridge_url[:-3] if bridge_url.endswith("/v1") else bridge_url
-    return f"{base.rstrip('/')}/api/chat/files"
+    """The bridge's `POST /v1/files`. `bridge_url` is the `/v1` base (as
+    dispatch uses); never a naive rstrip('/v1'), which would also eat a port
+    ending in '1'."""
+    base = bridge_url.rstrip("/")
+    return f"{base}/files" if base.endswith("/v1") else f"{base}/v1/files"
 
 
 def file_part(file_id: str) -> dict:

@@ -2,7 +2,7 @@
 
 `download_message_files` walks a `conversations.replies` history payload,
 fetches every Slack-hosted file with the bot token, and uploads each one
-to the bridge's `POST /api/chat/files` (`inbound.uploads.push_upload`), the
+to the bridge's `POST /v1/files` (`inbound.uploads.push_upload`), the
 same way every channel hands over a file. The returned file ids go in the
 messages as file parts, and the bridge attaches them to the thread's chat.
 

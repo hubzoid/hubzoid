@@ -508,9 +508,11 @@ class ChatEngine:
 
         if drain.active() and kind not in ("delete", "fork"):
             raise Err(503, "restarting", drain.MESSAGE)
-        # Content is validated (files resolved) before the transaction.
+        # Content is validated (files attached) before the transaction, and only
+        # for someone who may write here, so a refused send attaches nothing.
         with self.engine.connect() as conn:
-            conv, _ = self._readable(conn, conversation_id, actor)
+            conv, _ = (self._writable if kind in ("send", "synthesize", "revise") and "content" in op
+                       else self._readable)(conn, conversation_id, actor)
         validated = None
         if kind in ("send", "synthesize", "revise") and "content" in op:
             validated = self.part_validator(conv, op.get("content"), actor)
@@ -994,7 +996,8 @@ class ChatEngine:
         g.set_view(conn, new_cid, actor.id, brow.id if brow else None, selected)
         g.emit(conn, new_cid, "conversation.forked", new_cid, {"source": conv["id"], "messages": len(mapping)})
         return 201, {"new_conversation_id": new_cid, "mapping": mapping, "omitted": omitted,
-                     "source_chat_key": chat_key(conv), "new_chat_key": chat_key({"id": new_cid, "source": "web"})}, \
+                     "source_chat_key": chat_key(conv), "new_chat_key": chat_key({"id": new_cid, "source": "web"}),
+                     "source_conversation_id": conv["id"]}, \
             None
 
     # -- runs ----------------------------------------------------------------------------

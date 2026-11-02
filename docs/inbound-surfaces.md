@@ -169,9 +169,9 @@ mechanism, we hold the thread.
 
 Media a user sends — a WhatsApp image or document, a Telegram photo, voice note,
 or document — takes the **same path as every other surface**. The harness
-downloads the bytes from the surface, uploads them to the bridge's
-`POST /api/chat/files` with the bridge key, and names the returned file id in
-the user's turn as a file part. The bridge attaches the file to the chat:
+downloads the bytes from the surface, uploads them to the bridge's internal
+`POST /v1/files` with the bridge key (the same save as `POST /api/chat/files`),
+and names the returned file id in the user's turn as a file part. The bridge attaches the file to the chat:
 
 - **Images** are shown to the model directly as image blocks (`HUBZOID_VISION`,
   on by default).

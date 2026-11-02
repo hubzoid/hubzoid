@@ -1,4 +1,4 @@
-"""Size-cap tests for the one upload route, POST /api/chat/files.
+"""Size-cap tests for uploads (a channel's POST /v1/files, the same save as POST /api/chat/files).
 
 The cap is configured via HUBZOID_MAX_UPLOAD_BYTES (settings.max_upload_bytes,
 default 25 MiB). Bytes over the cap are rejected with 413 — silently
@@ -63,13 +63,13 @@ KEY = {"Authorization": "Bearer dev"}
 
 
 def test_upload_rejects_oversize_body(client):
-    r = client.post("/api/chat/files", headers=KEY, files={"file": ("big.txt", b"x" * 2048, "text/plain")})
+    r = client.post("/v1/files", headers=KEY, files={"file": ("big.txt", b"x" * 2048, "text/plain")})
     assert r.status_code == 413, r.text
     assert not (MINIMAL / ".hubzoid" / "chats").exists()
 
 
 def test_upload_accepts_under_cap_and_a_file_part_attaches_it(client):
-    r = client.post("/api/chat/files", headers=KEY, files={"file": ("ok.txt", b"x" * 512, "text/plain")})
+    r = client.post("/v1/files", headers=KEY, files={"file": ("ok.txt", b"x" * 512, "text/plain")})
     assert r.status_code == 201, r.text
     from unittest.mock import patch
 

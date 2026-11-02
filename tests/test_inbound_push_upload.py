@@ -1,5 +1,5 @@
 """The one way a channel hands over a file: upload the bytes to the bridge's
-POST /api/chat/files with the bridge key and get the stored file id, which the
+internal POST /v1/files with the bridge key and get the stored file id, which the
 message then names as a file part. Shared by Slack, WhatsApp and Telegram."""
 import httpx
 
@@ -22,7 +22,7 @@ def test_upload_posts_one_multipart_file_and_returns_the_file_id():
                       name="photo-7.jpg", mime="image/jpeg", content=b"\xff\xd8jpegbytes",
                       max_upload_bytes=1_000_000)
     assert got == "f-123"
-    assert cap["url"] == "http://127.0.0.1:8000/api/chat/files"
+    assert cap["url"] == "http://127.0.0.1:8000/v1/files"
     assert cap["auth"] == "Bearer KEY"
     assert cap["ctype"].startswith("multipart/form-data")
     assert b'filename="photo-7.jpg"' in cap["body"] and b"\xff\xd8jpegbytes" in cap["body"]
@@ -43,9 +43,9 @@ def test_bridge_error_or_no_id_returns_none():
 
 
 def test_upload_url_strips_only_the_v1_suffix():
-    assert upload_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000/api/chat/files"
-    assert upload_url("http://127.0.0.1:8001/v1") == "http://127.0.0.1:8001/api/chat/files"   # port ends in 1
-    assert upload_url("https://hub.example.com/b/finance/v1") == "https://hub.example.com/b/finance/api/chat/files"
+    assert upload_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000/v1/files"
+    assert upload_url("http://127.0.0.1:8001/v1") == "http://127.0.0.1:8001/v1/files"   # port ends in 1
+    assert upload_url("http://127.0.0.1:8001/") == "http://127.0.0.1:8001/v1/files"
 
 
 def test_messages_name_files_as_parts():

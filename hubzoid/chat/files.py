@@ -17,6 +17,7 @@ active content (HTML, SVG, XML, scripts) is never served with its own type.
 """
 from __future__ import annotations
 
+import errno
 import itertools
 import os
 import secrets
@@ -76,9 +77,12 @@ def _split(name: str) -> tuple[str, str]:
     return name, ""
 
 
-def reserve_name(upload_dir: Path, name: str) -> str:
+def reserve_name(upload_dir: Path, name: str, link_to: Path | None = None) -> str:
     """Claim ``name`` in the folder, or ``name-2``, ``name-3`` ... when taken.
-    Creating the file exclusively makes concurrent uploads of one name safe."""
+    Creating the file exclusively makes concurrent uploads of one name safe.
+    With ``link_to``, the name is claimed as a hard link to that file (atomic
+    too: a taken name is never overwritten); across disks, an empty file is
+    claimed and the caller copies into it."""
     stem, ext = _split(name)
 
     def numbered(suffix: str) -> str:
@@ -93,6 +97,16 @@ def reserve_name(upload_dir: Path, name: str) -> str:
     for candidate in candidates:
         if (upload_dir / f"{candidate}{uploads_lib.SIDECAR_SUFFIX}").exists():
             continue
+        if link_to is not None:
+            try:
+                os.link(link_to, upload_dir / candidate)
+                return candidate
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                link_to = None   # another disk: claim an empty file, the caller copies
         try:
             fd = os.open(upload_dir / candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:

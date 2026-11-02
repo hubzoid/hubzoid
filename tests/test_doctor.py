@@ -19,7 +19,7 @@ STABLE_IDS = {
     "config.layers", "secrets.deployment", "secrets.hub", "secrets.restricted",
     "secrets.names", "auth.google_merge",
     "ui.mode", "ui.openwebui_extra", "ui.openwebui_data", "exposure.local_mode", "deployment.key",
-    "tools.legacy_management_flag", "access.who", "mcp.access_group",
+    "tools.legacy_management_flag", "access.who", "mcp.access_group", "tools.schemas", "files.s3",
 }
 
 

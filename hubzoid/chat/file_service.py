@@ -385,23 +385,31 @@ class FileService:
                        conversation_id: str | None = None, local_name: str | None = None,
                        check_type: bool = True) -> dict:
         """Store bytes as a new ready file (already received and bounded by the
-        caller), with an optional conversation reference."""
+        caller), with an optional conversation reference. The quota is checked
+        before the bytes are written, and they are removed again if the record
+        is not."""
         if check_type:
             mime = self._check_type(name, mime, len(data))
+        with self.engine.connect() as conn:
+            self._check_quota(conn, actor_id, len(data))
         config_id, store = self._store()
         key = st.new_key()
         store.put(key, data)
         fid = str(uuid.uuid4())
-        t = _now()
-        with self.engine.begin() as conn:
-            self._check_quota(conn, actor_id, len(data))
-            conn.execute(files.insert().values(
-                file_id=fid, hub_id=self.hub, owner_principal_id=actor_id, storage_config_id=config_id, object_key=key,
-                content_sha256=sha256(data), size_bytes=len(data), mime_type=mime, original_name=name[:255],
-                origin=origin, state="ready", processing_error=None, revision=1, created_at=t, deleted_at=None))
-            if conversation_id:
-                self._add_ref(conn, fid, "conversation", conversation_id, conversation_id, actor_id, local_name)
-            row = self._row(conn, fid)
+        try:
+            with self.engine.begin() as conn:
+                self._check_quota(conn, actor_id, len(data))
+                conn.execute(files.insert().values(
+                    file_id=fid, hub_id=self.hub, owner_principal_id=actor_id, storage_config_id=config_id,
+                    object_key=key, content_sha256=sha256(data), size_bytes=len(data), mime_type=mime,
+                    original_name=name[:255], origin=origin, state="ready", processing_error=None, revision=1,
+                    created_at=_now(), deleted_at=None))
+                if conversation_id:
+                    self._add_ref(conn, fid, "conversation", conversation_id, conversation_id, actor_id, local_name)
+                row = self._row(conn, fid)
+        except BaseException:
+            store.delete(key)
+            raise
         return self.describe(row)
 
     def _validate(self, file_id: str, data: bytes) -> None:
@@ -805,9 +813,9 @@ def content_problem(mime: str, data: bytes) -> str | None:
     """Why the bytes are not the type they claim to be, or None. A renamed
     executable, an HTML page posing as an image or a fake PDF is refused."""
     head = data[:512].lstrip().lower()
-    if mime.startswith("image/") and mime != "image/svg+xml":
-        sig = {b"\x89png": "image/png", b"\xff\xd8\xff": "image/jpeg", b"gif8": "image/gif", b"riff": "image/webp"}
-        if not any(data[:4].lower().startswith(k) for k in sig):
+    sig = {"image/png": b"\x89png", "image/jpeg": b"\xff\xd8\xff", "image/gif": b"gif8", "image/webp": b"riff"}
+    if mime in sig:   # the pictures shown to models; other image types are files
+        if not data[:4].lower().startswith(sig[mime]):
             return "The bytes are not the image type they claim to be."
     elif mime == "application/pdf" and not data.startswith(b"%PDF"):
         return "The bytes are not a PDF."

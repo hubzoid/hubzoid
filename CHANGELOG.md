@@ -15,14 +15,16 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ### Changed
 - **Attachments have one path** (`proposals/2026-11-02-attachments-one-path.md`).
-  Every surface uploads a file once to `POST /api/chat/files`, or calls
+  Every surface uploads a file once to `POST /api/chat/files` (channels: the
+  bridge's internal `POST /v1/files` with the bridge key), or calls
   `hubzoid.attachments.save` in process, then names the file id in the message.
   The file is stored once and appears in the chat's folder as a hard link. The
   web app, the API, embedded chat, Slack, Telegram, WhatsApp and `hubzoid test -f`
   all work this way. Embedded chat accepts files (AG-UI `binary` parts with the
   file id). Every prompt is built from the stored message parts, and images go
   to the runtime as a list: nothing is read back out of the prompt text.
-  `HUBZOID_VISION` still turns image sending off.
+  `HUBZOID_VISION` still turns image sending off. Backups archive a chat's
+  linked attachment as a plain file, and a forked chat keeps its attachments.
 
 ### Removed
 - Base64 data URLs in `/v1/chat/completions` messages (refused with how to

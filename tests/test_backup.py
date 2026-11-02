@@ -650,3 +650,23 @@ def test_an_unreachable_postgres_store_never_stops_the_wait_check(tmp_path, monk
 
     monkeypatch.setattr(db, "operational_url", lambda hub_dir, env=None: "postgresql://hz@127.0.0.1:9/none")
     assert bk._waiting_for_people(tmp_path) == set()
+
+
+def test_an_attachment_linked_into_a_chat_is_saved_and_restored_as_a_file(tmp_path):
+    """A chat's attachment is a hard link to the stored file
+    (hubzoid.attachments): both names are archived as plain files."""
+    hub = _standalone(tmp_path)
+    stored = hub / ".hubzoid" / "files" / "hubzoid" / "ef"
+    stored.mkdir(parents=True)
+    (stored / "ef03").write_bytes(b"sku,qty\nA1,4\n")
+    chat = hub / ".hubzoid" / "chats" / "web-c1" / "uploads"
+    chat.mkdir(parents=True)
+    os.link(stored / "ef03", chat / "orders.csv")
+    archive = tmp_path / "b.tar.gz"
+    bk.backup(hub, archive, wait=0)
+    with tarfile.open(archive) as t:
+        members = {m.name: m for m in t.getmembers() if m.name.endswith(("/ef03", "/orders.csv"))}
+    assert len(members) == 2 and all(m.isreg() for m in members.values())
+    new = tmp_path / "moved"
+    bk.restore(archive, [(str(tmp_path / "live"), str(new))])
+    assert (new / "hub" / ".hubzoid" / "chats" / "web-c1" / "uploads" / "orders.csv").read_bytes() == b"sku,qty\nA1,4\n"

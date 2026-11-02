@@ -291,9 +291,12 @@ def test_a_channel_uploads_then_names_the_file_in_its_message(client):
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     try:
         assert client.post("/uploads/chat-up/notes.md", headers=key, content=b"x").status_code == 410
-        notes = client.post("/api/chat/files", headers=key, files={"file": ("notes.md", b"hello upload",
-                                                                             "text/markdown")})
-        pic = client.post("/api/chat/files", headers=key, files={"file": ("pic.png", png, "image/png")})
+        notes = client.post("/v1/files", headers=key, files={"file": ("notes.md", b"hello upload",
+                                                                       "text/markdown")})
+        pic = client.post("/v1/files", headers=key, files={"file": ("pic.png", png, "image/png")})
+        # the public upload route refuses a bridge key: channels use the internal /v1/files
+        assert client.post("/api/chat/files", headers=key, files={"file": ("x.txt", b"x", "text/plain")}
+                           ).status_code == 401
         assert notes.status_code == 201 and pic.status_code == 201, notes.text
         with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
             r = client.post("/v1/chat/completions", headers=caller(MINIMAL, key="test-bridge-key"), json={

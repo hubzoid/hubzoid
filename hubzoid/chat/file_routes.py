@@ -17,11 +17,12 @@
   POST   /api/chat/artifacts/{id}/versions          {content, base_version_id, expected_revision}
   GET    /api/chat/artifact-frame                   the sandboxed viewer frame (no network)
 
-``POST /api/chat/files`` is the one way in for every caller outside the bridge
+``POST /api/chat/files`` is the one upload for every caller outside the bridge
 process (``hubzoid.attachments``): the web app and the API with a sign-in or a
-personal key, an app's embedded chat with its token, and Slack, Telegram and
-WhatsApp with the bridge key. It needs no conversation, so the first message
-can carry files. The returned ``file_id`` goes in the message's file part, and
+personal key, and an app's embedded chat with its token. Slack, Telegram and
+WhatsApp send the same multipart request to the bridge's internal
+``/v1/files`` with the bridge key (the edge never forwards it). It needs no
+conversation, so the first message can carry files. The returned ``file_id`` goes in the message's file part, and
 the server attaches it to the chat when it saves the message.
 """
 from __future__ import annotations
@@ -35,7 +36,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .. import attachments
-from ..attachments import BRIDGE_OWNER
 from ..control import authz
 from . import files as files_mod
 from . import engine_routes as er
@@ -137,12 +137,14 @@ def mount(app: FastAPI, ctx) -> FileService:
 
     # -- uploads ---------------------------------------------------------------------------
     async def uploader(request: Request) -> str:
-        """Who the upload belongs to: the bridge (a channel with a bridge key),
-        an app's person (embedded chat token), or the signed-in person or key."""
+        """Who the upload belongs to: an app's person (embedded chat token), or
+        the signed-in person or their key. A bridge key is refused here (this
+        route is public behind the edge); channels upload to the bridge's
+        internal ``/v1/files``."""
         raw = request.headers.get("authorization", "")
         token = raw[7:].strip() if raw[:7].lower() == "bearer " else ""
         if token and not token.startswith("hzp_") and token in set(ctx.settings.bridge_api_keys):
-            return BRIDGE_OWNER
+            raise error(401, "unauthenticated", "Bridge keys upload to the bridge's own /v1/files.")
         if token.count(".") == 2 and not token.startswith("hzp_"):
             from ..embed import agui
 

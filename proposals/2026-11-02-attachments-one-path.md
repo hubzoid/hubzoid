@@ -67,7 +67,7 @@ Two results. Each is complete and production ready on its own. Neither is a phas
 |---|---|
 | Web chat | Upload each file with one request to `POST /api/chat/files` (no conversation needed, so the first message works). Send the message with the file ids. The server calls `attach()` when it saves the message. |
 | API (personal key) and embedded chat | The same upload route, with the API key or the embed token, returns a file id. Send it as a file part to `/v1/chat/completions` or the embed endpoint. The server checks the caller owns the file and calls `attach()`. Base64 data URLs are refused with a message that says how to upload. |
-| Slack, Telegram, WhatsApp | Each channel runs as its own process, so it uses the API path: it downloads the file, uploads it to `POST /api/chat/files` with the bridge key, then sends a file part. Only the bridge writes the file store. The bridge's separate `/uploads/{chat}/{name}` route goes. |
+| Slack, Telegram, WhatsApp | Each channel runs as its own process, so it uses the API path: it downloads the file, uploads it to the bridge's internal `POST /v1/files` with the bridge key (the same save; the edge never forwards `/v1`, so a bridge key never works from outside), then sends a file part. Only the bridge writes the file store. The bridge's separate `/uploads/{chat}/{name}` route goes. |
 | Terminal | `hubzoid test -f` calls `save()` and `attach()` directly. `hubzoid files upload` uses one request. |
 | Reuse in another chat | `attach()` with the existing file id. No new bytes. |
 | Email intake, Sources | Unchanged: they already `save()`. |

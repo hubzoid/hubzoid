@@ -28,12 +28,12 @@ STRICT_TOOLS: dict[str, str] = {}
 
 
 def load_all(hub_dir: Path) -> dict[str, FunctionTool]:
+    STRICT_TOOLS.clear()
     tools_dir = resolve_bucket(hub_dir, "tools_local")
     if tools_dir is None:
         return {}
 
     out: dict[str, FunctionTool] = {}
-    STRICT_TOOLS.clear()
     for path in sorted(tools_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue  # convention: underscore = private/example

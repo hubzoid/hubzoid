@@ -100,12 +100,9 @@ def _link(src: Path, folder: Path, name: str) -> str:
     or a copy when the two folders are on different disks."""
     from .chat.files import reserve_name
 
-    final = reserve_name(folder, name)
+    final = reserve_name(folder, name, link_to=src)
     target = folder / final
-    target.unlink(missing_ok=True)   # reserve_name claims it with an empty file
-    try:
-        os.link(src, target)
-    except OSError:
+    if not os.path.samefile(src, target):
         shutil.copyfile(src, target)
     return final
 
@@ -153,7 +150,11 @@ def attach(hub_dir: Path, file_id: str, chat_key: str, *, actor=None, owner: str
     folder = memlib.chat_upload_dir(Path(hub_dir), chat_key)
     local = existing if existing and (folder / existing).is_file() else None
     if local is None:
-        _, store = svc._store(row.storage_config_id)
+        try:
+            _, store = svc._store(row.storage_config_id)
+        except Exception as exc:  # noqa: BLE001 - storage_unavailable (an S3-held file)
+            raise AttachmentError(getattr(exc, "status", 503), getattr(exc, "code", "storage_unavailable"),
+                                  getattr(exc, "message", "The storage that holds this file is unavailable."))
         src = getattr(store, "_path", None)
         if src is not None and src(row.object_key).is_file():
             local = _link(src(row.object_key), folder, row.original_name)

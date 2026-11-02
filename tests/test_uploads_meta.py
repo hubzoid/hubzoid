@@ -89,7 +89,7 @@ class TestClassify:
 # Sidecar written when a stored file is attached
 # ---------------------------------------------------------------------------
 def _attach(client, name: str, payload: bytes, mime: str, chat="meta-chat") -> Path:
-    up = client.post("/api/chat/files", headers={"Authorization": "Bearer dev"},
+    up = client.post("/v1/files", headers={"Authorization": "Bearer dev"},
                      files={"file": (name, payload, mime)})
     assert up.status_code == 201, up.text
 

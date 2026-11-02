@@ -615,6 +615,10 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
                         # Hash what goes into the archive, not a second read of a file that
                         # may be growing (a log).
                         info = tar.gettarinfo(path, arcname=arc)
+                        if info.islnk():
+                            # A chat's attachment is a hard link to the stored file
+                            # (hubzoid.attachments): archive each name as a plain file.
+                            info.type, info.linkname, info.size = tarfile.REGTYPE, "", path.stat().st_size
                         with path.open("rb") as source:
                             hashing = _Hashing(source)
                             tar.addfile(info, hashing)

@@ -245,3 +245,68 @@ def test_someone_elses_reuse_never_locks_the_owner_out(client, monkeypatch):
     assert gone.status_code == 202, gone.text
     as_people(monkeypatch)
     assert client.get(f"/api/chat/files/{d['file_id']}", headers=ana).status_code == 404
+
+
+def test_a_viewer_attaches_nothing_and_other_image_types_are_files(client, monkeypatch):
+    cid, _ = new_conv(client)
+    conv = client.app.state.chat.store.get_conversation(cid)
+    client.app.state.chat.sharing.set_collaborators(conv, conv["owner_id"],
+                                                    [{"email": "ana@example.org", "role": "viewer"}], 0)
+    as_people(monkeypatch)
+    ana = who("ana")
+    tiff = client.post("/api/chat/files", headers=h(ana), files={"file": ("scan.tiff", b"II*\x00rest", "image/tiff")})
+    assert tiff.status_code == 201   # not a picture the models take: kept as a file, not refused
+    r = client.post(f"/api/conversations/{cid}/operations", headers={**h(ana), "Idempotency-Key": "k-viewer"}, json={
+        "kind": "send", "content": [{"type": "file", "file_id": tiff.json()["file_id"]}]})
+    assert r.status_code in (403, 404)
+    monkeypatch.undo()
+    assert client.get("/api/chat/files", params={"conversation_id": cid}).json()["items"] == []
+
+
+def test_a_refused_quota_leaves_no_bytes(client, hub, monkeypatch):
+    from hubzoid import attachments
+    from hubzoid.chat.file_service import Err
+
+    svc = client.app.state.chat.files
+    store_root = svc._store()[1].root
+    before = sorted(p for p in store_root.rglob("*") if p.is_file())
+    real = svc.settings
+
+    def tight():
+        s = real()
+        return {**s, "limits": {**s["limits"], "quota_bytes_per_person": 3}}
+
+    monkeypatch.setattr(svc, "settings", tight)
+    with pytest.raises(Err):
+        attachments.save(hub, b"too much", "a.txt", "text/plain", "someone")
+    assert sorted(p for p in store_root.rglob("*") if p.is_file()) == before
+
+
+def test_a_fork_keeps_its_attachments(client):
+    from tests.test_chat_operations import op, wait_run
+
+    cid, b = new_conv(client)
+    d = upload(client, b"a,b\n")
+    sent = op(client, cid, {"kind": "send", "branch_id": b["id"], "expected_branch_revision": b["revision"],
+                            "content": [{"type": "text", "text": "see"}, {"type": "file", "file_id": d["file_id"]}]})
+    assert sent.status_code == 202, sent.text
+    wait_run(client, sent.json()["run_id"])
+    r = op(client, cid, {"kind": "fork", "source_head_id": sent.json()["assistant_message_id"], "scope": "path"})
+    assert r.status_code == 201, r.text
+    new = r.json()["new_conversation_id"]
+    got = client.get(f"/api/conversations/{new}/files/{d['file_id']}")
+    assert got.status_code == 200 and got.content == b"a,b\n"
+    assert client.app.state.chat.files.local_for(new, d["file_id"]) == "orders.csv"
+
+
+def test_linking_never_overwrites_a_taken_name(tmp_path):
+    from hubzoid.chat.files import reserve_name
+
+    src = tmp_path / "stored"
+    src.write_bytes(b"new")
+    folder = tmp_path / "chat"
+    folder.mkdir()
+    (folder / "a.csv").write_bytes(b"someone else's")
+    name = reserve_name(folder, "a.csv", link_to=src)
+    assert name == "a-2.csv" and (folder / "a.csv").read_bytes() == b"someone else's"
+    assert (folder / name).read_bytes() == b"new" and (folder / name).stat().st_nlink == 2

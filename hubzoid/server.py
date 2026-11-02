@@ -5,6 +5,7 @@ Endpoints:
   GET  /v1/models                        [{ id, object, created, owned_by }]
   POST /v1/chat/completions              streaming SSE (OpenAI shape) + non-stream
   GET  /artifacts/{chat_id}/{filename}   download a file the agent wrote
+  POST /v1/files                         a channel's upload (bridge key): one file, its id
 
 The bridge is built around a single Runtime per process (one hub). The
 Runtime is selected based on `MODEL` in <hub>/.env — see `hubzoid/runtime.py`.
@@ -457,12 +458,31 @@ def build_app() -> FastAPI:
             inline=True,
         )
 
+    @app.post("/v1/files", status_code=201)
+    async def upload_file(request: Request):
+        """A channel's upload (Slack, Telegram, WhatsApp), with a bridge key, on
+        the bridge only: the edge keeps /v1 internal. The same ``save`` as
+        ``POST /api/chat/files``; the file id then goes in a /v1 file part."""
+        _auth(request)
+        from .chat.files import receive_one
+
+        name, mime, payload = await receive_one(request, settings.max_upload_bytes)
+        try:
+            desc = await asyncio.to_thread(attachments.save, hub_dir, payload, name, mime, attachments.BRIDGE_OWNER)
+        except Exception as exc:  # noqa: BLE001 - the store's refusal (too large, type) as its own status
+            status = getattr(exc, "status", None)
+            if status is None:
+                raise
+            raise HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
+        return JSONResponse({**desc, "id": desc["file_id"], "mime": desc["mime_type"], "size": desc["size_bytes"],
+                             "kind": attachments.kind_of(desc["mime_type"])}, status_code=201)
+
     @app.post("/uploads/{chat_id}/{filename:path}")
     async def post_upload_gone(chat_id: str, filename: str, request: Request):
         _auth(request)
         raise HTTPException(status_code=410, detail={
             "code": "upload_route_gone",
-            "message": "Upload each file to POST /api/chat/files (multipart field 'file'), then send "
+            "message": "Upload each file to POST /v1/files (multipart field 'file'), then send "
                        "{\"type\": \"file\", \"file\": {\"file_id\": ...}} in the message."})
 
     # Published artifacts (viewer, sharing, public links) under /portal, so any

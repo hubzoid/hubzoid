@@ -2,8 +2,8 @@
 
 When a Slack message has a `files` array, the adapter must:
   1. Fetch each file via `url_private_download` with the bot token.
-  2. Upload it to the bridge's `POST /api/chat/files` (the one upload route,
-     `inbound.uploads.push_upload`) and keep the stored file id.
+  2. Upload it to the bridge's internal `POST /v1/files`
+     (`inbound.uploads.push_upload`) and keep the stored file id.
   3. Put a file part with that id on the message, which the bridge attaches
      to the thread's chat.
 
@@ -78,7 +78,7 @@ def test_download_uploads_each_file_to_bridge():
 
     # The upload went to the one upload route with the bridge api key.
     bridge_call = http.post.call_args
-    assert bridge_call.args[0] == "http://127.0.0.1:8000/api/chat/files"
+    assert bridge_call.args[0] == "http://127.0.0.1:8000/v1/files"
     assert bridge_call.kwargs["headers"]["Authorization"] == "Bearer dev"
     assert bridge_call.kwargs["files"]["file"] == ("spec.pdf", payload, "application/pdf")
 
