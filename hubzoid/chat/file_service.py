@@ -299,10 +299,14 @@ class FileService:
                 cfg = StorageSettings().model_dump()
             config_id = "sc_" + canonical.digest(cfg)[7:31]
             if config_id not in self._adapters:
-                with self.engine.begin() as conn:
-                    if conn.execute(sa.select(storage_configs.c.id).where(storage_configs.c.id == config_id)).first() is None:
-                        conn.execute(storage_configs.insert().values(id=config_id, adapter=cfg["adapter"],
-                                                                     config_json=json.dumps(cfg), created_at=_now()))
+                try:
+                    with self.engine.begin() as conn:
+                        if conn.execute(sa.select(storage_configs.c.id).where(
+                                storage_configs.c.id == config_id)).first() is None:
+                            conn.execute(storage_configs.insert().values(id=config_id, adapter=cfg["adapter"],
+                                                                         config_json=json.dumps(cfg), created_at=_now()))
+                except sa.exc.IntegrityError:
+                    pass  # files uploaded at once: another request recorded the same configuration first
                 self._adapters[config_id] = st.for_settings(self.hub_dir, cfg)
             return config_id, self._adapters[config_id]
         if config_id not in self._adapters:

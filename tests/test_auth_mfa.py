@@ -72,13 +72,16 @@ def test_enrol_then_sign_in_with_a_code(hub):
     wrong = c.post("/api/auth/mfa/verify", json={"code": "000000"}, headers=ORIGIN)
     assert wrong.status_code == 401 and wrong.json()["detail"]["tries_left"] == 4
     # The confirming code's step was consumed at set-up; the next step works.
-    ok = c.post("/api/auth/mfa/verify", json={"code": _code(secret, 1)}, headers=ORIGIN)
+    # The code is made once: made again later, a 30-second boundary in between
+    # would give the following step's code, which is rightly accepted.
+    next_code = _code(secret, 1)
+    ok = c.post("/api/auth/mfa/verify", json={"code": next_code}, headers=ORIGIN)
     assert ok.status_code == 200, ok.text
     assert ok.json()["state"] == "signed_in" and c.get("/api/me/security").status_code == 200
     # The same code can't be used again (replay) and the step is spent.
     c.cookies.clear()
     sign_in(c)
-    again = c.post("/api/auth/mfa/verify", json={"code": _code(secret, 1)}, headers=ORIGIN)
+    again = c.post("/api/auth/mfa/verify", json={"code": next_code}, headers=ORIGIN)
     assert again.status_code == 401
 
 

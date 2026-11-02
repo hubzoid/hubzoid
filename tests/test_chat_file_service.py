@@ -310,3 +310,22 @@ def test_linking_never_overwrites_a_taken_name(tmp_path):
     name = reserve_name(folder, "a.csv", link_to=src)
     assert name == "a-2.csv" and (folder / "a.csv").read_bytes() == b"someone else's"
     assert (folder / name).read_bytes() == b"new" and (folder / name).stat().st_nlink == 2
+
+
+def test_files_uploaded_at_once_all_succeed(client):
+    """The composer uploads files in parallel; the first ones used to race to
+    record the storage configuration and one failed with a 500."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from hubzoid.chat.file_service import storage_configs
+
+    svc = client.app.state.chat.files
+    with svc.engine.begin() as conn:
+        conn.execute(storage_configs.delete())
+    svc._adapters.clear()
+
+    def one(n):
+        return client.post("/api/chat/files", headers=h(), files={"file": (f"f{n}.txt", b"x", "text/plain")}).status_code
+
+    with ThreadPoolExecutor(6) as pool:
+        assert list(pool.map(one, range(6))) == [201] * 6
