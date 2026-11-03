@@ -45,8 +45,10 @@ Amounts are text such as `"2.00"`; `"0"` blocks paid work.
 - **Prices.** Claude reports the cost of each run. Other models are priced
   from the price table pinned with the installed LiteLLM (never one fetched at
   start-up). Subscription logins work with token and turn
-  limits. A model with no price (a Codex login) is refused while a dollar
-  limit applies (`unpriced_model`) rather than run without a bound.
+  limits. A model with no price (a Codex login) skips the dollar limits, and
+  nothing is counted in dollars, as long as a turn or token limit that applies
+  to the call still bounds it. With only dollar limits it is refused
+  (`unpriced_model`) rather than run without a bound.
 - **Usage that never reported.** A call's hold is settled in the same write as
   its usage record. If Hubzoid stops in the middle of a call, or the record
   cannot be written, the hold keeps counting (across a month boundary too)

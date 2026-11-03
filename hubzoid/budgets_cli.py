@@ -21,6 +21,19 @@ def _limit_line(scope: str, caps: dict) -> str:
     return f"{scope}: " + ", ".join(parts)
 
 
+def _unpriced_model(hub: Path) -> str | None:
+    """The hub's configured model when it has no price, else None."""
+    from . import budgets
+
+    try:
+        from .cli import _hub_model
+
+        model = _hub_model(_hub(hub))
+    except Exception:  # noqa: BLE001 - no readable model: the note is only a hint
+        return None
+    return model if model and not budgets.priced(model) else None
+
+
 @budgets_app.command("show")
 def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(False, "--json")) -> None:
     """The limits in force, this month's usage and reservations still open."""
@@ -33,6 +46,8 @@ def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(Fal
                                                       else ""))
         for scope, caps in v["limits"].items():
             console.print(_limit_line(scope, caps))
+        if _unpriced_model(hub) and any("max_cost_usd" in c for c in v["limits"].values()):
+            console.print(f"Dollar limits don't apply to {_unpriced_model(hub)}; turn and token limits do.")
         m = v["month"]
         console.print(f"This month ({m['key']}): {m['input_tokens']:,} input tokens, {m['output_tokens']:,} output "
                       f"tokens, {float(m['cost_usd']):.4f} USD"

@@ -19,8 +19,12 @@ limits:
 Each scope takes `max_input_tokens`, `max_output_tokens` and `max_cost_usd`;
 `run` also takes `max_turns`. Token and turn limits work with subscription
 logins. A dollar limit needs a price: Claude reports its own cost, other
-models are priced from LiteLLM's table, and a model with no price is refused
-while a dollar limit applies (`unpriced_model`), never run unbounded.
+models are priced from LiteLLM's table. A model with no price skips the dollar
+limits (nothing is counted in dollars) when a turn or token limit in a scope
+that applies still bounds the call; otherwise it is refused while a dollar
+limit applies (`unpriced_model`), never run unbounded. `max_turns` is in the
+`run` scope, which always applies, and reaches the runtimes as the ticket's
+turn cap (`cap_turns`).
 
 `admit` is the one check before a model call (chat replies, workflow calls,
 isolated agents): it adds up the recorded usage (`hz_usage`) and the open
@@ -59,6 +63,8 @@ FILE = "budgets.yaml"
 SCOPES = ("run", "work_item", "month")
 _KEYS = ("max_input_tokens", "max_output_tokens", "max_cost_usd")
 _RUN_KEYS = _KEYS + ("max_turns",)
+#: The limits that still bound a call on a model with no price.
+_BOUNDS = ("max_turns", "max_input_tokens", "max_output_tokens")
 _ITEM_RUN = re.compile(r"^wi-([0-9a-f-]{36})-e\d+$")
 #: A run stopped by the runtime's own turn or cost cap.
 _STOPPED = re.compile(r"error_max_turns|error_max_budget_usd|Reached maximum number of turns|MaxTurnsExceeded"
@@ -288,7 +294,11 @@ def admit(hub_dir, *, model: str | None, run_id: str | None = None) -> Ticket | 
     run_id = run_id or _RUN_TAG.get() or f"reply-{uuid.uuid4()}"
     item_id = item_of(run_id)
     scopes = [s for s in SCOPES if s in cfg.limits and (s != "work_item" or item_id)]
-    if any("max_cost_usd" in cfg.limits[s] for s in scopes) and not priced(model):
+    unpriced = not priced(model)
+    if unpriced and any("max_cost_usd" in cfg.limits[s] for s in scopes) and not any(
+            k in cfg.limits[s] for s in scopes for k in _BOUNDS):
+        # A dollar limit is skipped for a model with no price only when a turn
+        # or token limit in a scope that applies still bounds the call.
         raise BudgetError("unpriced_model", f"This hub has a dollar limit, and {model or 'this model'} has no "
                           "price to count against it. Use token or turn limits for this model instead.",
                           status=422, model=model)
@@ -302,8 +312,8 @@ def admit(hub_dir, *, model: str | None, run_id: str | None = None) -> Ticket | 
             used = _used(conn, hub, scope, "", run_id=run_id, item_id=item_id)
             held = _reserved(conn, hub, scope, run_id=run_id, item_id=item_id)
             for key, cap in cfg.limits[scope].items():
-                if key == "max_turns":
-                    continue
+                if key == "max_turns" or (unpriced and key == "max_cost_usd"):
+                    continue        # an unpriced call has no cost to count
                 column, unit = _UNITS[key]
                 room = cap - (used[column] + held[column])
                 if room <= 0:

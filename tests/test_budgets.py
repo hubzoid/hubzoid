@@ -68,6 +68,36 @@ def test_dollar_limits_need_a_price_and_token_limits_do_not(hub_dir):
     assert budgets.admit(hub_dir, model="codex-local") is not None
 
 
+def test_an_unpriced_model_skips_dollars_when_tokens_or_turns_bound_it(hub_dir):
+    limits(hub_dir, "  run:\n    max_cost_usd: \"2\"\n  month:\n    max_cost_usd: \"5\"\n"
+                    "    max_output_tokens: 1000\n")
+    spend(hub_dir, run="old", cost=9, out=10)       # dollars already past the cap are not counted for it
+    ticket = budgets.admit(hub_dir, model="codex-local", run_id="r1")
+    assert ticket is not None and ticket.max_budget_usd is None
+    assert ticket.id is None                         # no dollars held, no token cap on the run itself
+    with pytest.raises(WorkItemError) as err:        # priced model: unchanged
+        budgets.admit(hub_dir, model="claude-local", run_id="r2")
+    assert err.value.code == "budget_exhausted" and err.value.fields["limit"] == "max_cost_usd"
+    limits(hub_dir, "  run:\n    max_turns: 5\n  month:\n    max_cost_usd: \"5\"\n")
+    assert budgets.admit(hub_dir, model="codex-local", run_id="r3").max_turns == 5
+    limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n")
+    with pytest.raises(WorkItemError) as err:
+        budgets.admit(hub_dir, model="codex-local")
+    assert err.value.code == "unpriced_model"
+
+
+def test_a_work_item_token_limit_bounds_only_calls_in_a_work_item(hub_dir):
+    item = "wi-" + "a" * 8 + "-" + "b" * 4 + "-" + "c" * 4 + "-" + "d" * 4 + "-" + "e" * 12 + "-e1"
+    limits(hub_dir, "  work_item:\n    max_output_tokens: 100\n  month:\n    max_cost_usd: \"5\"\n")
+    assert budgets.admit(hub_dir, model="codex-local", run_id=item) is not None     # in a work item: bounded
+    with pytest.raises(WorkItemError) as err:                                         # outside one: not bounded
+        budgets.admit(hub_dir, model="codex-local", run_id="reply-1")
+    assert err.value.code == "unpriced_model"
+    limits(hub_dir, "  work_item:\n    max_output_tokens: 100\n  run:\n    max_turns: 3\n"
+                    "  month:\n    max_cost_usd: \"5\"\n")
+    assert budgets.admit(hub_dir, model="codex-local", run_id="reply-2") is not None  # the run turn cap bounds it
+
+
 def test_running_calls_share_what_is_left(hub_dir):
     limits(hub_dir, "  run:\n    max_cost_usd: \"3\"\n  month:\n    max_cost_usd: \"5\"\n")
     first = budgets.admit(hub_dir, model="claude-local", run_id="a")
@@ -292,3 +322,16 @@ def test_the_eval_judge_is_checked_and_bounded(hub_dir, monkeypatch):
     spend(hub_dir, cost=2.0)
     with pytest.raises(WorkItemError):
         asyncio.run(judge.ask_model("gpt-4o-mini", "Score this.", hub_dir=hub_dir))
+
+
+def test_show_notes_that_dollar_limits_skip_an_unpriced_model(hub_dir):
+    from typer.testing import CliRunner
+
+    from hubzoid.budgets_cli import budgets_app
+
+    limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n    max_output_tokens: 100\n")
+    (hub_dir / "AGENTS.md").write_text("---\nname: Desk\nmodel: codex-local\n---\nA desk.\n")
+    result = CliRunner().invoke(budgets_app, ["show", str(hub_dir)])
+    assert "Dollar limits don't apply to codex-local; turn and token limits do." in result.output
+    (hub_dir / "AGENTS.md").write_text("---\nname: Desk\nmodel: claude-local\n---\nA desk.\n")
+    assert "Dollar limits don't" not in CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output
