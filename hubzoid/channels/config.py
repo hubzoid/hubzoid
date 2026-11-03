@@ -220,6 +220,11 @@ def _refs_rewritten(hub_dir: Path, data: dict, rewrite) -> dict:
     return {**data, "provider_config": walk(pc)}
 
 
+def _own_slot(hub: str, cid: str) -> str:
+    """A channel's own secrets, the short form first."""
+    return f"secret:channel/{cid}/<name> (or secret:channel/{hub}/{cid}/<name>)"
+
+
 def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:
     from ..secretstore import RefError, parse
 
@@ -236,13 +241,11 @@ def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:
             out.append(_err("invalid_config", path, str(exc), lines))
             continue
         if ref.provider == "secret" and ref.scope in ("hub", "channel") and ref.hub != hub:
-            out.append(_err("invalid_config", path, f"A channel can use only this hub's secrets "
-                                                    f"(secret:channel/{hub}/{cfg.id}/<name>), or write "
-                                                    f"secret:channel/{cfg.id}/<name> for this agent's own slot.",
-                                                    lines))
+            out.append(_err("invalid_config", path, f"A channel can use only this agent's secrets: write "
+                                                    f"{_own_slot(hub, cfg.id)}.", lines))
         if ref.provider == "secret" and ref.scope == "channel" and ref.channel != cfg.id:
-            out.append(_err("invalid_config", path, f"This channel's secrets are under "
-                                                    f"secret:channel/{hub}/{cfg.id}/<name>.", lines))
+            out.append(_err("invalid_config", path, f"This channel's secrets are under {_own_slot(hub, cfg.id)}.",
+                            lines))
     # a literal credential in a non-reference key is a mistake worth catching
     for key in ("token", "secret", "password", "private_key", "client_secret", "api_key"):
         if key in cfg.provider_config and cfg.provider_config[key]:
@@ -541,12 +544,11 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
         foreign = _foreign_refs(hub, cfg.id, norm.get("provider_config") or {})
         before = (current["config_json"] or {}).get("provider_config") if current else None
         if foreign and norm.get("provider_config") != before:
-            own = f"secret:channel/{hub}/{cfg.id}/<name>"
             raise ChannelError("permission_denied", f"Only organization administrators set or change a connection "
-                               f"that uses a secret other than its own ({own}).", status=403,
-                               fields=[_err("permission_denied", f, f"Use {own}, or write "
-                                                                    f"secret:channel/{cfg.id}/<name> for this agent's own "
-                                                                    "slot, or ask an organization administrator.", lines) for f in foreign])
+                               f"that uses a secret other than its own (secret:channel/{cfg.id}/<name>).", status=403,
+                               fields=[_err("permission_denied", f, f"Use {_own_slot(hub, cfg.id)}, or ask an "
+                                                                    "organization administrator.", lines)
+                                       for f in foreign])
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)

@@ -98,12 +98,15 @@ def test_secret_ref_grammar(hub_dir):
 
 
 def test_a_foreign_secret_ref_message_names_the_own_slot(hub_dir):
+    slot = "secret:channel/fake-main/<name> (or secret:channel/desk/fake-main/<name>)"   # the short form first
     v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/other/fake-main/s"}))
-    assert "or write secret:channel/fake-main/<name> for this agent's own slot" in v.errors[0]["message"]
+    assert v.errors[0]["message"] == f"A channel can use only this agent's secrets: write {slot}."
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/desk/x/s"}))
+    assert v.errors[0]["message"] == f"This channel's secrets are under {slot}."    # another channel's slot
     v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "env:HUBZOID_SECRET_KEY"}))
     with pytest.raises(ChannelError) as exc:
         config.apply(hub_dir, v.data, expected_revision="absent", actor="hub-admin", any_secret=False)
-    assert "or write secret:channel/fake-main/<name> for this agent's own slot" in exc.value.extra["fields"][0]["message"]
+    assert exc.value.extra["fields"][0]["message"] == f"Use {slot}, or ask an organization administrator."
 
 
 def test_a_short_secret_ref_means_this_hubs_slot_for_this_channel(hub_dir):
