@@ -24,9 +24,11 @@ workflow, rules and routes.
 - **A Claude subscription login wins over an inherited API key.** If you have
   both a Claude subscription login (or `CLAUDE_CODE_OAUTH_TOKEN`) and
   `ANTHROPIC_API_KEY` in your shell, the key is ignored, so a stray key does not
-  bill the API. To use an API key on purpose, set `MODEL=anthropic/<model>`.
-  With only an API key, or with `ANTHROPIC_BASE_URL` set for a gateway, nothing
-  changes.
+  bill the API. The login check asks Claude Code with the API-key variables
+  removed, so it sees the plan login even when a key is set, and doctor says the
+  key is ignored. To use an API key on purpose, set `MODEL=anthropic/<model>`.
+  With only an API key, a key-only setup still counts as signed in and keeps its
+  key. With `ANTHROPIC_BASE_URL` set for a gateway, nothing changes.
 - **Eval fakes cover GitHub tools the agent has not connected.** A case can
   fake a GitHub tool even when GitHub is not connected, so the check runs on a
   fresh copy. The stand-in exists only inside the eval case, for the agent (not
@@ -43,10 +45,31 @@ workflow, rules and routes.
 - **Work started from a web chat reports back in that chat.** Its requests
   (questions and approvals) and its result show up where you asked. The chat
   comes from the server session only, and a chat named by the caller is
-  dropped. A paused work item posts no result; a stopped one says why, in a
-  fixed sentence.
+  dropped. A result that arrives after the chat stopped waiting shows the
+  workflow's `reply` or `answer` text, not every key. A paused work item posts
+  no result; a stopped one says why, in a fixed sentence.
 
 ### Fixed
+- **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`
+  opened the Profile page when Settings was loaded fresh. It now opens the work
+  item, on wide and narrow screens.
+- **Evals on a never-started agent run as its owner when sign-in is off.** A
+  case run as the local owner on a fresh copy used to be refused the agent's
+  tools. With sign-in on, nothing changes.
+- **Dollar limits skip a model with no price when another limit bounds the
+  call.** A model such as `codex-local` has no price, so a dollar limit cannot
+  apply to it. If a turn or token limit still bounds the call, it runs under
+  that limit, and `hubzoid budgets show` says so. With dollar limits only, such
+  calls are still refused, and `budgets show` says what to add.
+- **The secret-ref error suggests the right form.** A reference to another
+  agent's secret now points to `secret:channel/<id>/<name>` for this agent's own
+  slot.
+- **A refused GitHub connect leaves no token behind.** The token is stored only
+  after the connection's other checks pass.
+- **`hubzoid stations doctor` asks Claude Code about its login only when a
+  station uses it.**
+- **The sandbox image has a `python` command.** It is rebuilt on the next
+  `hubzoid sandbox profiles prepare`.
 - **Doctor accepts the bridge key `hubzoid run` makes.** It used to reject the
   key in `state/bridge.key`. `BRIDGE_API_KEYS=dev` still fails, and a
   `hubzoid.yaml` deployment keeps its key in the deployment's state folder.
@@ -68,9 +91,16 @@ workflow, rules and routes.
 - The real check call passed on a Claude login.
 - The Software Factory's `safety/read-only-question` eval passed (judge 9/10) on
   an unconnected copy of the agent, using the new stand-ins.
-- Not checked: the in-app approval card for work started from a chat (to be
-  checked before release), and Codex login detection against a real Codex login
-  on a paid plan other than Plus.
+- The real check with a fake inherited API key, in a clean environment, reports
+  the plan login (`subscription team True`).
+- The follow link `/settings#/me/work/<agent>/<item>` was checked in a browser.
+- Not checked: the rebuilt sandbox image (Docker was not running), the in-app
+  approval card for work started from a chat (to be checked before release), and
+  Codex login detection against a real Codex login on a paid plan other than
+  Plus.
+
+### Known limits
+- Connecting GitHub rewrites `channels/github.yaml` without its comments.
 
 ## [2.0.7]
 
