@@ -50,8 +50,11 @@ def _create(client, agent, conv_id, person):
 
 
 def _upload(client, conv_id, name, payload, person):
-    return client.post(f"/api/conversations/{conv_id}/files", headers=who(person),
-                       files={"file": (name, payload, "text/plain")})
+    """Upload (POST /api/chat/files), then attach it to the conversation."""
+    up = client.post("/api/chat/files", headers=who(person), files={"file": (name, payload, "text/plain")})
+    assert up.status_code == 201, up.text
+    return client.post(f"/api/conversations/{conv_id}/files/reuse", headers=who(person),
+                       json={"file_id": up.json()["file_id"]})
 
 
 def _artifact_link(client, agent, conv_id, person, n=1):

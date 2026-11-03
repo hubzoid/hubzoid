@@ -26,6 +26,7 @@ DECLS = """\
 version: 1
 settings:
   - name: FACTORY_REPO
+    label: Repository
     description: Repository the factory works on
     required: true
     regex: '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'
@@ -306,6 +307,8 @@ def test_the_api_reads_validates_and_writes_settings(hub, monkeypatch):
     body = tc.get("/api/hubs/factory/settings").json()
     assert body["revision"] == 0 and {s["name"] for s in body["settings"]} >= {"FACTORY_REPO", "GITHUB_TOKEN"}
     assert "value" not in next(s for s in body["settings"] if s["secret"])
+    labels = {s["name"]: s["label"] for s in body["settings"]}
+    assert labels["FACTORY_REPO"] == "Repository" and labels["FACTORY_LABEL"] is None
     r = tc.post("/api/hubs/factory/settings/validate", json={"values": {"FACTORY_REPO": "bad repo"}})
     assert r.json()["valid"] is False
     r = tc.put("/api/hubs/factory/settings", json={"values": {"FACTORY_REPO": "bad repo"},

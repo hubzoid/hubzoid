@@ -14,9 +14,8 @@ const PERIODS = [
   { value: "30d", label: "30 days" },
 ];
 const count = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
-const acrossHubs = (n: number) => `Across ${n.toLocaleString()} ${n === 1 ? "hub" : "hubs"}`;
-const USERS_HINT = "Users you manage, blocked ones included. Service identities and people "
-  + "invited by email who have not signed up are not counted. The period does not change this total.";
+const acrossHubs = (n: number) => `Across ${n.toLocaleString()} ${n === 1 ? "agent" : "agents"}`;
+const USERS_HINT = "Users you manage, blocked ones too. Not service identities or unaccepted invites. Not tied to the period.";
 
 function Stat({ label, value, hint, sub }: {
   label: string;
@@ -80,14 +79,14 @@ export function HomeScreen({ hubs, reloadHubs, embedded = false }: { hubs: Hub[]
           <Stat label="Workflow runs" value={!s.has_workflows ? "0" : s.runs_available ? count(s.totals.runs) : "—"}
             sub={!s.has_workflows ? undefined : s.runs_available ? `${count(s.totals.failed)} failed` : "Unavailable"} />
           <Stat label="Approx. cost" value={<Cost usd={s.totals.cost_usd} unpriced={s.totals.unpriced} />}
-            sub="USD" hint="Estimated from model token prices, including cached usage where available. Subscription-backed calls can have an estimate without an extra per-call charge. Missing prices are excluded. Your provider’s bill is authoritative." />
+            sub="USD" hint="Estimated from token prices. Your provider’s bill is final." />
         </div>
       </>}
   </>;
   if (embedded)
     return (
       <>
-        <PageHeader title="Agents" description="Each agent is a folder of instructions, knowledge and tools." />
+        <PageHeader title="Agents" description="Your team's agents. Open one to manage it." />
         {workflows.error && <Alert type="warning" showIcon className="home-note"
           title="Couldn’t refresh workflow status" description="Open an agent to check its workflows, or try refreshing again." />}
         <AgentGrid hubs={hubs} workflows={workflows.data?.workflows} usage={s?.hubs} />

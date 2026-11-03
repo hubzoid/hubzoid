@@ -21,7 +21,7 @@ def setup(tmp_path, monkeypatch):
     agent = app.state.chat.model_label
     ana = who("ana")
     client.post("/api/conversations", headers=ana, json={"agent": agent, "id": "c_share0001"})
-    up = client.post("/api/conversations/c_share0001/files", headers=ana,
+    up = client.post("/api/chat/files", headers=ana,
                      files={"file": ("brief.txt", b"brief", "text/plain")}).json()
     client.post("/api/chat", headers=ana, json=chat_body(
         "c_share0001", "think and use a tool", agent=None, message_id="m_user00001",

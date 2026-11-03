@@ -2,7 +2,7 @@
 // live in hubzoid.yaml (chat:); this shows the values every agent reads and
 // where they come from.
 import { useCallback, useEffect, useState } from "react";
-import { PAGED } from "../../components/common";
+import { InfoHelp, PAGED } from "../../components/common";
 import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Input, Select, Space, Switch, Table, Tag, Typography, ConfigProvider } from "antd";
 import { control, ControlError } from "../../lib/controlApi";
 
@@ -88,10 +88,13 @@ export function ChatSettings() {
   return (
     <ConfigProvider componentDisabled>
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      {/* One quiet line, as on Brand and Advanced; the how-to sits behind the ?. */}
       <Text type="secondary" data-testid="chat-defaults-read-only">
-        {active.file.exists
-          ? <>Set in <Text code>{active.file.path}</Text>. Edit that file to change them. People can still change what it allows for themselves.</>
-          : <>No chat settings yet, so the defaults apply. Add a <Text code>chat:</Text> section to <Text code>hubzoid.yaml</Text> to change them.</>}
+        Set in <Text code>{active.file.exists ? active.file.path : "hubzoid.yaml"}</Text>.{" "}
+        {/* The form below is read-only; its help still opens. */}
+        <ConfigProvider componentDisabled={false}>
+          <InfoHelp text={`${active.file.exists ? "Edit its chat: section" : "No chat: section yet; defaults apply. Add one"}, or ask Claude Code or Codex. People can adjust what it allows.`} />
+        </ConfigProvider>
       </Text>
       {active.file.valid === false && (
         <Alert type="warning" showIcon title="The settings file has a problem" description={(active.file as any).error?.message} />
@@ -229,7 +232,7 @@ export function ChatSettings() {
                         ? `invalid: ${active.file.error?.message ?? ""}`
                         : active.file.matches_active
                           ? "matches what is applied"
-                          : `${active.file.pending_changes} change(s) not applied (hubzoid chat config apply)`}
+                          : <span title="CLI: hubzoid chat config apply">{active.file.pending_changes} change(s) not applied</span>}
                   </Descriptions.Item>
                 </Descriptions>
                 <Table

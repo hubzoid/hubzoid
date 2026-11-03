@@ -9,21 +9,10 @@ import json
 import re
 from typing import Any, Iterable
 
+from ..inbound.uploads import with_files
+
 
 _MENTION_RE = re.compile(r"<@[A-Z0-9_]+>")
-
-# Image extensions get the canonical [Image: name] reference so
-# hubzoid.vision_inject shows them to the model directly; anything else gets a
-# read_upload note. Slack gives us only the filename here, so we key on suffix.
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-
-
-def _attachment_note(name: str) -> str:
-    dot = name.rfind(".")
-    ext = name[dot:].lower() if dot != -1 else ""
-    if ext in _IMAGE_EXTS:
-        return f"[Image: {name}]  (attached image, shown to you directly)"
-    return f"[User attached file: {name}. Read with read_upload('{name}').]"
 
 # Standard-markdown -> Slack mrkdwn conversions. Slack does not understand
 # `**bold**`, `[label](url)`, or `# Heading`; left as-is they render as
@@ -87,11 +76,11 @@ def messages_from_thread(
         are skipped — they have no semantic value.
       - `<@BOT_ID>` mention prefixes are stripped from user text so the model
         sees the actual question.
-      - If `attached_files_by_ts` is provided, each message whose `ts` is
-        in the map gets `[User attached file: X. Read with read_upload('X').]`
-        notes appended to its content. Empty-text messages that have
-        attached files are surfaced (text-only filter is bypassed when
-        attachments exist) so the agent sees the upload.
+      - If `attached_files_by_ts` is provided (Slack ts -> stored file ids),
+        each user message whose `ts` is in the map gets a file part per file
+        (`inbound.uploads.with_files`), which the bridge attaches to the chat.
+        Empty-text messages that have attached files are surfaced so the
+        agent sees the upload.
     """
     files_map = attached_files_by_ts or {}
     out: list[dict[str, str]] = []
@@ -112,12 +101,12 @@ def messages_from_thread(
             is_bot = True
 
         cleaned = _MENTION_RE.sub("", text).strip()
-        if attached:
-            notes = "\n".join(_attachment_note(name) for name in attached)
-            cleaned = f"{cleaned}\n{notes}" if cleaned else notes
-        if not cleaned:
+        if not cleaned and not attached:
             continue
-        out.append({"role": "assistant" if is_bot else "user", "content": cleaned})
+        content = with_files(cleaned, attached) if attached and not is_bot else cleaned
+        if not content:
+            continue
+        out.append({"role": "assistant" if is_bot else "user", "content": content})
     return out
 
 

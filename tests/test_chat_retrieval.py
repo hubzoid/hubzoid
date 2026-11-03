@@ -128,7 +128,7 @@ def test_changed_and_directory_sources_and_file_use(client, hub):
     assert not q("escalated operations lead"), "a changed source leaves results at once"
     # An uploaded file used by a collection can't be deleted from under it.
     cid, _ = new_conv(client)
-    fid = client.post(f"/api/conversations/{cid}/files", headers=ORIGIN,
+    fid = client.post("/api/chat/files", headers=ORIGIN,
                       files={"file": ("h.md", b"Pallets are wrapped twice.", "text/markdown")}).json()["id"]
     put(client, "docs", {"readers": ["*"], "sources": [{"id": "h", "kind": "upload", "file_id": fid}]}, 2)
     refs = client.get(f"/api/chat/files/{fid}/references").json()["items"]
@@ -140,7 +140,7 @@ def test_changed_and_directory_sources_and_file_use(client, hub):
 
 def test_readers_and_upload_sources(client, monkeypatch):
     cid, _ = new_conv(client)
-    up = client.post(f"/api/conversations/{cid}/files", headers=ORIGIN,
+    up = client.post("/api/chat/files", headers=ORIGIN,
                      files={"file": ("handbook.md", b"Returns are accepted within 30 days of delivery.", "text/markdown")})
     fid = up.json()["id"]
     bad = put(client, "team", {"sources": [{"id": "hb", "kind": "upload", "file_id": "nope"}]}, "absent")

@@ -186,12 +186,15 @@ class Orchestrator:
                                    credential=plan.credential, credential_id=plan.credential_id,
                                    hubs=plan.key_hubs)
             from .. import _request_ctx
-            from .history import user_text
+            from .history import branch_images, message_images, user_text
 
             resume = await db(self.engine.binding_for, plan, self.config_digest(plan.actor_id))
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
-                if resume and path else None)
+                if resume and path else None,
+                images=await db(branch_images, self.ctx.hub_dir, key, path),
+                delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
+                if path else [])
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
             opts = plan.options or {}
@@ -688,10 +691,17 @@ def _sse(payload: dict, sequence: int | None) -> bytes:
 
 
 def _copy_files(hub_dir: Path, body: dict) -> None:
-    """A fork's attachments: copy the source chat's uploads the copy refers to."""
+    """A fork's attachments: the source chat's uploads appear in the copy under
+    the same names (hard links where they can be), and its file references
+    come along, so parts naming a store id still resolve."""
+    import os
     import shutil
 
+    import sqlalchemy as sa
+
+    from .. import attachments
     from .. import memory as memlib
+    from . import file_service as fs
 
     src = memlib.chat_upload_dir(Path(hub_dir), body["source_chat_key"])
     dst = memlib.chat_upload_dir(Path(hub_dir), body["new_chat_key"])
@@ -699,5 +709,17 @@ def _copy_files(hub_dir: Path, body: dict) -> None:
         return
     dst.mkdir(parents=True, exist_ok=True)
     for f in src.iterdir():
-        if f.is_file() and not f.is_symlink():
-            shutil.copy2(f, dst / f.name)
+        if f.is_file() and not f.is_symlink() and not (dst / f.name).exists():
+            try:
+                os.link(f, dst / f.name)
+            except OSError:
+                shutil.copy2(f, dst / f.name)
+    source, new = body.get("source_conversation_id"), body.get("new_conversation_id")
+    if not (source and new):
+        return
+    svc = attachments.service(hub_dir)
+    with svc.engine.begin() as conn:
+        for r in conn.execute(sa.select(fs.references).where(
+                fs.references.c.conversation_id == source, fs.references.c.resource_type == "conversation",
+                fs.references.c.deleted_at.is_(None))).all():
+            svc._add_ref(conn, r.file_id, "conversation", new, new, r.created_by, r.local_name)

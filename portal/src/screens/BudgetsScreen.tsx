@@ -18,7 +18,7 @@ type Status = {
 };
 type HubOption = { key: string; name: string };
 
-const SCOPE_LABELS: Record<string, string> = { run: "Each run", work_item: "Each work item", month: "This hub, per month" };
+const SCOPE_LABELS: Record<string, string> = { run: "Each run", work_item: "Each work item", month: "This agent, per month" };
 const KEY_LABELS: Record<string, string> = {
   max_turns: "turns", max_input_tokens: "input tokens", max_output_tokens: "output tokens", max_cost_usd: "USD",
 };

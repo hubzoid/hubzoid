@@ -11,11 +11,11 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agents import function_tool
+from .._tool import tool
 
 
 def make(ctx) -> list:  # noqa: ARG001
-    @function_tool
+    @tool
     def current_time(zone: str = "UTC") -> str:
         """Return the current date and time as an ISO 8601 string.
 

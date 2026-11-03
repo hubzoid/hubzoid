@@ -26,7 +26,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agents import function_tool
+from .._tool import tool
 
 from ..capabilities import Capability, register, switched_off
 
@@ -244,7 +244,7 @@ def make(ctx) -> list:
         verb = {"run": "run", "control": "pause, resume or cancel", "view_runs": "see the runs of"}[action]
         return f"You can't {verb} {key}. An admin can give you access in Settings, Workflow access."
 
-    @function_tool
+    @tool
     async def list_workflows() -> str:
         """List this agent's workflows and scheduled tasks.
 
@@ -275,7 +275,7 @@ def make(ctx) -> list:
 
     # Not strict: its filters are optional, so a call with only `run_id` (or
     # none) must validate on every runtime instead of failing once.
-    @function_tool(strict_mode=False)
+    @tool
     async def workflow_runs(workflow: str = "", run_id: str = "", status: str = "",
                             limit: int = 10) -> str:
         """Check recent runs of this agent's workflows, or one run in detail.
@@ -311,7 +311,7 @@ def make(ctx) -> list:
             return "No runs found."
         return "\n".join(["Runs, newest first:"] + [_run_line(r) for r in rows[:MAX_ROWS]])
 
-    @function_tool(strict_mode=False)
+    @tool
     async def run_workflow(name: str, inputs: str = "") -> str:
         """Start one of this agent's workflows or scheduled tasks now, as a team run.
 
@@ -357,7 +357,7 @@ def make(ctx) -> list:
                 "you, and its output is visible only to that account. Check its progress "
                 "with workflow_runs.")
 
-    @function_tool
+    @tool
     async def pause_workflow(name: str) -> str:
         """Pause one workflow's schedule until it is resumed.
 
@@ -388,7 +388,7 @@ def make(ctx) -> list:
         return (f"Paused {out['workflow']}. Its scheduled runs stop until it is resumed. A run "
                 "already queued or running carries on, and manual runs still work.")
 
-    @function_tool
+    @tool
     async def resume_workflow(name: str) -> str:
         """Resume a paused workflow's schedule.
 
@@ -418,7 +418,7 @@ def make(ctx) -> list:
             return f"{out['workflow']} was not paused. Its schedule is unchanged."
         return f"Resumed {out['workflow']}. Its scheduled runs start again."
 
-    @function_tool
+    @tool
     async def cancel_workflow_run(run_id: str) -> str:
         """Cancel one queued or running run of this agent's workflows.
 

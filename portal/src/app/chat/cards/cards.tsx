@@ -3,7 +3,7 @@
 // draws the frame, McpAppsRemoteHost sends the frame's requests to this hub's
 // card host route, and the server rechecks every one of them. Around the frame
 // this file draws the host's own chrome, which the card cannot change: the
-// tool, that it is a card, its live state and the "Review in Hub" link.
+// tool, that it is a card, its live state and the "Review" link.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   AuiConfig,
@@ -161,7 +161,7 @@ export function CardEntry(props: ToolCallMessagePartProps & { header: ReactNode 
         <span className="text-[12px] text-mute">{t.cards.label(card.kind)}</span>
         {status && <span className="hz-tag is-quiet" data-testid="card-state">{status.label}</span>}
         {card.kind === "approval" && status?.facts && (
-          // The operation's own facts, from Hub, outside the frame: a card's summary cannot stand in for them.
+          // The operation's own facts, from the server, outside the frame: a card's summary cannot stand in for them.
           <span className="text-[12px] text-mute" data-testid="card-facts">
             {String(status.facts.action ?? "")} · {t.cards.askedBy(String(status.facts.requester ?? ""))} ·{" "}
             <span className="font-mono">{String(status.facts.digest ?? "").slice(0, 19)}…</span>

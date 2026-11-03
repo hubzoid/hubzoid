@@ -14,6 +14,7 @@ Isolated per ``chat_id`` — a PII guarantee.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -47,6 +48,19 @@ _history = Table(
 )
 
 
+# A message stored with its file parts (``inbound.uploads.with_files``).
+_PARTS = "\x00parts:"
+
+
+def _decode(content: str):
+    if isinstance(content, str) and content.startswith(_PARTS):
+        try:
+            return json.loads(content[len(_PARTS):])
+        except ValueError:
+            return ""
+    return content
+
+
 class History:
     def __init__(self, engine: Engine, max_messages: int = DEFAULT_MAX_MESSAGES,
                  ttl_seconds: "float | None" = None) -> None:
@@ -73,10 +87,13 @@ class History:
         except Exception:  # noqa: BLE001 — memory is best-effort; never break a reply
             log.warning("history: load failed; continuing with no prior context", exc_info=True)
             return []
-        return [{"role": r.role, "content": r.content} for r in reversed(rows)]
+        return [{"role": r.role, "content": _decode(r.content)} for r in reversed(rows)]
 
-    def append(self, chat_id: str, role: str, content: str, _now: "float | None" = None) -> None:
-        """Append one message, then prune to the cap (and past the TTL). Blank is a no-op."""
+    def append(self, chat_id: str, role: str, content, _now: "float | None" = None) -> None:
+        """Append one message (text, or a list of parts when it carries files),
+        then prune to the cap (and past the TTL). Blank is a no-op."""
+        if isinstance(content, list):
+            content = _PARTS + json.dumps(content) if content else ""
         if not content or not content.strip():
             return
         now = _now if _now is not None else time.time()

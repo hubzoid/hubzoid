@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from agents import function_tool
+from .._tool import tool
 
 from .._fs import resolve_bucket
 from ..loaders import knowledge as knowledge_loader
@@ -66,7 +66,7 @@ def make(ctx) -> list:
             return "(no knowledge files in this hub)"
         return "\n".join(f"- {k.name}: {k.description}" for k in docs)
 
-    @function_tool
+    @tool
     def list_knowledge() -> str:
         """List every knowledge document available in the hub.
 
@@ -75,7 +75,7 @@ def make(ctx) -> list:
         """
         return _menu()
 
-    @function_tool
+    @tool
     def read_knowledge(name: str) -> str:
         """Read the full body of a knowledge document by name.
 

@@ -179,6 +179,104 @@ def pdf_preview(payload: bytes, *, pages: str | None) -> str:
     return "\n".join(chunks)
 
 
+# Excel and Word are zip files: refuse one that expands past this before
+# parsing it (a zip bomb), and stop reading at a size the prompt can hold.
+OFFICE_MAX_EXPANDED_BYTES = 100 * 1024 * 1024
+XLSX_PREVIEW_ROWS = 50
+
+
+def _office_too_big(payload: bytes) -> str | None:
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as z:
+            expanded = sum(info.file_size for info in z.infolist())
+    except zipfile.BadZipFile:
+        return "it is not a valid Office file"
+    if expanded > OFFICE_MAX_EXPANDED_BYTES:
+        return f"it expands to {expanded // 1048576} MiB, more than the {OFFICE_MAX_EXPANDED_BYTES // 1048576} MiB limit"
+    return None
+
+
+def xlsx_text(payload: bytes, *, max_rows: int | None, max_chars: int) -> str:
+    """Every sheet as comma-separated rows (cell values as Excel last saved
+    them, never formulas). ``max_rows`` per sheet (None: all), the whole text
+    capped at ``max_chars``. Footers say what was left out."""
+    import csv
+
+    problem = _office_too_big(payload)
+    if problem:
+        return f"[read_upload: can't read this spreadsheet: {problem}]"
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001
+        return f"[read_upload: failed to open the spreadsheet ({type(exc).__name__}: {exc})]"
+    out: list[str] = [f"[Excel workbook: {len(wb.sheetnames)} sheet(s): {', '.join(wb.sheetnames)}]"]
+    size = len(out[0])
+    cut = False
+    for ws in wb.worksheets:
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        shown = total = 0
+        for row in ws.iter_rows(values_only=True):
+            if not any(v is not None and v != "" for v in row):
+                continue
+            total += 1
+            if max_rows is not None and shown >= max_rows:
+                continue
+            writer.writerow(["" if v is None else v for v in row])
+            shown += 1
+        block = f"\n--- sheet {ws.title}: {total} row(s) ---\n{buf.getvalue().rstrip()}"
+        if shown < total:
+            block += f"\n[Showing the first {shown} of {total} rows. Use read_upload_full for every row.]"
+        if size + len(block) > max_chars:
+            out.append(block[: max(0, max_chars - size)])
+            cut = True
+            break
+        out.append(block)
+        size += len(block)
+    wb.close()
+    if cut:
+        out.append(f"\n[Stopped at {max_chars} characters.]")
+    return "\n".join(out)
+
+
+def docx_text(payload: bytes, *, max_chars: int) -> str:
+    """A Word document's text in order: paragraphs (headings marked with #)
+    and tables (cells joined with |), capped at ``max_chars``."""
+    problem = _office_too_big(payload)
+    if problem:
+        return f"[read_upload: can't read this document: {problem}]"
+    try:
+        from docx import Document
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        doc = Document(io.BytesIO(payload))
+    except Exception as exc:  # noqa: BLE001
+        return f"[read_upload: failed to open the document ({type(exc).__name__}: {exc})]"
+    lines: list[str] = []
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            p = Paragraph(child, doc)
+            text = p.text.strip()
+            if not text:
+                continue
+            style = (p.style.name if p.style is not None else "") or ""
+            level = style.removeprefix("Heading ").strip()
+            lines.append(("#" * int(level) + " " if style.startswith("Heading") and level.isdigit() else "") + text)
+        elif tag == "tbl":
+            for row in Table(child, doc).rows:
+                lines.append(" | ".join(cell.text.strip() for cell in row.cells))
+    text = "\n".join(lines) or "[Word document: no text]"
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n\n[Stopped at {max_chars} of {len(text)} characters.]"
+    return text
+
+
 def _parse_page_range(spec: str | None, total: int) -> tuple[int, int]:
     """Return (start, end) 1-indexed inclusive, clamped to [1, total]."""
     if not spec:

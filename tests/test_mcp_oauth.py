@@ -252,7 +252,7 @@ def test_consent_escapes_names_and_preserves_denied_access(setup):
         r = await c.get(url)
         assert r.status_code == 403
         assert r.headers["content-type"].startswith("text/html")
-        assert "Hub access needed" in r.text and 'value="allow"' not in r.text
+        assert "Access needed" in r.text and 'value="allow"' not in r.text
         assert 'href="/"' in r.text
 
     run_flow(hub, flow)

@@ -54,7 +54,6 @@ const triggerLabel = (t: string | null) => (t ? TRIGGERS[t] ?? t : "Not recorded
 const ACTIVE = new Set(["ENQUEUED", "PENDING"]);
 const FAILED = new Set(["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"]);
 
-const EXAMPLE = "## Prompt\nWhat is the refund window?\n\n## Criteria\nStates 14 days.";
 
 /** A few short arguments for a tool call's one-line summary. */
 const KEY_ARGS = ["name", "path", "file", "query", "q", "url", "id", "title"];
@@ -194,8 +193,8 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
         <div>
           {!underTabs && <Title level={2}>Evals in {hub.name}</Title>}
           <Paragraph type="secondary">
-            Checks that this agent still answers as it should.
-            <InfoHelp text="Each case is a markdown file in the agent's evals folder. Run them with hubzoid eval run, in CI or on a schedule." />
+            Checks that this agent still answers well.
+            <InfoHelp text="Each case is a markdown file in evals/. Runs from CI, a schedule or the CLI: hubzoid eval run." />
           </Paragraph>
         </div>
         <Space wrap>
@@ -228,7 +227,7 @@ export function EvalsScreen({ hub, run, embedded = false }: { hub: Hub; run?: st
         />
       )}
       {!data.folder || (data.cases.length === 0 && data.errors.length === 0) ? (
-        <NoCases hub={hub} docs={data.docs} folder={data.folder} />
+        <NoCases hub={hub} docs={data.docs} />
       ) : (
         <>
           <CasesTable embedded={embedded} hub={hub} cases={data.cases} />
@@ -301,21 +300,14 @@ function RunStateText({ state }: { state: EvalRunState }) {
   );
 }
 
-function NoCases({ hub, docs, folder }: { hub: Hub; docs: string; folder: boolean }) {
+function NoCases({ hub, docs }: { hub: Hub; docs: string }) {
   return (
     <Empty
       description={
         <div className="eval-empty">
-          <div>
-            {folder ? `The evals folder in ${hub.name} has no cases yet.` : `${hub.name} has no evals folder yet.`}
-          </div>
+          <div>{hub.name} has no evals yet.</div>
           <Text type="secondary">
-            Add a folder named <Text code>evals</Text> to the agent’s folder, with one markdown file per case. For
-            example, <Text code>evals/refund-window.md</Text>:
-          </Text>
-          <pre className="output eval-example">{EXAMPLE}</pre>
-          <Text type="secondary">
-            Run cases from the command line, CI, or their schedule. Evals use real tools and can have side effects. <a href={docs}>How eval cases work</a>
+            Each eval is a question and what a good answer says. <a href={docs}>How to add evals</a>
           </Text>
         </div>
       }
@@ -451,15 +443,7 @@ function RunsTable({ hub, runs, embedded }: { hub: Hub; runs: EvalRunSummary[]; 
       locale={{
         emptyText: (
           <Empty
-            description={
-              <>
-                <div>No eval runs yet.</div>
-                <Text type="secondary">
-                  Use the command line to record the first results. Runs from the command line (
-                  <Text code>hubzoid eval run</Text>) and from case schedules appear here too.
-                </Text>
-              </>
-            }
+            description="No eval runs yet."
           />
         ),
       }}

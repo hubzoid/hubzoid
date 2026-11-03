@@ -40,7 +40,7 @@ def test_empty_assistant_replies_are_skipped(tmp_path):
     assert build_prompt(tmp_path, "c_hist00001", branch) == "[user]\na\n\n[user]\nb"
 
 
-def test_attachments_use_the_bridge_notes(tmp_path):
+def test_attachments_use_the_one_note(tmp_path):
     hub = tmp_path
     png = _upload(hub, "c_hist00002", "chart.png", b"\x89PNG\r\n\x1a\nfake", "image/png")
     pdf = _upload(hub, "c_hist00002", "spec.pdf", b"%PDF-1.4 fake", "application/pdf")
@@ -49,13 +49,15 @@ def test_attachments_use_the_bridge_notes(tmp_path):
         {"type": "image", "file_id": "chart.png", "name": "chart.png", "mime": "image/png", "size": 12},
         {"type": "file", "file_id": "spec.pdf", "name": "spec.pdf", "mime": "application/pdf", "size": 13},
     ]}]
+    from hubzoid import attachments
+
     prompt = build_prompt(hub, "c_hist00002", branch)
     assert prompt == (
         "[user]\n"
-        + server._attachment_note("chart.png", 12, "image/png", png) + "\n\n"
-        + server._attachment_note("spec.pdf", 13, "application/pdf", pdf) + "\n\n"
+        + attachments.note("chart.png", 12, "image/png", png) + "\n\n"
+        + attachments.note("spec.pdf", 13, "application/pdf", pdf) + "\n\n"
         + "Look at these")
-    assert "[Image: chart.png]" in prompt   # what vision_inject expands
+    assert "[Image: chart.png]" in prompt   # names the image the model is shown
 
 
 def test_images_reach_vision_inject_from_the_conversation_folder(tmp_path):
@@ -64,9 +66,16 @@ def test_images_reach_vision_inject_from_the_conversation_folder(tmp_path):
     _upload(tmp_path, "c_hist00003", "cat.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")
     branch = [{"role": "user", "content": [
         {"type": "image", "file_id": "cat.png", "name": "cat.png", "mime": "image/png", "size": 40}]}]
+    from hubzoid import _request_ctx
+    from hubzoid.chat.history import branch_images
+
     prompt = build_prompt(tmp_path, "c_hist00003", branch)
-    data = vision_inject.openai_input(prompt, tmp_path, "c_hist00003", enabled=True,
-                                      max_edge=1568, max_images=4)
+    # the images come from the parts, as a list; the prompt text is never parsed
+    assert vision_inject.openai_input(prompt, tmp_path, "c_hist00003", enabled=True,
+                                      max_edge=1568, max_images=4) == prompt
+    with _request_ctx.image_scope(branch_images(tmp_path, "c_hist00003", branch)):
+        data = vision_inject.openai_input(prompt, tmp_path, "c_hist00003", enabled=True,
+                                          max_edge=1568, max_images=4)
     assert isinstance(data, list)
     assert [b["type"] for b in data[0]["content"]] == ["input_text", "input_image"]
 

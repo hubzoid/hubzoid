@@ -39,10 +39,6 @@ import { LegacyServiceTag } from "./AccessParts";
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
-/** Where a row's person opens, when they have a page of their own. */
-const personLink = (r: AccessRow) =>
-  r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup" ? undefined : personHref(r.subject);
-
 export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: boolean }) {
   const underTabs = useUnderTabs();
   const { modal, message } = App.useApp();
@@ -132,11 +128,16 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
   // entry points until fresh data lands so nobody edits stale permissions.
   const locked = data.refreshing;
 
+  // On an agent's Access, a person's row is their access to this agent: the
+  // row and the name open it here. Their profile is a link inside (2.0.7 review:
+  // the name went to People and a separate button edited access).
   const personColumn = {
     title: "Person",
     key: "person",
     render: (_: unknown, r: AccessRow) => (
-      <PersonCell subject={r.subject} display={r.display} link={personLink(r)} />
+      <PersonCell subject={r.subject} display={r.display}
+        onOpen={r.subject === EVERYONE || locked ? undefined : () => setDraft(draftFor(r))}
+        openLabel={`Edit access for ${personName(r.subject, r.display)}`} />
     ),
   };
   const capabilitiesColumn = {
@@ -178,36 +179,28 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
         <AccountTag status={status} />
       ),
   };
+  // Only "Everyone signed in" has an action of its own.
   const actionsColumn = {
     title: "",
     key: "actions",
     width: 140,
     align: "right" as const,
+    hidden: !access.public,
     render: (_: unknown, r: AccessRow) =>
-      r.subject === EVERYONE ? (
-        access.can_manage_admins ? (
-          <Button
-            danger
-            onClick={askRemoveEveryone}
-            loading={removingEveryone}
-            disabled={locked}
-            aria-label="Remove access for everyone signed in"
-          >
-            Remove
-          </Button>
-        ) : (
-          <Tooltip title="Only organization administrators can remove this.">
-            <Text type="secondary" tabIndex={0}>Read-only</Text>
-          </Tooltip>
-        )
-      ) : (
+      r.subject !== EVERYONE ? null : access.can_manage_admins ? (
         <Button
-          onClick={() => setDraft(draftFor(r))}
+          danger
+          onClick={askRemoveEveryone}
+          loading={removingEveryone}
           disabled={locked}
-          aria-label={`Edit access for ${personName(r.subject, r.display)}`}
+          aria-label="Remove access for everyone signed in"
         >
-          Edit access
+          Remove
         </Button>
+      ) : (
+        <Tooltip title="Only organization administrators can remove this.">
+          <Text type="secondary" tabIndex={0}>Read-only</Text>
+        </Tooltip>
       ),
   };
   const columns = [personColumn, capabilitiesColumn, accountColumn, actionsColumn];
@@ -272,8 +265,8 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
         <>
           <ul className="hz-access-list" aria-label={`Access to ${hub.name}`}>
             {access.rows.map((row) => (
-              // A row opens the person, as in People (one row style, founder review).
-              <li key={row.subject} className={personLink(row) ? "hz-row-link" : undefined} onClick={openRowName}>
+              // A row opens the person's access here (one row style, founder review).
+              <li key={row.subject} className={row.subject !== EVERYONE ? "hz-row-link" : undefined} onClick={openRowName}>
                 <div className="hz-access-person">
                   {personColumn.render(row.status, row)}
                   <div className="hz-access-status">{accountColumn.render(row.status, row)}</div>

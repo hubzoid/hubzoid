@@ -34,7 +34,7 @@ BUILTIN: dict[str, str] = {
         "read_upload", "read_upload_full", "render_jinja", "web_search", "who_has_access",
         "workflow_runs")},
     **{name: "personal_store" for name in (
-        "write_artifact", "publish_artifact", "schedule_workflow", "change_schedule",
+        "write_artifact", "make_excel", "make_pdf", "make_word", "publish_artifact", "schedule_workflow", "change_schedule",
         "propose_access_change", "propose_new_account")},
     "remember": "shared_knowledge",
     "write_hub_file": "shared_knowledge",

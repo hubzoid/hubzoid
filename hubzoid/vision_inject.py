@@ -1,19 +1,18 @@
-"""Native image vision — inject uploaded images into the model call as content blocks.
+"""Native image vision: show a turn's images to the model as content blocks.
 
-Hubzoid persists every uploaded image to the chat uploads dir and leaves an
-``[Image: <name>]`` reference in the prompt text (``server.py`` for the Open
-WebUI bridge, ``slack/conversion.py`` for Slack). This module turns those
-references into real multimodal content blocks at model-call time, per runtime:
+The images come as a list of names in the chat's uploads folder
+(``_request_ctx.turn_images``), set by whoever built the prompt from the
+message parts (``hubzoid.attachments``). This module turns them into real
+multimodal content blocks at model-call time, per runtime:
 
   * claude-local (``claude_agent_sdk.query``): Anthropic image blocks, passed
     via the streaming-input message form.
-  * OpenAI Agents (``Runner.run_streamed``): ``input_image`` blocks in the
-    input list (Responses API shape).
+  * OpenAI Agents (``Runner.run_streamed``) and codex-local: ``input_image``
+    blocks (Responses API shape).
 
 Design notes:
-  - The uploads dir IS the store (the analogue of Claude Code's paste-store).
-    The ``[Image: …]`` reference persists in conversation history and
-    re-expands every turn, so an uploaded image stays visible for follow-ups.
+  - The uploads dir IS the store. Every turn's prompt is rebuilt from the
+    stored parts, so an uploaded image stays visible for follow-ups.
   - Only files that resolve INSIDE the chat uploads dir *and* classify as an
     image are ever read. No arbitrary path is reachable — ``restricted/.env``
     is not an upload — so this never exposes secrets the way a filesystem Read
@@ -28,29 +27,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import re
 from pathlib import Path
 
+from . import _request_ctx
 from . import memory as memlib
 from . import uploads as uploads_lib
-
-# Matches the canonical reference the ingest layer emits: `[Image: creative.png]`.
-_REF_RE = re.compile(r"\[Image:\s*([^\]]+?)\s*\]")
 
 # content-hash -> (mime, base64). Bounded so a long-lived process cannot grow it
 # without limit. Cleared wholesale when full (simple, good enough for this size).
 _CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_MAX = 64
-
-
-def image_names(prompt: str) -> list[str]:
-    """Distinct ``[Image: <name>]`` references, in order of first appearance."""
-    seen: list[str] = []
-    for m in _REF_RE.finditer(prompt or ""):
-        name = m.group(1).strip()
-        if name and name not in seen:
-            seen.append(name)
-    return seen
 
 
 def _safe_resolve(upload_dir: Path, name: str) -> Path | None:
@@ -122,20 +108,20 @@ def _load_image(upload_dir: Path, name: str, *, max_edge: int) -> tuple[str, str
 
 
 def _resolved(
-    prompt: str, hub_dir: Path, chat_id: str | None, *, max_edge: int, max_images: int
+    names: list[str], hub_dir: Path, chat_id: str | None, *, max_edge: int, max_images: int
 ) -> list[tuple[str, str]]:
-    """(mime, base64) for each referenced image, capped to the most recent
-    ``max_images`` (older references fall back to their text marker)."""
-    if not chat_id:
+    """(mime, base64) for each image, capped to the most recent ``max_images``."""
+    if not chat_id or not names:
         return []
-    names = image_names(prompt)
-    if not names:
-        return []
-    if max_images > 0 and len(names) > max_images:
-        names = names[-max_images:]
+    seen: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.append(name)
+    if max_images > 0 and len(seen) > max_images:
+        seen = seen[-max_images:]
     upload_dir = memlib.chat_upload_dir(hub_dir, chat_id)
     out: list[tuple[str, str]] = []
-    for name in names:
+    for name in seen:
         img = _load_image(upload_dir, name, max_edge=max_edge)
         if img is not None:
             out.append(img)
@@ -150,13 +136,15 @@ def claude_prompt(
     enabled: bool,
     max_edge: int,
     max_images: int,
+    resuming: bool = False,
 ):
     """Value to pass as ``query(prompt=...)``. The original string when there is
     nothing to inject, else an async iterable yielding one user message with the
     text plus Anthropic image blocks."""
     if not enabled:
         return prompt
-    images = _resolved(prompt, hub_dir, chat_id, max_edge=max_edge, max_images=max_images)
+    images = _resolved(_request_ctx.turn_images(resuming=resuming), hub_dir, chat_id,
+                       max_edge=max_edge, max_images=max_images)
     if not images:
         return prompt
     content: list[dict] = [{"type": "text", "text": prompt}]
@@ -185,7 +173,7 @@ def openai_input(
     text plus ``input_image`` blocks (Responses API shape)."""
     if not enabled:
         return prompt
-    images = _resolved(prompt, hub_dir, chat_id, max_edge=max_edge, max_images=max_images)
+    images = _resolved(_request_ctx.turn_images(), hub_dir, chat_id, max_edge=max_edge, max_images=max_images)
     if not images:
         return prompt
     content: list[dict] = [{"type": "input_text", "text": prompt}]

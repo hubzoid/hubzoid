@@ -1,22 +1,21 @@
 """Files and artifacts with lasting identity (HUB-74).
 
 A **file** is immutable bytes with an opaque id, its SHA-256, size, type and
-original name, stored through an adapter (``storage``: local disk or one
-S3-compatible bucket). Who may read it follows its **references**: a file is
+original name, stored on local disk (the hub's data folder). Files an older
+release stored in S3 stay recorded and answer ``storage_unavailable`` (503)
+until S3 returns as its own decision; ``hubzoid doctor`` lists them. Who may read it follows its **references**: a file is
 readable by its owner and by anyone who may read a conversation that refers to
 it, checked at every read (never a cached grant). Removing a reference never
 deletes bytes another reference still uses; deleting a file needs zero active
 references, tombstones it first (reads stop at once) and then removes the bytes.
 There is no default quota and no automatic deletion.
 
-Uploads are resumable: create, send bounded chunks at the server's offset
-(a replayed identical chunk returns the same offset), complete with the
-whole-file hash. A completed file is ``validating`` until its type is checked,
-then ``ready`` (or ``quarantined``); only ready files can be attached.
-
-The conversation keeps a working copy of each attached file in its own uploads
-folder (``memory.chat_upload_dir``), which is what the agent's tools read, so
-every runtime sees attachments the same way.
+Files are stored by ``hubzoid.attachments.save`` (one request, type checked
+against the bytes, ``ready`` at once) and put in a chat by
+``attachments.attach``: the chat's uploads folder (``memory.chat_upload_dir``)
+gets a hard link to the stored bytes, which is what the agent's tools read, so
+every runtime sees attachments the same way. Files an older release left
+``validating`` are checked again at start (``recover``).
 
 An **artifact** is a document the agent produced in a conversation (its chat
 artifacts folder) or that a person revised. Each version is a file, numbered,
@@ -29,7 +28,6 @@ import hashlib
 import json
 import logging
 import re
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -47,8 +45,6 @@ log = logging.getLogger("hubzoid.chat.files")
 metadata = sa.MetaData()
 Err = g.GraphError
 
-CHUNK_BYTES = 4 * 1024 * 1024
-UPLOAD_SECONDS = 24 * 3600
 DEFAULT_TYPES = [
     "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -178,6 +174,8 @@ files = sa.Table(
     sa.Column("deleted_at", sa.Float),
 )
 
+# Resumable uploads of releases before 2.1. No longer written; kept so the
+# schema and older rows stay as they were.
 uploads = sa.Table(
     "hz_chat_file_uploads", metadata,
     sa.Column("upload_id", sa.String(64), primary_key=True),
@@ -296,12 +294,19 @@ class FileService:
         current default, recording its redacted configuration once."""
         if config_id is None:
             cfg = self.settings()["storage"]
+            if cfg.get("adapter") != "local":
+                # S3 is not written in this release: new files go to local disk.
+                cfg = StorageSettings().model_dump()
             config_id = "sc_" + canonical.digest(cfg)[7:31]
             if config_id not in self._adapters:
-                with self.engine.begin() as conn:
-                    if conn.execute(sa.select(storage_configs.c.id).where(storage_configs.c.id == config_id)).first() is None:
-                        conn.execute(storage_configs.insert().values(id=config_id, adapter=cfg["adapter"],
-                                                                     config_json=json.dumps(cfg), created_at=_now()))
+                try:
+                    with self.engine.begin() as conn:
+                        if conn.execute(sa.select(storage_configs.c.id).where(
+                                storage_configs.c.id == config_id)).first() is None:
+                            conn.execute(storage_configs.insert().values(id=config_id, adapter=cfg["adapter"],
+                                                                         config_json=json.dumps(cfg), created_at=_now()))
+                except sa.exc.IntegrityError:
+                    pass  # files uploaded at once: another request recorded the same configuration first
                 self._adapters[config_id] = st.for_settings(self.hub_dir, cfg)
             return config_id, self._adapters[config_id]
         if config_id not in self._adapters:
@@ -309,15 +314,12 @@ class FileService:
                 row = conn.execute(sa.select(storage_configs).where(storage_configs.c.id == config_id)).first()
             if row is None:
                 raise Err(503, "storage_unavailable", "The storage that holds this file is no longer configured.")
+            if row.adapter != "local":
+                raise Err(503, "storage_unavailable", "This file is stored in S3, which this release does not "
+                                                      "read. Run `hubzoid doctor` to list such files.",
+                          retryable=False)
             self._adapters[config_id] = st.for_settings(self.hub_dir, json.loads(row.config_json))
         return config_id, self._adapters[config_id]
-
-    def _staging(self, upload_id: str) -> Path:
-        from ..control import deploy
-
-        p = deploy.state_root(self.hub_dir) / ".hubzoid" / "files-staging"
-        p.mkdir(parents=True, exist_ok=True)
-        return p / upload_id
 
     def _check_type(self, name: str, mime: str, size: int) -> str:
         from .. import uploads as uploads_lib
@@ -340,11 +342,9 @@ class FileService:
             return
         used = conn.execute(sa.select(sa.func.coalesce(sa.func.sum(files.c.size_bytes), 0)).where(
             files.c.owner_principal_id == owner_id, files.c.deleted_at.is_(None))).scalar() or 0
-        pending = conn.execute(sa.select(sa.func.coalesce(sa.func.sum(uploads.c.size_bytes), 0)).where(
-            uploads.c.owner_principal_id == owner_id, uploads.c.state == "uploading")).scalar() or 0
-        if used + pending + size > quota:
+        if used + size > quota:
             raise Err(429, "quota_exceeded", "This would go over your storage allowance. Delete files you no longer "
-                                             "need.", remaining_bytes=max(0, quota - used - pending))
+                                             "need.", remaining_bytes=max(0, quota - used))
 
     # -- access ----------------------------------------------------------------------------------
     def _row(self, conn, file_id: str):
@@ -389,136 +389,32 @@ class FileService:
                        conversation_id: str | None = None, local_name: str | None = None,
                        check_type: bool = True) -> dict:
         """Store bytes as a new ready file (already received and bounded by the
-        caller), with an optional conversation reference."""
+        caller), with an optional conversation reference. The quota is checked
+        before the bytes are written, and they are removed again if the record
+        is not."""
         if check_type:
             mime = self._check_type(name, mime, len(data))
+        with self.engine.connect() as conn:
+            self._check_quota(conn, actor_id, len(data))
         config_id, store = self._store()
         key = st.new_key()
         store.put(key, data)
         fid = str(uuid.uuid4())
-        t = _now()
-        with self.engine.begin() as conn:
-            self._check_quota(conn, actor_id, len(data))
-            conn.execute(files.insert().values(
-                file_id=fid, hub_id=self.hub, owner_principal_id=actor_id, storage_config_id=config_id, object_key=key,
-                content_sha256=sha256(data), size_bytes=len(data), mime_type=mime, original_name=name[:255],
-                origin=origin, state="ready", processing_error=None, revision=1, created_at=t, deleted_at=None))
-            if conversation_id:
-                self._add_ref(conn, fid, "conversation", conversation_id, conversation_id, actor_id, local_name)
-            row = self._row(conn, fid)
+        try:
+            with self.engine.begin() as conn:
+                self._check_quota(conn, actor_id, len(data))
+                conn.execute(files.insert().values(
+                    file_id=fid, hub_id=self.hub, owner_principal_id=actor_id, storage_config_id=config_id,
+                    object_key=key, content_sha256=sha256(data), size_bytes=len(data), mime_type=mime,
+                    original_name=name[:255], origin=origin, state="ready", processing_error=None, revision=1,
+                    created_at=_now(), deleted_at=None))
+                if conversation_id:
+                    self._add_ref(conn, fid, "conversation", conversation_id, conversation_id, actor_id, local_name)
+                row = self._row(conn, fid)
+        except BaseException:
+            store.delete(key)
+            raise
         return self.describe(row)
-
-    def start_upload(self, actor, body: dict, *, key: str | None) -> dict:
-        if not self.settings()["enabled"]:
-            raise Err(403, "feature_disabled", "File uploads are turned off for this deployment.")
-        from .files import safe_upload_name
-
-        name = safe_upload_name(str(body.get("name") or ""))
-        size = body.get("size_bytes")
-        if not isinstance(size, int) or size < 0:
-            raise Err(422, "validation_failed", "size_bytes is the file's size in bytes.")
-        mime = self._check_type(name, str(body.get("mime_type") or ""), size)
-        expected = body.get("content_sha256")
-        if expected is not None and not re.fullmatch(r"[0-9a-f]{64}", str(expected)):
-            raise Err(422, "validation_failed", "content_sha256 is 64 lowercase hex characters.")
-        cid = body.get("conversation_id")
-        with self.engine.begin() as conn:
-            if cid and not self._writable_conversation(conn, cid, actor):
-                raise Err(404, "not_found", "That conversation was not found.")
-            if key:
-                old = conn.execute(sa.select(uploads).where(uploads.c.owner_principal_id == actor.id,
-                                                            uploads.c.hub_id == self.hub,
-                                                            uploads.c.idempotency_key == key)).first()
-                if old is not None:
-                    if (old.name, old.size_bytes, old.conversation_id) != (name, size, cid):
-                        raise Err(409, "idempotency_key_reused", "That Idempotency-Key was used for another upload.")
-                    return self._upload_json(old)
-            self._check_quota(conn, actor.id, size)
-            uid, fid = str(uuid.uuid4()), str(uuid.uuid4())
-            conn.execute(uploads.insert().values(
-                upload_id=uid, file_id=fid, hub_id=self.hub, owner_principal_id=actor.id, conversation_id=cid,
-                name=name, mime_type=mime, size_bytes=size, expected_sha256=expected, next_offset=0,
-                last_chunk_sha256=None, state="uploading", idempotency_key=key, expires_at=_now() + UPLOAD_SECONDS))
-            row = conn.execute(sa.select(uploads).where(uploads.c.upload_id == uid)).first()
-        self._staging(uid).write_bytes(b"")
-        return self._upload_json(row)
-
-    @staticmethod
-    def _upload_json(r) -> dict:
-        return {"upload_id": r.upload_id, "file_id": r.file_id, "offset": r.next_offset, "chunk_bytes": CHUNK_BYTES,
-                "size_bytes": r.size_bytes, "state": r.state, "expires_at": r.expires_at}
-
-    def _upload(self, conn, upload_id: str, actor):
-        r = conn.execute(sa.select(uploads).where(uploads.c.upload_id == upload_id,
-                                                  uploads.c.owner_principal_id == actor.id)).first()
-        if r is None:
-            raise Err(404, "not_found", "That upload was not found.")
-        if r.state == "uploading" and r.expires_at < _now():
-            raise Err(410, "upload_expired", "This upload expired. Start it again.")
-        return r
-
-    def put_chunk(self, actor, upload_id: str, offset: int, data: bytes, chunk_sha: str | None) -> dict:
-        if len(data) > CHUNK_BYTES:
-            raise Err(413, "chunk_too_large", f"Send at most {CHUNK_BYTES} bytes per chunk.")
-        if chunk_sha and sha256(data) != chunk_sha:
-            raise Err(409, "checksum_mismatch", "That chunk did not arrive intact. Send it again.")
-        with self.engine.begin() as conn:
-            r = self._upload(conn, upload_id, actor)
-            if r.state != "uploading":
-                raise Err(409, "invalid_state", "This upload is no longer accepting bytes.")
-            digest = sha256(data)
-            # The identical chunk again (a retry after a lost reply): same answer.
-            if offset + len(data) == r.next_offset and digest == r.last_chunk_sha256:
-                return {"offset": r.next_offset}
-            if offset != r.next_offset:
-                raise Err(409, "offset_conflict", "Resume from the server's offset.", offset=r.next_offset)
-            if r.next_offset + len(data) > r.size_bytes:
-                raise Err(409, "offset_conflict", "That is more than the declared size.", offset=r.next_offset)
-            with open(self._staging(upload_id), "r+b") as fh:
-                fh.seek(offset)
-                fh.write(data)
-                fh.truncate(offset + len(data))
-            conn.execute(uploads.update().where(uploads.c.upload_id == upload_id).values(
-                next_offset=offset + len(data), last_chunk_sha256=digest))
-        return {"offset": offset + len(data)}
-
-    def complete(self, actor, upload_id: str, content_sha: str | None) -> dict:
-        with self.engine.begin() as conn:
-            r = self._upload(conn, upload_id, actor)
-            if r.state == "complete":
-                return self.describe(self._row(conn, r.file_id), actor)
-            if r.state != "uploading":
-                raise Err(409, "invalid_state", "This upload was cancelled.")
-            if r.next_offset != r.size_bytes:
-                raise Err(409, "upload_incomplete", "Not every byte has arrived yet.", offset=r.next_offset)
-        data = self._staging(upload_id).read_bytes()
-        digest = sha256(data)
-        want = content_sha or r.expected_sha256
-        if want and want != digest:
-            raise Err(409, "checksum_mismatch", "The file did not arrive intact. Start the upload again.")
-        config_id, store = self._store()
-        key = st.new_key()
-        store.put(key, data)
-        t = _now()
-        with self.engine.begin() as conn:
-            claimed = conn.execute(uploads.update().where(uploads.c.upload_id == upload_id,
-                                                          uploads.c.state == "uploading")
-                                   .values(state="complete")).rowcount
-            if claimed != 1:  # a concurrent completion won
-                store.delete(key)
-                return self.describe(self._row(conn, r.file_id), actor)
-            conn.execute(files.insert().values(
-                file_id=r.file_id, hub_id=self.hub, owner_principal_id=actor.id, storage_config_id=config_id,
-                object_key=key, content_sha256=digest, size_bytes=len(data), mime_type=r.mime_type,
-                original_name=r.name, origin="upload", state="validating", processing_error=None, revision=1,
-                created_at=t, deleted_at=None))
-            if r.conversation_id:
-                self._add_ref(conn, r.file_id, "conversation", r.conversation_id, r.conversation_id, actor.id, None)
-            row = self._row(conn, r.file_id)
-        self._staging(upload_id).unlink(missing_ok=True)
-        threading.Thread(target=self._validate, args=(r.file_id, data), daemon=True,
-                         name=f"hubzoid-file-{r.file_id[:8]}").start()
-        return self.describe(row, actor)
 
     def _validate(self, file_id: str, data: bytes) -> None:
         """The declared type must match the bytes (a renamed executable or an
@@ -554,15 +450,6 @@ class FileService:
             self._validate(r.file_id, data)
             n += 1
         return n
-
-    def abort(self, actor, upload_id: str) -> None:
-        with self.engine.begin() as conn:
-            r = conn.execute(sa.select(uploads).where(uploads.c.upload_id == upload_id,
-                                                      uploads.c.owner_principal_id == actor.id)).first()
-            if r is None or r.state != "uploading":
-                return
-            conn.execute(uploads.update().where(uploads.c.upload_id == upload_id).values(state="cancelled"))
-        self._staging(upload_id).unlink(missing_ok=True)
 
     # -- reading ---------------------------------------------------------------------------------
     def get(self, actor, file_id: str) -> dict:
@@ -652,34 +539,6 @@ class FileService:
         if conversation_id:
             g.emit(conn, conversation_id, "file_reference.changed", file_id, {"action": "added"})
         return rid
-
-    def attach(self, actor, file_id: str, conversation_id: str) -> dict:
-        """Reuse a readable, ready file in a conversation the person may write
-        in: a new reference and the conversation's working copy, no new bytes."""
-        from .files import _save, file_part
-        from .store import chat_key
-
-        with self.engine.begin() as conn:
-            row = self._readable(conn, file_id, actor)
-            if row.state != "ready":
-                raise Err(409, "file_processing", "This file isn't ready to attach yet.")
-            if not self._writable_conversation(conn, conversation_id, actor):
-                raise Err(404, "not_found", "That conversation was not found.")
-            conv = dict(conn.execute(sa.select(conversations).where(conversations.c.id == conversation_id)).first()._mapping)
-            existing = conn.execute(sa.select(references.c.local_name).where(
-                references.c.file_id == file_id, references.c.resource_type == "conversation",
-                references.c.resource_id == conversation_id, references.c.deleted_at.is_(None))).scalar()
-        key = chat_key(conv)
-        if existing and file_part(self.hub_dir, key, existing) is not None:
-            local = existing
-        else:
-            _, data = self.content(actor, file_id)
-            local = _save(self.hub_dir, key, row.original_name, data, row.mime_type)
-        with self.engine.begin() as conn:
-            rid = self._add_ref(conn, file_id, "conversation", conversation_id, conversation_id, actor.id, local)
-        self.notify(conversation_id)
-        part = file_part(self.hub_dir, key, local) or {}
-        return {**part, "id": file_id, "reference_id": rid}
 
     def references_of(self, actor, file_id: str) -> list[dict]:
         """Where the file is used. Its owner also sees uses in conversations they
@@ -898,8 +757,7 @@ class FileService:
 
     # -- operations ------------------------------------------------------------------------------
     def doctor(self, *, write_probe: bool = True) -> dict:
-        cfg = self.settings()["storage"]
-        report = {"adapter": cfg["adapter"], "checks": []}
+        report = {"adapter": "local", "checks": []}
         try:
             _, store = self._store()
             if write_probe:
@@ -915,15 +773,30 @@ class FileService:
         except Exception as exc:  # noqa: BLE001 - the report names the failure
             report["checks"].append({"check": "storage", "ok": False, "code": "storage_unavailable",
                                      "message": type(exc).__name__})
+        try:
+            held = self.unreadable_files()
+        except Exception:  # noqa: BLE001 - the probe above names a broken store
+            held = 0
+        if held:
+            report["checks"].append({"check": "s3_files", "ok": False, "code": "storage_unavailable",
+                                     "message": f"{held} file(s) are stored in S3, which this release does not read."})
         report["ok"] = bool(report["checks"]) and all(c["ok"] for c in report["checks"])
         return report
 
-    def file_for_local(self, conversation_id: str, local_name: str) -> str | None:
-        """The file id behind a conversation's working copy, when it has one."""
+    def unreadable_files(self) -> int:
+        """Live files held by a storage this release does not read (S3)."""
         with self.engine.connect() as conn:
-            return conn.execute(sa.select(references.c.file_id).where(
-                references.c.conversation_id == conversation_id, references.c.local_name == local_name,
-                references.c.deleted_at.is_(None))).scalar()
+            return conn.execute(sa.select(sa.func.count()).select_from(
+                files.join(storage_configs, storage_configs.c.id == files.c.storage_config_id)).where(
+                files.c.hub_id == self.hub, files.c.deleted_at.is_(None),
+                storage_configs.c.adapter != "local")).scalar() or 0
+
+    def local_for(self, conversation_id: str, file_id: str) -> str | None:
+        """The conversation's own copy of a stored file (its name in the uploads folder)."""
+        with self.engine.connect() as conn:
+            return conn.execute(sa.select(references.c.local_name).where(
+                references.c.conversation_id == conversation_id, references.c.file_id == file_id,
+                references.c.local_name.is_not(None), references.c.deleted_at.is_(None))).scalar()
 
 
 _services: dict[str, FileService] = {}
@@ -944,9 +817,9 @@ def content_problem(mime: str, data: bytes) -> str | None:
     """Why the bytes are not the type they claim to be, or None. A renamed
     executable, an HTML page posing as an image or a fake PDF is refused."""
     head = data[:512].lstrip().lower()
-    if mime.startswith("image/") and mime != "image/svg+xml":
-        sig = {b"\x89png": "image/png", b"\xff\xd8\xff": "image/jpeg", b"gif8": "image/gif", b"riff": "image/webp"}
-        if not any(data[:4].lower().startswith(k) for k in sig):
+    sig = {"image/png": b"\x89png", "image/jpeg": b"\xff\xd8\xff", "image/gif": b"gif8", "image/webp": b"riff"}
+    if mime in sig:   # the pictures shown to models; other image types are files
+        if not data[:4].lower().startswith(sig[mime]):
             return "The bytes are not the image type they claim to be."
     elif mime == "application/pdf" and not data.startswith(b"%PDF"):
         return "The bytes are not a PDF."

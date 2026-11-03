@@ -35,7 +35,30 @@ def test_personal_keys_never_reach_bridge_files(bridge):
     assert client.post("/uploads/c1/x.txt", content=b"hi", headers=bearer).status_code == 401
     assert client.get("/artifacts/c1/x.txt", headers=bearer).status_code in (401, 404)
     assert client.post("/uploads/c1/x.txt", content=b"hi",
-                       headers={"authorization": "Bearer dev"}).status_code == 200
+                       headers={"authorization": "Bearer dev"}).status_code == 410   # one upload route now
+
+
+def test_a_key_needs_hub_access_and_never_names_the_bridges_files(bridge):
+    import os
+
+    from tests.access_helpers import allow
+
+    client, key = bridge
+    upload = lambda: client.post("/api/chat/files", headers={"authorization": f"Bearer {key}"},  # noqa: E731
+                                 files={"file": ("mine.txt", b"mine", "text/plain")})
+    # the upload checks hub access like the chat API
+    assert upload().status_code == 403 and upload().json()["detail"]["code"] == "no_access"
+    allow(Path(os.environ["HUBZOID_HUB_DIR"]), "ana@example.com")
+    assert upload().status_code == 201
+    # a person's key never reaches the bridge's own upload route
+    assert client.post("/v1/files", headers={"authorization": f"Bearer {key}"},
+                       files={"file": ("x.txt", b"x", "text/plain")}).status_code == 401
+    theirs = client.post("/v1/files", headers={"authorization": "Bearer dev"},
+                         files={"file": ("bridge.txt", b"channel", "text/plain")}).json()["file_id"]
+    r = client.post("/v1/chat/completions", headers={"authorization": f"Bearer {key}"}, json={
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "read it"},
+                                                  {"type": "file", "file": {"file_id": theirs}}]}]})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "file_not_found"
 
 
 def test_personal_chat_ids_are_per_account():

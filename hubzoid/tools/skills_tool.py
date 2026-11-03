@@ -6,7 +6,7 @@ when relevant.
 """
 from __future__ import annotations
 
-from agents import function_tool
+from .._tool import tool
 
 
 def make(ctx) -> list:
@@ -18,7 +18,7 @@ def make(ctx) -> list:
         rows = [f"- {s.spec.name}: {s.spec.description}" for s in ctx.skills]
         return "\n".join(rows)
 
-    @function_tool
+    @tool
     def list_skills() -> str:
         """List every skill (playbook) available in this hub.
 
@@ -27,7 +27,7 @@ def make(ctx) -> list:
         """
         return _menu()
 
-    @function_tool
+    @tool
     def load_skill(name: str) -> str:
         """Load the full body of a skill by name.
 

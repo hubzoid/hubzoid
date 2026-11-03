@@ -1,13 +1,13 @@
 """Sidecar-metadata tests for upload ingestion.
 
-When the bridge writes an upload (data-URL or POST /uploads), it should
-also drop a `{filename}.hubzoid.json` sidecar holding {mime, size, kind}.
+When a stored file is attached to a chat (`hubzoid.attachments.attach`), the
+chat's folder also gets a `{filename}.hubzoid.json` sidecar holding
+{mime, size, kind}.
 Downstream tools read this instead of re-sniffing every time, and
 listings hide it from the agent.
 """
 from __future__ import annotations
 
-import base64
 import json
 import shutil
 from pathlib import Path
@@ -86,93 +86,39 @@ class TestClassify:
 
 
 # ---------------------------------------------------------------------------
-# Sidecar written via data-URL ingest path
+# Sidecar written when a stored file is attached
 # ---------------------------------------------------------------------------
-def test_data_url_attachment_writes_sidecar(client):
-    async def capture(self, prompt):
+def _attach(client, name: str, payload: bytes, mime: str, chat="meta-chat") -> Path:
+    up = client.post("/v1/files", headers={"Authorization": "Bearer dev"},
+                     files={"file": (name, payload, mime)})
+    assert up.status_code == 201, up.text
+
+    async def fake_run(self, prompt):
         return "ok"
 
-    payload = b'{"hello": "world"}'
-    b64 = base64.b64encode(payload).decode("ascii")
-    data_url = f"data:application/json;name=blob.json;base64,{b64}"
-
-    with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
-        r = client.post(
-            "/v1/chat/completions",
-            headers=caller(MINIMAL),
-            json={
-                "model": "testbot-label",
-                "chat_id": "sidecar-c",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "here"},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }],
-            },
-        )
-    assert r.status_code == 200
-    uploads = MINIMAL / ".hubzoid/chats/sidecar-c/uploads"
-    # Find the non-sidecar file.
-    actuals = [p for p in uploads.iterdir() if not p.name.endswith(".hubzoid.json")]
-    assert len(actuals) == 1
-    fname = actuals[0].name
-    meta = _read_sidecar(uploads, fname)
-    assert meta["mime"] == "application/json"
-    assert meta["size"] == len(payload)
-    assert meta["kind"] == "json"
+    with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=fake_run):
+        r = client.post("/v1/chat/completions", headers=caller(MINIMAL), json={
+            "model": "testbot-label", "chat_id": chat, "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "see"}, {"type": "file", "file": {"file_id": up.json()["file_id"]}}]}]})
+    assert r.status_code == 200, r.text
+    return MINIMAL / ".hubzoid" / "chats" / chat / "uploads"
 
 
-# ---------------------------------------------------------------------------
-# Sidecar written via POST /uploads
-# ---------------------------------------------------------------------------
-def test_post_upload_writes_sidecar_with_kind_text(client):
-    r = client.post(
-        "/uploads/text-chat/notes.txt",
-        headers={"Authorization": "Bearer dev", "Content-Type": "text/plain"},
-        content=b"hello there\nline two\n",
-    )
-    assert r.status_code == 200
-    uploads = MINIMAL / ".hubzoid/chats/text-chat/uploads"
-    meta = _read_sidecar(uploads, "notes.txt")
-    assert meta["kind"] == "text"
-    assert meta["mime"] == "text/plain"
+def test_attach_writes_sidecar_with_kind_text(client):
+    uploads = _attach(client, "notes.txt", b"hello world\n", "text/plain")
+    assert _read_sidecar(uploads, "notes.txt") == {"mime": "text/plain", "size": 12, "kind": "text"}
 
 
-def test_post_upload_sidecar_falls_back_to_content_type_header(client):
-    """If no header provided, mime is sniffed from the filename extension."""
-    r = client.post(
-        "/uploads/sniff-chat/data.csv",
-        headers={"Authorization": "Bearer dev"},
-        content=b"a,b,c\n1,2,3\n",
-    )
-    assert r.status_code == 200
-    uploads = MINIMAL / ".hubzoid/chats/sniff-chat/uploads"
-    meta = _read_sidecar(uploads, "data.csv")
-    assert meta["mime"] == "text/csv"
-    assert meta["kind"] == "csv"
+def test_sidecar_type_falls_back_to_the_name(client):
+    uploads = _attach(client, "readme.md", b"# hi\n", "application/octet-stream")
+    assert _read_sidecar(uploads, "readme.md")["mime"] == "text/markdown"
 
 
-def test_post_upload_binary_classified_as_binary(client):
-    r = client.post(
-        "/uploads/bin-chat/blob.bin",
-        headers={"Authorization": "Bearer dev", "Content-Type": "application/octet-stream"},
-        content=b"\x00\x01\x02\xff\xfe",
-    )
-    assert r.status_code == 200
-    uploads = MINIMAL / ".hubzoid/chats/bin-chat/uploads"
-    meta = _read_sidecar(uploads, "blob.bin")
-    assert meta["kind"] == "binary"
+def test_binary_classified_as_binary(client):
+    uploads = _attach(client, "blob.bin", b"\x00\x01\x02\xff\xfe", "application/octet-stream")
+    assert _read_sidecar(uploads, "blob.bin")["kind"] == "binary"
 
 
-def test_post_upload_pdf_classified_as_pdf(client):
-    r = client.post(
-        "/uploads/pdf-chat/doc.pdf",
-        headers={"Authorization": "Bearer dev", "Content-Type": "application/pdf"},
-        content=b"%PDF-1.7\n%minimal\n",
-    )
-    assert r.status_code == 200
-    uploads = MINIMAL / ".hubzoid/chats/pdf-chat/uploads"
-    meta = _read_sidecar(uploads, "doc.pdf")
-    assert meta["kind"] == "pdf"
+def test_pdf_classified_as_pdf(client):
+    uploads = _attach(client, "spec.pdf", b"%PDF-1.7\n%fake\n", "application/pdf")
+    assert _read_sidecar(uploads, "spec.pdf")["kind"] == "pdf"

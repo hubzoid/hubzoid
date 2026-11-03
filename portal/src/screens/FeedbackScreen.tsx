@@ -111,7 +111,7 @@ export function AgentFeedback({ hub }: { hub: Hub }) {
       {!underTabs && <Title level={2}>Feedback</Title>}
       <Paragraph type="secondary">
         Ratings people gave this agent's answers. They don't change the agent.
-        <InfoHelp text="Thumbs in the web chat, a rating someone asked the agent to save, Slack buttons and WhatsApp reactions. You see a comment and its answer only where you could open that conversation yourself. The same list is in hubzoid chat feedback list." />
+        <InfoHelp text="Thumbs in chat, saved ratings, Slack buttons and WhatsApp reactions. Comments show only where you can open the conversation. CLI: hubzoid chat feedback list." />
       </Paragraph>
       <Space style={{ marginBottom: 12 }} wrap>
         <Segmented

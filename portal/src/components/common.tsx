@@ -224,17 +224,24 @@ export function PersonCell({
   subject,
   display,
   link,
+  onOpen,
+  openLabel,
 }: {
   subject: string;
   display?: string | null;
   link?: string;
+  /** Opens something in place (a drawer) instead of following `link`. */
+  onOpen?: () => void;
+  /** Its accessible name, which keeps the visible name in it. */
+  openLabel?: string;
 }) {
   const name = personName(subject, display);
   return (
     <Space align="center">
       <PersonAvatar subject={subject} display={display} />
       <div className="person-cell">
-        {link ? <a className="hz-row-name" href={link}>{name}</a> : <Text strong className="hz-row-name">{name}</Text>}
+        {onOpen ? <button type="button" className="row-name hz-row-name" onClick={onOpen} aria-label={openLabel}>{name}</button>
+          : link ? <a className="hz-row-name" href={link}>{name}</a> : <Text strong className="hz-row-name">{name}</Text>}
         {name !== subject && (
           <div>
             <Text type="secondary" className="identity">

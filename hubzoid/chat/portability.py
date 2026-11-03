@@ -70,6 +70,8 @@ def export_package(engine, hub_dir: Path, *, actor_id: str, conversation_ids: li
                                      "created_at": conv_row.get("created_at"), "head_id": view.get("view_head_id")},
                             "refs": {}})
             key = chat_key(conv_row)
+            from ..attachments import part_name
+
             for m in msgs:
                 refs: dict = {}
                 content = []
@@ -79,7 +81,7 @@ def export_package(engine, hub_dir: Path, *, actor_id: str, conversation_ids: li
                     if p.get("type") in ("file", "image") and p.get("file_id"):
                         # Only a file stored in this conversation's uploads,
                         # never a path a message names.
-                        f = stored_file(Path(hub_dir), key, p["file_id"])
+                        f = stored_file(Path(hub_dir), key, part_name(p))
                         if f is not None and not f.is_symlink() and f.stat().st_size <= MAX_BLOB:
                             data = f.read_bytes()
                             h = _sha(data)
@@ -357,7 +359,7 @@ def _imported_name(part: dict) -> str:
     from .. import uploads as uploads_lib
     from .files import safe_upload_name
 
-    raw = part.get("file_id")
+    raw = part.get("name") or part.get("file_id")   # the folder name (``attachments.part_name``)
     if not isinstance(raw, str) or not raw.strip():
         return ""
     name = safe_upload_name(raw)
@@ -373,7 +375,9 @@ def _imported_part(part: dict) -> dict:
         out = {k: part.get(k) for k in ("type", "file_id", "name", "mime", "size") if k in part}
         name = _imported_name(out)
         if name:
-            out["file_id"] = name
+            # Store ids don't travel between deployments: the part names its file
+            # by its folder name, as parts stored before store ids did.
+            out["file_id"] = out["name"] = name
         else:
             out.pop("file_id", None)
         return out

@@ -195,7 +195,7 @@ def test_title_model_can_be_chosen(app, client, monkeypatch):
 def test_a_file_only_first_message_is_titled_by_its_files(app, client):
     client.post("/api/conversations", headers=ORIGIN,
                 json={"agent": app.state.chat.model_label, "id": "c_title0007"})
-    up = client.post("/api/conversations/c_title0007/files", headers=ORIGIN,
+    up = client.post("/api/chat/files", headers=ORIGIN,
                      files={"file": ("q3-report.pdf", b"%PDF-1", "application/pdf")}).json()
     body = chat_body("c_title0007", None, agent=None, message_id="m_user00001",
                      assistant_id="m_asst00001", files=(up["file_id"],))

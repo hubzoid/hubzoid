@@ -74,7 +74,8 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     const actionBounds = await workflowRows.first().getByRole("button", { name: "Run now", exact: true }).boundingBox();
     assert.ok(actionBounds && actionBounds.x >= 0 && actionBounds.x + actionBounds.width <= 390, "workflow actions fit without horizontal scrolling");
     await agentNav.getByRole("link", { name: "Access", exact: true }).click();
-    const editAccess = page.getByRole("button", { name: /^Edit access for/ }).first();
+    // A person's whole row opens their access to this agent.
+    const editAccess = page.locator(".hz-access-list li.hz-row-link").filter({ has: page.getByRole("button", { name: /^Edit access for/ }) }).first();
     await editAccess.waitFor();
     const editBounds = await editAccess.boundingBox();
     assert.ok(editBounds && editBounds.x + editBounds.width <= 390 && editBounds.height >= 44, "access actions are reachable on phones");

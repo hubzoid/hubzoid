@@ -397,7 +397,7 @@ pip install "hubzoid[saml]"
 brew install libxmlsec1        # macOS; Debian and Ubuntu: apt-get install xmlsec1
 ```
 
-Then, under **Workspace settings → Sign-in → Company sign-in**:
+Then, under **Settings → Organization → Sign-in → Company sign-in**:
 
 1. **Add identity provider.** Choose a short id (it goes in the URLs) and the
    button label, and give the identity provider's metadata URL or paste its

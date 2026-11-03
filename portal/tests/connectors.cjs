@@ -161,7 +161,7 @@ const step = (name) => {
 
     step("Organization administrators find Connectors in each agent");
     await page.getByRole("navigation", { name: "Agent sections" }).getByRole("link", { name: "Connectors", exact: true }).click();
-    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
+    await page.getByText("Remote MCP servers Sales Assistant can use.").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#/agents/sales/connectors");
     // Only the connectors this agent offers are listed; Notion is another agent's.
     assert.equal(await page.getByRole("row").filter({ hasText: "notion.example" }).count(), 0);
@@ -285,7 +285,7 @@ const step = (name) => {
 
     step("Editing keeps a stored secret unless it is replaced or removed");
     await page.getByRole("link", { name: "Linear" }).click();
-    await drawer().getByText("A secret is stored. Leave empty to keep it. It is never shown again.").waitFor();
+    await drawer().getByText("A secret is stored. Leave empty to keep it.").waitFor();
     assert.equal(await drawer().getByLabel("ID", { exact: true }).isDisabled(), true);
     await drawer().getByLabel("Scopes (optional)").fill("read");
     await drawer().getByRole("button", { name: "Save" }).click();
@@ -382,7 +382,7 @@ const step = (name) => {
 
     step("At phone width the page does not scroll sideways");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
+    await page.getByText("Remote MCP servers Sales Assistant can use.").waitFor();
     // Once the last dialog's closing animation is over.
     await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth, null, { timeout: 5000 });
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -395,8 +395,8 @@ const step = (name) => {
     step("Agent administrators see where connectors come from but cannot change them");
     fx.state.org = false;
     await page.goto(`${ORIGIN}/settings?again#/agents/sales/connectors`);
-    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
-    await page.getByText("From the hub folder").waitFor();
+    await page.getByText("Organization administrators add connectors.", { exact: false }).waitFor();
+    await page.getByText("From the agent's files").waitFor();
     await page.getByRole("button", { name: "Add connector", exact: true }).waitFor({ state: "detached" });
     assert.equal(await page.getByRole("button", { name: "Add connector", exact: true }).count(), 0);
 
@@ -414,13 +414,19 @@ const step = (name) => {
       await page.screenshot({ path: path.join(process.env.PORTAL_SHOTS, "connectors-restored.png"), fullPage: true });
       await page.getByRole("button", { name: "Add connector" }).first().click();
       await drawer().getByRole("button", { name: /Custom server/ }).click();
-      await drawer().getByText("Saved to", { exact: false }).waitFor();
+      await drawer().getByText("Saved for this deployment", { exact: false }).waitFor();
       await page.screenshot({ path: path.join(process.env.PORTAL_SHOTS, "connector-yaml-editor.png"), fullPage: true });
     }
-    step("With browser editing off (the default), connectors are shown without Add, Edit or Delete");
+    step("With browser editing off (the default), connectors are still added, edited and deleted here");
     host.app.state.flags.editing = false;
     await page.reload();
-    await page.getByText("Changing this agent's files from the browser is off", { exact: false }).first().waitFor();
+    await page.getByRole("button", { name: "Add connector" }).first().waitFor();
+    assert.ok(await page.getByRole("button", { name: /^More actions for/ }).count() > 0, "Edit and Delete menu");
+
+    step("Files that come with an image are shown without Add, Edit or Delete");
+    host.app.state.flags.editing = "image";
+    await page.reload();
+    await page.getByText("redeploy the image", { exact: false }).first().waitFor();
     assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0, "no Add connector");
     assert.equal(await page.getByRole("button", { name: /^More actions for/ }).count(), 0, "no Edit or Delete menu");
     host.app.state.flags.editing = true;

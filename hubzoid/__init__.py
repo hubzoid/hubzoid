@@ -25,6 +25,10 @@ def __getattr__(name):
     # LiteLLM) or DBOS until something uses them.
     # `from hubzoid import build_agent` and `from hubzoid import workflow, step,
     # hub` work as before.
+    if name == "tool":
+        from ._tool import tool
+
+        return tool
     if name == "build_agent":
         from .factory import build_agent
 

@@ -81,7 +81,7 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
           description={
             search
               ? `No agent matches “${search}”.`
-              : "No agents are registered in this deployment, or none are assigned to you."
+              : "No agents for you yet."
           }
         >
           {search && <Button onClick={() => setSearch("")}>Clear search</Button>}
@@ -155,7 +155,7 @@ function AgentStatus({ hub, broken }: { hub: Hub; broken: boolean }) {
 }
 
 const PARTS: [keyof NonNullable<Hub["contents"]> | "workflows", string, string][] = [
-  ["knowledge", "knowledge", "knowledge"],
+  ["knowledge", "document", "documents"],
   ["skills", "skill", "skills"],
   ["workflows", "workflow", "workflows"],
   ["subagents", "sub-agent", "sub-agents"],
@@ -163,7 +163,7 @@ const PARTS: [keyof NonNullable<Hub["contents"]> | "workflows", string, string][
   ["tool_files", "tool file", "tool files"],
 ];
 
-/** What the agent's folder holds, as a short line: the numbers stand out. */
+/** What the agent is built with, as a short line: the numbers stand out. */
 function FolderLine({ hub, workflows }: { hub: Hub; workflows: number | null }) {
   const c = hub.contents;
   if (!c) return <span className="hz-agent-folder is-empty">—</span>;
@@ -177,7 +177,7 @@ function FolderLine({ hub, workflows }: { hub: Hub; workflows: number | null }) 
 
 type Filter = "all" | "attention" | "unused";
 
-/** Agents as one row each: who it is, what its folder holds, who uses it and
+/** Agents as one row each: who it is, what it is built with, who uses it and
  *  whether it is healthy. The row opens the agent; Chat starts a chat. */
 export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?: Workflow[]; usage?: SummaryHub[] }) {
   const app = useContext(AppContext);
@@ -226,7 +226,7 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
             {/* Matches the rows' stretched link, so columns line up at every width. */}
             <span className="hz-agent-row-link" aria-hidden />
             <span role="columnheader">Agent</span>
-            <span role="columnheader">In its folder</span>
+            <span role="columnheader">Built with</span>
             <span role="columnheader">People</span>
             <span role="columnheader">Chats, 30 days</span>
             <span role="columnheader">Spend, 30 days</span>
@@ -240,8 +240,9 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
               <span className="hz-agent-who" role="cell">
                 <AppAvatar name={name} src={agent?.avatar_url} size={40} />
                 <span className="min-w-0">
-                  <span className="hz-agent-name">{name}</span>
-                  <span className="hz-agent-key">{h.key}</span>
+                  {/* The key is for search and hover; people read the description. */}
+                  <span className="hz-agent-name" title={h.key}>{name}</span>
+                  {agent?.description && <span className="hz-agent-about" title={agent.description}>{agent.description}</span>}
                 </span>
               </span>
               <span role="cell"><FolderLine hub={h} workflows={flows} /></span>

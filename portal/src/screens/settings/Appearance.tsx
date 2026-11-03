@@ -49,7 +49,7 @@ export function Appearance() {
       {/* One quiet line; the how-to and the folder sit behind the ? (founder review). */}
       <Space size={6} align="center" style={{ width: "100%", justifyContent: "space-between" }}>
         <Text type="secondary">
-          The brand comes from <Text code>hubzoid.yaml</Text> and <Text code>branding/</Text>.{" "}
+          Set in <Text code>hubzoid.yaml</Text> and <Text code>branding/</Text>.{" "}
           <InfoHelp text={`${source.how_to_change} Folder: ${source.folder}`} />
         </Text>
         <Button size="small" onClick={() => void load()}>Reload</Button>
@@ -78,7 +78,7 @@ export function Appearance() {
         </Card>
       ) : (
         <Card size="small">
-          <Text type="secondary">No brand set yet, so the default brand shows.</Text>
+          <Text type="secondary">Default brand</Text>
         </Card>
       )}
       {source.legacy.length > 0 && (

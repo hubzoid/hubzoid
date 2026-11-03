@@ -64,7 +64,7 @@ function StateTag({ state, reason }: { state: string; reason?: string | null }) 
   );
 }
 
-/** `selected`: a work item to open at once (a card's "Review in Hub" link).
+/** `selected`: a work item to open at once (a card's "Review" link).
  *  `mine`: only the work this person asked for (their own page), even when they manage the hub. */
 export function WorkItemsScreen({ hubs, selected, mine = false }: {
   hubs: HubOption[];
@@ -96,8 +96,8 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
       {!underTabs && <Title level={2} style={{ marginTop: 0 }}>Work items</Title>}
       {!mine && (
         <Paragraph type="secondary">
-          Longer jobs people asked this agent for, and the outside actions each one took.
-          <InfoHelp text="Each item keeps its saved stages, and every action outside the hub is recorded. The same list is in hubzoid work-items and hubzoid operations." />
+          Longer jobs and the actions they took.
+          <InfoHelp text="Each item keeps its stages; every action in another system is recorded. CLI: hubzoid work-items start, hubzoid work-items, hubzoid operations." />
         </Paragraph>
       )}
       <Space wrap style={{ marginBottom: 16 }}>
@@ -113,11 +113,7 @@ export function WorkItemsScreen({ hubs, selected, mine = false }: {
       ) : items.loading ? (
         <Spin />
       ) : (items.data?.items.length ?? 0) === 0 ? (
-        <Empty description={state ? "No work in this state." : "No work started yet."}>
-          <Text type="secondary">
-            Start work with <Text code>hubzoid work-items start</Text> or from a workflow that declares work items.
-          </Text>
-        </Empty>
+        <Empty description={state ? "No work in this state." : "No work started yet."} />
       ) : (
         <Table<WorkItem>
           rowKey="id"
@@ -185,7 +181,7 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
           ]} />
           {w.state === "running" && <Alert type="info" showIcon title="Running" description="It keeps going if you close this page." />}
           {w.state === "waiting" && <Alert type="warning" showIcon title="Waiting for approval"
-            description="An action below waits for the person who asked for this work to approve its exact content." />}
+            description="The person who asked must approve an action below." />}
           {w.state === "needs_input" && w.reason === "operation_ambiguous" && <Alert type="warning" showIcon
             title="We cannot confirm whether an action completed"
             description="Nothing is retried automatically. The person who asked for this work decides below." />}
@@ -207,7 +203,7 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
           <StationsCard base={base} id={w.id} active={!!active} busy={busy} act={act}
             stopped={["needs_input", "failed", "stopped"].includes(w.state)} />
 
-          <Card size="small" title="Actions outside the hub">
+          <Card size="small" title="Actions in other systems">
             {(w.operations?.length ?? 0) === 0 ? <Text type="secondary">None recorded.</Text> : (
               <Space direction="vertical" style={{ width: "100%" }}>
                 {w.operations!.map((op) => (

@@ -335,6 +335,18 @@ def test_a_padded_client_id_in_the_file_keeps_its_secret(hub, tc):
     assert registry.client_secret(hub, "gmail") == "kept"
 
 
+def test_connectors_change_from_the_browser_with_the_switch_off(hub, tc, monkeypatch, tmp_path):
+    """Adding a connector is how an agent reaches an app, so it does not wait for
+    the in-app editing Beta. Files that come from an image are never written."""
+    monkeypatch.delenv("HUBZOID_IN_APP_EDITING")
+    assert create(tc).status_code == 201
+    r = tc.patch("/portal/api/connectors/gmail", json={"name": "Mail"}, headers=SAME)
+    assert r.status_code == 200, r.text
+    monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))
+    r = create(tc, name="Calendar", url="https://cal-mcp.example.org/mcp")
+    assert r.status_code == 409 and detail(r)["code"] == "hub_read_only"
+
+
 @pytest.fixture(autouse=True)
 def _in_app_editing_on(monkeypatch):
     """These tests change agent files from the browser: Beta, off by default

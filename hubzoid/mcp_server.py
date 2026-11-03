@@ -57,6 +57,9 @@ MCP_SURFACE = "mcp"
 # non-chat scope.
 CHAT_SCOPED_TOOLS = frozenset({
     "write_artifact",
+    "make_excel",
+    "make_pdf",
+    "make_word",
     "list_artifacts",
     "read_upload",
     "read_upload_full",

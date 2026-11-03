@@ -168,16 +168,16 @@ mechanism, we hold the thread.
 ## Attachments (images & files)
 
 Media a user sends — a WhatsApp image or document, a Telegram photo, voice note,
-or document — rides the **same pipeline the web and Slack already use**. The
-harness downloads the bytes from the surface, POSTs them to the bridge's per-chat
-uploads route (`/uploads/{chat_id}/{filename}`), and stitches a text reference
-onto the user's turn:
+or document — takes the **same path as every other surface**. The harness
+downloads the bytes from the surface, uploads them to the bridge's internal
+`POST /v1/files` with the bridge key (the same save as `POST /api/chat/files`),
+and names the returned file id in the user's turn as a file part. The bridge attaches the file to the chat:
 
-- **Images** get an `[Image: <name>]` reference that `vision_inject` expands into
-  a real image block at model-call time — the model **sees** the image directly.
+- **Images** are shown to the model directly as image blocks (`HUBZOID_VISION`,
+  on by default).
 - **Other files** (PDF, CSV, docs) land in the chat's uploads dir with a
-  `read_upload('<name>')` note. The agent reads them on demand **if the hub
-  exposes a file-read tool** — same as Slack and the web app today.
+  `read_upload('<name>')` note, and the agent reads them on demand — same as
+  Slack and the web app.
 - **Voice/audio notes** are captured as files and referenced, but are only
   *understood* if the hub provides a transcription tool (there is no native audio
   vision). Capture-and-reference works out of the box; transcription is a hub

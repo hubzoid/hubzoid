@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { Alert, Button, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { ApiError, hubRequest } from "../api";
 import type { Hub, HubCheck, HubSetting, HubSettings, SettingProblem } from "../api";
 import { InfoHelp, LoadState, PAGED } from "../components/common";
 import { errorText } from "../hooks/useData";
+import { checkStatus, optionLabel, settingLabel, settingPrefix } from "../lib/format";
 import { useAgentEditing } from "../app/lib/editing";
 
 const { Title, Text } = Typography;
 
-const CHECK_COLORS: Record<HubCheck["status"], string> = {
-  ok: "green", info: "blue", warn: "orange", fail: "red", pending: "default",
-};
-
 function control(s: HubSetting) {
-  if (s.enum) return <Select allowClear={!s.required} options={s.enum.map((v) => ({ value: v, label: String(v) }))} />;
+  if (s.enum) return <Select allowClear={!s.required} options={s.enum.map((v) => ({ value: v, label: optionLabel(v) }))} />;
   if (s.type === "integer" || s.type === "number")
     return <InputNumber style={{ width: "100%" }} precision={s.type === "integer" ? 0 : undefined} />;
   if (s.type === "boolean") return <Switch />;
@@ -50,6 +47,9 @@ export function AgentSetup({ hub }: { hub: Hub }) {
   const { settings, problems } = state.data;
   const plain = settings.filter((s) => !s.secret);
   const secrets = settings.filter((s) => s.secret);
+  // Labels, not keys: the key shows on hover for whoever edits the files.
+  const prefix = settingPrefix(settings.map((s) => s.name));
+  const nameOf = (s: HubSetting) => <span title={s.name}>{s.label || settingLabel(s.name, prefix)}</span>;
 
   const save = async () => {
     const entered = await form.validateFields();
@@ -75,7 +75,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
       setNotice({
         type: "success",
         text: done.changed_keys.length
-          ? `Saved as revision ${done.revision}. It applies after the agent restarts.`
+          ? "Saved. Applies after a restart."
           : "Nothing changed.",
       });
       reload();
@@ -85,7 +85,7 @@ export function AgentSetup({ hub }: { hub: Hub }) {
       setNotice({
         type: "error",
         text: e instanceof ApiError && e.code === "revision_conflict"
-          ? "Someone changed these settings since you opened them. Reload and apply again."
+          ? "Changed by someone else. Reload and try again."
           : errorText(e),
       });
     } finally {
@@ -110,14 +110,14 @@ export function AgentSetup({ hub }: { hub: Hub }) {
     <div className="panel">
       <Title level={2}>
         Setup
-        <InfoHelp text="The settings this agent declares in settings.yaml, and its own checks. The same as hubzoid hub settings and hubzoid hub doctor." />
+        <InfoHelp text={`Declared in settings.yaml; hover a setting for its key. CLI: hubzoid hub settings ${hub.key}, hubzoid hub doctor ${hub.key}.`} />
       </Title>
       {notice && (
         <Alert type={notice.type} showIcon closable onClose={() => setNotice(null)} style={{ marginBottom: 16 }}
           title={notice.text} />
       )}
       {settings.length === 0 ? (
-        <Text type="secondary" className="hint">No <Text code>settings.yaml</Text> in this agent's folder.</Text>
+        <Text type="secondary" className="hint">This agent has no settings.</Text>
       ) : (
         <>
           {problems.length > 0 && (
@@ -131,7 +131,16 @@ export function AgentSetup({ hub }: { hub: Hub }) {
                 <Form.Item
                   key={s.name}
                   name={s.name}
-                  label={<Space size={6}><Text code>{s.name}</Text>{s.source && <Tag>{s.source}</Tag>}</Space>}
+                  label={
+                    <Space size={6}>
+                      {nameOf(s)}
+                      {s.source === "environment" && (
+                        <Tooltip title={`${s.env ?? s.name} on the server overrides the saved value.`}>
+                          <Tag>Set by the server</Tag>
+                        </Tooltip>
+                      )}
+                    </Space>
+                  }
                   extra={s.description}
                   required={s.required}
                   valuePropName={s.type === "boolean" ? "checked" : "value"}
@@ -144,22 +153,24 @@ export function AgentSetup({ hub }: { hub: Hub }) {
               {editing.editable ? (
                 <>
                   <Button type="primary" loading={saving} onClick={save}>Save settings</Button>
-                  <Text type="secondary" style={{ marginLeft: 12 }}>Applies after the agent restarts.</Text>
+                  <Text type="secondary" style={{ marginLeft: 12 }}>Applies after a restart.</Text>
                 </>
               ) : (
-                <Text type="secondary">{editing.message ?? "Change these in the agent's settings.yaml."}</Text>
+                <Text type="secondary">{editing.message ?? "Read-only here."}</Text>
               )}
             </Form>
           )}
           {secrets.length > 0 && (
             <>
               <Title level={4} style={{ marginTop: 24 }}>Secret settings</Title>
-              <Text type="secondary">Values are never shown. Set them in <Text code>{hub.key}/.env</Text> (or the host's environment), then restart the agent.</Text>
+              <Text type="secondary">Values stay hidden. Set on the server, then restart the agent.</Text>
               <Table<HubSetting>
                 rowKey="name" size="small" pagination={PAGED} style={{ marginTop: 8 }} dataSource={secrets}
                 columns={[
-                  { title: "Name", key: "name", render: (_, s) => <Text code>{s.name}</Text> },
-                  { title: "Reference", key: "ref", render: (_, s) => <Text code>{s.ref}</Text> },
+                  { title: "Name", key: "name", render: (_, s) =>
+                    <Tooltip title={<>Set <code>{s.ref}</code> ({s.name})</>} trigger={["hover", "focus", "click"]}>
+                      <span tabIndex={0} className="hz-hint">{s.label || settingLabel(s.name, prefix)}</span>
+                    </Tooltip> },
                   { title: "Status", key: "status", render: (_, s) =>
                     <Tag color={s.available ? "green" : s.required ? "red" : "orange"}>{s.available ? "Available" : "Not set"}</Tag> },
                   { title: "", key: "why", render: (_, s) => <Text type="secondary">{s.description}</Text> },
@@ -170,18 +181,18 @@ export function AgentSetup({ hub }: { hub: Hub }) {
         </>
       )}
       <Title level={4} style={{ marginTop: 24 }}>Checks</Title>
-      <Space style={{ marginBottom: 8 }}>
-        <Button onClick={runChecks} loading={checks.running}>Run checks</Button>
-        <Text type="secondary">Runs the agent's settings checks and the checks in hub.manifest.yaml.</Text>
-      </Space>
+      <Button onClick={runChecks} loading={checks.running} style={{ marginBottom: 8 }}>Run checks</Button>
       {checks.error && <Alert type="error" showIcon title={checks.error} style={{ marginBottom: 8 }} />}
       {checks.data && (
         <Table<HubCheck>
           rowKey="id" size="small" pagination={PAGED} dataSource={checks.data}
-          locale={{ emptyText: "This agent declares no settings or checks." }}
+          locale={{ emptyText: "No checks." }}
           columns={[
-            { title: "Check", key: "id", render: (_, c) => <Text code>{c.id}</Text> },
-            { title: "Result", key: "status", render: (_, c) => <Tag color={CHECK_COLORS[c.status]}>{c.status}</Tag> },
+            { title: "Check", key: "id", render: (_, c) => <span title={c.id}>{optionLabel(c.id.replaceAll(".", " "))}</span> },
+            { title: "Result", key: "status", render: (_, c) => {
+              const r = checkStatus(c.status);
+              return <Tag color={r.color}>{r.label}</Tag>;
+            } },
             {
               title: "Summary", key: "summary", render: (_, c) => {
                 const recovery = c.detail && typeof c.detail === "object" && "recovery" in c.detail
@@ -197,9 +208,6 @@ export function AgentSetup({ hub }: { hub: Hub }) {
           ]}
         />
       )}
-      <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-        From a terminal: <Text code>hubzoid hub settings {hub.key}</Text> and <Text code>hubzoid hub doctor {hub.key}</Text>
-      </Text>
     </div>
   );
 }

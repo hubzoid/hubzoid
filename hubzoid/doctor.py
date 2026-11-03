@@ -57,6 +57,30 @@ def _hub_checks(hub: Path) -> list[Check]:
                              "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
+    try:
+        from .loaders import tools_local
+
+        tools_local.load_all(hub)
+        if tools_local.STRICT_TOOLS:
+            out.append(Check("tools.schemas", "warn",
+                             f"{len(tools_local.STRICT_TOOLS)} hub tool(s) mark optional arguments as required. "
+                             "Use `from hubzoid import tool` and `@tool` instead of `function_tool`",
+                             [f"{name} ({where})" for name, where in sorted(tools_local.STRICT_TOOLS.items())]))
+    except Exception:  # noqa: BLE001 - a broken tools file is reported by the build check
+        pass
+    try:
+        from . import attachments, db
+
+        # Read only: a hub whose database is not created yet has no files.
+        if _sqlite_missing(db.operational_url(hub)) or _sqlite_missing(db.resolve_url(hub)):
+            raise LookupError("no database yet")
+        held = attachments.service(hub).unreadable_files()
+        if held:
+            out.append(Check("files.s3", "warn",
+                             f"{held} file(s) are stored in S3, which this release does not read. They answer "
+                             "'storage unavailable' until S3 storage returns; everything else works"))
+    except Exception:  # noqa: BLE001 - no file store yet: nothing to report
+        pass
 
     try:
         from . import scheduling as sch

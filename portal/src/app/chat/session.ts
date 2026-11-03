@@ -2,7 +2,9 @@
 // the three assistant-ui adapters that connect it to Hubzoid:
 //   chat model  POST ${api_base}/api/chat, streamed (contract 6.2, 6.3)
 //   history     the stored tree, loaded before the runtime mounts
-//   attachments uploaded at once to POST ${api_base}/api/conversations/{id}/files
+//   attachments uploaded at once to POST ${api_base}/api/chat/files (no conversation
+//               needed); the message names the returned file_id and the server
+//               attaches the file when it saves the message
 import type {
   AttachmentAdapter,
   ChatModelAdapter,
@@ -479,20 +481,13 @@ export class ChatSession {
     // The composer lists it now; it counts there from here on.
     release();
 
-    let conversationId: string;
-    try {
-      conversationId = await this.ensureConversation();
-    } catch (error) {
-      throw new Error(describeError(error, t.chat.uploadFailed(file.name)));
-    }
-
     // Progress callbacks arrive outside the generator; queue them.
     let progress = 0;
     let wake: (() => void) | null = null;
     let result: FileRef | null = null;
     let failure: unknown = null;
     const done = upload(
-      hubUrl(this.apiBase, `/api/conversations/${enc(conversationId)}/files`),
+      hubUrl(this.apiBase, "/api/chat/files"),
       file,
       (fraction) => {
         progress = fraction;

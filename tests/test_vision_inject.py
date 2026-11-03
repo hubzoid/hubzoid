@@ -1,8 +1,8 @@
 """Unit tests for hubzoid.vision_inject — native image injection.
 
 Covers the security boundary (only real images inside the uploads dir are ever
-read; .env / path escapes are refused), reference parsing, the max_images cap,
-and the per-runtime block shapes.
+read; .env / path escapes are refused), the image list (never parsed from the
+prompt text), resumed turns, the max_images cap, and the per-runtime block shapes.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from io import BytesIO
 
 import pytest
 
+from hubzoid import _request_ctx
 from hubzoid import memory as memlib
 from hubzoid import uploads as uploads_lib
 from hubzoid import vision_inject
@@ -37,9 +38,29 @@ def hub(tmp_path):
     return tmp_path, chat_id
 
 
-def test_image_names_parses_distinct_refs():
-    p = "look at [Image: a.png] and [Image: b.png] and again [Image: a.png]"
-    assert vision_inject.image_names(p) == ["a.png", "b.png"]
+def _with(names, fn, *args, **kw):
+    with _request_ctx.image_scope(names):
+        return fn(*args, **kw)
+
+
+def test_a_marker_in_the_text_alone_injects_nothing(hub):
+    """The prompt text is never parsed: only the turn's image list counts."""
+    hub_dir, chat_id = hub
+    out = vision_inject.openai_input("review [Image: creative.png]", hub_dir, chat_id,
+                                     enabled=True, max_edge=1568, max_images=4)
+    assert out == "review [Image: creative.png]"
+
+
+def test_a_resumed_turn_sends_only_its_own_images(hub):
+    hub_dir, chat_id = hub
+    slot = _request_ctx.SessionSlot(resume_id="s1", delta_prompt="new turn", images=["creative.png"],
+                                    delta_images=[])
+    with _request_ctx.native_session_scope(slot):
+        assert _request_ctx.turn_images() == ["creative.png"]
+        assert _request_ctx.turn_images(resuming=True) == []
+        out = vision_inject.claude_prompt("new turn", hub_dir, chat_id, enabled=True, max_edge=1568,
+                                          max_images=4, resuming=True)
+    assert out == "new turn"   # the resumed session already has the earlier image
 
 
 def test_no_reference_returns_plain_string(hub):
@@ -53,10 +74,8 @@ def test_no_reference_returns_plain_string(hub):
 
 def test_disabled_returns_plain_string(hub):
     hub_dir, chat_id = hub
-    out = vision_inject.claude_prompt(
-        "[Image: creative.png]", hub_dir, chat_id,
-        enabled=False, max_edge=1568, max_images=4,
-    )
+    out = _with(["creative.png"], vision_inject.claude_prompt, "[Image: creative.png]", hub_dir, chat_id,
+                enabled=False, max_edge=1568, max_images=4)
     assert out == "[Image: creative.png]"
 
 
@@ -64,10 +83,8 @@ def test_claude_prompt_injects_image_block(hub):
     import anyio
 
     hub_dir, chat_id = hub
-    out = vision_inject.claude_prompt(
-        "review [Image: creative.png]", hub_dir, chat_id,
-        enabled=True, max_edge=1568, max_images=4,
-    )
+    out = _with(["creative.png"], vision_inject.claude_prompt, "review [Image: creative.png]", hub_dir, chat_id,
+                enabled=True, max_edge=1568, max_images=4)
     # An async iterable, not a string.
     assert not isinstance(out, str)
 
@@ -90,10 +107,8 @@ def test_claude_prompt_injects_image_block(hub):
 
 def test_openai_input_shape(hub):
     hub_dir, chat_id = hub
-    out = vision_inject.openai_input(
-        "review [Image: creative.png]", hub_dir, chat_id,
-        enabled=True, max_edge=1568, max_images=4,
-    )
+    out = _with(["creative.png"], vision_inject.openai_input, "review [Image: creative.png]", hub_dir, chat_id,
+                enabled=True, max_edge=1568, max_images=4)
     assert isinstance(out, list) and len(out) == 1
     content = out[0]["content"]
     assert content[0]["type"] == "input_text"
@@ -105,10 +120,8 @@ def test_openai_input_shape(hub):
 def test_env_secret_is_never_injected(hub):
     """A reference to a non-image (the .env) must resolve to no image block."""
     hub_dir, chat_id = hub
-    out = vision_inject.claude_prompt(
-        "[Image: secret.env]", hub_dir, chat_id,
-        enabled=True, max_edge=1568, max_images=4,
-    )
+    out = _with(["secret.env"], vision_inject.claude_prompt, "[Image: secret.env]", hub_dir, chat_id,
+                enabled=True, max_edge=1568, max_images=4)
     # Not an image -> nothing injected -> plain string passthrough.
     assert out == "[Image: secret.env]"
 
@@ -116,17 +129,13 @@ def test_env_secret_is_never_injected(hub):
 def test_path_escape_is_refused(hub):
     """A traversal ref must not resolve outside the uploads dir."""
     hub_dir, chat_id = hub
-    out = vision_inject.claude_prompt(
-        "[Image: ../../secret.env]", hub_dir, chat_id,
-        enabled=True, max_edge=1568, max_images=4,
-    )
+    out = _with(["../../secret.env"], vision_inject.claude_prompt, "[Image: ../../secret.env]", hub_dir, chat_id,
+                enabled=True, max_edge=1568, max_images=4)
     assert out == "[Image: ../../secret.env]"
 
 
 def test_missing_file_is_skipped(hub):
     hub_dir, chat_id = hub
-    out = vision_inject.claude_prompt(
-        "[Image: nope.png]", hub_dir, chat_id,
-        enabled=True, max_edge=1568, max_images=4,
-    )
+    out = _with(["nope.png"], vision_inject.claude_prompt, "[Image: nope.png]", hub_dir, chat_id,
+                enabled=True, max_edge=1568, max_images=4)
     assert out == "[Image: nope.png]"

@@ -1,10 +1,10 @@
 """`hubzoid test --file` — stage local files as chat attachments.
 
 `hubzoid test` runs in-process with no bridge, so it never had a chat in
-scope and `read_upload` refused every call. `--file` stages the given
-files through the *same* `server._persist_attachments` the bridge uses,
-under a stable `cli-test` chat id, so the CLI sees byte-identical notes,
-sidecars and size caps to real Open WebUI / Slack traffic.
+scope and `read_upload` refused every call. `--file` saves and attaches the
+given files with the *same* `hubzoid.attachments.save` and `attach` every
+surface uses, under a stable `cli-test` chat id, so the CLI sees the same
+notes, sidecars, size caps and image list as the web app and channels.
 
 The scope is entered only when `--file` is passed. Without it the command
 must behave exactly as before — see `test_no_file_leaves_run_unscoped`,
@@ -14,11 +14,9 @@ isn't running.
 """
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 from typer.testing import CliRunner
 
 from hubzoid import cli
@@ -45,9 +43,7 @@ def test_text_file_is_staged_with_sidecar(hub: Path, tmp_path: Path):
     src = tmp_path / "data.csv"
     src.write_text("name,qty\nbolt,4\n", encoding="utf-8")
 
-    cli._stage_test_attachments(
-        hub, "cli-test", [src], "how many rows?", max_upload_bytes=1_000_000
-    )
+    cli._stage_test_attachments(hub, "cli-test", [src], "how many rows?", max_upload_bytes=1_000_000)
 
     staged = _uploads(hub) / "data.csv"
     assert staged.read_text(encoding="utf-8") == "name,qty\nbolt,4\n"
@@ -58,9 +54,7 @@ def test_text_file_note_points_the_agent_at_read_upload(hub: Path, tmp_path: Pat
     src = tmp_path / "data.csv"
     src.write_text("name,qty\nbolt,4\n", encoding="utf-8")
 
-    prompt = cli._stage_test_attachments(
-        hub, "cli-test", [src], "how many rows?", max_upload_bytes=1_000_000
-    )
+    prompt, _ = cli._stage_test_attachments(hub, "cli-test", [src], "how many rows?", max_upload_bytes=1_000_000)
 
     assert "read_upload('data.csv')" in prompt
     # The user's own question survives, after the notes.
@@ -71,14 +65,13 @@ def test_image_file_note_uses_the_vision_marker(hub: Path, tmp_path: Path):
     src = tmp_path / "chart.png"
     src.write_bytes(PNG_BYTES)
 
-    prompt = cli._stage_test_attachments(
-        hub, "cli-test", [src], "what is this?", max_upload_bytes=1_000_000
-    )
+    prompt, images = cli._stage_test_attachments(hub, "cli-test", [src], "what is this?",
+                                                 max_upload_bytes=1_000_000)
 
-    # `vision_inject` keys off this exact marker to expand the image into a
-    # multimodal block — a read_upload note here would silently skip vision.
+    # The note names the image; the image itself goes to the runtime as a list.
     assert "[Image: chart.png]" in prompt
     assert "read_upload" not in prompt
+    assert images == ["chart.png"]
 
 
 def test_multiple_files_are_all_staged(hub: Path, tmp_path: Path):
@@ -87,9 +80,8 @@ def test_multiple_files_are_all_staged(hub: Path, tmp_path: Path):
     png = tmp_path / "chart.png"
     png.write_bytes(PNG_BYTES)
 
-    prompt = cli._stage_test_attachments(
-        hub, "cli-test", [csv, png], "compare these", max_upload_bytes=1_000_000
-    )
+    prompt, _ = cli._stage_test_attachments(hub, "cli-test", [csv, png], "compare these",
+                                            max_upload_bytes=1_000_000)
 
     assert (_uploads(hub) / "data.csv").is_file()
     assert (_uploads(hub) / "chart.png").is_file()
@@ -98,11 +90,10 @@ def test_multiple_files_are_all_staged(hub: Path, tmp_path: Path):
 
 
 def test_no_files_leaves_the_prompt_untouched(hub: Path):
-    prompt = cli._stage_test_attachments(
-        hub, "cli-test", [], "just a question", max_upload_bytes=1_000_000
-    )
+    prompt, images = cli._stage_test_attachments(hub, "cli-test", [], "just a question",
+                                                 max_upload_bytes=1_000_000)
 
-    assert prompt == "just a question"
+    assert (prompt, images) == ("just a question", [])
     assert not (hub / ".hubzoid").exists()
 
 
@@ -113,13 +104,13 @@ def test_oversize_attachment_is_refused_and_nothing_is_written(hub: Path, tmp_pa
     big = tmp_path / "big.txt"
     big.write_text("x" * 4096, encoding="utf-8")
 
-    with pytest.raises(HTTPException) as exc:
-        cli._stage_test_attachments(
-            hub, "cli-test", [big], "read it", max_upload_bytes=1024
-        )
+    from hubzoid.chat.graph import GraphError
 
-    assert exc.value.status_code == 413
-    assert "max_upload_bytes" in str(exc.value.detail)
+    with pytest.raises(GraphError) as exc:
+        cli._stage_test_attachments(hub, "cli-test", [big], "read it", max_upload_bytes=1024)
+
+    assert exc.value.status == 413
+    assert "1024 bytes" in str(exc.value)
     assert not _uploads(hub).exists()
 
 
@@ -129,10 +120,10 @@ def test_oversize_file_blocks_its_small_sibling_too(hub: Path, tmp_path: Path):
     big = tmp_path / "big.txt"
     big.write_text("x" * 4096, encoding="utf-8")
 
-    with pytest.raises(HTTPException):
-        cli._stage_test_attachments(
-            hub, "cli-test", [small, big], "read them", max_upload_bytes=1024
-        )
+    from hubzoid.chat.graph import GraphError
+
+    with pytest.raises(GraphError):
+        cli._stage_test_attachments(hub, "cli-test", [small, big], "read them", max_upload_bytes=1024)
 
     # All-or-nothing: a half-staged set would let the agent reason over a
     # chat that is missing a file the user believes they attached.
@@ -215,23 +206,14 @@ def test_missing_file_is_rejected_before_any_model_call(
     assert fake_runtime.seen_chat_id == "<never ran>"
 
 
-def test_attachments_are_staged_as_data_urls(hub: Path, tmp_path: Path):
-    """The CLI must hand `_persist_attachments` a data URL it can parse.
+def test_staged_files_are_links_to_the_stored_bytes(hub: Path, tmp_path: Path):
+    """One copy: the chat's file is a hard link to the file store's object."""
+    import os
 
-    Guards the seam between the CLI and the bridge helper: a malformed
-    data URL is silently skipped by `_DATA_URL_RE`, which would produce a
-    run with no notes and no staged file rather than an error.
-    """
     src = tmp_path / "data.csv"
-    payload = b"a,b\n1,2\n"
-    src.write_bytes(payload)
-
-    blocks = cli._attachment_blocks([src])
-
-    assert len(blocks) == 1
-    url = blocks[0]["data"]
-    assert url.startswith("data:text/csv;base64,")
-    assert base64.b64decode(url.split(",", 1)[1]) == payload
+    src.write_bytes(b"a,b\n1,2\n")
+    cli._stage_test_attachments(hub, "cli-test", [src], "rows?", max_upload_bytes=1_000_000)
+    assert os.stat(_uploads(hub) / "data.csv").st_nlink == 2
 
 
 def test_test_json_is_one_json_document(tmp_path, monkeypatch):

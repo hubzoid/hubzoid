@@ -342,7 +342,7 @@ def test_delete_removes_messages_shares_and_files(hub, client, agent):
 
     up = client.post("/api/conversations", headers=ORIGIN, json={"agent": agent, "id": "c_delete001"})
     assert up.status_code == 201
-    f = client.post("/api/conversations/c_delete001/files", headers=ORIGIN,
+    f = client.post("/api/chat/files", headers=ORIGIN,
                     files={"file": ("notes.txt", b"hello", "text/plain")}).json()
     _send(client, "c_delete001", "make an artifact", agent, "m_user00001", "m_asst00001",
           files=(f["file_id"],))
@@ -419,8 +419,6 @@ def test_hub_scoped_calls_on_another_hubs_conversation(app, client):
         ("POST", "/api/chat", {"json": chat_body("c_otherhub1", "hi", agent=None,
                                                  message_id="m_user00001")}),
         ("DELETE", "/api/conversations/c_otherhub1", {}),
-        ("POST", "/api/conversations/c_otherhub1/files",
-         {"files": {"file": ("a.txt", b"a", "text/plain")}}),
         ("GET", "/api/conversations/c_otherhub1/files/a.txt", {}),
         ("GET", "/api/runs/m_other0001", {}),
     ]:
@@ -460,7 +458,7 @@ def test_files_per_message_limit(hub, monkeypatch):
     client = TestClient(app)
     agent = app.state.chat.model_label
     client.post("/api/conversations", headers=ORIGIN, json={"agent": agent, "id": "c_files0001"})
-    ids = [client.post("/api/conversations/c_files0001/files", headers=ORIGIN,
+    ids = [client.post("/api/chat/files", headers=ORIGIN,
                        files={"file": (f"f{n}.txt", b"x", "text/plain")}).json()["file_id"]
            for n in range(3)]
     r = _send(client, "c_files0001", "three", agent, "m_user00001", "m_asst00001", files=tuple(ids))
@@ -542,8 +540,8 @@ def test_a_refused_first_message_leaves_no_conversation(client, agent):
 
 def test_attachment_names_are_searchable(client, agent):
     client.post("/api/conversations", headers=ORIGIN, json={"agent": agent, "id": "c_search001"})
-    up = client.post("/api/conversations/c_search001/files", headers=ORIGIN,
-                     files={"file": ("quarterly-forecast.xlsx", b"PK", "application/octet-stream")})
+    up = client.post("/api/chat/files", headers=ORIGIN,
+                     files={"file": ("quarterly-forecast.xlsx", b"PK\x03\x04", "application/octet-stream")})
     _send(client, "c_search001", None, None, "m_user00001", "m_asst00001",
           files=(up.json()["file_id"],))
     found = client.get("/api/conversations", params={"q": "forecast"}).json()["items"]

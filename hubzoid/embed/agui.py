@@ -6,6 +6,7 @@
   GET    /api/agui/threads/{thread}/run     rejoin the reply being written (SSE)
   POST   /api/agui/threads/{thread}/stop    stop it
   DELETE /api/agui/threads/{thread}         delete the chat
+  POST   /api/chat/files                    upload a file with the same token (``chat.file_routes``)
 
 Every call carries ``Authorization: Bearer <token>`` (``tokens.verify``). The
 token alone says who it is: these routes never read a Hubzoid cookie, and a
@@ -49,6 +50,7 @@ from .tokens import verify
 log = logging.getLogger("hubzoid.embed")
 
 PREFIX = "/api/agui"
+UPLOAD_PATH = "/api/chat/files"
 MAX_BODY = 2 * 1024 * 1024
 MAX_CONTEXT_CHARS = 4000
 MAX_TEXT_CHARS = 100_000
@@ -157,16 +159,29 @@ async def _owned_conversation(ctx, caller: AppCaller, thread_id: str, *, create:
 
 
 def _text_of(content: Any) -> str:
+    return _content_of(content)[0]
+
+
+def _content_of(content: Any) -> tuple[str, list[str]]:
+    """(text, file ids) of a user message. A file is an AG-UI ``binary`` part
+    whose ``id`` is the file id from ``POST /api/chat/files`` (uploaded with
+    the same token); inline ``data`` and ``url`` are refused."""
     if isinstance(content, str):
-        return content
+        return content, []
     if isinstance(content, list):
-        bits = []
+        bits, files = [], []
         for part in content:
             if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
                 bits.append(part["text"])
+            elif isinstance(part, dict) and part.get("type") == "binary" and isinstance(part.get("id"), str) \
+                    and part["id"] and not part.get("data") and not part.get("url"):
+                files.append(part["id"])
+            elif isinstance(part, dict) and part.get("type") == "binary":
+                raise _error(415, "upload_first", "Upload each file to POST /api/chat/files with this token, "
+                                                  "then send a binary part with its id.")
             elif isinstance(part, dict):
-                raise _error(415, "unsupported_content", "Only text messages are supported in this release.")
-        return "".join(bits)
+                raise _error(415, "unsupported_content", "Messages hold text and binary (file id) parts.")
+        return "".join(bits), files
     raise _error(400, "invalid_message", "A message's content is text.")
 
 
@@ -515,7 +530,8 @@ def mount(app: FastAPI, ctx) -> None:
     @app.middleware("http")
     async def agui_cors(request: Request, call_next):
         path = request.url.path
-        if not (path == PREFIX or path.startswith(PREFIX + "/")):
+        # The app's own page also uploads files, to the one upload route.
+        if not (path == PREFIX or path.startswith(PREFIX + "/") or path == UPLOAD_PATH):
             return await call_next(request)
         origin = (request.headers.get("origin") or "").rstrip("/")
         try:
@@ -580,8 +596,8 @@ def mount(app: FastAPI, ctx) -> None:
         if not users:
             raise _error(400, "no_message", "Send the person's message as the last user message.")
         last = users[-1]
-        text = _text_of(last.get("content"))
-        if not text.strip():
+        text, file_ids = _content_of(last.get("content"))
+        if not text.strip() and not file_ids:
             raise _error(400, "empty_message", "The message is empty.")
         if len(text) > MAX_TEXT_CHARS:
             raise _error(413, "request_too_large", "That message is too long.")
@@ -607,7 +623,9 @@ def mount(app: FastAPI, ctx) -> None:
             raise _error(409, "run_in_progress", "A reply is starting in this chat. Wait for it to finish.")
         try:
             launched = await _legacy_turn(ctx, conv, actor, {}, parent_id,
-                                          {"id": message_id, "content": [{"type": "text", "text": text}]},
+                                          {"id": message_id, "content": ([{"type": "text", "text": text}]
+                                                                         if text else [])
+                                           + [{"type": "file", "file_id": f} for f in file_ids]},
                                           new_id("m_"))
         except BaseException:
             app_scope.release(conv["id"], caller)

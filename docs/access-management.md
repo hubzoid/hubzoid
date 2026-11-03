@@ -392,7 +392,7 @@ Then add the module to `capabilities.REGISTRANTS`.
   `delegate_grantable=False` lets only organization administrators grant it. The
   service enforces both; Settings only explains them.
 - `enabled_by="SOME_SWITCH"` (or a tuple of names): when a named setting is
-  present and false, the status is "Disabled for this hub". The tool module
+  present and false, the status is "Turned off for this agent". The tool module
   checks `capabilities.switched_off(CAP)` to leave its tools out.
 - `section="workflows"` or `"access"` shows the row under that sub-heading
   inside its group. Rows without a section come first.

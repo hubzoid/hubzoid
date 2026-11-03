@@ -35,7 +35,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from agents import function_tool
+from .._tool import tool
 
 from .. import datadir
 from .._fs import resolve_bucket
@@ -117,7 +117,7 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
             f"{rel!r} is outside this task's writable paths: {', '.join(writable)}"
         )
 
-    @function_tool
+    @tool
     def run_git(repo: str, args: str) -> str:
         """Run a read/sync git command inside a repo checkout in this hub.
 
@@ -185,7 +185,7 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
              exit=r.returncode, result=out[:300])
         return _truncate(out)
 
-    @function_tool
+    @tool
     def write_hub_file(path: str, content: str) -> str:
         """Create or overwrite a file inside this task's writable paths.
 
@@ -261,7 +261,7 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
 
     if task.publish_artifacts:
 
-        @function_tool
+        @tool
         def publish_artifact(path: str, title: str) -> str:
             """Publish a file you wrote in this run as an artifact for the person
             this task runs for. Only they can open it until they choose to share
@@ -292,7 +292,7 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
 
     if task.send_email:
 
-        @function_tool
+        @tool
         def send_email(subject: str, body: str, artifact_ids: list[str] | None = None) -> str:
             """Email the person this task runs for (the only possible recipient)
             with a short message and optional links to artifacts published in this

@@ -1,10 +1,10 @@
 """Slack attachment downloader.
 
 `download_message_files` walks a `conversations.replies` history payload,
-fetches every Slack-hosted file with the bot token, and forwards each
-one to the bridge's `/uploads/{chat_id}/{filename}` route — so Slack
-attachments land in the same per-chat uploads dir as data-URL uploads
-and pick up the same size cap + sidecar metadata for free.
+fetches every Slack-hosted file with the bot token, and uploads each one
+to the bridge's `POST /v1/files` (`inbound.uploads.push_upload`), the
+same way every channel hands over a file. The returned file ids go in the
+messages as file parts, and the bridge attaches them to the thread's chat.
 
 The function is the bridge between two boundaries (Slack API and the
 bridge HTTP API) and keeps the adapter handlers small. Both seams are
@@ -31,23 +31,23 @@ def download_message_files(
     chat_id: str,
     bot_token: str,
     max_upload_bytes: int,
-    already_seen: set[str] | None = None,
+    already_seen: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    """Download every file in `history` and POST it to the bridge.
+    """Download every file in `history` and upload it to the bridge.
 
-    Returns `{message_ts: [filenames_successfully_uploaded]}` so the
-    caller can stitch attachment notes onto the matching user message.
-    Failures (Slack info miss, oversized file, GET error, bridge 4xx) are
-    logged and skipped — never raised, so a single bad file can't kill
-    the turn.
+    Returns `{message_ts: [stored file ids]}` so the caller can put file
+    parts on the matching user message. Failures (Slack info miss, oversized
+    file, GET error, bridge 4xx) are logged and skipped — never raised, so a
+    single bad file can't kill the turn.
 
-    `already_seen` is an optional set of Slack file IDs the caller wants
-    to skip on this call. The set is mutated in place with the IDs of
-    every file successfully uploaded, so the caller can persist it
-    across turns and dedupe re-fetches of the same attachment when
-    Slack returns the full thread history on every message. Failed
-    uploads are NOT added to the set — they'll retry next turn.
+    `already_seen` maps Slack file ids to stored file ids. Files in it are
+    skipped, and every file uploaded on this call is added, so the caller can
+    persist it across turns and avoid re-fetching the same attachment when
+    Slack returns the full thread history on every message. Failed uploads
+    are NOT added — they'll retry next turn. `chat_id` is the thread's chat.
     """
+    from ..inbound.uploads import push_upload
+
     out: dict[str, list[str]] = {}
     for msg in history:
         if not isinstance(msg, dict):
@@ -96,25 +96,11 @@ def download_message_files(
                     name, len(resp.content),
                 )
                 continue
-            try:
-                bridge_resp = http.post(
-                    f"{bridge_url.rstrip('/v1').rstrip('/')}/uploads/{chat_id}/{name}",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": mimetype,
-                    },
-                    content=resp.content,
-                )
-            except Exception:  # noqa: BLE001
-                log.exception("bridge POST /uploads failed for %s", name)
+            stored = push_upload(http=http, bridge_url=bridge_url, api_key=api_key, name=name,
+                                 mime=mimetype, content=resp.content, max_upload_bytes=max_upload_bytes)
+            if stored is None:
                 continue
-            if bridge_resp.status_code != 200:
-                log.warning(
-                    "bridge POST /uploads for %s returned %s; skipping",
-                    name, bridge_resp.status_code,
-                )
-                continue
-            out.setdefault(ts, []).append(name)
+            out.setdefault(ts, []).append(stored)
             if already_seen is not None:
-                already_seen.add(file_id)
+                already_seen[file_id] = stored
     return out

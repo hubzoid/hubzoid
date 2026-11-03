@@ -5,9 +5,9 @@ message becomes a ``[user]`` or ``[assistant]`` block through the bridge's own
 ``server._flatten_messages``, so a web app turn reads exactly like an
 OpenAI-compatible one. Assistant messages contribute their answer text only
 (never reasoning or tool entries). A user message's attachments come first in
-its block, as the notes ``server._attachment_note`` writes: an image becomes
-``[Image: name]``, which ``hubzoid.vision_inject`` shows to the model, and any
-other file points the agent at ``read_upload``. Files live in the
+its block, as the notes ``attachments.note`` writes, built from the message's
+stored parts. Its images also go to the runtime as a list (``branch_images``),
+which ``hubzoid.vision_inject`` shows to the model. Files live in the
 conversation's uploads folder (``memory.chat_upload_dir`` of its
 ``store.chat_key``), whose folder is the turn's chat scope.
 """
@@ -15,31 +15,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import memory as memlib
+from ..attachments import RASTER_IMAGES, describe_parts  # noqa: F401 - RASTER_IMAGES is re-exported
 
-# Pictures the models take directly. Other image types (SVG, TIFF, HEIC ...)
-# are offered to the agent as files.
-RASTER_IMAGES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
-
-
-def attachment_note(name: str, size: int, mime: str, target: Path, *, image: bool) -> str:
-    from .. import server
-
-    if not target.is_file():
-        return (f"[Attachment unreadable: the user attached {name} but it is no longer "
-                f"available. Tell them and ask them to upload it again. Do NOT guess its "
-                f"contents.]")
-    if image or not mime.startswith("image/"):
-        return server._attachment_note(name, size, mime, target)
-    # A picture format the model cannot take: the file note, with its real type.
-    note = server._attachment_note(name, size, "application/octet-stream", target)
-    return note.replace("application/octet-stream", mime, 1)
+__all__ = ["RASTER_IMAGES", "user_text", "assistant_text", "build_prompt", "branch_images", "message_images"]
 
 
 def user_text(hub_dir: Path, key: str, content: list) -> str:
     """A user message as prompt text; ``key`` is the conversation's ``store.chat_key``."""
-    upload_dir = memlib.chat_upload_dir(Path(hub_dir), key)
-    notes: list[str] = []
+    notes, _ = describe_parts(hub_dir, key, content)
     texts: list[str] = []
     for part in content or []:
         if not isinstance(part, dict):
@@ -51,13 +34,21 @@ def user_text(hub_dir: Path, key: str, content: list) -> str:
         elif kind == "request_outcome" and part.get("for_model"):
             # The person's answer to the agent's approval or question, as data.
             texts = [str(part["for_model"])]
-        elif kind in ("file", "image") and part.get("file_id"):
-            name = str(part["file_id"])
-            notes.append(attachment_note(
-                name, int(part.get("size") or 0),
-                str(part.get("mime") or "application/octet-stream"),
-                upload_dir / name, image=kind == "image"))
     return "\n\n".join(notes + ["\n\n".join(texts)] if texts else notes)
+
+
+def message_images(hub_dir: Path, key: str, content: list) -> list[str]:
+    """The images of one user message, as names in the chat's uploads folder."""
+    return describe_parts(hub_dir, key, content)[1]
+
+
+def branch_images(hub_dir: Path, key: str, branch: list[dict]) -> list[str]:
+    """Every image the person attached on this branch, oldest first."""
+    out: list[str] = []
+    for message in branch:
+        if message.get("role") == "user":
+            out += message_images(hub_dir, key, message.get("content"))
+    return out
 
 
 def assistant_text(content: list) -> str:

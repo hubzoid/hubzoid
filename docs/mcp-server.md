@@ -47,7 +47,7 @@ the same access guard as chat:
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
 
-Chat-scoped tools (`write_artifact`, `read_upload`, …) are not exposed —
+Chat-scoped tools (`write_artifact`, `make_excel`, `make_pdf`, `make_word`, `read_upload`, …) are not exposed —
 they need a live chat to resolve their directories. Model-delegates are not
 exposed either: an MCP caller brings their own model; the hub does not spend
 inference for them.

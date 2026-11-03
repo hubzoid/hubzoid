@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import {
   Alert,
   App,
@@ -28,7 +28,8 @@ import {
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { personHref, useNavigationGuard } from "../../hooks/useRoute";
+import { href, personHref, useNavigationGuard } from "../../hooks/useRoute";
+import { AppContext } from "../../app/lib/app-context";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
   EVERYONE,
@@ -204,6 +205,13 @@ export function AccessDrawer({
   onReload: () => void;
 }) {
   const { modal } = App.useApp();
+  // Where a person's profile opens: their page in People (organization
+  // administrators, sign-in on), or your own Account when it is you (on a
+  // laptop that is the local owner). Anyone else has no page to open.
+  const local = useContext(AppContext)?.isLocal ?? false;
+  const profileOf = (subject: string) =>
+    me?.org_admin && !local ? personHref(subject)
+      : me && normalizeSubject(subject) === normalizeSubject(me.subject) ? href("/me/profile") : undefined;
   const [touched, setTouched] = useState(false);
   const [checking, setChecking] = useState(false);
   // Open groups and pre-review problems belong to one drawer session: they
@@ -818,7 +826,7 @@ export function AccessDrawer({
                 </>
               ) : (
                 <>
-                  <Identity row={draft.row} name={name} />
+                  <Identity row={draft.row} name={name} profile={profileOf(draft.row.subject)} />
                   {!draft.row.perms.length && !draft.row.inherited.length && !access.public && (
                     <Text type="secondary">No access to {hub.name} yet. Choose what they can do.</Text>
                   )}
@@ -977,12 +985,14 @@ export function AccessDrawer({
 }
 
 /** Who is being edited: a person (name, identity and account state). */
-function Identity({ row, name }: { row: AccessRow; name: string }) {
-  return <PersonIdentity row={row} name={name} />;
+function Identity({ row, name, profile }: { row: AccessRow; name: string; profile?: string }) {
+  return <PersonIdentity row={row} name={name} profile={profile} />;
 }
 
-function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
+function PersonIdentity({ row, name, profile }: { row: AccessRow; name: string; profile?: string }) {
   const service = isService(row.subject);
+  // Not signed up yet: no account, so no profile to open. The name opens it too.
+  const link = !service && row.subject !== EVERYONE && row.status !== "awaiting-signup" ? profile : undefined;
   const [open, setOpen] = useState(false);
   const helpId = useId();
   return (
@@ -990,7 +1000,7 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
       <Space align="center">
         <PersonAvatar subject={row.subject} display={row.display} size={40} />
         <div>
-          <Text strong>{name}</Text>
+          {link ? <a className="hz-row-name" href={link}>{name}</a> : <Text strong>{name}</Text>}
           <div className="identity-tags">
             {name !== row.subject && (
               <Text type="secondary" className="identity">
@@ -999,9 +1009,8 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
             )}
             {service && <LegacyServiceTag />}
             {row.status && (!service || row.status !== "service") && <AccountTag status={row.status} />}
-            {/* Not signed up yet: no account, so no details page to open. */}
-            {!service && row.subject !== EVERYONE && row.status !== "awaiting-signup" && (
-              <Button type="link" size="small" className="inline-link" href={personHref(row.subject)}>
+            {link && (
+              <Button type="link" size="small" className="inline-link" href={link}>
                 View profile
               </Button>
             )}

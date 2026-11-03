@@ -1,9 +1,6 @@
 """Routes for files and artifacts (``hubzoid.chat.file_service``).
 
-  POST   /api/chat/files/uploads                    start a resumable upload (Idempotency-Key)
-  PUT    /api/chat/files/uploads/{id}/bytes         one chunk at Upload-Offset (Upload-Chunk-SHA256)
-  POST   /api/chat/files/uploads/{id}/complete      {content_sha256} -> the file (validating)
-  DELETE /api/chat/files/uploads/{id}               cancel
+  POST   /api/chat/files                            multipart ``file``, one request -> 201 the file
   GET    /api/chat/files[?conversation_id=]         your files, or a conversation's
   GET    /api/chat/files/{id}                       one file's descriptor
   GET    /api/chat/files/{id}/content               the bytes (Range; attachment unless a safe image)
@@ -12,12 +9,21 @@
   DELETE /api/chat/files/{id}/references/{ref}      remove one use (bytes stay while others use it)
   DELETE /api/chat/files/{id}                       delete (only when nothing uses it)
   POST   /api/conversations/{id}/files/reuse        {file_id}: attach a file you can read, no new bytes
+  *      /api/chat/files/uploads[...]               410: one request to POST /api/chat/files instead
   POST   /api/chat/files/doctor                     storage write probe (hub managers)
   GET    /api/chat/artifacts?conversation_id=       a conversation's artifacts and versions
   GET    /api/chat/artifacts/{id}
   GET    /api/chat/artifacts/{id}/versions/{v}/content
   POST   /api/chat/artifacts/{id}/versions          {content, base_version_id, expected_revision}
   GET    /api/chat/artifact-frame                   the sandboxed viewer frame (no network)
+
+``POST /api/chat/files`` is the one upload for every caller outside the bridge
+process (``hubzoid.attachments``): the web app and the API with a sign-in or a
+personal key, and an app's embedded chat with its token. Slack, Telegram and
+WhatsApp send the same multipart request to the bridge's internal
+``/v1/files`` with the bridge key (the edge never forwards it). It needs no
+conversation, so the first message can carry files. The returned ``file_id`` goes in the message's file part, and
+the server attaches it to the chat when it saves the message.
 """
 from __future__ import annotations
 
@@ -29,10 +35,12 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from .. import attachments
 from ..control import authz
+from . import files as files_mod
 from . import engine_routes as er
 from .common import error
-from .file_service import CHUNK_BYTES, FileService, service_for
+from .file_service import FileService, service_for
 
 SAFE_INLINE = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
@@ -115,45 +123,53 @@ def mount(app: FastAPI, ctx) -> FileService:
         pass
     call = er.call
 
+    def _reuse(actor, file_id: str, cid: str) -> dict:
+        """Attach a file the person may read to a conversation they may write in."""
+        try:
+            part = attachments.attach_conversation(ctx.hub_dir, actor, file_id, cid)
+        except attachments.AttachmentError as exc:
+            raise error(404 if exc.status == 400 else exc.status, exc.code, exc.message)
+        return {**part, "id": file_id}
+
     async def actor_of(request: Request, mutation: bool = False):
         user = await (ctx.mutation(request) if mutation else ctx.user(request))
         return user, await asyncio.to_thread(engine.actor, user)
 
     # -- uploads ---------------------------------------------------------------------------
-    @app.post("/api/chat/files/uploads", status_code=201)
-    async def start_upload(request: Request):
+    async def uploader(request: Request) -> str:
+        """Who the upload belongs to: an app's person (embedded chat token), or
+        the signed-in person or their key. A bridge key is refused here (this
+        route is public behind the edge); channels upload to the bridge's
+        internal ``/v1/files``."""
+        raw = request.headers.get("authorization", "")
+        token = raw[7:].strip() if raw[:7].lower() == "bearer " else ""
+        if token and not token.startswith("hzp_") and token in set(ctx.settings.bridge_api_keys):
+            raise error(401, "unauthenticated", "Bridge keys upload to the bridge's own /v1/files.")
+        if token.count(".") == 2 and not token.startswith("hzp_"):
+            from ..embed import agui
+
+            caller = await agui._caller(request, ctx.hub_dir)
+            agui._hub_allowed(ctx, caller)
+            return caller.subject
         user, actor = await actor_of(request, True)
         await ctx.may_use_hub(user)
-        body = await er.read_json(request)
-        return JSONResponse(await call(svc.start_upload, actor, body, key=request.headers.get("idempotency-key")),
-                            status_code=201)
+        return actor.id
 
-    @app.put("/api/chat/files/uploads/{upload_id}/bytes")
-    async def put_bytes(upload_id: str, request: Request):
-        _, actor = await actor_of(request, True)
-        raw = request.headers.get("upload-offset", "")
-        if not raw.isdigit():
-            raise error(400, "invalid_request", "Send the chunk's position as Upload-Offset.")
-        chunks, size = [], 0
-        async for part in request.stream():
-            size += len(part)
-            if size > CHUNK_BYTES:
-                raise error(413, "chunk_too_large", f"Send at most {CHUNK_BYTES} bytes per chunk.")
-            chunks.append(part)
-        return await call(svc.put_chunk, actor, upload_id, int(raw), b"".join(chunks),
-                          request.headers.get("upload-chunk-sha256"))
+    @app.post("/api/chat/files", status_code=201)
+    async def upload(request: Request):
+        if not svc.settings()["enabled"]:
+            raise error(403, "feature_disabled", "File uploads are turned off for this deployment.")
+        owner = await uploader(request)
+        name, mime, payload = await files_mod.receive_one(request, int(ctx.settings.max_upload_bytes))
+        desc = await call(attachments.save, ctx.hub_dir, payload, name, mime, owner)
+        return JSONResponse({**desc, "id": desc["file_id"], "mime": desc["mime_type"], "size": desc["size_bytes"],
+                             "kind": attachments.kind_of(desc["mime_type"])}, status_code=201)
 
-    @app.post("/api/chat/files/uploads/{upload_id}/complete", status_code=202)
-    async def complete(upload_id: str, request: Request):
-        _, actor = await actor_of(request, True)
-        body = await er.read_json(request)
-        return JSONResponse(await call(svc.complete, actor, upload_id, body.get("content_sha256")), status_code=202)
-
-    @app.delete("/api/chat/files/uploads/{upload_id}", status_code=204)
-    async def cancel(upload_id: str, request: Request):
-        _, actor = await actor_of(request, True)
-        await call(svc.abort, actor, upload_id)
-        return Response(status_code=204)
+    @app.api_route("/api/chat/files/uploads", methods=["POST"])
+    @app.api_route("/api/chat/files/uploads/{rest:path}", methods=["PUT", "POST", "DELETE"])
+    async def chunked_gone(request: Request, rest: str = ""):
+        raise error(410, "upload_route_gone", "Upload each file in one request to POST /api/chat/files "
+                                              "(multipart field 'file'), then send its file_id in the message.")
 
     # -- files -------------------------------------------------------------------------------
     @app.get("/api/chat/files")
@@ -204,7 +220,8 @@ def mount(app: FastAPI, ctx) -> FileService:
         user, actor = await actor_of(request, True)
         await ctx.may_use_hub(user)
         body = await er.read_json(request)
-        return JSONResponse(await call(svc.attach, actor, str(body.get("file_id") or ""), cid), status_code=201)
+        part = await call(_reuse, actor, str(body.get("file_id") or ""), cid)
+        return JSONResponse(part, status_code=201)
 
     @app.post("/api/chat/files/doctor")
     async def doctor(request: Request):
