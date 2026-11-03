@@ -302,8 +302,10 @@ def _auth(hub: Path | None = None) -> list[Check]:
     out = []
     keys = [k.strip() for k in os.environ.get("BRIDGE_API_KEYS", "").split(",") if k.strip()]
     if not keys:
-        out.append(Check("auth.bridge_keys", "fail",
-                         "BRIDGE_API_KEYS is not set, so the bridge accepts the public key 'dev'"))
+        out.append(Check("auth.bridge_keys", "ok", "A random bridge key is made by hubzoid run")
+                   if _run_key_exists(hub) else
+                   Check("auth.bridge_keys", "info",
+                         "hubzoid run makes a random bridge key on first start"))
     elif "dev" in keys:
         out.append(Check("auth.bridge_keys", "fail", "BRIDGE_API_KEYS includes the public key 'dev'"))
     elif any(len(k) < 16 for k in keys):
@@ -313,6 +315,27 @@ def _auth(hub: Path | None = None) -> list[Check]:
 
     out.append(_web_app_signin(hub))
     return out
+
+
+def _run_key_exists(hub: Path | None) -> bool:
+    """Whether `hubzoid run` already made its bridge key: in the deployment's
+    state folder when the hub belongs to a hubzoid.yaml, else the hub's own.
+    Only reads: the key is made by `hubzoid run`, never by doctor."""
+    from . import datadir, deployfile
+
+    if hub is None:
+        return False
+    found = deployfile.owning(hub)
+    try:
+        if found is not None:
+            from .cli import _deployment_state_dir
+
+            state = _deployment_state_dir(deployfile.load(found))
+        else:
+            state = datadir.state(hub)
+        return bool((state / "bridge.key").read_text().strip())
+    except (OSError, deployfile.DeployFileError):
+        return False
 
 
 def _web_app_signin(hub: Path | None) -> Check:
