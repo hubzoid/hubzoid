@@ -111,6 +111,62 @@ def test_a_codex_api_key_login_has_no_plan(tmp_path, monkeypatch):
     assert (lg.method, lg.plan, lg.tier) == ("api_key", None, 0)
 
 
+def test_a_hanging_claude_cli_is_not_signed_in(monkeypatch):
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda name: "/bin/claude")
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(factory_claude.subprocess, "run", hang)
+    factory_claude.clear_login_cache()
+    assert factory_claude.claude_login().signed_in is False
+
+
+def test_a_hanging_codex_login_status_is_not_signed_in(tmp_path, monkeypatch):
+    write_codex_auth(tmp_path)
+    fake_codex_status(monkeypatch)
+    ok = factory_codex.subprocess.run
+
+    def run(cmd, **kw):
+        if cmd[1] == "login":
+            raise subprocess.TimeoutExpired(cmd, 10)
+        return ok(cmd, **kw)
+
+    monkeypatch.setattr(factory_codex.subprocess, "run", run)
+    assert factory_codex.codex_login().signed_in is False
+
+
+@pytest.mark.parametrize("auth_method,method", [
+    ("claude.ai", "subscription"), ("oauth_token", "subscription"), ("console", "api_key"),
+    ("api_key", "api_key"), ("third_party", "api_key"), ("none", "api_key"),
+])
+def test_claude_auth_methods(monkeypatch, auth_method, method):
+    fake_claude_status(monkeypatch, json.dumps({"loggedIn": True, "authMethod": auth_method, "subscriptionType": "max"}))
+    assert factory_claude.claude_login().method == method
+
+
+@pytest.mark.parametrize("plan,expected", [
+    ("promax", 2), ("business", 2), ("self_serve_business_prolite", 2), ("ent26", 2), ("edu_pro", 2),
+    ("prolite", 1), ("go", 1), ("edu", 1), ("edu_plus", 1), ("free", 0), ("hc", 0), ("brand_new", 0),
+])
+def test_codex_plan_tiers(plan, expected):
+    assert logins.tier("codex-local", "subscription", plan) == expected
+
+
+def test_codex_login_without_auth_mode(tmp_path, monkeypatch):
+    fake_codex_status(monkeypatch)
+    write_codex_auth(tmp_path, plan="pro")           # id_token, no auth_mode
+    f = tmp_path / "codex" / "auth.json"
+    data = json.loads(f.read_text())
+    data.pop("auth_mode")
+    f.write_text(json.dumps(data))
+    assert factory_codex.codex_login().method == "subscription"
+    f.write_text(json.dumps({"OPENAI_API_KEY": "k"}))  # gitleaks:allow
+    assert factory_codex.codex_login().method == "api_key"
+    f.write_text("{}")
+    assert factory_codex.codex_login().method is None
+
+
 def test_a_codex_keychain_login_names_the_fix(monkeypatch):
     fake_codex_status(monkeypatch, rc=0)          # no auth.json
     lg = factory_codex.codex_login()

@@ -89,7 +89,8 @@ def claude_login():
         result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
         status = json.loads(result.stdout) if result.returncode == 0 else {}
         if isinstance(status, dict) and status.get("loggedIn") is True:
-            method = "subscription" if status.get("authMethod") == "claude.ai" else "api_key"
+            # claude.ai login, or `claude setup-token` / CLAUDE_CODE_OAUTH_TOKEN
+            method = "subscription" if status.get("authMethod") in ("claude.ai", "oauth_token") else "api_key"
             plan = status.get("subscriptionType")
             plan = plan if isinstance(plan, str) and plan else None
             login = Login("claude-local", True, method, plan, tier("claude-local", method, plan))

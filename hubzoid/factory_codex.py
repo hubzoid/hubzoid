@@ -176,7 +176,11 @@ def codex_login():
         # Signed in, but not in the file the runtime copies into its CODEX_HOME.
         return Login("codex-local", True, version=version, problem="not_file_backed", fix=_LOGIN_FIX)
     data = data if isinstance(data, dict) else {}
-    method = "subscription" if data.get("auth_mode") == "chatgpt" else "api_key"
+    mode = data.get("auth_mode")
+    if mode is None:
+        mode = ("chatgpt" if (data.get("tokens") or {}).get("id_token")
+                else "apikey" if data.get("OPENAI_API_KEY") else None)
+    method = {"chatgpt": "subscription", "apikey": "api_key"}.get(mode)
     plan = _plan_from_login_file(data) if method == "subscription" else None
     return Login("codex-local", True, method, plan, tier("codex-local", method, plan), version)
 

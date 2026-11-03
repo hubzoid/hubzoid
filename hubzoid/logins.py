@@ -18,8 +18,19 @@ class Login:
     fix: str | None = None       # one command that fixes `problem`
 
 
-TOP = {"claude-local": {"max", "team", "enterprise"}, "codex-local": {"pro", "business", "team", "enterprise"}}
-STANDARD = {"claude-local": {"pro"}, "codex-local": {"plus"}}
+# Plan names as the CLIs report them: Claude Code 2.1.301 `subscriptionType`
+# (max, pro, team, enterprise, free) and Codex 0.163 `chatgpt_plan_type` (KnownPlan).
+# free, hc and anything unknown are tier 0.
+TOP = {
+    "claude-local": {"max", "team", "enterprise"},
+    "codex-local": {"pro", "promax", "team", "business", "self_serve_business_prolite",
+                    "self_serve_business_usage_based", "enterprise", "ent26",
+                    "enterprise_cbp_automation", "enterprise_cbp_usage_based", "edu_pro"},
+}
+STANDARD = {
+    "claude-local": {"pro"},
+    "codex-local": {"plus", "prolite", "go", "edu", "education", "edu_plus"},
+}
 
 _NAMES = {"claude-local": "Claude Code", "codex-local": "Codex"}
 
