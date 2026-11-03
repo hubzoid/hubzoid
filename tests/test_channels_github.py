@@ -744,6 +744,18 @@ def test_connecting_a_token_keeps_the_hubs_channel_file(hub_dir, factory_file, f
     assert "workflow: factory" in (hub_dir / "channels/github.yaml").read_text()
 
 
+def test_a_refused_connect_stores_no_token(hub_dir, factory_file, fake_pat, monkeypatch):
+    from hubzoid.secretstore import store as secret_store
+
+    puts = []
+    monkeypatch.setattr(secret_store, "put", lambda *a, **kw: puts.append(kw))
+    (hub_dir / "channels/github.yaml").write_text("workflow: [unclosed\n")
+    with pytest.raises(ChannelError):
+        setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                          expected_revision=None)
+    assert puts == []
+
+
 def test_reconnecting_a_token_keeps_short_secret_refs_in_the_file(hub_dir, factory_file, fake_pat):
     path = hub_dir / "channels/github.yaml"
     path.write_text(path.read_text().replace("secret:channel/factory/github/", "secret:channel/github/"))

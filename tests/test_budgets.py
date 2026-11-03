@@ -335,3 +335,8 @@ def test_show_notes_that_dollar_limits_skip_an_unpriced_model(hub_dir):
     assert "Dollar limits don't apply to codex-local; turn and token limits do." in result.output
     (hub_dir / "AGENTS.md").write_text("---\nname: Desk\nmodel: claude-local\n---\nA desk.\n")
     assert "Dollar limits don't" not in CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output
+    (hub_dir / "AGENTS.md").write_text("---\nname: Desk\nmodel: codex-local\n---\nA desk.\n")
+    limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n")      # dollars only: the model is refused
+    out = CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output
+    assert "Dollar limits don't" not in out
+    assert "Calls on codex-local are refused until a turn or token limit is added" in out

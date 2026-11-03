@@ -97,6 +97,15 @@ def test_secret_ref_grammar(hub_dir):
     assert not other_hub.valid and not other_channel.valid and not garbage.valid
 
 
+def test_a_foreign_secret_ref_message_names_the_own_slot(hub_dir):
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/other/fake-main/s"}))
+    assert "or write secret:channel/fake-main/<name> for this agent's own slot" in v.errors[0]["message"]
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "env:HUBZOID_SECRET_KEY"}))
+    with pytest.raises(ChannelError) as exc:
+        config.apply(hub_dir, v.data, expected_revision="absent", actor="hub-admin", any_secret=False)
+    assert "or write secret:channel/fake-main/<name> for this agent's own slot" in exc.value.extra["fields"][0]["message"]
+
+
 def test_a_short_secret_ref_means_this_hubs_slot_for_this_channel(hub_dir):
     short = "secret:channel/fake-main/sig"
     v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": short}))

@@ -237,7 +237,9 @@ def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:
             continue
         if ref.provider == "secret" and ref.scope in ("hub", "channel") and ref.hub != hub:
             out.append(_err("invalid_config", path, f"A channel can use only this hub's secrets "
-                                                    f"(secret:channel/{hub}/{cfg.id}/<name>).", lines))
+                                                    f"(secret:channel/{hub}/{cfg.id}/<name>), or write "
+                                                    f"secret:channel/{cfg.id}/<name> for this agent's own slot.",
+                                                    lines))
         if ref.provider == "secret" and ref.scope == "channel" and ref.channel != cfg.id:
             out.append(_err("invalid_config", path, f"This channel's secrets are under "
                                                     f"secret:channel/{hub}/{cfg.id}/<name>.", lines))
@@ -542,8 +544,9 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
             own = f"secret:channel/{hub}/{cfg.id}/<name>"
             raise ChannelError("permission_denied", f"Only organization administrators set or change a connection "
                                f"that uses a secret other than its own ({own}).", status=403,
-                               fields=[_err("permission_denied", f, f"Use {own}, or ask an organization "
-                                                                    "administrator.", lines) for f in foreign])
+                               fields=[_err("permission_denied", f, f"Use {own}, or write "
+                                                                    f"secret:channel/{cfg.id}/<name> for this agent's own "
+                                                                    "slot, or ask an organization administrator.", lines) for f in foreign])
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)

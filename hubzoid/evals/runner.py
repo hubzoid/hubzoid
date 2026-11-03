@@ -210,7 +210,8 @@ def _what(case: EvalCase) -> str:
 def _resolve_identity(hub_dir: Path, email: str, case: EvalCase):
     """The account `email` as a RunIdentity, by the workflow identity rules: a
     usable account (bound, not pending, not blocked, holding use_hub on a
-    managed hub). Raises IdentityError naming the fix. Grants nothing."""
+    managed hub). Raises IdentityError naming the fix. With sign-in off it first
+    provisions the local owner (see `_provision_local_owner`); it grants nothing else."""
     from ..workflows import identity as idlib
 
     _provision_local_owner(Path(hub_dir), email)

@@ -46,8 +46,12 @@ def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(Fal
                                                       else ""))
         for scope, caps in v["limits"].items():
             console.print(_limit_line(scope, caps))
-        if _unpriced_model(hub) and any("max_cost_usd" in c for c in v["limits"].values()):
-            console.print(f"Dollar limits don't apply to {_unpriced_model(hub)}; turn and token limits do.")
+        unpriced = _unpriced_model(hub) if any("max_cost_usd" in c for c in v["limits"].values()) else None
+        if unpriced:
+            if any(k in c for c in v["limits"].values() for k in ("max_turns", "max_input_tokens", "max_output_tokens")):
+                console.print(f"Dollar limits don't apply to {unpriced}; turn and token limits do.")
+            else:
+                console.print(f"Calls on {unpriced} are refused until a turn or token limit is added.")
         m = v["month"]
         console.print(f"This month ({m['key']}): {m['input_tokens']:,} input tokens, {m['output_tokens']:,} output "
                       f"tokens, {float(m['cost_usd']):.4f} USD"

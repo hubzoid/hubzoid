@@ -50,10 +50,13 @@ def doctor(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(F
     from ..factory_claude import claude_login as claude_probe
     from ..factory_codex import codex_available
 
-    probed = claude_probe()
-    claude_login = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) or bool(probed and probed.signed_in)
+    stations = out.get("stations") or {}
+    claude_login = False
+    if any(s["engine"] != "codex-local" for s in stations.values()):   # no claude station: no login probe
+        probed = claude_probe()
+        claude_login = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) or bool(probed and probed.signed_in)
     report = {"valid": out["valid"], "checks": out["checks"], "stations": {}}
-    for name, s in (out.get("stations") or {}).items():
+    for name, s in stations.items():
         report["stations"][name] = {
             "digest": s["digest"], "engine": s["engine"], "model": s["model"] or "(the engine's default)",
             "tools": s["tools"], "structured_output": "native" if s["schema"] else "text",

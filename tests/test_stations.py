@@ -455,6 +455,22 @@ def test_stations_doctor_asks_the_claude_login(hub_dir, monkeypatch, tmp_path):
     assert available() == {True}
 
 
+def test_stations_doctor_skips_the_claude_probe_without_a_claude_station(hub_dir, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hubzoid import factory_claude
+    from hubzoid.cli import app
+
+    probes = []
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: probes.append(1))
+    for name in ("analyst", "reviewer"):
+        path = hub_dir / "agents" / name / "AGENTS.md"
+        path.write_text(path.read_text().replace("claude-local", "codex-local"))
+    out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
+    stations = json.loads(out.output)["stations"]
+    assert {s["engine"] for s in stations.values()} == {"codex-local"} and probes == []
+
+
 @pytest.mark.real_logins
 def test_stations_doctor_counts_a_key_only_claude_setup(hub_dir, monkeypatch):
     import subprocess

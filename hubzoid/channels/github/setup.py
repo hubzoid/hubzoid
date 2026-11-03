@@ -313,9 +313,6 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
         except Exception as exc:  # noqa: BLE001
             raise ChannelError("repository_not_installed", f"The token cannot read {name}.", status=409) from exc
         repos.append({"id": r["id"], "full_name": r["full_name"]})
-    from ...secretstore import store as secret_store
-
-    secret_store.put(Path(hub_dir), scope="channel", target=f"{hub}/{cid}", name="token", value=token, actor=actor)
     existing = None
     try:
         existing = config_lib.export(hub_dir, cid)
@@ -327,6 +324,10 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
     if base is None and config_lib.file_for(hub_dir, cid).is_file():
         raise ChannelError("validation_failed", f"channels/{cid}.yaml cannot be read. Fix it, then connect again.",
                            status=422)
+    from ...secretstore import store as secret_store
+
+    # only now: a refused connect leaves no new token behind
+    secret_store.put(Path(hub_dir), scope="channel", target=f"{hub}/{cid}", name="token", value=token, actor=actor)
     data = json.loads(json.dumps(base)) if base else {
         "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
         "provider_config": {}}
