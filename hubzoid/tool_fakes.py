@@ -154,13 +154,14 @@ def _github_stand_ins() -> dict:
 _STAND_INS = {"github__": _github_stand_ins}
 
 
-def wrap_registry(registry: dict) -> dict:
+def wrap_registry(registry: dict, *, stand_ins: bool = False) -> dict:
     """Every tool of a runtime's registry, wrapped (the factories' last step).
-    In a case, a faked tool the registry lacks (its connector is not connected
-    yet) is added as its provider's stand-in, so the fake answers it."""
+    With ``stand_ins`` (an agent's own runtime, never a station's tools), in a
+    case a faked tool the registry lacks (its connector is not connected yet)
+    is added as its provider's stand-in, so the fake answers it."""
     out = {name: wrap(ft) for name, ft in registry.items()}
     session = _active.get()
-    if session is None:
+    if session is None or not stand_ins:
         return out
     cache: dict = {}
     for fake in session.fakes:

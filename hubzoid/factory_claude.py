@@ -75,7 +75,12 @@ def clear_login_cache() -> None:
 
 def claude_login():
     """The Claude Code login (`logins.Login`), or None when `claude` isn't installed.
-    Reads only loggedIn, authMethod and subscriptionType from `claude auth status`."""
+    Reads only loggedIn, authMethod and subscriptionType from `claude auth status`.
+
+    Only a definite answer is kept for a few minutes: signed in, or the CLI
+    saying cleanly that it is not. A probe that fails or times out is asked
+    again next time. The chat runtime reads the login when it is built, so a
+    running hub sees a new login after `hubzoid restart`."""
     global _login_cache
     if _login_cache and time.monotonic() - _login_cache[0] < _LOGIN_TTL:
         return _login_cache[1]
@@ -84,19 +89,22 @@ def claude_login():
     binary = shutil.which("claude")
     if not binary:
         return None
-    login = Login("claude-local", False)
+    login, definite = Login("claude-local", False), False
     try:
         result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
-        status = json.loads(result.stdout) if result.returncode == 0 else {}
-        if isinstance(status, dict) and status.get("loggedIn") is True:
+        status = json.loads(result.stdout)
+        if isinstance(status, dict) and status.get("loggedIn") is True and result.returncode == 0:
             # claude.ai login, or `claude setup-token` / CLAUDE_CODE_OAUTH_TOKEN
             method = "subscription" if status.get("authMethod") in ("claude.ai", "oauth_token") else "api_key"
             plan = status.get("subscriptionType")
             plan = plan if isinstance(plan, str) and plan else None
-            login = Login("claude-local", True, method, plan, tier("claude-local", method, plan))
+            login, definite = Login("claude-local", True, method, plan, tier("claude-local", method, plan)), True
+        elif isinstance(status, dict) and status.get("loggedIn") is False:
+            definite = True
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
-    _login_cache = (time.monotonic(), login)
+    if definite:
+        _login_cache = (time.monotonic(), login)
     return login
 
 
@@ -207,17 +215,22 @@ def _child_env(model: str | None = None) -> dict[str, str]:
 
     On claude-local with a subscription login (or CLAUDE_CODE_OAUTH_TOKEN), an
     inherited ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is blanked so the CLI
-    never bills the API silently. To use a key on purpose, set MODEL=anthropic/<model>."""
+    never bills the API silently. To use a key on purpose, set MODEL=anthropic/<model>.
+    With ANTHROPIC_BASE_URL set (a deliberate gateway), the keys are left alone."""
     global _billing_logged
     out = config_secrets.child_env_overrides(os.environ)
     model = (model or os.environ.get("MODEL") or "claude-local").strip().lower()
-    if model.startswith("claude-local"):
-        login = None if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else claude_login()
-        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or (login and login.signed_in and login.method == "subscription"):
+    if model.startswith("claude-local") and not os.environ.get("ANTHROPIC_BASE_URL"):
+        reason = "CLAUDE_CODE_OAUTH_TOKEN" if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else None
+        if reason is None:
+            login = claude_login()
+            reason = "the claude login" if login and login.signed_in and login.method == "subscription" else None
+        if reason:
+            keys = [k for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") if os.environ.get(k)]
             out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"] = ""
-            if not _billing_logged:
+            if keys and not _billing_logged:
                 _billing_logged = True
-                log.info("Using the Claude subscription; ignoring ANTHROPIC_API_KEY")
+                log.info("Using the Claude subscription (%s); ignoring %s", reason, " and ".join(keys))
     if os.environ.get("HUBZOID_MCP_TIMEOUT", "").strip() and not os.environ.get("MCP_TOOL_TIMEOUT"):
         from .loaders.mcp import call_timeout
 
@@ -428,7 +441,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl, tool_fakes
-    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # evals: fake tool results (and stand-ins for faked tools not connected yet), inert otherwise
+    registry = tool_fakes.wrap_registry(registry, stand_ins=True)
     # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
     registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
 

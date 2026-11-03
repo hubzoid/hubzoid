@@ -151,3 +151,23 @@ def _planned_ports_ignore_this_machine(request, monkeypatch):
     import hubzoid.gateway as gateway
 
     monkeypatch.setattr(gateway, "port_free", lambda port, host="127.0.0.1": True)
+
+
+_REAL_MODEL_MARKERS = ("e2e", "e2e_llm", "e2e_ui", "e2e_browser", "real_logins")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_logins_or_model_calls(request, monkeypatch):
+    """Unit tests never start `claude` or `codex` to read a login and never make
+    the one real check call (init, the model.reply diagnostic). The probes say
+    neither CLI is installed and the check says the model answered. Tests of
+    those functions are marked ``real_logins`` and fake the CLIs themselves;
+    e2e tests use the real ones."""
+    if any(request.node.get_closest_marker(m) for m in _REAL_MODEL_MARKERS):
+        return
+    from hubzoid import factory_claude, factory_codex, runtime
+
+    factory_claude.clear_login_cache()
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: None)
+    monkeypatch.setattr(factory_codex, "codex_login", lambda: None)
+    monkeypatch.setattr(runtime, "reply_check", lambda hub_dir, **kw: (True, ""))

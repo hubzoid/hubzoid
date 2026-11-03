@@ -14,12 +14,16 @@ from hubzoid.logins import Login
 
 CODEX_FIX = "cli_auth_credentials_store"
 
+# These test the probes and the check call themselves, with the CLIs faked here.
+pytestmark = pytest.mark.real_logins
+
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch, tmp_path):
     factory_claude.clear_login_cache()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    for name in ("HUBZOID_CODEX_BIN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "MODEL"):
+    for name in ("HUBZOID_CODEX_BIN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                 "ANTHROPIC_BASE_URL", "MODEL"):
         monkeypatch.delenv(name, raising=False)
     yield
     factory_claude.clear_login_cache()
@@ -92,8 +96,17 @@ def test_claude_login_is_cached_and_without_the_cli_is_none(monkeypatch):
 
 @pytest.mark.parametrize("rc,out", [(1, ""), (0, "not json"), (0, "{}")])
 def test_a_broken_or_old_claude_cli_is_not_signed_in(monkeypatch, rc, out):
-    fake_claude_status(monkeypatch, out, rc)
+    calls = fake_claude_status(monkeypatch, out, rc)
     assert factory_claude.claude_login().signed_in is False
+    factory_claude.claude_login()
+    assert len(calls) == 2               # no answer is not cached: the next start asks again
+
+
+def test_a_clean_not_signed_in_answer_is_cached(monkeypatch):
+    calls = fake_claude_status(monkeypatch, '{"loggedIn": false}', rc=1)
+    assert factory_claude.claude_login().signed_in is False
+    factory_claude.claude_login()
+    assert len(calls) == 1
 
 
 def test_codex_login_reads_the_plan_from_its_login_file(tmp_path, monkeypatch):
@@ -120,6 +133,7 @@ def test_a_hanging_claude_cli_is_not_signed_in(monkeypatch):
     monkeypatch.setattr(factory_claude.subprocess, "run", hang)
     factory_claude.clear_login_cache()
     assert factory_claude.claude_login().signed_in is False
+    assert factory_claude._login_cache is None   # a timeout is never cached
 
 
 def test_a_hanging_codex_login_status_is_not_signed_in(tmp_path, monkeypatch):
@@ -274,6 +288,31 @@ def test_billing_oauth_token_blanks_the_key(monkeypatch):
 def test_billing_an_anthropic_model_keeps_its_key(monkeypatch):
     _billing_env(monkeypatch, login=Login("claude-local", True, "subscription", "max"))
     assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("anthropic/claude-haiku-4-5")
+
+
+def test_billing_a_gateway_base_url_keeps_its_key(monkeypatch):
+    _billing_env(monkeypatch, login=Login("claude-local", True, "subscription", "max"), token=True)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
+    env = factory_claude._child_env()
+    assert "ANTHROPIC_API_KEY" not in env and "ANTHROPIC_AUTH_TOKEN" not in env
+
+
+def test_billing_logs_only_a_key_it_blanked_and_why(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(factory_claude, "_billing_logged", False)
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
+    caplog.set_level(logging.INFO, logger="hubzoid.claude")
+    factory_claude._child_env()                                  # no key to ignore: nothing said
+    assert "ignoring" not in caplog.text
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    factory_claude._child_env()
+    assert "ignoring ANTHROPIC_API_KEY" in caplog.text and "claude login" in caplog.text
+    monkeypatch.setattr(factory_claude, "_billing_logged", False)
+    caplog.clear()
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
+    factory_claude._child_env()
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in caplog.text
 
 
 def test_model_reply_check_maps_ok_and_fail(tmp_path, monkeypatch):

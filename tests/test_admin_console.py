@@ -21,7 +21,6 @@ from tests.chat_helpers import ORIGIN, as_people, build_app, make_hub, who
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake-SECRET-123")  # must never leak
-    monkeypatch.setattr("hubzoid.factory_claude.claude_login", lambda: None)  # no real CLI
     return make_hub(tmp_path, monkeypatch)
 
 

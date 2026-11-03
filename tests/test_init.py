@@ -406,3 +406,12 @@ def test_init_survives_a_failed_reply_check_and_skips_it_for_a_key(tmp_path, mon
     monkeypatch.setattr(runtime, "reply_check", lambda *a, **k: pytest.fail("no call for a key"))
     _interactive(monkeypatch, answers=["sk-or-v1-" + "a" * 40])
     assert _run_init(tmp_path, "hub2").exit_code == 0
+
+
+def test_unit_tests_never_start_a_real_cli_or_model(tmp_path):
+    """tests/conftest.py stands in for the login probes and the one check call
+    (tests of those mark themselves `real_logins`)."""
+    from hubzoid import factory_claude, factory_codex, runtime
+
+    assert factory_claude.claude_login() is None and factory_codex.codex_login() is None
+    assert runtime.reply_check(tmp_path) == (True, "")

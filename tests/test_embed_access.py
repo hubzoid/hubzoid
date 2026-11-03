@@ -17,8 +17,6 @@ from hubzoid.embed.config import Access
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
     monkeypatch.delenv("HUBZOID_DEPLOYMENT_FILE", raising=False)
-    monkeypatch.setattr("hubzoid.factory_claude.claude_login", lambda: None)  # no real CLI
-    monkeypatch.setattr("hubzoid.factory_codex.codex_login", lambda: None)
     hub = tmp_path / "finance"
     hub.mkdir()
     (hub / "AGENTS.md").write_text("---\nname: finance\n---\nHelp.\n")

@@ -66,12 +66,13 @@ def test_bedrock_keeps_the_aws_credentials_the_cli_signs_in_with():
     assert cs.child_env_overrides(env) == {"AWS_SECRET_NAME": "", "HUBZOID_ARTIFACT_SECRET": ""}
 
 
-def _hub(tmp_path: Path) -> Path:
+def _hub(tmp_path: Path, *, oauth: bool = True) -> Path:
     hub = tmp_path / "hub"
     shutil.copytree(MINIMAL, hub, ignore=shutil.ignore_patterns("output", "__pycache__"))
     (hub / "restricted").mkdir()
     (hub / ".env").write_text("MODEL=claude-local\nBRIDGE_API_KEYS=bridge-key-long-enough\n"
-                              "SHARED=hub-value\nSLACK_BOT_TOKEN=xoxb-hub\nCLAUDE_CODE_OAUTH_TOKEN=oauth\n")
+                              "SHARED=hub-value\nSLACK_BOT_TOKEN=xoxb-hub\n"
+                              + ("CLAUDE_CODE_OAUTH_TOKEN=oauth\n" if oauth else ""))
     (hub / "restricted" / ".env").write_text(
         "TOOL_TOKEN=tool-secret\nSHARED=restricted-value\nANTHROPIC_API_KEY=sk-ant-restricted\n"
         "HUBZOID_RESTRICTED_SECRET_NAME=rsec\n")
@@ -106,7 +107,9 @@ def test_claude_runtime_passes_the_overrides_to_every_child(tmp_path, monkeypatc
     assert child["TOOL_TOKEN"] == "" and child["RESTRICTED_DB_PASSWORD"] == ""
     assert child["AWS_ACCESS_KEY_ID"] == "" and child["BRIDGE_API_KEYS"] == ""
     assert child["SHARED"] == "hub-value"
-    assert "ANTHROPIC_API_KEY" not in child and "SLACK_BOT_TOKEN" not in child
+    assert "SLACK_BOT_TOKEN" not in child
+    # The hub signs in with CLAUDE_CODE_OAUTH_TOKEN: an inherited key never bills the API.
+    assert child["ANTHROPIC_API_KEY"] == ""
     # An MCP server that names a value explicitly in .mcp.json still gets it:
     # interpolation happens in the bridge, and a server's own env wins.
     assert runtime._options.mcp_servers["db"]["env"] == {"TOKEN": "tool-secret", "SLACK": "xoxb-hub"}
@@ -115,8 +118,19 @@ def test_claude_runtime_passes_the_overrides_to_every_child(tmp_path, monkeypatc
     runtime._otel_endpoint = "http://127.0.0.1:4318"
     turn = runtime._options_for_turn().env
     assert turn["TOOL_TOKEN"] == "" and turn["AWS_ACCESS_KEY_ID"] == ""
-    assert turn["ANTHROPIC_API_KEY"] == "sk-ant-restricted" and turn["SLACK_BOT_TOKEN"] == "xoxb-hub"
+    assert turn["ANTHROPIC_API_KEY"] == "" and turn["SLACK_BOT_TOKEN"] == "xoxb-hub"
     assert turn["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
+
+
+def test_a_key_without_a_token_or_subscription_login_reaches_the_child(tmp_path, monkeypatch):
+    hub = _hub(tmp_path, oauth=False)      # and no `claude` login (tests/conftest.py)
+    install(monkeypatch, {"rsec": {}})
+    from hubzoid.factory_claude import build_claude_runtime
+
+    runtime = build_claude_runtime(hub)
+    assert "ANTHROPIC_API_KEY" not in runtime._options.env
+    runtime._otel_endpoint = "http://127.0.0.1:4318"
+    assert runtime._options_for_turn().env["ANTHROPIC_API_KEY"] == "sk-ant-restricted"
 
 
 def test_claude_complete_passes_the_overrides(monkeypatch):
