@@ -840,3 +840,51 @@ def test_a_connection_the_person_paused_stays_paused_on_reconnect(hub_dir, facto
     assert out.exit_code == 0, out.output
     assert config.export(hub_dir, "github")["status"] == "disabled"
     assert "channels resume" in out.output
+
+
+class _IntakeWeb:
+    def request(self, method, path, **kw):
+        if path == "/user":
+            return _Resp({"login": "dev", "id": 77})
+        return _Resp({"title": "Fix it", "html_url": "https://github.com/acme/api/issues/5"})
+
+
+@pytest.fixture
+def intake(hub_dir, factory_file, fake_pat, monkeypatch):
+    from hubzoid.channels import admission
+
+    setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    conn = config.active(hub_dir, "github")
+    admitted = []
+
+    class _Out:
+        events = [{"id": "delivery-1", "status": "accepted"}]
+
+    monkeypatch.setattr(gh, "for_repo", lambda c, rid: _IntakeWeb())
+    monkeypatch.setattr(admission, "admit", lambda c, v, evs, raw=None: admitted.extend(evs) or _Out)
+    return conn, admitted
+
+
+URL = "https://github.com/acme/api/issues/5"
+
+
+def test_manual_intake_asks_for_a_declared_route(intake):
+    conn, admitted = intake
+    setup.manual_intake(conn, url=URL, task="go", route="triage")
+    assert admitted[0].data["route"] == "triage"
+
+
+def test_manual_intake_refuses_an_undeclared_route_before_admitting(intake):
+    conn, admitted = intake
+    for bad in ("nope", "Bad Name!"):
+        with pytest.raises(ChannelError) as exc:
+            setup.manual_intake(conn, url=URL, task="go", route=bad)
+        assert exc.value.code == "validation_failed" and exc.value.status == 422
+    assert admitted == []
+
+
+def test_manual_intake_route_defaults_to_plan(intake):
+    conn, admitted = intake
+    setup.manual_intake(conn, url=URL, task="go")
+    assert admitted[0].data["route"] == "plan"

@@ -358,9 +358,10 @@ def apply_hub_file(hub_dir, cid: str, *, actor: str) -> bool:
     return True
 
 
-def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
+def manual_intake(conn, *, url: str, task: str, key: str | None = None, route: str = "plan") -> dict:
     """Local token mode: start work from an issue URL, acting as the token's
-    owner. Never accepts a caller-supplied sender."""
+    owner. Never accepts a caller-supplied sender. A route other than the
+    default must be one the connection's workflow declares."""
     import re
 
     from .. import admission
@@ -373,6 +374,17 @@ def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
     if not m:
         raise ChannelError("validation_failed", "Use an issue or pull request URL on github.com.", status=422)
     full, kind, number = m.group(1), m.group(2), int(m.group(3))
+    if route != "plan":
+        from ...work_items import service as wi
+        from ...work_items.errors import WorkItemError
+
+        try:
+            declared = isinstance(route, str) and route in wi._definition(conn.hub_dir, conn.config.workflow)[1]
+        except WorkItemError:
+            declared = False
+        if not declared:
+            raise ChannelError("validation_failed", f"This connection's workflow has no route {route!r}.",
+                               status=422)
     repo = next((r for r in conn.settings.repositories if r.full_name.lower() == full.lower()), None)
     if repo is None:
         raise ChannelError("repository_not_configured", f"{full} is not in this connection's repositories.",
@@ -387,7 +399,7 @@ def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
     event = InboundEvent(semantic_key=f"manual:{did}", kind="manual", origin=origin,
                          actor=ExternalActor(str(me["id"]), me["login"], False, {"source": "token_owner"}),
                          text=task, trigger=True, message_id=did,
-                         data={"route": "plan", "provider_trusted": True, "title": issue.get("title"),
+                         data={"route": route, "provider_trusted": True, "title": issue.get("title"),
                                "is_pull_request": kind == "pull"})
     verified = Verified(delivery_id=did, workspace_id=origin.workspace_id, method="pat-manual",
                         body=json.dumps({"url": url, "task": task}).encode())

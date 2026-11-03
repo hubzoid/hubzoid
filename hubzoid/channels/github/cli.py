@@ -227,13 +227,15 @@ def configure_cmd(hub: Path = HUB, cid: str = ID, expected_revision: int = typer
 
 @github_app.command("intake")
 def intake_cmd(hub: Path = HUB, cid: str = ID, url: str = typer.Option(..., "--url"),
-               task: str = typer.Option(..., "--task"), as_json: bool = JSON_OPT):
+               task: str = typer.Option(..., "--task"),
+               route: str = typer.Option("plan", "--route", help="A route the connection's workflow declares."),
+               as_json: bool = JSON_OPT):
     """Local token mode: start work on an issue, as the token's owner."""
     from ..cli import _run
     from . import setup
 
     hub, conn = _conn(hub, cid, as_json)
-    out = _run(setup.manual_intake, as_json, conn, url=url, task=task)
+    out = _run(setup.manual_intake, as_json, conn, url=url, task=task, route=route)
     _print(out, as_json, f"Accepted as delivery {out['delivery_id'][:8]}. A running hub starts the work.")
 
 
