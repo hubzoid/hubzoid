@@ -108,6 +108,20 @@ def test_a_result_with_a_reply_shows_only_the_reply(chat):
     assert "Plain text." in three
 
 
+def test_a_late_post_reads_answer_and_refused_like_the_quick_path(chat):
+    from hubzoid.workflows import chat_link
+
+    hub, engine, _actor, link = chat
+    env = {"chat": link, "started_at": 1}
+    chat_link.post_result(hub, env, "w", "run-a1", ok=True, result={"answer": "Seven open.", "n": 7})
+    chat_link.post_result(hub, env, "w", "run-a2", ok=True, result={"refused": "Not allowed.", "answer": "x"})
+    chat_link.post_result(hub, env, "w", "run-a3", ok=True, result={"answer": "y" * 9000})
+    one, two, three = _texts(engine, link["conversation_id"])
+    assert "Seven open." in one and "Answer" not in one and "N: 7" not in one
+    assert "Not allowed." in two and "x" not in two.split("finished.")[1]
+    assert "y" * 8000 in three and "y" * 8001 not in three
+
+
 def test_odd_results_never_break_the_run(chat):
     from hubzoid.workflows import chat_link
 

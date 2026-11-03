@@ -544,15 +544,24 @@ def personal_runs(hub_dir, viewer: str, account: str | None, *, run_id: str | No
             for art in artifacts.for_run(hub_dir, hub, w.workflow_id):
                 if art.series_id not in represented and art.owner == viewer and art.owner_account == account:
                     links.append(dict(title=art.title or art.filename, url=artifacts.viewer_url(art.id, hub_dir)))
-            answer = output.get("refused") or output.get("answer")
+            answer = chat_answer(output)
             rows.append(dict(id=w.workflow_id, report=title_for(w.name), status=w.status,
                 started=w.created_at, links=links,
-                answer=answer[:8000] if isinstance(answer, str) else None,
+                answer=answer,
                 recovery="Try again. If it fails again, give this run reference to the builder."
                     if w.status in ("ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED") else None))
         return rows
     finally:
         client.destroy()
+
+
+def chat_answer(output) -> str | None:
+    """The text a work item shows in chat: its `refused`, else its `answer`
+    (capped). One rule for the quick path and the late post."""
+    if not isinstance(output, dict):
+        return None
+    answer = output.get("refused") or output.get("answer")
+    return answer[:8000] if isinstance(answer, str) else None
 
 
 def schedule_runs(hub_dir, schedule_id: str, *, limit: int = 10) -> list[dict]:

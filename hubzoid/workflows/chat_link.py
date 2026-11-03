@@ -96,7 +96,7 @@ def post_request(hub_dir, env: dict, workflow: str, req: dict) -> None:
 
 
 def _readable(result) -> str:
-    """A run's return value for a person: text as is, a mapping's `reply` text, else its lines."""
+    """A run's return value for a person: text as is, a mapping's `reply`, `refused` or `answer` text, else its lines."""
     if result is None:
         return ""
     if isinstance(result, str):
@@ -105,6 +105,11 @@ def _readable(result) -> str:
         reply = result.get("reply")
         if isinstance(reply, str) and reply.strip():
             return reply.strip()  # the run's own words, not its whole record
+        from .observe import chat_answer
+
+        answer = chat_answer(result)
+        if answer and answer.strip():
+            return answer.strip()
         lines = []
         for key, value in result.items():
             key = str(key)

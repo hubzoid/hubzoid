@@ -869,4 +869,4 @@ def test_work_from_a_chat_posts_its_result_or_why_it_stopped_but_never_a_pause(h
 
     assert run(parks) == []
     assert run(stops) == ["Stops stopped: a person denied it."]
-    assert run(finishes) == ["Finishes finished.\n\n- Answer: done"]
+    assert run(finishes) == ["Finishes finished.\n\ndone"]
