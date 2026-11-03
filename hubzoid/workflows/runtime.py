@@ -485,7 +485,7 @@ def workflow(
                 result = {"parked": parked.kind, "operation": parked.operation_id,
                           "message": parked.message}
                 outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
-                                  published=published, tool_wait=chat["tool_wait"])
+                                  published=published, tool_wait=chat["tool_wait"], parked=True)
                 return result
             except (OperationFailed, WorkItemError) as exc:
                 if item_id:

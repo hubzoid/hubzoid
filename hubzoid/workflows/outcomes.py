@@ -47,7 +47,7 @@ def cause_of(error: BaseException | None) -> str:
 
 def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bool,
              error: BaseException | None = None, published: list | None = None,
-             tool_wait: float = 60.0, result=None) -> None:
+             tool_wait: float = 60.0, result=None, parked: bool = False) -> None:
     hub_dir = Path(hub_dir)
     trigger = env.get("trigger")
     try:
@@ -72,7 +72,7 @@ def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bo
                 _ready_email(hub_dir, hub, workflow, run_id, env, list(published or []))
     except Exception:  # noqa: BLE001
         log.exception("workflows: could not finish bookkeeping for run %s", run_id)
-    if env.get("chat"):  # started from a chat: the outcome goes back there
+    if env.get("chat") and not parked:  # started from a chat: the outcome goes back there (a pause is not one)
         try:
             from .chat_link import post_result
 

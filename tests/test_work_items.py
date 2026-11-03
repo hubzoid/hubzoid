@@ -830,3 +830,15 @@ def test_a_named_chat_is_dropped_and_work_outside_chat_has_none(hub_dir, fake_en
     with _request_ctx.native_session_scope(slot):   # a session wins over a forged name
         env = _started_envelope(hub_dir, fake_engine, key="k3", origin=forged)
     assert env["chat"] == CHAT
+
+
+def test_a_paused_work_item_posts_no_result_into_its_chat(hub_dir, monkeypatch):
+    from hubzoid.workflows import chat_link, outcomes
+
+    posted = []
+    monkeypatch.setattr(chat_link, "post_result", lambda *a, **kw: posted.append(a))
+    env = {"trigger": "work_item", "scope": "team", "chat": dict(CHAT)}
+    outcomes.finished(hub_dir, "desk", "desk", "run-1", env, ok=True, parked=True)
+    assert posted == []
+    outcomes.finished(hub_dir, "desk", "desk", "run-1", env, ok=True)
+    assert len(posted) == 1
