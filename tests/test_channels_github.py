@@ -756,13 +756,47 @@ def test_reconnecting_a_token_keeps_short_secret_refs_in_the_file(hub_dir, facto
     assert stored["webhook_secret_ref"] == "secret:channel/factory/github/webhook-secret"
 
 
-def test_a_file_that_cannot_be_read_is_not_replaced(hub_dir, fake_pat):
-    (hub_dir / "channels").mkdir()
-    (hub_dir / "channels" / "github.yaml").write_text("workflow: [unclosed\n")
-    with pytest.raises(ChannelError):
-        setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
-                          expected_revision=None)
-    assert "unclosed" in (hub_dir / "channels/github.yaml").read_text()
+def test_a_file_that_cannot_be_read_is_not_replaced(hub_dir, factory_file, fake_pat):
+    path = hub_dir / "channels/github.yaml"
+    for connected in (False, True):           # a new connection, then an applied one
+        if connected:
+            factory_file()
+            setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                              expected_revision=None)
+        path.write_text("workflow: [unclosed\n")
+        with pytest.raises(ChannelError) as exc:
+            setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                              expected_revision=None)
+        assert "channels/github.yaml" in exc.value.message and "unclosed" in path.read_text()
+
+
+def test_reconnecting_keeps_an_edit_made_after_the_last_sync(hub_dir, factory_file, fake_pat):
+    setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    path = hub_dir / "channels/github.yaml"
+    path.write_text(path.read_text().replace("label: answer", "label: triage"))
+    setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    assert "label: triage" in path.read_text()
+    assert config.export(hub_dir, "github")["config"]["provider_config"]["rules"]["routes"]["label"] == "triage"
+
+
+def test_refs_hubzoid_writes_never_name_the_agents_folder(hub_dir, api, fake_pat):
+    path = hub_dir / "channels/github.yaml"
+    conn = pending_conn(hub_dir)
+    out = setup.start(conn, owner="example-co", owner_type="organization", name="A", actor="admin")
+    state = re.search(r"state=([^&]+)$", out["registration_url"]).group(1)
+    setup.callback(config.active(hub_dir, "github"), "c", state)
+    setup.installed(config.active(hub_dir, "github"), 7001, state)
+    assert "private_key_ref: secret:channel/github/private-key" in path.read_text()
+    assert "secret:channel/factory/" not in path.read_text()
+    conn = config.active(hub_dir, "github")
+    setup.configure(conn, expected_revision=conn.revision, actor="admin", sets={"provider_config.bot_name": "bot"})
+    assert "bot_name: bot" in path.read_text() and "secret:channel/factory/" not in path.read_text()
+    setup.connect_pat(hub_dir, "github-local", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    text = (hub_dir / "channels/github-local.yaml").read_text()
+    assert "token_ref: secret:channel/github-local/token" in text and "secret:channel/factory/" not in text
 
 
 def test_connect_with_yes_turns_it_on(hub_dir, factory_file, fake_pat):

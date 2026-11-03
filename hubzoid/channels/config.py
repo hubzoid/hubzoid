@@ -192,6 +192,18 @@ def _expanded(hub_dir: Path, data: dict) -> dict:
     in full for this hub; a copy, never the caller's mapping."""
     from ..secretstore.refs import expand
 
+    return _refs_rewritten(hub_dir, data, expand)
+
+
+def _shortened(hub_dir: Path, data: dict) -> dict:
+    """``data`` with this connection's own full references in the short form a
+    channel file uses, so a file Hubzoid writes never names the agent's folder."""
+    from ..secretstore.refs import shorten
+
+    return _refs_rewritten(hub_dir, data, shorten)
+
+
+def _refs_rewritten(hub_dir: Path, data: dict, rewrite) -> dict:
     cid, pc = data.get("id"), data.get("provider_config")
     if not isinstance(cid, str) or not isinstance(pc, dict):
         return data
@@ -199,7 +211,7 @@ def _expanded(hub_dir: Path, data: dict) -> dict:
 
     def walk(value):
         if isinstance(value, dict):
-            return {k: (expand(v, hub=hub, channel=cid) if isinstance(k, str) and _REF_KEY.match(k)
+            return {k: (rewrite(v, hub=hub, channel=cid) if isinstance(k, str) and _REF_KEY.match(k)
                         and isinstance(v, str) else walk(v)) for k, v in value.items()}
         if isinstance(value, list):
             return [walk(v) for v in value]
@@ -576,25 +588,51 @@ def export(hub_dir, cid: str) -> dict:
             "applied_by": row["applied_by"], "updated": row["updated"]}
 
 
+def _shown(hub_dir: Path, path: Path) -> str:
+    return str(path.relative_to(hub_dir)) if path.is_relative_to(hub_dir) else str(path)
+
+
+def _stored(hub_dir: Path, cid: str) -> dict:
+    """The stored configuration, with its own references in the file's short form."""
+    return _shortened(hub_dir, json.loads(json.dumps(export(hub_dir, cid)["config"])))
+
+
 def applied_base(hub_dir, cid: str) -> dict:
-    """The configuration to change one field of. The file as the person wrote
-    it (short secret references kept) when it equals what is applied; otherwise
-    the applied configuration, so pending edits in the file are never applied
-    by an unrelated change."""
-    current = export(hub_dir, cid)
-    if current["file_matches"] is True:
-        written = file_config(hub_dir, cid)
-        if written is not None:
-            return written
-    return current["config"]
+    """The configuration a change starts from. The file is the configuration, so
+    it is the file as written (short secret references, edits made since the
+    last sync) whenever it exists and is valid; the stored configuration only
+    when there is no file. A file that is there but not valid is refused,
+    naming it: nothing replaces a file the person has to fix."""
+    hub_dir = Path(hub_dir)
+    path = file_for(hub_dir, cid)
+    if not path.is_file():
+        return _stored(hub_dir, cid)
+    v = load_file(hub_dir, path, expected_id=cid)
+    if not v.valid or not isinstance(v.data, dict):
+        raise ChannelError("validation_failed", f"{_shown(hub_dir, path)} is not valid. Fix it, then try again.",
+                           status=422, fields=v.errors)
+    return json.loads(json.dumps(v.data))
 
 
 def set_enabled(hub_dir, cid: str, enabled: bool, *, expected_revision: int, actor: str) -> dict:
     """Pause or resume: rewrite `enabled` in the file and apply it. The one
-    disable rule for every adapter."""
-    data = json.loads(json.dumps(applied_base(hub_dir, cid)))
+    disable rule for every adapter. A file that is not valid stops a resume.
+    A pause replaces it with the stored configuration instead, because
+    stopping intake must always work; the result's message says so."""
+    hub_dir = Path(hub_dir)
+    replaced = False
+    try:
+        data = applied_base(hub_dir, cid)
+    except ChannelError as exc:
+        if enabled or exc.code != "validation_failed":
+            raise
+        data, replaced = _stored(hub_dir, cid), True
     data["enabled"] = bool(enabled)
-    return apply(hub_dir, data, expected_revision=expected_revision, actor=actor, expected_id=cid)
+    out = apply(hub_dir, data, expected_revision=expected_revision, actor=actor, expected_id=cid)
+    if replaced:
+        out["message"] = (f"{_shown(hub_dir, file_for(hub_dir, cid))} could not be read, so it was replaced "
+                          "with the last applied configuration to pause intake.")
+    return out
 
 
 def audit(hub_dir, actor: str, action: str, subject: str, *, request_id: str | None = None) -> None:

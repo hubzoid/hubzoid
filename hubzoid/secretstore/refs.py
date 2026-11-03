@@ -108,6 +108,16 @@ def expand(value: str, *, hub: str, channel: str) -> str:
     return value
 
 
+def shorten(value: str, *, hub: str, channel: str) -> str:
+    """The reverse of ``expand``: this hub's full reference to this channel's
+    secret, in the short form a channel file uses. Anything else unchanged."""
+    if isinstance(value, str):
+        parts = value.strip().split("/")
+        if len(parts) == 4 and parts[0] == "secret:channel" and parts[1] == hub and parts[2] == channel:
+            return f"secret:channel/{channel}/{parts[3]}"
+    return value
+
+
 def from_object(value: dict) -> Ref:
     """The object form ``{provider, name}``: ``{"provider": "env", "name": "X"}``
     or ``{"provider": "secret", "name": "hub/<hub>/<name>"}``."""

@@ -211,16 +211,16 @@ def installed(conn, installation_id: int, state: str | None, *, actor: str | Non
     if str(account.get("id")) != str(setup.get("owner_id")) or int(inst.get("app_id") or 0) != int(setup["app_id"]):
         raise ChannelError("installation_mismatch", "That installation belongs to another account or App.",
                            status=409)
-    data = config_lib.export(conn.hub_dir, conn.id)
-    cfg = json.loads(json.dumps(data["config"]))
-    pc = cfg["provider_config"]
+    revision = config_lib.export(conn.hub_dir, conn.id)["revision"]
+    cfg = config_lib.applied_base(conn.hub_dir, conn.id)
+    pc = cfg.setdefault("provider_config", {})
     pc.update({"mode": "app", "app_id": int(setup["app_id"]), "installation_id": int(installation_id),
                "owner": {"type": setup["owner_type"], "login": account.get("login") or setup["owner"],
                          "id": account.get("id")},
-               "private_key_ref": f"secret:channel/{conn.hub}/{conn.id}/private-key",
-               "webhook_secret_ref": f"secret:channel/{conn.hub}/{conn.id}/webhook-secret",
+               "private_key_ref": f"secret:channel/{conn.id}/private-key",
+               "webhook_secret_ref": f"secret:channel/{conn.id}/webhook-secret",
                "token_ref": None})
-    out = config_lib.apply(conn.hub_dir, cfg, expected_revision=data["revision"],
+    out = config_lib.apply(conn.hub_dir, cfg, expected_revision=revision,
                            actor=actor or setup.get("actor") or "github-setup", expected_id=conn.id)
     store.set_connection_state(conn.hub_dir, conn.hub, conn.id,
                                github_setup={**setup, "status": "ready", "installation_id": int(installation_id)},
@@ -284,7 +284,7 @@ def resolve_names(conn, names: list[str]) -> list[dict]:
 
 def configure(conn, *, expected_revision: int, actor: str, repositories_: list[str] | None = None,
               sets: dict | None = None, any_secret: bool = True) -> dict:
-    data = json.loads(json.dumps(config_lib.export(conn.hub_dir, conn.id)["config"]))
+    data = config_lib.applied_base(conn.hub_dir, conn.id)
     if repositories_:
         data["provider_config"]["repositories"] = resolve_names(conn, repositories_)
     for key, value in (sets or {}).items():
@@ -333,7 +333,7 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
     data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
                                   if k not in ("app_id", "installation_id", "private_key_ref")},
                                "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
-                               "repositories": repos, "token_ref": f"secret:channel/{hub}/{cid}/token"}
+                               "repositories": repos, "token_ref": f"secret:channel/{cid}/token"}
     return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
                             actor=actor, expected_id=cid)
 
