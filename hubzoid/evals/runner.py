@@ -213,7 +213,27 @@ def _resolve_identity(hub_dir: Path, email: str, case: EvalCase):
     managed hub). Raises IdentityError naming the fix. Grants nothing."""
     from ..workflows import identity as idlib
 
+    _provision_local_owner(Path(hub_dir), email)
     return idlib.resolve(Path(hub_dir), run_as=email, what=_what(case))
+
+
+def _provision_local_owner(hub_dir: Path, email: str) -> None:
+    """With sign-in off, the local owner owns the agent from its first start.
+    A clone that was never started has not had that yet, so a case running as
+    the owner gets it as the server's start does (the same call, best effort).
+    With sign-in on, nothing is granted: an account without access is refused."""
+    from .. import appmode
+    from ..access import normalize
+    from ..access.session import LOCAL_OWNER
+
+    if normalize(email) != LOCAL_OWNER or appmode.auth_enabled(hub_dir):
+        return
+    from ..auth.users import provision_owner
+
+    try:
+        provision_owner(hub_dir, LOCAL_OWNER)
+    except Exception:  # noqa: BLE001 — access checks still fail closed
+        log.warning("evals: the local owner could not be provisioned yet", exc_info=True)
 
 
 def _recheck_identity(hub_dir: Path, ident, case: EvalCase) -> None:

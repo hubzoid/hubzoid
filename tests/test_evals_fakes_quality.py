@@ -604,3 +604,35 @@ def test_a_station_gets_exactly_the_tools_it_lists_in_a_faked_case(tmp_path):
     with tool_fakes.scope(session):
         assert list(station_tools.for_station(hub, ["save_handoff"])) == ["save_handoff"]
         assert "github__getRepository" not in hub_tool_registry(hub)
+
+
+# ---------------------------------------------------------------------------
+# A fresh clone runs as the agent's owner (sign-in off)
+# ---------------------------------------------------------------------------
+def _run_as_owner(tmp_path, monkeypatch, *, auth: bool):
+    from hubzoid.access import store_for
+    from hubzoid.access.session import LOCAL_OWNER
+    from hubzoid.access.store import USE_HUB
+
+    monkeypatch.setenv("HUBZOID_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HUBZOID_AUTH", "true" if auth else "false")
+    hub = make_hub(tmp_path, {"c.md": "---\nrun_as: admin@localhost\n---\nRead it"})
+    assert not store_for(hub).can(LOCAL_OWNER, hub.name, USE_HUB)    # a fresh clone: no grants
+    real: list = []
+    from hubzoid.access.guard import run_checked
+
+    # As a hub's own tools are wrapped: it checks the run's account holds use_hub.
+    rt = ToolRuntime({"read_knowledge": run_checked(tool("read_knowledge", real), hub)},
+                     {"Read it": [("read_knowledge", {})]})
+    return run(hub, rt, monkeypatch).cases[0], real
+
+
+def test_a_fresh_clone_with_sign_in_off_runs_the_case_as_the_local_owner(tmp_path, monkeypatch):
+    case, real = _run_as_owner(tmp_path, monkeypatch, auth=False)
+    assert case.error is None and case.run_as == "admin@localhost"
+    assert real == [("read_knowledge", "{}")]
+
+
+def test_with_sign_in_on_an_owner_without_access_is_still_refused(tmp_path, monkeypatch):
+    case, real = _run_as_owner(tmp_path, monkeypatch, auth=True)
+    assert case.error and real == []
