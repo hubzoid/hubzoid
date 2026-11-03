@@ -74,6 +74,10 @@ def parse(text: str) -> Ref:
     expected = {"deployment": 2, "hub": 3, "channel": 4}.get(scope)
     if expected is None:
         raise RefError("The scope after secret: is deployment, hub or channel.")
+    if scope == "channel" and len(parts) == 3:
+        raise RefError("secret:channel/<channel_id>/<name> is written in a channel file, where it means "
+                       "this agent's slot for that channel. Anywhere else write "
+                       "secret:channel/<hub_id>/<channel_id>/<name>.")
     if len(parts) != expected:
         shape = {"deployment": "secret:deployment/<name>", "hub": "secret:hub/<hub_id>/<name>",
                  "channel": "secret:channel/<hub_id>/<channel_id>/<name>"}[scope]
@@ -90,6 +94,18 @@ def parse(text: str) -> Ref:
     if scope == "hub":
         return Ref("secret", name, "hub", hub=parts[1])
     return Ref("secret", name, "channel", hub=parts[1], channel=parts[2])
+
+
+def expand(value: str, *, hub: str, channel: str) -> str:
+    """A channel file's short reference ``secret:channel/<channel>/<name>`` (this
+    hub's slot for this channel) as the full ``secret:channel/<hub>/<channel>/<name>``.
+    Anything else, including a short reference naming another channel, is
+    returned unchanged for ``parse`` to judge."""
+    if isinstance(value, str):
+        parts = value.strip().split("/")
+        if len(parts) == 3 and parts[0] == "secret:channel" and parts[1] == channel:
+            return f"secret:channel/{hub}/{channel}/{parts[2]}"
+    return value
 
 
 def from_object(value: dict) -> Ref:

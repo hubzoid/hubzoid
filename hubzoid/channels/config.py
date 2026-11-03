@@ -124,7 +124,9 @@ def validate(hub_dir, data: dict, *, lines: dict | None = None, path: str | None
     if not isinstance(data, dict):
         return Validation(False, [_err("invalid_config", "/", "The file must be a mapping.")])
     try:
-        cfg = ChannelConfig.model_validate(data)
+        # Everything after this sees full references; `data`, the file's own
+        # content, keeps the short form the person wrote.
+        cfg = ChannelConfig.model_validate(_expanded(hub_dir, data))
     except ValidationError as exc:
         for e in exc.errors():
             loc = [p for p in e.get("loc", ()) if p != "__root__"]
@@ -183,6 +185,27 @@ def _walk_refs(value, path: str):
     elif isinstance(value, list):
         for i, v in enumerate(value):
             yield from _walk_refs(v, f"{path}/{i}")
+
+
+def _expanded(hub_dir: Path, data: dict) -> dict:
+    """``data`` with each short ``secret:channel/<id>/<name>`` reference written
+    in full for this hub; a copy, never the caller's mapping."""
+    from ..secretstore.refs import expand
+
+    cid, pc = data.get("id"), data.get("provider_config")
+    if not isinstance(cid, str) or not isinstance(pc, dict):
+        return data
+    hub = hub_of(hub_dir)
+
+    def walk(value):
+        if isinstance(value, dict):
+            return {k: (expand(v, hub=hub, channel=cid) if isinstance(k, str) and _REF_KEY.match(k)
+                        and isinstance(v, str) else walk(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        return value
+
+    return {**data, "provider_config": walk(pc)}
 
 
 def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:

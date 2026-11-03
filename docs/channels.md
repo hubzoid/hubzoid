@@ -74,6 +74,12 @@ Credentials are references, never values: `secret:channel/<hub>/<id>/<name>`
 (set with `hubzoid secrets set <hub> --ref <reference> --stdin --apply`) or
 `env:NAME`. Validation refuses a value pasted into the file.
 
+In a channel file you can leave the agent's folder name out:
+`secret:channel/<id>/<name>` means this agent's secret for the channel with that
+`id` (in `channels/github.yaml`, `secret:channel/github/private-key`). The file
+keeps what you wrote, so it works in a clone under any folder name. Everywhere
+else, such as `hubzoid secrets set --ref`, write the full form.
+
 ## Setting it up
 
 These commands work the same from a terminal or from Claude Code or Codex:

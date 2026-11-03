@@ -97,6 +97,32 @@ def test_secret_ref_grammar(hub_dir):
     assert not other_hub.valid and not other_channel.valid and not garbage.valid
 
 
+def test_a_short_secret_ref_means_this_hubs_slot_for_this_channel(hub_dir):
+    short = "secret:channel/fake-main/sig"
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": short}))
+    assert v.valid, v.errors
+    assert v.settings.secret_ref == "secret:channel/desk/fake-main/sig"
+    out = config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    # the file keeps what the person wrote; the stored form and resolution see the full ref
+    assert short in config.file_for(hub_dir, "fake-main").read_text()
+    exported = config.export(hub_dir, "fake-main")
+    assert exported["config"]["provider_config"]["secret_ref"] == "secret:channel/desk/fake-main/sig"
+    assert exported["file_matches"] is True and exported["digest"] == out["digest"]
+    assert config.active(hub_dir, "fake-main").settings.secret_ref == "secret:channel/desk/fake-main/sig"
+    # it is the same connection as one written with the full ref
+    full = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/desk/fake-main/sig"}))
+    assert config.canonical.digest(config.normalized(full.config, full.settings)) == out["digest"]
+    # a hub admin may use it: it is the connection's own secret
+    config.apply(hub_dir, v.data, expected_revision=1, actor="hub-admin", any_secret=False)
+    # another hub's full ref and another channel's short ref are still refused
+    for bad in ("secret:channel/other/fake-main/sig", "secret:channel/slack/sig"):
+        assert not config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": bad})).valid
+    # parse alone still refuses the short form, and says what it means
+    from hubzoid.secretstore import RefError, parse
+    with pytest.raises(RefError, match="this agent's slot"):
+        parse(short)
+
+
 def test_a_hub_admin_names_only_the_connections_own_secrets(hub_dir):
     # A reference decides which value the connection sends to its host: a hub
     # administrator can't point it at the deployment's environment or secrets.
