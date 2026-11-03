@@ -326,17 +326,33 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
                            status=422)
     from ...secretstore import store as secret_store
 
-    # only now: a refused connect leaves no new token behind
-    secret_store.put(Path(hub_dir), scope="channel", target=f"{hub}/{cid}", name="token", value=token, actor=actor)
-    data = json.loads(json.dumps(base)) if base else {
-        "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
-        "provider_config": {}}
-    data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
-                                  if k not in ("app_id", "installation_id", "private_key_ref")},
-                               "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
-                               "repositories": repos, "token_ref": f"secret:channel/{cid}/token"}
-    return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
-                            actor=actor, expected_id=cid)
+    # A refused connect leaves the slot as it was: the old token, or none.
+    slot = {"scope": "channel", "target": f"{hub}/{cid}", "name": "token"}
+    try:
+        old = secret_store.value(Path(hub_dir), **slot)
+    except secret_store.SecretError:
+        old = None  # the deployment key cannot read it: nothing usable to put back
+    secret_store.put(Path(hub_dir), **slot, value=token, actor=actor)
+    try:
+        data = json.loads(json.dumps(base)) if base else {
+            "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
+            "provider_config": {}}
+        data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
+                                      if k not in ("app_id", "installation_id", "private_key_ref")},
+                                   "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
+                                   "repositories": repos, "token_ref": f"secret:channel/{cid}/token"}
+        return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
+                                actor=actor, expected_id=cid)
+    except BaseException:
+        try:
+            if old is None:
+                secret_store.delete(Path(hub_dir), **slot, actor=actor)
+            else:
+                secret_store.put(Path(hub_dir), **slot, value=old, actor=actor)
+        except Exception as exc:  # noqa: BLE001 - the refusal is what the person needs to see
+            log.warning("github: could not restore the token of %s after a refused connect (%s)", cid,
+                        type(exc).__name__)
+        raise
 
 
 def apply_hub_file(hub_dir, cid: str, *, actor: str) -> bool:

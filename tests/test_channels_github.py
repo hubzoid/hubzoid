@@ -756,6 +756,36 @@ def test_a_refused_connect_stores_no_token(hub_dir, factory_file, fake_pat, monk
     assert puts == []
 
 
+def test_a_connect_refused_after_the_token_is_stored_leaves_the_slot_as_it_was(hub_dir, factory_file, fake_pat,
+                                                                               monkeypatch):
+    from hubzoid import datadir
+    from hubzoid.secretstore import store as secret_store
+
+    def token():
+        return secret_store.value(hub_dir, scope="channel", target=f"{config.hub_of(hub_dir)}/github", name="token")
+
+    def connect(value):
+        setup.connect_pat(hub_dir, "github", token=value, repositories_=["acme/api"], actor="owner",
+                          expected_revision=None)
+
+    path = hub_dir / "channels/github.yaml"
+    path.write_text(path.read_text().replace("allowed_groups: []", "allowed_groups: not-a-list"))
+    with pytest.raises(ChannelError):                       # a new connection: no token is left
+        connect("fake-new")
+    assert token() is None
+    factory_file()
+    connect("fake-old")
+    path.write_text(path.read_text().replace("allowed_groups: []", "allowed_groups: not-a-list"))
+    with pytest.raises(ChannelError):                       # a reconnect: the old token stays
+        connect("fake-new")
+    assert token() == "fake-old"
+    factory_file()
+    monkeypatch.setattr(datadir, "hub_read_only", lambda hub: True)   # apply refuses after the store
+    with pytest.raises(ChannelError):
+        connect("fake-new")
+    assert token() == "fake-old"
+
+
 def test_reconnecting_a_token_keeps_short_secret_refs_in_the_file(hub_dir, factory_file, fake_pat):
     path = hub_dir / "channels/github.yaml"
     path.write_text(path.read_text().replace("secret:channel/factory/github/", "secret:channel/github/"))
