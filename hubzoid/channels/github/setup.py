@@ -321,7 +321,11 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
         existing = config_lib.export(hub_dir, cid)
     except ChannelError:
         pass
-    data = json.loads(json.dumps(existing["config"])) if existing else {
+    base = existing["config"] if existing else config_lib.file_config(hub_dir, cid)
+    if base is None and config_lib.file_for(hub_dir, cid).is_file():
+        raise ChannelError("validation_failed", f"channels/{cid}.yaml cannot be read. Fix it, then connect again.",
+                           status=422)
+    data = json.loads(json.dumps(base)) if base else {
         "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
         "provider_config": {}}
     data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
@@ -330,6 +334,26 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
                                "repositories": repos, "token_ref": f"secret:channel/{hub}/{cid}/token"}
     return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
                             actor=actor, expected_id=cid)
+
+
+def apply_hub_file(hub_dir, cid: str, *, actor: str) -> bool:
+    """Apply the hub's own channel file, paused, when it is not applied yet.
+    True if it did. A file that already loads is left alone."""
+    try:
+        config_lib.active(hub_dir, cid)
+        return False
+    except ChannelError:
+        pass
+    data = config_lib.file_config(hub_dir, cid)
+    if data is None:
+        return False
+    data["enabled"] = False
+    try:
+        revision = config_lib.export(hub_dir, cid)["revision"]
+    except ChannelError:
+        revision = "absent"
+    config_lib.apply(hub_dir, data, expected_revision=revision, actor=actor, expected_id=cid)
+    return True
 
 
 def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:

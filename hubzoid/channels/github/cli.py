@@ -1,7 +1,7 @@
 """``hubzoid channels github``: set up and use a GitHub connection.
 
     hubzoid channels github connect      [HUB] ID --owner LOGIN --owner-type organization|user --name NAME [--open]
-    hubzoid channels github connect      [HUB] ID --mode pat --repository OWNER/NAME [--token-stdin]
+    hubzoid channels github connect      [HUB] ID --mode pat --repository OWNER/NAME [--token-stdin] [--yes]
     hubzoid channels github setup status [HUB] ID
     hubzoid channels github setup verify [HUB] ID --installation-id N
     hubzoid channels github setup cancel [HUB] ID
@@ -54,6 +54,46 @@ def _print(data, as_json, line=None):
         console.print(line)
 
 
+def _interactive() -> bool:
+    """A person at a terminal can answer a question."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _plan(conn) -> dict:
+    rules = conn.settings.rules
+    return {"repositories": [r.full_name for r in conn.settings.repositories], "mode": conn.settings.mode,
+            "workflow": conn.config.workflow, "label": rules.label, "mentions": rules.mentions,
+            "routes": {t: rules.route(t) for t in ("mention", "label", "pull_request", "ci_failure")}}
+
+
+def _print_connected(hub, cid, out, as_json, *, yes: bool, ask: bool) -> None:
+    """Say what will run, then turn intake on only with the person's yes."""
+    from .. import config
+    from ..cli import _actor, _run
+
+    conn = config.active(hub, cid)
+    plan = _plan(conn)
+    on = conn.config.enabled
+    if not on and (yes or (ask and typer.confirm("Turn it on now?", default=False))):
+        out = _run(config.set_enabled, as_json, hub, cid, True, expected_revision=out["revision"], actor=_actor())
+        on = True
+    result = {**out, "enabled": on, "plan": plan}
+    if not on:
+        result["resume_command"] = (f"hubzoid channels resume {hub} {cid} --expected-revision {out['revision']}")
+    if as_json:
+        print(json.dumps(result, default=str))
+        return
+    runs = ", ".join(f"{t} -> {r}" for t, r in plan["routes"].items())
+    console.print(f"[green]{escape(cid)} uses your token.[/green] Replies use your GitHub account.")
+    console.print(f"Repositories: {escape(', '.join(plan['repositories']))}. Workflow: {escape(str(plan['workflow']))}. "
+                  f"Label: {escape(str(plan['label']))}. Mentions: {'on' if plan['mentions'] else 'off'}.")
+    console.print(f"Routes: {escape(runs)}.")
+    if on:
+        console.print("[green]Intake is on.[/green]")
+    else:
+        console.print(f"Intake is paused. Turn it on with:\n  {escape(result['resume_command'])}")
+
+
 @github_app.command("connect")
 def connect_cmd(hub: Path = HUB, cid: str = ID,
                 owner: str = typer.Option(None, "--owner", help="The GitHub account or organization that owns the App."),
@@ -63,6 +103,7 @@ def connect_cmd(hub: Path = HUB, cid: str = ID,
                 repository: list[str] = typer.Option([], "--repository", help="OWNER/NAME, for --mode pat"),
                 token_stdin: bool = typer.Option(False, "--token-stdin", help="Read the token from standard input."),
                 open_: bool = typer.Option(False, "--open", help="Open the registration page in a browser."),
+                yes: bool = typer.Option(False, "--yes", help="Turn intake on without asking (token mode)."),
                 as_json: bool = JSON_OPT):
     """Start the App setup (prints the page that creates the App on GitHub), or connect a local token."""
     from ..cli import _actor, _fail, _hub, _run
@@ -83,11 +124,12 @@ def connect_cmd(hub: Path = HUB, cid: str = ID,
             current = "absent"
         out = _run(setup.connect_pat, as_json, hub, cid, token=token, repositories_=repository, actor=_actor(),
                    expected_revision=current)
-        _print(out, as_json, f"[green]{cid} uses your token (revision {out['revision']}).[/green] Replies use your "
-                             "GitHub account. Run doctor, then start work with hubzoid channels github intake.")
+        _print_connected(hub, cid, out, as_json, yes=yes, ask=not token_stdin and not as_json and _interactive())
         return
     if not owner:
         _fail("validation_failed", "Name the App's owner with --owner.", 422, as_json)
+    hub = _hub(hub, as_json)
+    _run(setup.apply_hub_file, as_json, hub, cid, actor=_actor())
     hub, conn = _conn(hub, cid, as_json)
     out = _run(setup.start, as_json, conn, owner=owner, owner_type=owner_type, name=name or cid, actor=_actor())
     if open_:

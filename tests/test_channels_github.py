@@ -671,3 +671,141 @@ def test_after_github_setup_the_browser_lands_on_settings():
     page = gh_setup.page("Create your GitHub App", "<p>x</p>")
     assert "/</span>hubzoid" in page and "Create your GitHub App · Hubzoid" in page
     assert gh_setup.SETUP_SECONDS == 3600
+
+
+# -- connecting builds on the hub's own channel file ---------------------------------------
+
+FACTORY_FILE = textwrap.dedent('''
+    version: 1
+    id: github
+    provider: github
+    enabled: {enabled}
+    workflow: factory
+    run_as: workflow
+    allowed_groups: []
+    provider_config:
+      mode: app
+      owner: {{type: organization, login: example-co}}
+      private_key_ref: secret:channel/factory/github/private-key
+      webhook_secret_ref: secret:channel/factory/github/webhook-secret
+      rules:
+        label: ship
+        routes: {{label: answer}}
+''')
+
+
+@pytest.fixture
+def factory_file(hub_dir):
+    def write(enabled="false"):
+        (hub_dir / "channels").mkdir(exist_ok=True)
+        (hub_dir / "channels" / "github.yaml").write_text(FACTORY_FILE.format(enabled=enabled))
+    write()
+    return write
+
+
+class _Resp:
+    def __init__(self, data):
+        self._data = data
+
+    def json(self):
+        return self._data
+
+
+class _FakePat:
+    def request(self, method, path, **kw):
+        if path == "/user":
+            return _Resp({"login": "dev", "id": 77})
+        return _Resp({"id": 2001, "full_name": "acme/api"})
+
+
+@pytest.fixture
+def fake_pat(monkeypatch):
+    monkeypatch.setattr(gh, "pat_client_raw", lambda token: _FakePat())
+
+
+def _connect_cli(hub_dir, *extra, input_=None):
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    return CliRunner().invoke(app, ["channels", "github", "connect", str(hub_dir), "github", "--mode", "pat",
+                                    "--repository", "acme/api", "--token-stdin", *extra], input=input_ or "tok\n")
+
+
+def test_connecting_a_token_keeps_the_hubs_channel_file(hub_dir, factory_file, fake_pat):
+    setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    cfg = config.export(hub_dir, "github")["config"]
+    assert cfg["workflow"] == "factory" and cfg["run_as"] == "workflow"
+    assert cfg["provider_config"]["rules"]["label"] == "ship"
+    assert cfg["provider_config"]["rules"]["routes"]["label"] == "answer"
+    assert cfg["provider_config"]["mode"] == "pat" and cfg["provider_config"].get("private_key_ref") is None
+    assert cfg["enabled"] is False
+    assert "workflow: factory" in (hub_dir / "channels/github.yaml").read_text()
+
+
+def test_a_file_that_cannot_be_read_is_not_replaced(hub_dir, fake_pat):
+    (hub_dir / "channels").mkdir()
+    (hub_dir / "channels" / "github.yaml").write_text("workflow: [unclosed\n")
+    with pytest.raises(ChannelError):
+        setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                          expected_revision=None)
+    assert "unclosed" in (hub_dir / "channels/github.yaml").read_text()
+
+
+def test_connect_with_yes_turns_it_on(hub_dir, factory_file, fake_pat):
+    out = _connect_cli(hub_dir, "--yes")
+    assert out.exit_code == 0, out.output
+    assert config.export(hub_dir, "github")["status"] == "enabled"
+    assert "factory" in out.output and "ship" in out.output
+
+
+def test_connect_without_a_terminal_stays_paused_and_says_how(hub_dir, factory_file, fake_pat):
+    out = _connect_cli(hub_dir)
+    assert out.exit_code == 0, out.output
+    exp = config.export(hub_dir, "github")
+    assert exp["status"] == "disabled"
+    assert "channels resume" in out.output and f"--expected-revision {exp['revision']}" in out.output
+
+
+def test_json_output_names_the_resume_command_and_never_asks(hub_dir, factory_file, fake_pat):
+    out = _connect_cli(hub_dir, "--json")
+    data = json.loads(out.output.strip().splitlines()[-1])
+    exp = config.export(hub_dir, "github")
+    assert exp["status"] == "disabled" and data["enabled"] is False
+    assert f"--expected-revision {exp['revision']}" in data["resume_command"]
+
+
+def test_connect_asks_once_at_a_terminal(hub_dir, factory_file, fake_pat, monkeypatch):
+    import getpass
+
+    from hubzoid.channels.github import cli as ghcli
+
+    monkeypatch.setattr(ghcli, "_interactive", lambda: True)
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "tok")
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    args = ["channels", "github", "connect", str(hub_dir), "github", "--mode", "pat", "--repository", "acme/api"]
+    out = CliRunner().invoke(app, args, input="n\n")
+    assert "Turn it on now?" in out.output and config.export(hub_dir, "github")["status"] == "disabled"
+    out = CliRunner().invoke(app, args, input="y\n")
+    assert config.export(hub_dir, "github")["status"] == "enabled"
+
+
+def test_app_setup_applies_the_hubs_file_first(hub_dir, factory_file, api):
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    factory_file(enabled="true")   # invalid until the App is installed: not loadable as is
+    with pytest.raises(ChannelError):
+        config.active(hub_dir, "github")
+    out = CliRunner().invoke(app, ["channels", "github", "connect", str(hub_dir), "github", "--owner", "example-co",
+                                   "--json"])
+    assert out.exit_code == 0, out.output
+    assert "registration_url" in out.output
+    cfg = config.export(hub_dir, "github")["config"]
+    assert cfg["workflow"] == "factory" and cfg["enabled"] is False
+    assert cfg["provider_config"]["rules"]["label"] == "ship"

@@ -275,6 +275,20 @@ def load_file(hub_dir, path: Path, *, expected_id: str | None = None) -> Validat
     return load_text(hub_dir, text, path=str(path), expected_id=expected_id)
 
 
+def file_config(hub_dir, cid: str) -> dict | None:
+    """The hub's own ``channels/<cid>.yaml`` as written, applied or not. None
+    when there is no file or it cannot be read as a mapping. A file that reads
+    but does not validate yet (for example it is enabled before its App is
+    installed) is still returned: the caller changes what it must and ``apply``
+    validates the result, so the file's workflow, rules and routes are never
+    dropped for a bare default."""
+    path = file_for(hub_dir, cid)
+    if not path.is_file():
+        return None
+    data = load_file(hub_dir, path, expected_id=cid).data
+    return json.loads(json.dumps(data)) if isinstance(data, dict) else None
+
+
 def render(data: dict) -> str:
     """The canonical YAML for a configuration, version first."""
     order = ["version", "id", "provider", "enabled", "agent", "workflow", "run_as", "allowed_groups",
