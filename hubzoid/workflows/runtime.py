@@ -492,7 +492,7 @@ def workflow(
                     # A clean stop (denied, abandoned, out of scope), recorded on the item.
                     wi_service.finished(_HUB_DIR, item_id, run_id, error=exc)
                     outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
-                                      published=published, tool_wait=chat["tool_wait"])
+                                      published=published, tool_wait=chat["tool_wait"], stopped=exc.code)
                     return {"stopped": exc.code}
                 outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=False,
                                   error=exc, published=published, tool_wait=chat["tool_wait"])
