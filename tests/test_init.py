@@ -363,3 +363,16 @@ def test_private_files_are_never_readable_by_others(tmp_path):
     path.chmod(0o644)
     _write_private(path, "KEY=value\n")
     assert path.read_text() == "KEY=value\n" and (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_both_logins_offer_the_better_one_first_and_name_the_other(monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import logins
+
+    both = [logins.Login("codex-local", True, "subscription", "plus", 1),
+            logins.Login("claude-local", True, "subscription", "max", 2)]
+    monkeypatch.setattr(logins, "detect", lambda: both)
+    assert cli._available_local_models() == ["claude-local", "codex-local"]
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **kw: 1)
+    assert cli._choose_initial_model() == "claude-local"
+    assert "Codex also signed in" in capsys.readouterr().out

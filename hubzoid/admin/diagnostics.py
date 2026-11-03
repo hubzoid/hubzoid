@@ -218,20 +218,28 @@ def check_model_auth(hub: Path) -> Result:
     model = (os.environ.get("MODEL") or "claude-local").strip()
     low = model.lower()
     if low.startswith("claude-local"):
-        found = shutil.which("claude") is not None or Path.home().joinpath(".claude").is_dir()
-        if found or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"):
+        from .. import factory_claude, logins
+
+        login = factory_claude.claude_login()
+        if login and login.signed_in:
+            return Result("ok", f"Signed in: {logins.describe(login)}.", {"runtime": "claude-local"})
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"):
             return Result("ok", "Claude sign-in is available for the claude-local runtime.", {"runtime": "claude-local"})
-        return Result("fail", "Model provider credential is not configured.", {"runtime": "claude-local"},
-                      "Run `claude` once and sign in, or set CLAUDE_CODE_OAUTH_TOKEN in the hub's .env.",
+        return Result("fail", "Claude Code isn't signed in.", {"runtime": "claude-local"},
+                      "Run `claude auth login`, or set CLAUDE_CODE_OAUTH_TOKEN in the hub's .env.",
                       "model_signin")
     if low.startswith("codex-local"):
-        # The same check the runtime makes: a reviewed Codex version and a
+        # The same checks the runtime makes: a reviewed Codex version and a
         # file-backed login, not merely some `codex` on PATH (HUB-140 F4).
-        from ..factory_codex import REVIEWED_CODEX_VERSIONS, codex_available
+        from .. import logins
+        from ..factory_codex import REVIEWED_CODEX_VERSIONS, codex_login
 
-        if codex_available():
-            return Result("ok", "A reviewed Codex CLI with a file-backed login is ready for codex-local.",
-                          {"runtime": "codex-local"})
+        login = codex_login()
+        if login and login.signed_in and not login.problem:
+            return Result("ok", f"Signed in: {logins.describe(login)}.", {"runtime": "codex-local"})
+        if login and login.problem:
+            return Result("fail", "Codex is signed in, but not in a file the runtime can use.",
+                          {"runtime": "codex-local"}, f"Run `{login.fix}`.", "model_signin")
         return Result("fail", "Codex isn't ready: it needs a reviewed Codex CLI version and a file-backed login.",
                       {"runtime": "codex-local"},
                       f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one), "

@@ -137,20 +137,17 @@ def _public_scheme(env: dict, *urls: str) -> str:
 # init
 # ---------------------------------------------------------------------------
 def _available_local_models() -> list[str]:
-    """Only authenticated CLIs are offered; never reads credentials into output."""
-    available = []
-    claude = shutil.which("claude")
-    if claude:
-        try:
-            result = subprocess.run([claude, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0 and json.loads(result.stdout).get("loggedIn") is True:
-                available.append("claude-local")
-        except (OSError, subprocess.SubprocessError, ValueError):
-            pass
-    from .factory_codex import codex_available
-    if codex_available():
-        available.append("codex-local")
-    return available
+    """Signed-in, usable CLIs, the better login first; never reads credentials into output."""
+    from . import logins
+
+    found = logins.detect()
+    best = logins.choose(found)
+    usable = [lg for lg in found if lg.signed_in and not lg.problem]
+    usable.sort(key=lambda lg: lg is not best)
+    return [lg.runtime for lg in usable]
+
+
+_LOCAL_NAMES = {"claude-local": "Claude Code", "codex-local": "Codex"}
 
 
 def _choose_initial_model() -> str | None:
@@ -160,6 +157,8 @@ def _choose_initial_model() -> str | None:
     if len(choices) == 1:
         console.print(f"Using authenticated local runtime: {choices[0]}")
         return choices[0]
+    others = ", ".join(_LOCAL_NAMES.get(c, c) for c in choices[1:])
+    console.print(f"Best sign-in first. {others} also signed in.")
     console.print("Available local runtimes:")
     for i, choice in enumerate(choices, 1):
         console.print(f"  {i}. {choice}")

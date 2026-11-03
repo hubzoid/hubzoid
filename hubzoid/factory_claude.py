@@ -33,6 +33,9 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import time
 from typing import Any, AsyncIterator
 
 from . import _request_ctx
@@ -59,6 +62,41 @@ _MCP_NAMESPACE = "hubzoid"
 # the model dispatch our AgentDefinition delegates while Bash/Read/etc. stay
 # off — verified live on claude CLI 2.1.198.
 SUBAGENT_SPAWN_TOOL = "Agent"
+
+
+_LOGIN_TTL = 300  # seconds; every child start reads the login
+_login_cache: tuple[float, Any] | None = None
+
+
+def clear_login_cache() -> None:
+    global _login_cache
+    _login_cache = None
+
+
+def claude_login():
+    """The Claude Code login (`logins.Login`), or None when `claude` isn't installed.
+    Reads only loggedIn, authMethod and subscriptionType from `claude auth status`."""
+    global _login_cache
+    if _login_cache and time.monotonic() - _login_cache[0] < _LOGIN_TTL:
+        return _login_cache[1]
+    from .logins import Login, tier
+
+    binary = shutil.which("claude")
+    if not binary:
+        return None
+    login = Login("claude-local", False)
+    try:
+        result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
+        status = json.loads(result.stdout) if result.returncode == 0 else {}
+        if isinstance(status, dict) and status.get("loggedIn") is True:
+            method = "subscription" if status.get("authMethod") == "claude.ai" else "api_key"
+            plan = status.get("subscriptionType")
+            plan = plan if isinstance(plan, str) and plan else None
+            login = Login("claude-local", True, method, plan, tier("claude-local", method, plan))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    _login_cache = (time.monotonic(), login)
+    return login
 
 
 def claude_options(**kwargs):
