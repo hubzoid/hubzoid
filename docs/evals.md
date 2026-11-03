@@ -464,7 +464,8 @@ How a faked case runs:
   through the eval's approval rules like the real tool. Restricted-tool access
   checks, which cover the hub's own tools, don't wrap it. It never reaches the
   network, a call no fake matches is blocked as above, and cases without
-  `fake_tools` run on a runtime that has none of these stand-ins.
+  `fake_tools` run on a runtime that has none of these stand-ins. Isolated
+  agents keep exactly the tools they list, so they get no stand-ins.
 - **Other cases are untouched.** Cases without `fake_tools` run every tool for
   real, as before.
 

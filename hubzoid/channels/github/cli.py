@@ -8,7 +8,7 @@
     hubzoid channels github import-app   [HUB] ID --app-id N --installation-id N --owner-id N
     hubzoid channels github repositories [HUB] ID
     hubzoid channels github configure    [HUB] ID --expected-revision N [--repository OWNER/NAME]... [--set KEY=JSON]...
-    hubzoid channels github intake       [HUB] ID --url ISSUE_URL --task TEXT
+    hubzoid channels github intake       [HUB] ID --url ISSUE_URL --task TEXT [--route NAME]
     hubzoid channels github call         [HUB] ID --operation NAME --arguments-file FILE
 
 A token is read hidden from the terminal, or from standard input with

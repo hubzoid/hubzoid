@@ -155,9 +155,9 @@ Set `enabled: false` and apply it (`hubzoid channels pause <hub> <id>
 start no work. Work that already started finishes and still replies.
 `resume` reverses it. Run `doctor` first.
 
-Pause, resume and connecting change only their own setting in the file as it
-is now, so your other edits stay. If the file is not valid, `resume` and
-connecting stop and name it; `pause` still works, and replaces the file with the
+Pause, resume, connecting and `configure` change only their own settings in
+the file as it is now, so your other edits stay. If the file is not valid, they
+stop and name it, except `pause`: it still works, and replaces the file with the
 last applied configuration so intake stops.
 
 ## Workflows that answer in a thread
