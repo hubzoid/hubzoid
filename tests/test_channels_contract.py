@@ -123,6 +123,23 @@ def test_a_short_secret_ref_means_this_hubs_slot_for_this_channel(hub_dir):
         parse(short)
 
 
+def test_pause_and_resume_keep_the_files_short_refs_and_pending_edits_wait(hub_dir):
+    short = "secret:channel/fake-main/sig"
+    path = config.file_for(hub_dir, "fake-main")
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": short}))
+    config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="test")
+    assert short in path.read_text() and "enabled: false" in path.read_text()
+    config.set_enabled(hub_dir, "fake-main", True, expected_revision=2, actor="test")
+    assert short in path.read_text() and "desk" not in path.read_text()
+    assert config.export(hub_dir, "fake-main")["config"]["provider_config"]["secret_ref"] == \
+        "secret:channel/desk/fake-main/sig"
+    # an unapplied edit in the file is not applied by a pause
+    path.write_text(path.read_text() + "queue_limit: 7\n")
+    config.set_enabled(hub_dir, "fake-main", False, expected_revision=3, actor="test")
+    assert config.export(hub_dir, "fake-main")["config"]["queue_limit"] != 7
+
+
 def test_a_hub_admin_names_only_the_connections_own_secrets(hub_dir):
     # A reference decides which value the connection sends to its host: a hub
     # administrator can't point it at the deployment's environment or secrets.

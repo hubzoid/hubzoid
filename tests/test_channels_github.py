@@ -744,6 +744,18 @@ def test_connecting_a_token_keeps_the_hubs_channel_file(hub_dir, factory_file, f
     assert "workflow: factory" in (hub_dir / "channels/github.yaml").read_text()
 
 
+def test_reconnecting_a_token_keeps_short_secret_refs_in_the_file(hub_dir, factory_file, fake_pat):
+    path = hub_dir / "channels/github.yaml"
+    path.write_text(path.read_text().replace("secret:channel/factory/github/", "secret:channel/github/"))
+    config.active(hub_dir, "github")  # the file is loaded and applied as written
+    assert config.export(hub_dir, "github")["file_matches"] is True
+    setup.connect_pat(hub_dir, "github", token="t", repositories_=["acme/api"], actor="owner",
+                      expected_revision=None)
+    assert "webhook_secret_ref: secret:channel/github/webhook-secret" in path.read_text()
+    stored = config.export(hub_dir, "github")["config"]["provider_config"]
+    assert stored["webhook_secret_ref"] == "secret:channel/factory/github/webhook-secret"
+
+
 def test_a_file_that_cannot_be_read_is_not_replaced(hub_dir, fake_pat):
     (hub_dir / "channels").mkdir()
     (hub_dir / "channels" / "github.yaml").write_text("workflow: [unclosed\n")

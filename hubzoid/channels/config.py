@@ -576,11 +576,23 @@ def export(hub_dir, cid: str) -> dict:
             "applied_by": row["applied_by"], "updated": row["updated"]}
 
 
+def applied_base(hub_dir, cid: str) -> dict:
+    """The configuration to change one field of. The file as the person wrote
+    it (short secret references kept) when it equals what is applied; otherwise
+    the applied configuration, so pending edits in the file are never applied
+    by an unrelated change."""
+    current = export(hub_dir, cid)
+    if current["file_matches"] is True:
+        written = file_config(hub_dir, cid)
+        if written is not None:
+            return written
+    return current["config"]
+
+
 def set_enabled(hub_dir, cid: str, enabled: bool, *, expected_revision: int, actor: str) -> dict:
     """Pause or resume: rewrite `enabled` in the file and apply it. The one
     disable rule for every adapter."""
-    current = export(hub_dir, cid)
-    data = json.loads(json.dumps(current["config"]))
+    data = json.loads(json.dumps(applied_base(hub_dir, cid)))
     data["enabled"] = bool(enabled)
     return apply(hub_dir, data, expected_revision=expected_revision, actor=actor, expected_id=cid)
 
