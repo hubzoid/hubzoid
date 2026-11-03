@@ -67,11 +67,41 @@ SUBAGENT_SPAWN_TOOL = "Agent"
 _API_KEY_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 _LOGIN_TTL = 300  # seconds; every child start reads the login
 _login_cache: tuple[float, Any] | None = None
+_probe_warned = False
 
 
 def clear_login_cache() -> None:
-    global _login_cache
-    _login_cache = None
+    global _login_cache, _probe_warned
+    _login_cache, _probe_warned = None, False
+
+
+def api_key_vars() -> list[str]:
+    """The Anthropic API-key variables set in this environment (names only)."""
+    return [k for k in _API_KEY_VARS if os.environ.get(k)]
+
+
+def _key_kept(why: str) -> None:
+    """Warn once that, with no login read, an inherited key is what the child
+    uses. Not for a gateway or CLAUDE_CODE_OAUTH_TOKEN: their keys are decided."""
+    global _probe_warned
+    keys = api_key_vars()
+    if _probe_warned or not keys or os.environ.get("ANTHROPIC_BASE_URL") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return
+    _probe_warned = True
+    log.warning("Could not read the Claude Code login (%s), so %s in the environment will be used.",
+                why, " and ".join(keys))
+
+
+def ignored_key_note(login) -> str:
+    """Diagnostics' and doctor's words when a plan login means an inherited key
+    is ignored (the rule in `_child_env`), else ""."""
+    keys = api_key_vars()
+    if not keys or os.environ.get("ANTHROPIC_BASE_URL") or not (login and login.signed_in) \
+            or login.method != "subscription":
+        return ""
+    if len(keys) > 1:
+        return f"{' and '.join(keys)} in the environment are ignored."
+    return f"An {keys[0]} in the environment is ignored."
 
 
 def claude_login():
@@ -89,12 +119,16 @@ def claude_login():
 
     binary = shutil.which("claude")
     if not binary:
+        _key_kept("no `claude` on PATH")
         return None
     # The CLI reports `api_key` whenever a key is in its environment and hides the
-    # login. Ask without the keys: that is the login the child uses once they are blanked.
+    # login. Ask without the keys: that is the login the child uses once they are
+    # blanked. With a gateway (ANTHROPIC_BASE_URL) the child keeps them, so ask with them.
     key_set = any(os.environ.get(k) for k in _API_KEY_VARS)
-    probe_env = {k: v for k, v in os.environ.items() if k not in _API_KEY_VARS}
+    gateway = bool(os.environ.get("ANTHROPIC_BASE_URL"))
+    probe_env = {k: v for k, v in os.environ.items() if gateway or k not in _API_KEY_VARS}
     login, definite = Login("claude-local", False, api_key_in_env=key_set), False
+    why = "`claude auth status` gave no readable answer"
     try:
         result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10,
                                 env=probe_env)
@@ -110,10 +144,14 @@ def claude_login():
             definite = True
             if key_set:   # only a key: it is the login, and the child keeps it
                 login = Login("claude-local", True, "api_key", None, 0, api_key_in_env=True)
+    except subprocess.TimeoutExpired:
+        why = "`claude auth status` timed out"
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
     if definite:
         _login_cache = (time.monotonic(), login)
+    else:
+        _key_kept(why)
     return login
 
 

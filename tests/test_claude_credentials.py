@@ -153,10 +153,19 @@ def test_configuration_and_secret_masking(configured, monkeypatch):
     assert len(creds.Pool.configured(configured).credentials) == 2
     assert config_secrets.child_env_overrides({k: "x" for k in creds.TOKEN_KEYS}) == {
         k: "" for k in creds.TOKEN_KEYS[1:]}
+    from hubzoid import factory_claude
+
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-    with pytest.raises(ValueError, match="cannot be combined"):
-        creds.Pool.configured(configured)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "fake-key")
+    assert len(creds.Pool.configured(configured).credentials) == 2     # an inherited key is blanked for the child
+    assert factory_claude._child_env("claude-local")["ANTHROPIC_API_KEY"] == ""
+    for key, value in (("ANTHROPIC_BASE_URL", "https://gateway.example.test"), ("CLAUDE_CODE_USE_BEDROCK", "1")):
+        monkeypatch.setenv(key, value)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            creds.Pool.configured(configured)
+        monkeypatch.delenv(key)
     monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN")
     monkeypatch.delenv(creds.TOKEN_KEYS[0])
     with pytest.raises(ValueError, match="require CLAUDE"):
         creds.Pool.configured(configured)

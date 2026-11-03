@@ -490,11 +490,13 @@ def _model(hub: Path) -> Check:
     if model == "claude-local" or model.startswith("claude-local/"):
         from . import factory_claude, logins
 
+        login = factory_claude.claude_login()   # first: a plan login means an inherited key is ignored
+        if login and login.signed_in:
+            note = factory_claude.ignored_key_note(login)
+            return Check("model.credentials", "ok",
+                         f"{model}: signed in ({logins.describe(login)})" + (f". {note}" if note else ""))
         if any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")):
             return Check("model.credentials", "ok", f"{model}: Anthropic credentials set")
-        login = factory_claude.claude_login()
-        if login and login.signed_in:
-            return Check("model.credentials", "ok", f"{model}: signed in ({logins.describe(login)})")
         return Check("model.credentials", "fail",
                      f"{model}: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or `claude` login "
                      "(run `claude auth login`)")

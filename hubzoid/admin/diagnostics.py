@@ -223,10 +223,9 @@ def check_model_auth(hub: Path) -> Result:
 
         login = factory_claude.claude_login()
         if login and login.signed_in:
-            note = ""
-            if login.api_key_in_env and login.method == "subscription" and not os.environ.get("ANTHROPIC_BASE_URL"):
-                note = " An ANTHROPIC_API_KEY in the environment is ignored."
-            return Result("ok", f"Signed in: {logins.describe(login)}.{note}", {"runtime": "claude-local"})
+            note = factory_claude.ignored_key_note(login)
+            return Result("ok", f"Signed in: {logins.describe(login)}." + (f" {note}" if note else ""),
+                          {"runtime": "claude-local"})
         if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"):
             return Result("ok", "Claude sign-in is available for the claude-local runtime.", {"runtime": "claude-local"})
         return Result("fail", "Claude Code isn't signed in.", {"runtime": "claude-local"},

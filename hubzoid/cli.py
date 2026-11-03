@@ -212,9 +212,13 @@ def _check_local_reply(hub_dir: Path) -> None:
     if ok:
         console.print(f"{escape(logins.describe(login))} answered.")
     else:
-        fix = "claude auth login" if login.runtime == "claude-local" else factory_codex.LOGIN_FIX
+        if login.runtime == "claude-local" and login.method == "api_key":   # a key-only setup: the key failed
+            hint = f"Check {' and '.join(factory_claude.api_key_vars()) or 'ANTHROPIC_API_KEY'}"
+        else:
+            fix = "claude auth login" if login.runtime == "claude-local" else factory_codex.LOGIN_FIX
+            hint = f"Sign in again (`{fix}`)"
         console.print(f"[yellow]{escape(logins.describe(login))} did not answer: {escape(reason)}. "
-                      f"Sign in again (`{escape(fix)}`), then run `hubzoid run`.[/yellow]")
+                      f"{escape(hint)}, then run `hubzoid run`.[/yellow]")
 
 
 # The ready-to-use hubs `hubzoid init` points to: (name, what it does, clone command).

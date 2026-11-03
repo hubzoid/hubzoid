@@ -446,6 +446,25 @@ def test_the_reply_check_names_the_login_of_the_hubs_model(tmp_path, monkeypatch
     assert "cli_auth_credentials_store" in out and "claude auth login" not in out
 
 
+def test_a_key_only_claude_login_that_does_not_answer_points_to_the_key(tmp_path, monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=claude-local\n")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude, "claude_login",
+                        lambda: Login("claude-local", True, "api_key", None, 0, api_key_in_env=True))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub_dir, **kw: (False, "invalid key"))
+    cli._check_local_reply(hub)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Claude Code, API key did not answer: invalid key. Check ANTHROPIC_API_KEY" in out
+    assert "claude auth login" not in out and "fake-key" not in out
+
+
 @pytest.mark.real_logins
 def test_a_key_only_claude_setup_is_offered_by_init(monkeypatch):
     import subprocess

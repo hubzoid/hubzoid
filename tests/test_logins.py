@@ -393,18 +393,50 @@ def test_probe_flags_no_key_when_none_is_set(monkeypatch):
 
 
 def test_a_gateway_base_url_keeps_the_key_even_with_a_login(monkeypatch):
-    _fake_cli_by_env(monkeypatch)
+    seen = _fake_cli_by_env(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
+    assert factory_claude.claude_login().method == "api_key"    # the probe sees what the child uses
+    assert seen[0]["ANTHROPIC_API_KEY"] == "inherited"
     assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("claude-local")
 
 
-def test_only_a_key_and_no_login_keeps_the_key(monkeypatch):
+def test_a_probe_with_no_answer_warns_once_that_the_key_is_used(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda name: "/bin/claude" if name == "claude" else None)
+
+    def slow(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(factory_claude.subprocess, "run", slow)
+    with caplog.at_level(logging.WARNING, logger="hubzoid.claude"):
+        assert factory_claude.claude_login().signed_in is False         # no change: not signed in
+        factory_claude.claude_login()
+        factory_claude.clear_login_cache()
+        monkeypatch.setattr(factory_claude.shutil, "which", lambda name: None)
+        assert factory_claude.claude_login() is None
+        factory_claude.clear_login_cache()
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
+        factory_claude.claude_login()                                   # a gateway uses the key on purpose
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warned) == 2 and "timed out" in warned[0] and "no `claude`" in warned[1]
+    assert all("ANTHROPIC_API_KEY in the environment will be used" in w for w in warned)
+    assert "fake-inherited" not in caplog.text
+
+
+def test_only_a_key_and_no_login_keeps_the_key(tmp_path, monkeypatch):
     _fake_cli_by_env(monkeypatch, stored=None)                  # without the key: loggedIn false
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
     login = factory_claude.claude_login()
     assert (login.signed_in, login.method, login.tier, login.api_key_in_env) == (True, "api_key", 0, True)
     assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("claude-local")
+    from hubzoid import doctor
+
+    monkeypatch.setenv("MODEL", "claude-local")
+    check = doctor._model(tmp_path)
+    assert check.status == "ok" and "ignored" not in check.summary
 
 
 def test_tool_free_options_decide_by_the_call_model_not_the_shell_model(monkeypatch):
@@ -416,9 +448,20 @@ def test_tool_free_options_decide_by_the_call_model_not_the_shell_model(monkeypa
 
 
 def test_doctor_says_an_env_key_is_ignored_when_it_is(tmp_path, monkeypatch):
+    from hubzoid import doctor
+
     _fake_cli_by_env(monkeypatch)
+    monkeypatch.setenv("MODEL", "claude-local")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
-    r = diag.check_model_auth(tmp_path)
-    assert r.summary == "Signed in: Claude Code, Team plan. An ANTHROPIC_API_KEY in the environment is ignored."
+    note = "An ANTHROPIC_API_KEY in the environment is ignored."
+    assert diag.check_model_auth(tmp_path).summary == f"Signed in: Claude Code, Team plan. {note}"
+    check = doctor._model(tmp_path)
+    assert check.status == "ok" and check.summary == f"claude-local: signed in (Claude Code, Team plan). {note}"
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "inherited")  # gitleaks:allow
+    assert diag.check_model_auth(tmp_path).summary.endswith(
+        "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN in the environment are ignored.")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert diag.check_model_auth(tmp_path).summary.endswith("An ANTHROPIC_AUTH_TOKEN in the environment is ignored.")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
     assert "ignored" not in diag.check_model_auth(tmp_path).summary
+    assert "ignored" not in doctor._model(tmp_path).summary
