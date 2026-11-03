@@ -214,7 +214,11 @@ def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
 
     gs = store_for(hub)
     check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "info" and "owner" in check.summary and "hubzoid run" in check.summary
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    check = _by_id(doc.run(hub))["access.who"]
     assert check.status == "warn" and "Nobody may use hub" in check.summary
+    monkeypatch.delenv("HUBZOID_AUTH")
     gs.provision_owner("owner@example.org", "hub")
     check = _by_id(doc.run(hub))["access.who"]
     assert check.status == "info" and "owner@example.org" in check.summary

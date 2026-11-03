@@ -583,6 +583,11 @@ def _who_may_use(hub: Path, engine) -> Check:
             "AND (permission='use_hub' OR permission='*')"), {"h": key})})
     owner = _meta_text(engine, "initial_owner:" + key)
     if not holders:
+        from . import appmode
+
+        if not appmode.auth_enabled(hub):
+            return Check("access.who", "info", f"You are the owner of {key}. "
+                         "Access is set up the first time you run `hubzoid run`.")
         return Check("access.who", "warn", f"Nobody may use {key}. Grant \"Use this agent\" "
                      "in Settings, on the agent's Access tab, or sign in once as the configured owner.")
     if "*" in holders:
