@@ -454,7 +454,7 @@ async def arun_suite(
     from .quality import hub_digest
 
     suite.hub_digest = hub_digest(hub_dir, model=model)
-    rt = runtime_lib.build(hub_dir, model=model)
+    rt = _build_runtime(runtime_lib, hub_dir, cases, model)
     suite.model = getattr(rt, "name", "") or ""
 
     # Open/use/close MCP in one task — see runtime.aopen() for why.
@@ -475,6 +475,22 @@ async def arun_suite(
 
     suite.finished_at = now_iso()
     return suite
+
+
+def _build_runtime(runtime_lib, hub_dir: Path, cases: list, model: str | None):
+    """The suite's runtime, built once before any case. When cases fake tools,
+    it is built inside a scope holding all their fakes, so a faked tool the hub
+    has not connected yet (``github__...``) is in its tools as a stand-in. A
+    case's own scope replaces this one when it runs; with no faked case, the
+    build is as it always was."""
+    from .. import tool_fakes
+
+    fakes = [f for case in cases for f in case.fake_tools]
+    if not fakes:
+        return runtime_lib.build(hub_dir, model=model)
+    # allow_mcp: building must not drop the person's connectors, as before.
+    with tool_fakes.scope(tool_fakes.Session(fakes=fakes, allow_mcp=True)):
+        return runtime_lib.build(hub_dir, model=model)
 
 
 def run_suite(hub_dir: Path, cases: Iterable[EvalCase], **kwargs) -> SuiteResult:

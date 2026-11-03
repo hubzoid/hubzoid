@@ -528,3 +528,24 @@ def test_a_call_no_fake_matches_on_an_unconnected_stand_in_is_blocked():
         out = asyncio.run(tool_.on_invoke_tool(None, json.dumps({"title": "b"})))
     assert out.startswith("Blocked in this eval") and session.used == []
     assert session.blocked == [("github__createIssue", {"title": "b"})]
+
+
+def test_a_suite_builds_its_runtime_with_the_cases_faked_unconnected_tools(tmp_path, monkeypatch):
+    """The runtime is built once per suite, before any case: a stand-in for a
+    faked, unconnected tool has to be in it, and only in a suite that fakes."""
+    hub = make_hub(tmp_path, {"read.md": CASE.replace("{prompt}", "Read it").replace(
+        "lookup_order", "github__getRepository")})
+    built: list = []
+
+    def build(*_a, **_k):
+        built.append(sorted(tool_fakes.wrap_registry({})))
+        return ToolRuntime({}, {})
+
+    monkeypatch.setattr("hubzoid.runtime.build", build)
+    asyncio.run(arun_suite(hub, cases_lib.discover(hub), judge_fn=None))
+    assert built == [["github__getRepository"]]
+    assert tool_fakes.wrap_registry({}) == {}                     # nothing leaks out of the build
+    plain = make_hub(tmp_path / "p", {"plain.md": "Hello"})
+    built.clear()
+    asyncio.run(arun_suite(plain, cases_lib.discover(plain), judge_fn=None))
+    assert built == [[]]
