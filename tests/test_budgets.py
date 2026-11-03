@@ -86,6 +86,15 @@ def test_an_unpriced_model_skips_dollars_when_tokens_or_turns_bound_it(hub_dir):
     assert err.value.code == "unpriced_model"
 
 
+def test_only_a_model_with_no_per_call_charge_skips_dollar_limits(hub_dir):
+    limits(hub_dir, "  run:\n    max_turns: 5\n  month:\n    max_cost_usd: \"5\"\n    max_output_tokens: 1000\n")
+    assert budgets.admit(hub_dir, model="codex-local") is not None          # a subscription: no per-call charge
+    for model in ("typesafe/jev-1.13", "openrouter/acme/not-a-real-model"):  # paid, with no price: refused
+        with pytest.raises(WorkItemError) as err:
+            budgets.admit(hub_dir, model=model)
+        assert err.value.code == "unpriced_model"
+
+
 def test_a_work_item_token_limit_bounds_only_calls_in_a_work_item(hub_dir):
     item = "wi-" + "a" * 8 + "-" + "b" * 4 + "-" + "c" * 4 + "-" + "d" * 4 + "-" + "e" * 12 + "-e1"
     limits(hub_dir, "  work_item:\n    max_output_tokens: 100\n  month:\n    max_cost_usd: \"5\"\n")
@@ -340,3 +349,11 @@ def test_show_notes_that_dollar_limits_skip_an_unpriced_model(hub_dir):
     out = CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output
     assert "Dollar limits don't" not in out
     assert "Calls on codex-local are refused until a turn or token limit is added" in out
+    limits(hub_dir, "  work_item:\n    max_output_tokens: 100\n  month:\n    max_cost_usd: \"5\"\n")
+    out = " ".join(CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output.split())
+    assert "turn and token limits do" not in out                      # a chat reply is refused
+    assert "Other calls, such as chat replies, are refused until a run or month turn or token limit" in out
+    (hub_dir / "AGENTS.md").write_text("---\nname: Desk\nmodel: typesafe/jev-1.13\n---\nA desk.\n")
+    limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n    max_output_tokens: 100\n")
+    out = " ".join(CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output.split())
+    assert "Dollar limits don't" not in out and "Calls on typesafe/jev-1.13 are refused" in out
