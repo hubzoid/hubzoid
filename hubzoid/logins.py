@@ -17,6 +17,7 @@ class Login:
     version: str | None = None
     problem: str | None = None   # "not_file_backed" | None
     fix: str | None = None       # one command that fixes `problem`
+    api_key_in_env: bool = False  # ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is set in the environment
 
 
 # Plan names as the CLIs report them: Claude Code 2.1.301 `subscriptionType`

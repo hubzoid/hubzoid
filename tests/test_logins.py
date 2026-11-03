@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 
 import pytest
@@ -350,3 +351,74 @@ def test_reply_check_wraps_complete_once(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "complete_once", boom)
     ok, reason = runtime.reply_check(tmp_path)
     assert not ok and "slow" in reason
+
+
+# -- the probe must not see an inherited key (it would report api_key and hide the login) --
+def _fake_cli_by_env(monkeypatch, stored="claude.ai"):
+    """A claude CLI that, like the real one, reports api_key whenever a key is in its env."""
+    seen = []
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda name: "/bin/claude" if name == "claude" else None)
+
+    def run(cmd, **kw):
+        env = kw.get("env") if kw.get("env") is not None else os.environ
+        seen.append(dict(env))
+        if env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"):
+            out = '{"loggedIn": true, "authMethod": "api_key", "subscriptionType": null}'
+        elif stored:
+            out = '{"loggedIn": true, "authMethod": "%s", "subscriptionType": "team"}' % stored
+        else:
+            out = '{"loggedIn": false}'
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(factory_claude.subprocess, "run", run)
+    return seen
+
+
+def test_probe_ignores_an_inherited_key_and_sees_the_subscription(monkeypatch):
+    seen = _fake_cli_by_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "inherited")  # gitleaks:allow
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
+    login = factory_claude.claude_login()
+    assert (login.method, login.plan, login.api_key_in_env) == ("subscription", "team", True)
+    assert "ANTHROPIC_API_KEY" not in seen[0] and "ANTHROPIC_AUTH_TOKEN" not in seen[0]
+    assert seen[0]["CLAUDE_CODE_OAUTH_TOKEN"] == "dummy"        # a plan login stays
+    assert os.environ["ANTHROPIC_API_KEY"] == "inherited"       # our own environment is untouched
+    assert factory_claude._child_env("claude-local")["ANTHROPIC_API_KEY"] == ""
+
+
+def test_probe_flags_no_key_when_none_is_set(monkeypatch):
+    _fake_cli_by_env(monkeypatch)
+    assert factory_claude.claude_login().api_key_in_env is False
+
+
+def test_a_gateway_base_url_keeps_the_key_even_with_a_login(monkeypatch):
+    _fake_cli_by_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
+    assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("claude-local")
+
+
+def test_only_a_key_and_no_login_keeps_the_key(monkeypatch):
+    _fake_cli_by_env(monkeypatch, stored=None)                  # without the key: loggedIn false
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    login = factory_claude.claude_login()
+    assert login.signed_in is False and login.api_key_in_env is True
+    assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("claude-local")
+
+
+def test_tool_free_options_decide_by_the_call_model_not_the_shell_model(monkeypatch):
+    _fake_cli_by_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setenv("MODEL", "openrouter/x")
+    assert factory_claude.tool_free_options("s", model="claude-local").env["ANTHROPIC_API_KEY"] == ""
+    assert "ANTHROPIC_API_KEY" not in (factory_claude.tool_free_options("s", model="anthropic/claude-haiku-4-5").env or {})
+
+
+def test_doctor_says_an_env_key_is_ignored_when_it_is(tmp_path, monkeypatch):
+    _fake_cli_by_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    r = diag.check_model_auth(tmp_path)
+    assert r.summary == "Signed in: Claude Code, Team plan. An ANTHROPIC_API_KEY in the environment is ignored."
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test")
+    assert "ignored" not in diag.check_model_auth(tmp_path).summary

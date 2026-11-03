@@ -64,6 +64,7 @@ _MCP_NAMESPACE = "hubzoid"
 SUBAGENT_SPAWN_TOOL = "Agent"
 
 
+_API_KEY_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 _LOGIN_TTL = 300  # seconds; every child start reads the login
 _login_cache: tuple[float, Any] | None = None
 
@@ -89,16 +90,22 @@ def claude_login():
     binary = shutil.which("claude")
     if not binary:
         return None
-    login, definite = Login("claude-local", False), False
+    # The CLI reports `api_key` whenever a key is in its environment and hides the
+    # login. Ask without the keys: that is the login the child uses once they are blanked.
+    key_set = any(os.environ.get(k) for k in _API_KEY_VARS)
+    probe_env = {k: v for k, v in os.environ.items() if k not in _API_KEY_VARS}
+    login, definite = Login("claude-local", False, api_key_in_env=key_set), False
     try:
-        result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10,
+                                env=probe_env)
         status = json.loads(result.stdout)
         if isinstance(status, dict) and status.get("loggedIn") is True and result.returncode == 0:
             # claude.ai login, or `claude setup-token` / CLAUDE_CODE_OAUTH_TOKEN
             method = "subscription" if status.get("authMethod") in ("claude.ai", "oauth_token") else "api_key"
             plan = status.get("subscriptionType")
             plan = plan if isinstance(plan, str) and plan else None
-            login, definite = Login("claude-local", True, method, plan, tier("claude-local", method, plan)), True
+            login, definite = Login("claude-local", True, method, plan, tier("claude-local", method, plan),
+                                    api_key_in_env=key_set), True
         elif isinstance(status, dict) and status.get("loggedIn") is False:
             definite = True
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -190,16 +197,17 @@ class PrivateMcpConfig:
         self.close()
 
 
-def tool_free_options(system: str, model_pin: str | None = None):
+def tool_free_options(system: str, model_pin: str | None = None, model: str | None = None):
     """One plain model turn: no tools, no MCP servers, no settings, one turn.
-    Used by `hub.call_llm` on claude-local and the eval judge."""
+    Used by `hub.call_llm` on claude-local and the eval judge. `model` is the
+    call's own model setting, which decides whether an inherited key is blanked."""
     opts: dict[str, Any] = dict(
         system_prompt=system, tools=[], allowed_tools=[], mcp_servers={},
         setting_sources=[], max_turns=1,
     )
     if model_pin is not None:
         opts["model"] = model_pin
-    child_env = _child_env()
+    child_env = _child_env(model)
     if child_env:
         opts["env"] = child_env
     return claude_options(**opts)
@@ -1524,7 +1532,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
 
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
     options = tool_free_options(
-        system or "You are a precise assistant. Answer the request directly.", pin)
+        system or "You are a precise assistant. Answer the request directly.", pin, model_setting)
     if output_schema is not None:
         import dataclasses
 
