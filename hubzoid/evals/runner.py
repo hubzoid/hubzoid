@@ -454,39 +454,49 @@ async def arun_suite(
     from .quality import hub_digest
 
     suite.hub_digest = hub_digest(hub_dir, model=model)
-    rt = _build_runtime(runtime_lib, hub_dir, cases, model)
-    suite.model = getattr(rt, "name", "") or ""
+    # A faked case's runtime is built with the suite's fakes in scope (stand-ins
+    # for tools the hub hasn't connected); a case without fakes gets a runtime
+    # built as always, so nothing a fake needed leaks into it.
+    kinds = {bool(c.is_faked) for c in cases} or {False}
+    runtimes = {kind: _build_runtime(runtime_lib, hub_dir, cases, model, faked=kind) for kind in sorted(kinds)}
+    suite.model = getattr(next(iter(runtimes.values())), "name", "") or ""
 
     # Open/use/close MCP in one task — see runtime.aopen() for why.
-    await rt.aopen()
+    opened: list = []
     try:
-        # After aopen(), so MCP-provided tools are in the inventory too.
-        tools_available = judge_tools(rt) if judge_fn is not None else None
+        available: dict = {}
+        for kind, rt in runtimes.items():
+            await rt.aopen()
+            opened.append(rt)
+            # After aopen(), so MCP-provided tools are in the inventory too.
+            available[kind] = judge_tools(rt) if judge_fn is not None else None
         for case in cases:
             log.info("eval: running %s", case.name)
-            result = await _run_one(rt, case, judge_fn=judge_fn,
-                                    tools_available=tools_available,
+            kind = bool(case.is_faked)
+            result = await _run_one(runtimes[kind], case, judge_fn=judge_fn,
+                                    tools_available=available[kind],
                                     hub_dir=hub_dir, run_as=run_as)
             suite.cases.append(result)
             if on_case is not None:
                 on_case(result)
     finally:
-        await rt.aclose()
+        for rt in opened:
+            await rt.aclose()
 
     suite.finished_at = now_iso()
     return suite
 
 
-def _build_runtime(runtime_lib, hub_dir: Path, cases: list, model: str | None):
-    """The suite's runtime, built once before any case. When cases fake tools,
-    it is built inside a scope holding all their fakes, so a faked tool the hub
-    has not connected yet (``github__...``) is in its tools as a stand-in. A
-    case's own scope replaces this one when it runs; with no faked case, the
-    build is as it always was."""
+def _build_runtime(runtime_lib, hub_dir: Path, cases: list, model: str | None, *, faked: bool):
+    """A runtime for the suite's faked cases (``faked``) or its other cases.
+    The faked one is built inside a scope holding all their fakes, so a faked
+    tool the hub has not connected yet (``github__...``) is in its tools as a
+    stand-in; each case's own scope replaces that one when it runs. The other
+    is built exactly as outside evals."""
     from .. import tool_fakes
 
-    fakes = [f for case in cases for f in case.fake_tools]
-    if not fakes:
+    fakes = [f for case in cases if case.is_faked for f in case.fake_tools]
+    if not faked or not fakes:
         return runtime_lib.build(hub_dir, model=model)
     # allow_mcp: building must not drop the person's connectors, as before.
     with tool_fakes.scope(tool_fakes.Session(fakes=fakes, allow_mcp=True)):

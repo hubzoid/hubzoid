@@ -549,3 +549,45 @@ def test_a_suite_builds_its_runtime_with_the_cases_faked_unconnected_tools(tmp_p
     built.clear()
     asyncio.run(arun_suite(plain, cases_lib.discover(plain), judge_fn=None))
     assert built == [[]]
+
+
+def test_a_mixed_suite_gives_stand_ins_only_to_the_faked_cases_runtime(tmp_path, monkeypatch):
+    hub = make_hub(tmp_path, {
+        "a-plain.md": "Hello",
+        "b-faked.md": CASE.replace("{prompt}", "Read it").replace("lookup_order", "github__getRepository")})
+    built: list = []
+    closed: list = []
+
+    class Rt(ToolRuntime):
+        async def aclose(self):
+            closed.append(self)
+
+    def build(*_a, **_k):
+        rt = Rt(tool_fakes.wrap_registry({}), {})
+        built.append(rt)
+        return rt
+
+    monkeypatch.setattr("hubzoid.runtime.build", build)
+    suite = asyncio.run(arun_suite(hub, cases_lib.discover(hub), judge_fn=None))
+    assert [list(rt.registry) for rt in built] == [[], ["github__getRepository"]]
+    assert len(closed) == 2 and [c.name for c in suite.cases] == ["a-plain", "b-faked"]
+
+
+def test_a_write_stand_in_goes_through_the_approval_gate(tmp_path, monkeypatch):
+    """A stand-in is added after access.apply, before hitl.equip, as factory.build
+    orders it: its approval rule (hitl.yaml) applies as it does to the real tool."""
+    from hubzoid import hitl, tool_classes
+    from hubzoid.hitl import gate, service
+
+    asked: list = []
+    monkeypatch.setattr(gate, "evaluate", lambda hub_dir, tool, args, **k: asked.append((tool, k.get("read_only")))
+                        or service.Verdict("refuse", message="Waiting for approval: it has not run."))
+    hub = make_hub(tmp_path, {})
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__createIssue", output="created")])
+    with tool_fakes.scope(session):
+        registry = tool_fakes.wrap_registry({})
+        registry = tool_fakes.wrap_added(registry, hitl.equip(hub, registry, questions=False))
+        out = asyncio.run(registry["github__createIssue"].on_invoke_tool(None, "{}"))
+    assert tool_classes.classify(registry["github__createIssue"]) == "external_write"
+    assert asked == [("github__createIssue", None)] and "has not run" in out
+    assert session.used == []                                  # the gate answered first; the fake never ran
