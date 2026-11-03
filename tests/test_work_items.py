@@ -790,3 +790,43 @@ def test_a_folder_named_with_capitals_queues_where_the_engine_listens(tmp_path, 
     service.start(root, item)
     assert seen["queue_name"] == _app_name("B-Customer-Desk") + "-wi" == engine_lib.queue_name(root.name)
     assert seen["queue_name"] != engine_lib.queue_name(item["hub"])
+
+
+def _started_envelope(hub_dir, fake_engine, **admit_kw):
+    seen = {}
+
+    def enqueue(options, *args):
+        seen["env"] = args[-1]
+        return options["workflow_id"]
+
+    fake_engine.enqueue = enqueue
+    service.admit_and_start(hub_dir, workflow="desk", key=admit_kw.pop("key", "k"), requester=OWNER, **admit_kw)
+    return seen["env"]
+
+
+CHAT = {"conversation_id": "c1", "branch_id": "b1", "account_id": "a1"}
+
+
+def test_work_admitted_in_a_chat_reports_back_to_it(hub_dir, fake_engine):
+    from hubzoid import _request_ctx
+
+    slot = _request_ctx.SessionSlot()
+    slot.hitl = dict(CHAT)
+    with _request_ctx.native_session_scope(slot):
+        env = _started_envelope(hub_dir, fake_engine, origin={"surface": "tool"})
+    assert env["chat"] == CHAT
+
+
+def test_a_named_chat_is_dropped_and_work_outside_chat_has_none(hub_dir, fake_engine):
+    forged = {"surface": "tool", "chat": {"conversation_id": "x", "branch_id": "y", "account_id": "z"}}
+    env = _started_envelope(hub_dir, fake_engine, origin=forged)
+    assert "chat" not in env
+    env = _started_envelope(hub_dir, fake_engine, key="k2", origin={"surface": "mcp"})
+    assert "chat" not in env
+    from hubzoid import _request_ctx
+
+    slot = _request_ctx.SessionSlot()
+    slot.hitl = dict(CHAT)
+    with _request_ctx.native_session_scope(slot):   # a session wins over a forged name
+        env = _started_envelope(hub_dir, fake_engine, key="k3", origin=forged)
+    assert env["chat"] == CHAT

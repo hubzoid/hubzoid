@@ -112,6 +112,14 @@ def admit(hub_dir, *, workflow: str, key: str, route: str | None = None, input=N
     generation only when asked for, and only once the previous one finished."""
     hub_dir = Path(hub_dir)
     hub = _hub(hub_dir)
+    origin = dict(origin or {})
+    origin.pop("chat", None)  # the chat is the server's to name, never the caller's
+    from .. import _request_ctx
+    from ..workflows import chat_link
+
+    chat = chat_link.origin(_request_ctx.native_session())
+    if chat:
+        origin["chat"] = chat
     if generation_mode not in GENERATION_MODES:
         raise WorkItemError("invalid_request", "generation_mode is reuse or new.")
     if not isinstance(key, str) or not key.strip() or len(key) > 512:
@@ -187,6 +195,9 @@ def start(hub_dir, item: dict) -> dict:
                    "queue_partition_key": item["id"], "workflow_id": wid}
         envelope = {"trigger": "work_item", "scope": "team", "work_item": item["id"],
                     "started_by": item.get("requester") or None}
+        chat = (item.get("origin_json") or {}).get("chat")
+        if chat:
+            envelope["chat"] = chat  # its approval card and result come back to that chat
         eng.enqueue(options, item["hub"], None, envelope)
     return store.require_item(hub_dir, item["id"])
 
