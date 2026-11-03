@@ -809,3 +809,22 @@ def test_app_setup_applies_the_hubs_file_first(hub_dir, factory_file, api):
     cfg = config.export(hub_dir, "github")["config"]
     assert cfg["workflow"] == "factory" and cfg["enabled"] is False
     assert cfg["provider_config"]["rules"]["label"] == "ship"
+
+
+def test_a_file_that_says_enabled_still_starts_paused(hub_dir, factory_file, fake_pat):
+    factory_file(enabled="true")
+    out = _connect_cli(hub_dir)
+    assert out.exit_code == 0, out.output
+    exp = config.export(hub_dir, "github")
+    assert exp["status"] == "disabled"
+    assert "channels resume" in out.output and f"--expected-revision {exp['revision']}" in out.output
+
+
+def test_a_connection_the_person_paused_stays_paused_on_reconnect(hub_dir, factory_file, fake_pat):
+    assert _connect_cli(hub_dir, "--yes").exit_code == 0
+    rev = config.export(hub_dir, "github")["revision"]
+    config.set_enabled(hub_dir, "github", False, expected_revision=rev, actor="owner")
+    out = _connect_cli(hub_dir)
+    assert out.exit_code == 0, out.output
+    assert config.export(hub_dir, "github")["status"] == "disabled"
+    assert "channels resume" in out.output

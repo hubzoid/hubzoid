@@ -322,6 +322,8 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
     except ChannelError:
         pass
     base = existing["config"] if existing else config_lib.file_config(hub_dir, cid)
+    if base is not None and not existing:
+        base = {**base, "enabled": False}  # the hub's unapplied file: intake waits for the person's yes
     if base is None and config_lib.file_for(hub_dir, cid).is_file():
         raise ChannelError("validation_failed", f"channels/{cid}.yaml cannot be read. Fix it, then connect again.",
                            status=422)
