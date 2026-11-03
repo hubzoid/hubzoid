@@ -34,6 +34,13 @@ WORKFLOW = textwrap.dedent('''
 ''')
 
 
+def _only_run(run):
+    """A stand-in for the `subprocess` a module sees, so no other module gets the fake."""
+    import subprocess as real
+    import types
+    return types.SimpleNamespace(**{**vars(real), "run": run})
+
+
 def station_file(name, *, tools="[]", extra="", body="Do the analysis."):
     return f"---\nname: {name}\ndescription: {name} station\nisolated: true\nengine: claude-local\n" \
            f"tools: {tools}\nresponse_schema: schemas/result.json\n{extra}---\n{body}\n"
@@ -484,8 +491,7 @@ def test_stations_doctor_counts_a_key_only_claude_setup(hub_dir, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
     monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
-    monkeypatch.setattr(factory_claude.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', ""))
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', "")))
     try:
         out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
         stations = json.loads(out.output)["stations"].values()

@@ -21,6 +21,13 @@ from hubzoid.cli import _parent_looks_fresh, app
 runner = CliRunner()
 
 
+def _only_run(run):
+    """A stand-in for the `subprocess` a module sees, so no other module gets the fake."""
+    import subprocess as real
+    import types
+    return types.SimpleNamespace(**{**vars(real), "run": run})
+
+
 def _run_init(tmp_path: Path, *args: str):
     """Invoke `hubzoid init` with cwd set to tmp_path."""
     import os
@@ -475,8 +482,7 @@ def test_a_key_only_claude_setup_is_offered_by_init(monkeypatch):
     factory_claude.clear_login_cache()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
     monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
-    monkeypatch.setattr(factory_claude.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', ""))
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', "")))
     monkeypatch.setattr(factory_codex, "codex_login", lambda: None)
     try:
         assert cli._available_local_models() == ["claude-local"]

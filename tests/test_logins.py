@@ -19,6 +19,13 @@ CODEX_FIX = "cli_auth_credentials_store"
 pytestmark = pytest.mark.real_logins
 
 
+def _only_run(run):
+    """A stand-in for the `subprocess` a module sees, so no other module gets the fake."""
+    import subprocess as real
+    import types
+    return types.SimpleNamespace(**{**vars(real), "run": run})
+
+
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch, tmp_path):
     factory_claude.clear_login_cache()
@@ -38,7 +45,7 @@ def fake_claude_status(monkeypatch, out, rc=0):
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, rc, out, "")
 
-    monkeypatch.setattr(factory_claude.subprocess, "run", run)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(run))
     return calls
 
 
@@ -51,7 +58,7 @@ def fake_codex_status(monkeypatch, rc=0, version=None):
             return subprocess.CompletedProcess(cmd, 0, f"codex-cli {version}\n", "")
         return subprocess.CompletedProcess(cmd, rc, b"", b"")
 
-    monkeypatch.setattr(factory_codex.subprocess, "run", run)
+    monkeypatch.setattr(factory_codex, "subprocess", _only_run(run))
 
 
 def write_codex_auth(tmp_path, auth_mode="chatgpt", plan="plus"):
@@ -131,7 +138,7 @@ def test_a_hanging_claude_cli_is_not_signed_in(monkeypatch):
     def hang(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 10)
 
-    monkeypatch.setattr(factory_claude.subprocess, "run", hang)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(hang))
     factory_claude.clear_login_cache()
     assert factory_claude.claude_login().signed_in is False
     assert factory_claude._login_cache is None   # a timeout is never cached
@@ -147,7 +154,7 @@ def test_a_hanging_codex_login_status_is_not_signed_in(tmp_path, monkeypatch):
             raise subprocess.TimeoutExpired(cmd, 10)
         return ok(cmd, **kw)
 
-    monkeypatch.setattr(factory_codex.subprocess, "run", run)
+    monkeypatch.setattr(factory_codex, "subprocess", _only_run(run))
     assert factory_codex.codex_login().signed_in is False
 
 
@@ -370,7 +377,7 @@ def _fake_cli_by_env(monkeypatch, stored="claude.ai"):
             out = '{"loggedIn": false}'
         return subprocess.CompletedProcess(cmd, 0, out, "")
 
-    monkeypatch.setattr(factory_claude.subprocess, "run", run)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(run))
     return seen
 
 
@@ -410,7 +417,7 @@ def test_a_probe_with_no_answer_warns_once_that_the_key_is_used(monkeypatch, cap
     def slow(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 10)
 
-    monkeypatch.setattr(factory_claude.subprocess, "run", slow)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(slow))
     with caplog.at_level(logging.WARNING, logger="hubzoid.claude"):
         assert factory_claude.claude_login().signed_in is False         # no change: not signed in
         factory_claude.claude_login()
