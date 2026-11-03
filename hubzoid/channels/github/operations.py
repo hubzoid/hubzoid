@@ -751,11 +751,22 @@ def _write(conn, op: Op, repo, arguments: dict, bound) -> dict:
     return {"data": result}
 
 
-def tools(conn) -> list:
-    """FunctionTools named `github__<operation>` for agents and stations."""
+def tool_for(op: Op, invoke) -> Any:
+    """The `github__<operation>` FunctionTool for ``op`` answering with ``invoke``:
+    one place for its name, description, schema and class (read or external
+    write), so a stand-in and the real tool can never differ."""
     from agents import FunctionTool
 
-    from ... import redaction, tool_classes
+    from ... import tool_classes
+
+    tool = FunctionTool(name=f"github__{op.name}", description=f"GitHub: {op.description}",
+                        params_json_schema=schema(op), on_invoke_tool=invoke, strict_json_schema=False)
+    return tool_classes.declare(tool, "read" if op.kind == "read" else "external_write")
+
+
+def tools(conn) -> list:
+    """FunctionTools named `github__<operation>` for agents and stations."""
+    from ... import redaction
 
     out = []
     for op in OPS.values():
@@ -774,9 +785,7 @@ def tools(conn) -> list:
                 except Exception as exc:  # noqa: BLE001 - the model gets a safe, plain error
                     return json.dumps({"error": "operation_failed", "message": redaction.scrub_error(exc)})
 
-            tool = FunctionTool(name=f"github__{op.name}", description=f"GitHub: {op.description}",
-                                params_json_schema=schema(op), on_invoke_tool=invoke, strict_json_schema=False)
-            return tool_classes.declare(tool, "read" if op.kind == "read" else "external_write")
+            return tool_for(op, invoke)
         out.append(make())
     return out
 

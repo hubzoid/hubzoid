@@ -487,3 +487,44 @@ def test_a_requirement_that_matches_nothing_fails(tmp_path, monkeypatch):
     assert doctor._eval_checks(make_hub(tmp_path / "b", {"x.md": "Hi"})) == []
     monkeypatch.setattr(quality, "evidence", lambda hub_dir: 1 / 0)       # unreadable results never pass
     assert [(c.id, c.status) for c in doctor._eval_checks(hub)] == [("evals.quality", "fail")]
+
+
+# ---------------------------------------------------------------------------
+# Fakes for connector tools the hub has not connected yet
+# ---------------------------------------------------------------------------
+def test_a_faked_unconnected_github_tool_gets_a_stand_in_in_a_case_only():
+    assert tool_fakes.wrap_registry({}) == {}             # outside a case nothing changes
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__getRepository", output={"full_name": "acme/app"}),
+                                        tool_fakes.Fake(tool="crm__lookup", output="x")])
+    with tool_fakes.scope(session):
+        registry = tool_fakes.wrap_registry({})
+        assert list(registry) == ["github__getRepository"]  # a name with no provider stays out
+        out = asyncio.run(registry["github__getRepository"].on_invoke_tool(None, "{}"))
+    assert json.loads(out) == {"full_name": "acme/app"} and session.used == ["github__getRepository"]
+    assert tool_fakes.wrap_registry({}) == {}
+
+
+def test_a_github_stand_in_is_the_real_tool_without_the_network(monkeypatch):
+    from hubzoid import tool_classes
+    from hubzoid.channels.github import client as gh
+    from hubzoid.channels.github import operations
+    from hubzoid.tools import github_tools
+
+    monkeypatch.setattr(gh, "request", lambda *a, **k: pytest.fail("network call"), raising=False)
+    stand = github_tools.stand_ins()["github__createIssue"]
+    op = operations.OPS["createIssue"]
+    assert stand.description == f"GitHub: {op.description}" and stand.params_json_schema == operations.schema(op)
+    assert tool_classes.classify(stand) == "external_write"
+    assert tool_classes.classify(github_tools.stand_ins()["github__getRepository"]) == "read"
+    assert set(github_tools.stand_ins()) == {f"github__{n}" for n in operations.OPS}
+    assert json.loads(asyncio.run(stand.on_invoke_tool(None, "{}"))) == {
+        "error": "not_connected", "message": "GitHub isn't connected to this agent."}
+
+
+def test_a_call_no_fake_matches_on_an_unconnected_stand_in_is_blocked():
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__createIssue", args={"title": "a"}, output="ok")])
+    with tool_fakes.scope(session):
+        tool_ = tool_fakes.wrap_registry({})["github__createIssue"]
+        out = asyncio.run(tool_.on_invoke_tool(None, json.dumps({"title": "b"})))
+    assert out.startswith("Blocked in this eval") and session.used == []
+    assert session.blocked == [("github__createIssue", {"title": "b"})]

@@ -457,6 +457,12 @@ How a faked case runs:
   case with `run_as` gets none of that person's own connectors either; the
   `fake_tools` check names the ones left out. `allow_real_mcp` takes `true`
   or `false`, unquoted.
+- **Tools the agent hasn't connected can be faked.** A case may fake a
+  connector tool that isn't connected yet, such as `github__getRepository` on
+  a fresh clone. While the case runs, the faked `github__` name is added as a
+  stand-in with the real tool's name, description, schema and class, so
+  approval rules treat it the same. It never reaches the network, and a call
+  no fake matches is blocked as above.
 - **Other cases are untouched.** Cases without `fake_tools` run every tool for
   real, as before.
 

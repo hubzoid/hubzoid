@@ -31,6 +31,22 @@ def make(ctx) -> list:
     return operations.tools(conns[0])
 
 
+def stand_ins() -> dict:
+    """One tool per GitHub operation, built without a connection: the real
+    tool's name, description, schema and class, for an eval case that fakes
+    a tool the hub has not connected yet. Called outside a fake, it answers
+    "not connected" and never reaches the network."""
+    import json
+
+    from ..channels.github import operations
+
+    async def invoke(_ctx, _args_json: str) -> str:
+        return json.dumps({"error": "not_connected", "message": "GitHub isn't connected to this agent."})
+
+    tools = (operations.tool_for(op, invoke) for op in operations.OPS.values())
+    return {t.name: t for t in tools}
+
+
 def _store_exists(hub_dir) -> bool:
     """Whether the operational store is already there. A connection is only
     ever in an applied store, so a missing SQLite file means no connection."""
