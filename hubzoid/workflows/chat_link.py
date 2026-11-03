@@ -96,12 +96,15 @@ def post_request(hub_dir, env: dict, workflow: str, req: dict) -> None:
 
 
 def _readable(result) -> str:
-    """A run's return value for a person: text as is, a mapping as lines."""
+    """A run's return value for a person: text as is, a mapping's `reply` text, else its lines."""
     if result is None:
         return ""
     if isinstance(result, str):
         return result.strip()
     if isinstance(result, dict):
+        reply = result.get("reply")
+        if isinstance(reply, str) and reply.strip():
+            return reply.strip()  # the run's own words, not its whole record
         lines = []
         for key, value in result.items():
             key = str(key)

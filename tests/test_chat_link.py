@@ -93,6 +93,21 @@ def test_a_late_post_is_what_the_person_sees_next(chat):
         assert g.get_view(c, cid, "u_ana")["view_head_id"] == "m_res_dddddddd"
 
 
+def test_a_result_with_a_reply_shows_only_the_reply(chat):
+    from hubzoid.workflows import chat_link
+
+    hub, engine, _actor, link = chat
+    env = {"chat": link, "started_at": 1}
+    chat_link.post_result(hub, env, "factory", "run-r1", ok=True,
+                          result={"reply": "Opened the draft.", "posted": False, "record": {"a": 1}})
+    chat_link.post_result(hub, env, "factory", "run-r2", ok=True, result={"reply": "  ", "posted": False})
+    chat_link.post_result(hub, env, "factory", "run-r3", ok=True, result="Plain text.")
+    one, two, three = _texts(engine, link["conversation_id"])
+    assert "Opened the draft." in one and "Posted" not in one and "record" not in one
+    assert "- Posted: false" in two  # an empty reply keeps today's lines
+    assert "Plain text." in three
+
+
 def test_odd_results_never_break_the_run(chat):
     from hubzoid.workflows import chat_link
 
