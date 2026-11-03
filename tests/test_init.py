@@ -444,3 +444,22 @@ def test_the_reply_check_names_the_login_of_the_hubs_model(tmp_path, monkeypatch
     out = " ".join(capsys.readouterr().out.split())
     assert used == ["codex-local"] and "Codex, Plus plan did not answer: slow" in out
     assert "cli_auth_credentials_store" in out and "claude auth login" not in out
+
+
+@pytest.mark.real_logins
+def test_a_key_only_claude_setup_is_offered_by_init(monkeypatch):
+    import subprocess
+
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, factory_codex
+
+    factory_claude.clear_login_cache()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
+    monkeypatch.setattr(factory_claude.subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', ""))
+    monkeypatch.setattr(factory_codex, "codex_login", lambda: None)
+    try:
+        assert cli._available_local_models() == ["claude-local"]
+    finally:
+        factory_claude.clear_login_cache()

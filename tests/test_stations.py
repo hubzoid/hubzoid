@@ -453,3 +453,26 @@ def test_stations_doctor_asks_the_claude_login(hub_dir, monkeypatch, tmp_path):
     assert available() == {False}
     monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
     assert available() == {True}
+
+
+@pytest.mark.real_logins
+def test_stations_doctor_counts_a_key_only_claude_setup(hub_dir, monkeypatch):
+    import subprocess
+
+    from typer.testing import CliRunner
+
+    from hubzoid import factory_claude
+    from hubzoid.cli import app
+
+    factory_claude.clear_login_cache()
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
+    monkeypatch.setattr(factory_claude.subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', ""))
+    try:
+        out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
+        stations = json.loads(out.output)["stations"].values()
+        assert {s["credentials_available"] for s in stations if s["engine"] != "codex-local"} == {True}
+    finally:
+        factory_claude.clear_login_cache()

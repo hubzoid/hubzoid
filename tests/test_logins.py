@@ -403,7 +403,7 @@ def test_only_a_key_and_no_login_keeps_the_key(monkeypatch):
     _fake_cli_by_env(monkeypatch, stored=None)                  # without the key: loggedIn false
     monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
     login = factory_claude.claude_login()
-    assert login.signed_in is False and login.api_key_in_env is True
+    assert (login.signed_in, login.method, login.tier, login.api_key_in_env) == (True, "api_key", 0, True)
     assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("claude-local")
 
 

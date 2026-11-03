@@ -108,6 +108,8 @@ def claude_login():
                                     api_key_in_env=key_set), True
         elif isinstance(status, dict) and status.get("loggedIn") is False:
             definite = True
+            if key_set:   # only a key: it is the login, and the child keeps it
+                login = Login("claude-local", True, "api_key", None, 0, api_key_in_env=True)
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
     if definite:
