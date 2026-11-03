@@ -169,6 +169,23 @@ def _choose_initial_model() -> str | None:
         console.print("Choose one of the listed numbers.")
 
 
+def _check_local_reply(hub_dir: Path, model: str) -> None:
+    """One real call after init picks a signed-in CLI: say it answered, or why not.
+    Never stops init."""
+    from . import factory_claude, factory_codex, logins, runtime
+
+    login = factory_claude.claude_login() if model.startswith("claude-local") else (
+        factory_codex.codex_login() if model.startswith("codex-local") else None)
+    if not (login and login.signed_in):
+        return
+    ok, reason = runtime.reply_check(hub_dir)
+    if ok:
+        console.print(f"{escape(logins.describe(login))} answered.")
+    else:
+        console.print(f"[yellow]{escape(logins.describe(login))} did not answer: {escape(reason)}. "
+                      "Sign in again (`claude auth login` or `codex login`), then run `hubzoid run`.[/yellow]")
+
+
 # The ready-to-use hubs `hubzoid init` points to: (name, what it does, clone command).
 READY_HUBS = (
     ("Software Factory", "turns issues into reviewed draft pull requests",
@@ -486,6 +503,9 @@ def init(
         console.print(f"\n[green]Bootstrapped agents-repo wrapper at[/green] {parent}")
         for p in parent_written:
             console.print(f"  + {p.name}")
+
+    if selected_model and not saved_key:
+        _check_local_reply(hub_dir, selected_model)
 
     console.print("\nNext:")
     step = 1

@@ -197,11 +197,27 @@ def tool_free_options(system: str, model_pin: str | None = None):
     return claude_options(**opts)
 
 
-def _child_env() -> dict[str, str]:
+_billing_logged = False
+
+
+def _child_env(model: str | None = None) -> dict[str, str]:
     """The claude child's environment overrides. An explicit
     HUBZOID_MCP_TIMEOUT (seconds) becomes the CLI's MCP_TOOL_TIMEOUT
-    (milliseconds) unless that is set; unset, the CLI keeps its own default."""
+    (milliseconds) unless that is set; unset, the CLI keeps its own default.
+
+    On claude-local with a subscription login (or CLAUDE_CODE_OAUTH_TOKEN), an
+    inherited ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is blanked so the CLI
+    never bills the API silently. To use a key on purpose, set MODEL=anthropic/<model>."""
+    global _billing_logged
     out = config_secrets.child_env_overrides(os.environ)
+    model = (model or os.environ.get("MODEL") or "claude-local").strip().lower()
+    if model.startswith("claude-local"):
+        login = None if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else claude_login()
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or (login and login.signed_in and login.method == "subscription"):
+            out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"] = ""
+            if not _billing_logged:
+                _billing_logged = True
+                log.info("Using the Claude subscription; ignoring ANTHROPIC_API_KEY")
     if os.environ.get("HUBZOID_MCP_TIMEOUT", "").strip() and not os.environ.get("MCP_TOOL_TIMEOUT"):
         from .loaders.mcp import call_timeout
 
@@ -479,7 +495,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
-    child_env = _child_env()
+    child_env = _child_env(hub_model)
     if child_env:
         opts_kwargs["env"] = child_env
     if agent_defs:
@@ -1561,7 +1577,7 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
         opts["output_format"] = {"type": "json_schema", "schema": schema}
     if pin is not None:
         opts["model"] = pin
-    child_env = _child_env()
+    child_env = _child_env(model_setting)
     if child_env:
         opts["env"] = child_env
     options = _budget_caps(claude_options(**opts))

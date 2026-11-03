@@ -376,3 +376,33 @@ def test_both_logins_offer_the_better_one_first_and_name_the_other(monkeypatch, 
     monkeypatch.setattr(cli.typer, "prompt", lambda *a, **kw: 1)
     assert cli._choose_initial_model() == "claude-local"
     assert "Codex also signed in" in capsys.readouterr().out
+
+
+def test_init_checks_the_model_answers_before_the_next_steps(tmp_path, monkeypatch):
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    calls = []
+    _interactive(monkeypatch, local=["claude-local"])
+    monkeypatch.setattr(factory_claude, "claude_login",
+                        lambda: Login("claude-local", True, "subscription", "max"))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: calls.append(hub) or (True, ""))
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    assert len(calls) == 1
+    assert "Claude Code, Max plan answered." in res.output
+    assert res.output.index("answered.") < res.output.index("Next:")
+
+
+def test_init_survives_a_failed_reply_check_and_skips_it_for_a_key(tmp_path, monkeypatch):
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    _interactive(monkeypatch, local=["claude-local"])
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription"))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: (False, "timed out"))
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0 and "did not answer: timed out" in res.output
+    monkeypatch.setattr(runtime, "reply_check", lambda *a, **k: pytest.fail("no call for a key"))
+    _interactive(monkeypatch, answers=["sk-or-v1-" + "a" * 40])
+    assert _run_init(tmp_path, "hub2").exit_code == 0

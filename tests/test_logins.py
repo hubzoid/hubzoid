@@ -243,3 +243,68 @@ def test_signed_in_codex_names_the_plan(tmp_path, monkeypatch):
     fake_codex_status(monkeypatch)
     r = diag.check_model_auth(tmp_path)
     assert r.status == "ok" and "Plus plan" in r.summary
+
+
+# -- billing: a subscription login beats an inherited API key; one real check call --
+def _billing_env(monkeypatch, *, login=None, token=False):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: login)
+    if token:
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
+
+
+def test_billing_subscription_login_blanks_the_inherited_api_key(monkeypatch):
+    _billing_env(monkeypatch, login=Login("claude-local", True, "subscription", "max"))
+    env = factory_claude._child_env()
+    assert env["ANTHROPIC_API_KEY"] == "" and env["ANTHROPIC_AUTH_TOKEN"] == ""
+
+
+def test_billing_api_key_passes_without_a_subscription(monkeypatch):
+    _billing_env(monkeypatch, login=None)
+    assert "ANTHROPIC_API_KEY" not in factory_claude._child_env()
+    _billing_env(monkeypatch, login=Login("claude-local", True, "api_key"))
+    assert "ANTHROPIC_API_KEY" not in factory_claude._child_env()
+
+
+def test_billing_oauth_token_blanks_the_key(monkeypatch):
+    _billing_env(monkeypatch, login=None, token=True)
+    assert factory_claude._child_env()["ANTHROPIC_API_KEY"] == ""
+
+
+def test_billing_an_anthropic_model_keeps_its_key(monkeypatch):
+    _billing_env(monkeypatch, login=Login("claude-local", True, "subscription", "max"))
+    assert "ANTHROPIC_API_KEY" not in factory_claude._child_env("anthropic/claude-haiku-4-5")
+
+
+def test_model_reply_check_maps_ok_and_fail(tmp_path, monkeypatch):
+    from hubzoid import runtime
+
+    monkeypatch.setattr(runtime, "reply_check", lambda hub: (True, ""))
+    assert diag.BY_ID["model.reply"].fn(tmp_path).status == "ok"
+    monkeypatch.setattr(runtime, "reply_check", lambda hub: (False, "timed out"))
+    r = diag.BY_ID["model.reply"].fn(tmp_path)
+    assert r.status == "fail" and "timed out" in r.summary
+    assert diag.BY_ID["model.reply"].profile == "active"
+
+
+def test_reply_check_wraps_complete_once(tmp_path, monkeypatch):
+    from hubzoid import runtime
+
+    seen = {}
+
+    def once(hub, spec, **kw):
+        seen.update(spec=spec, kw=kw)
+        return {"text": "ready"}
+
+    monkeypatch.setattr(runtime, "complete_once", once)
+    assert runtime.reply_check(tmp_path, timeout=5) == (True, "")
+    assert seen["spec"]["timeout"] == 5 and seen["kw"]["kind"] == "check"
+    monkeypatch.setattr(runtime, "complete_once", lambda *a, **k: {"text": " "})
+    assert runtime.reply_check(tmp_path)[0] is False
+
+    def boom(*a, **k):
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(runtime, "complete_once", boom)
+    ok, reason = runtime.reply_check(tmp_path)
+    assert not ok and "slow" in reason

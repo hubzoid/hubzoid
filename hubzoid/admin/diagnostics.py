@@ -256,6 +256,17 @@ def check_model_auth(hub: Path) -> Result:
                                                                          "provider": provider})
 
 
+def check_model_reply(hub: Path) -> Result:
+    """Active: one tiny real model call (spends a few tokens)."""
+    from .. import runtime
+
+    ok, reason = runtime.reply_check(hub)
+    if ok:
+        return Result("ok", "The model answered.")
+    return Result("fail", f"The model did not answer: {reason}", {}, "Check the model sign-in, then try again.",
+                  "model_reply")
+
+
 def check_signin(hub: Path) -> Result:
     from .. import doctor
 
@@ -493,6 +504,7 @@ CHECKS: tuple[CheckDef, ...] = (
     CheckDef("telemetry.config", "passive", "Telemetry export is set up.", "HUB-109", check_telemetry),
     CheckDef("config.chat", "passive", "chat/config.yaml is valid and applied.", "HUB-71", check_chat_config),
     CheckDef("config.branding", "passive", "The active brand is complete.", "HUB-82", check_branding),
+    CheckDef("model.reply", "active", "The model answers one short message.", "HUB-101", check_model_reply),
     CheckDef("connectors.reachability", "active", "Connector hosts answer (network probe).", "HUB-102",
              check_connector_reachability),
 )
