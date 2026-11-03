@@ -4,7 +4,9 @@ The branch runs from the conversation's root to the new user message. Each
 message becomes a ``[user]`` or ``[assistant]`` block through the bridge's own
 ``server._flatten_messages``, so a web app turn reads exactly like an
 OpenAI-compatible one. Assistant messages contribute their answer text only
-(never reasoning or tool entries). A user message's attachments come first in
+(never reasoning or tool entries); a run's result posted to the chat
+(``workflows.chat_link``) contributes its form fenced as data, as a person's
+decision (``request_outcome``) does for user text. A user message's attachments come first in
 its block, as the notes ``attachments.note`` writes, built from the message's
 stored parts. Its images also go to the runtime as a list (``branch_images``),
 which ``hubzoid.vision_inject`` shows to the model. Files live in the
@@ -52,8 +54,11 @@ def branch_images(hub_dir: Path, key: str, branch: list[dict]) -> list[str]:
 
 
 def assistant_text(content: list) -> str:
-    return "".join(str(p.get("text") or "") for p in content or []
-                   if isinstance(p, dict) and p.get("type") == "text")
+    parts = [p for p in content or [] if isinstance(p, dict)]
+    for part in parts:
+        if part.get("type") == "run_result" and part.get("for_model"):
+            return str(part["for_model"])  # a run's posted result, fenced as data
+    return "".join(str(p.get("text") or "") for p in parts if p.get("type") == "text")
 
 
 def build_prompt(hub_dir: Path, key: str, branch: list[dict]) -> str:

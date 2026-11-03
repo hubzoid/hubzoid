@@ -96,17 +96,19 @@ def post_request(hub_dir, env: dict, workflow: str, req: dict) -> None:
 
 
 def _readable(result) -> str:
-    """A run's return value for a person: text as is, a mapping's `reply`, `refused` or `answer` text, else its lines."""
+    """A run's return value for a person, capped as the quick path caps it: text
+    as is, a mapping's `reply`, else its `refused` or `answer`
+    (`observe.chat_answer`), else its lines."""
+    from .observe import capped, chat_answer
+
     if result is None:
         return ""
     if isinstance(result, str):
-        return result.strip()
+        return capped(result)
     if isinstance(result, dict):
         reply = result.get("reply")
         if isinstance(reply, str) and reply.strip():
-            return reply.strip()  # the run's own words, not its whole record
-        from .observe import chat_answer
-
+            return capped(reply)  # the run's own words, not its whole record
         answer = chat_answer(result)
         if answer and answer.strip():
             return answer.strip()
@@ -117,8 +119,8 @@ def _readable(result) -> str:
                 continue
             shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
             lines.append(f"- {key.replace('_', ' ').capitalize()}: {shown}")
-        return "\n".join(lines)
-    return json.dumps(result, ensure_ascii=False, default=str)
+        return capped("\n".join(lines))
+    return capped(json.dumps(result, ensure_ascii=False, default=str))
 
 
 def post_result(hub_dir, env: dict, workflow: str, run_id: str, *, ok: bool, result=None,
@@ -145,12 +147,20 @@ def post_result(hub_dir, env: dict, workflow: str, run_id: str, *, ok: bool, res
 
         title = title_for(workflow)
         if ok:
+            from .observe import as_data
+
             links = _run_links(Path(hub_dir), run_id) or links_text(list(published or []))
-            body = "\n\n".join(p for p in (_readable(result), links) if p)
-            text = f"{title} finished." + (f"\n\n{body}" if body else "")
+            readable = _readable(result)
+            body = "\n\n".join(p for p in (readable, links) if p)
+            parts = [{"type": "text", "text": f"{title} finished." + (f"\n\n{body}" if body else "")}]
+            if readable:
+                # People see the text; the model reads the run's words fenced as
+                # data (chat.history), as it reads a decision's `request_outcome`.
+                fenced = "\n\n".join(p for p in (as_data(readable), links) if p)
+                parts.append({"type": "run_result", "run_id": run_id, "for_model": f"{title} finished.\n\n{fenced}"})
         else:
-            text = f"{title} stopped: {CAUSES.get(cause or 'error', CAUSES['error'])}."
-        _post(Path(hub_dir), chat, _mid("result", run_id), [{"type": "text", "text": text}], tries=5)
+            parts = [{"type": "text", "text": f"{title} stopped: {CAUSES.get(cause or 'error', CAUSES['error'])}."}]
+        _post(Path(hub_dir), chat, _mid("result", run_id), parts, tries=5)
     except Exception:  # noqa: BLE001 - never the run's outcome; it is still in the person's runs and reports
         log.warning("workflows: could not post the result of %s to its chat", run_id, exc_info=True)
 
