@@ -45,9 +45,13 @@ def doctor(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(F
 
     hub = _hub(hub)
     out = definitions.validate(hub)
+    import os
+
+    from ..factory_claude import claude_login as claude_probe
     from ..factory_codex import codex_available
 
-    claude_login = Path.home().joinpath(".claude.json").exists() or bool(__import__("os").environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    probed = claude_probe()
+    claude_login = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) or bool(probed and probed.signed_in)
     report = {"valid": out["valid"], "checks": out["checks"], "stations": {}}
     for name, s in (out.get("stations") or {}).items():
         report["stations"][name] = {

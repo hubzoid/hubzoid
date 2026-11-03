@@ -820,6 +820,7 @@ def test_json_output_names_the_resume_command_and_never_asks(hub_dir, factory_fi
     exp = config.export(hub_dir, "github")
     assert exp["status"] == "disabled" and data["enabled"] is False
     assert f"--expected-revision {exp['revision']}" in data["resume_command"]
+    assert data["plan"]["routes"]["review_mention"] == "revise" and data["plan"]["routes"]["label"] == "answer"
 
 
 def test_connect_asks_once_at_a_terminal(hub_dir, factory_file, fake_pat, monkeypatch):

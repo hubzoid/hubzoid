@@ -142,7 +142,7 @@ def codex_available() -> bool:
         return False
 
 
-_LOGIN_FIX = "codex -c 'cli_auth_credentials_store=\"file\"' login"
+LOGIN_FIX = "codex -c 'cli_auth_credentials_store=\"file\"' login"
 
 
 def _plan_from_login_file(data: dict) -> str | None:
@@ -174,7 +174,7 @@ def codex_login():
         data = json.loads(_auth_file().read_text())
     except (OSError, ValueError):
         # Signed in, but not in the file the runtime copies into its CODEX_HOME.
-        return Login("codex-local", True, version=version, problem="not_file_backed", fix=_LOGIN_FIX)
+        return Login("codex-local", True, version=version, problem="not_file_backed", fix=LOGIN_FIX)
     data = data if isinstance(data, dict) else {}
     mode = data.get("auth_mode")
     if mode is None:

@@ -15,7 +15,6 @@ secret once to prove it is reachable (skip with `fetch_secrets=False`, the
 from __future__ import annotations
 
 import os
-import shutil
 import time
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
@@ -51,10 +50,16 @@ def _hub_checks(hub: Path) -> list[Check]:
         rt = runtime_lib.build(hub)
         out.append(Check("runtime.build", "ok", f"Agent builds: {rt.name!r} via {type(rt).__name__}"))
         if type(rt).__name__ == "CodexRuntime":
-            from .factory_codex import codex_available, REVIEWED_CODEX_VERSIONS
-            ready = codex_available()
-            out.append(Check("runtime.codex_login", "ok" if ready else "fail",
-                             "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
+            from . import logins
+            from .factory_codex import REVIEWED_CODEX_VERSIONS, codex_login
+
+            login = codex_login()
+            if login and login.signed_in and not login.problem:
+                out.append(Check("runtime.codex_login", "ok", f"Codex CLI login available: {logins.describe(login)}"))
+            elif login and login.problem:
+                out.append(Check("runtime.codex_login", "fail", f"{logins.problem(login)} Run `{login.fix}`"))
+            else:
+                out.append(Check("runtime.codex_login", "fail", f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
     try:
@@ -483,13 +488,16 @@ def _model(hub: Path) -> Check:
 
     model = runtime_lib._resolve_model_id(hub, settingslib.load(hub))
     if model == "claude-local" or model.startswith("claude-local/"):
+        from . import factory_claude, logins
+
         if any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")):
             return Check("model.credentials", "ok", f"{model}: Anthropic credentials set")
-        if shutil.which("claude"):
-            return Check("model.credentials", "info",
-                         f"{model}: uses the local `claude` login (check it with `claude /status`)")
+        login = factory_claude.claude_login()
+        if login and login.signed_in:
+            return Check("model.credentials", "ok", f"{model}: signed in ({logins.describe(login)})")
         return Check("model.credentials", "fail",
-                     f"{model}: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or `claude` login")
+                     f"{model}: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or `claude` login "
+                     "(run `claude auth login`)")
     try:
         import litellm
 

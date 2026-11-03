@@ -745,14 +745,16 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         )
 
 
-def reply_check(hub_dir, *, timeout: float = 60) -> tuple[bool, str]:
-    """One tiny real call: does the hub's model answer? (True, "") on a
-    non-empty reply, else (False, a short scrubbed reason)."""
+def reply_check(hub_dir, *, timeout: float = 60, model: str | None = None) -> tuple[bool, str]:
+    """One tiny real call: does the hub's model (or ``model``) answer? (True, "")
+    on a non-empty reply, else (False, a short scrubbed reason)."""
     from .redaction import scrub_error
 
+    spec = {"prompt": "Reply with the single word: ready", "timeout": timeout}
+    if model:
+        spec["model"] = model
     try:
-        out = complete_once(hub_dir, {"prompt": "Reply with the single word: ready", "timeout": timeout},
-                            surface="diagnostics", kind="check")
+        out = complete_once(hub_dir, spec, surface="diagnostics", kind="check")
     except Exception as exc:  # noqa: BLE001
         return False, scrub_error(exc)
     if str((out or {}).get("text") or "").strip():

@@ -3,6 +3,7 @@ one to prefer. Runtime-neutral: detection lives in factory_claude / factory_code
 and returns the `Login` record defined here. Never holds a token."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -14,7 +15,7 @@ class Login:
     plan: str | None = None      # as the CLI reports it: "team", "max", "pro", "plus", ...
     tier: int = 0                # 2 top, 1 standard, 0 unknown or API key
     version: str | None = None
-    problem: str | None = None   # "not_file_backed" | "unreviewed_version" | None
+    problem: str | None = None   # "not_file_backed" | None
     fix: str | None = None       # one command that fixes `problem`
 
 
@@ -33,6 +34,17 @@ STANDARD = {
 }
 
 _NAMES = {"claude-local": "Claude Code", "codex-local": "Codex"}
+
+# Plan names people know; any other is its words, capitalised.
+_PLAN_NAMES = {
+    "prolite": "Pro Lite", "promax": "Pro Max",
+    "self_serve_business_prolite": "Self-serve Business Pro Lite",
+    "self_serve_business_usage_based": "Self-serve Business Usage-based",
+    "ent26": "Enterprise", "enterprise_cbp_automation": "Enterprise", "enterprise_cbp_usage_based": "Enterprise",
+}
+
+# What Diagnostics and init say about a login that is there but can't be used.
+_PROBLEMS = {"not_file_backed": "{name} is signed in, but not in a file the runtime can use."}
 
 
 def tier(runtime: str, method: str | None, plan: str | None) -> int:
@@ -61,8 +73,19 @@ def choose(logins: list[Login]) -> Login | None:
     return max(usable, key=lambda lg: (lg.method == "subscription", lg.tier, lg.runtime == "claude-local"))
 
 
+def plan_name(plan: str) -> str:
+    key = plan.strip().lower()
+    return _PLAN_NAMES.get(key) or " ".join(w.capitalize() for w in re.split(r"[_\s-]+", key) if w)
+
+
 def describe(login: Login) -> str:
     name = _NAMES.get(login.runtime, login.runtime)
     if login.method == "api_key":
         return f"{name}, API key"
-    return f"{name}, {login.plan.strip().capitalize()} plan" if login.plan else name
+    return f"{name}, {plan_name(login.plan)} plan" if login.plan else name
+
+
+def problem(login: Login) -> str | None:
+    """One plain sentence for the login's ``problem``, or None."""
+    text = _PROBLEMS.get(login.problem or "")
+    return text.format(name=_NAMES.get(login.runtime, login.runtime)) if text else None

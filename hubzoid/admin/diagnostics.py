@@ -135,6 +135,7 @@ class CheckDef:
     purpose: str
     owner: str
     fn: Callable[[Path], Result]
+    timeout: float | None = None  # seconds; None: admin.yaml's check_timeout_seconds
 
 
 _SECRETISH = re.compile(r"(secret|token|password|passwd|api[_-]?key|fingerprint|credential|cookie|authorization)", re.I)
@@ -238,8 +239,8 @@ def check_model_auth(hub: Path) -> Result:
         if login and login.signed_in and not login.problem:
             return Result("ok", f"Signed in: {logins.describe(login)}.", {"runtime": "codex-local"})
         if login and login.problem:
-            return Result("fail", "Codex is signed in, but not in a file the runtime can use.",
-                          {"runtime": "codex-local"}, f"Run `{login.fix}`.", "model_signin")
+            return Result("fail", logins.problem(login), {"runtime": "codex-local"}, f"Run `{login.fix}`.",
+                          "model_signin")
         return Result("fail", "Codex isn't ready: it needs a reviewed Codex CLI version and a file-backed login.",
                       {"runtime": "codex-local"},
                       f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one), "
@@ -256,11 +257,15 @@ def check_model_auth(hub: Path) -> Result:
                                                                          "provider": provider})
 
 
+REPLY_SECONDS = 60  # one real call can take longer than other checks' limit
+
+
 def check_model_reply(hub: Path) -> Result:
-    """Active: one tiny real model call (spends a few tokens)."""
+    """Active: one tiny real model call (spends a few tokens). It stops itself
+    just before the check's own limit, so its reason is what the report shows."""
     from .. import runtime
 
-    ok, reason = runtime.reply_check(hub)
+    ok, reason = runtime.reply_check(hub, timeout=REPLY_SECONDS - 2)
     if ok:
         return Result("ok", "The model answered.")
     return Result("fail", f"The model did not answer: {reason}", {}, "Check the model sign-in, then try again.",
@@ -504,7 +509,8 @@ CHECKS: tuple[CheckDef, ...] = (
     CheckDef("telemetry.config", "passive", "Telemetry export is set up.", "HUB-109", check_telemetry),
     CheckDef("config.chat", "passive", "chat/config.yaml is valid and applied.", "HUB-71", check_chat_config),
     CheckDef("config.branding", "passive", "The active brand is complete.", "HUB-82", check_branding),
-    CheckDef("model.reply", "active", "The model answers one short message.", "HUB-101", check_model_reply),
+    CheckDef("model.reply", "active", "The model answers one short message.", "HUB-101", check_model_reply,
+             timeout=REPLY_SECONDS),
     CheckDef("connectors.reachability", "active", "Connector hosts answer (network probe).", "HUB-102",
              check_connector_reachability),
 )
@@ -776,9 +782,9 @@ class DiagnosticsService:
                                 result = Result("fail", f"The check raised {type(exc).__name__}.")
                             self._record(report_id, c, result, int((now - began) * 1000))
                             del running[fut]
-                        elif now - began > timeout or now > deadline:
+                        elif now - began > (c.timeout or timeout) or now > deadline:
                             self._record(report_id, c, Result(
-                                "timeout", f"{c.id} did not finish within {timeout} s.",
+                                "timeout", f"{c.id} did not finish within {c.timeout or timeout:g} s.",
                                 remediation=f"Inspect the service that owns {c.id} ({c.owner}).",
                                 remediation_code="check_timeout"), int((now - began) * 1000))
                             fut.cancel()

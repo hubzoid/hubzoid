@@ -133,6 +133,25 @@ def test_slow_check_times_out(hub, monkeypatch):
     assert check["status"] == "timeout" and check["remediation_code"] == "check_timeout"
 
 
+def test_the_model_reply_check_is_not_cut_off_by_the_check_time_limit(hub, monkeypatch):
+    from hubzoid import runtime
+
+    asked = []
+
+    def slow(hub_dir, *, timeout=60, **kw):
+        asked.append(timeout)
+        time.sleep(1.5)
+        return True, ""
+
+    monkeypatch.setattr(runtime, "reply_check", slow)
+    (hub / "admin.yaml").write_text("version: 1\ndiagnostics:\n  check_timeout_seconds: 1\n"
+                                    "  allow_network_probes: true\n")
+    svc = diag.service_for(hub)
+    rid = svc.start(actor="t", check_ids=["model.reply"], consent_network=True, run_inline=True)["report_id"]
+    assert svc.get(rid)["checks"][0]["status"] == "ok"
+    assert diag.BY_ID["model.reply"].timeout == 60 and asked[0] < 60   # its own answer comes before the cut-off
+
+
 def test_bundle_allowlist_limits_and_expiry(client, hub):
     rid = diag.service_for(hub).start(actor="t", run_inline=True)["report_id"]
     b = client.post(f"/api/admin/diagnostics/reports/{rid}/bundles", headers=ORIGIN)

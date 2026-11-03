@@ -415,3 +415,32 @@ def test_unit_tests_never_start_a_real_cli_or_model(tmp_path):
 
     assert factory_claude.claude_login() is None and factory_codex.codex_login() is None
     assert runtime.reply_check(tmp_path) == (True, "")
+
+
+def test_init_names_the_fix_for_a_login_it_cannot_use(monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import logins
+
+    monkeypatch.setattr(logins, "detect", lambda: [
+        logins.Login("codex-local", True, problem="not_file_backed", fix="codex login --file")])
+    assert cli._available_local_models() == []
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Codex is signed in, but not in a file the runtime can use. Run `codex login --file`." in out
+
+
+def test_the_reply_check_names_the_login_of_the_hubs_model(tmp_path, monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, factory_codex, runtime
+    from hubzoid.logins import Login
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=codex-local\n")
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
+    monkeypatch.setattr(factory_codex, "codex_login", lambda: Login("codex-local", True, "subscription", "plus"))
+    used = []
+    monkeypatch.setattr(runtime, "reply_check", lambda hub_dir, **kw: used.append(kw.get("model")) or (False, "slow"))
+    cli._check_local_reply(hub)
+    out = " ".join(capsys.readouterr().out.split())
+    assert used == ["codex-local"] and "Codex, Plus plan did not answer: slow" in out
+    assert "cli_auth_credentials_store" in out and "claude auth login" not in out

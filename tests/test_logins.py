@@ -221,6 +221,9 @@ def test_detect_drops_missing_clis_and_describe_reads_plainly(monkeypatch):
     assert logins.describe(claude("team")) == "Claude Code, Team plan"
     assert logins.describe(codex("plus")) == "Codex, Plus plan"
     assert logins.describe(claude_api_key()) == "Claude Code, API key"
+    assert logins.describe(codex("self_serve_business_prolite")) == "Codex, Self-serve Business Pro Lite plan"
+    assert logins.describe(codex("ent26")) == "Codex, Enterprise plan"
+    assert logins.describe(claude("brand_new_tier")) == "Claude Code, Brand New Tier plan"
 
 
 # --- doctor ----------------------------------------------------------------
@@ -318,9 +321,9 @@ def test_billing_logs_only_a_key_it_blanked_and_why(monkeypatch, caplog):
 def test_model_reply_check_maps_ok_and_fail(tmp_path, monkeypatch):
     from hubzoid import runtime
 
-    monkeypatch.setattr(runtime, "reply_check", lambda hub: (True, ""))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: (True, ""))
     assert diag.BY_ID["model.reply"].fn(tmp_path).status == "ok"
-    monkeypatch.setattr(runtime, "reply_check", lambda hub: (False, "timed out"))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: (False, "timed out"))
     r = diag.BY_ID["model.reply"].fn(tmp_path)
     assert r.status == "fail" and "timed out" in r.summary
     assert diag.BY_ID["model.reply"].profile == "active"

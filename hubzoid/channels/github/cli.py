@@ -60,10 +60,12 @@ def _interactive() -> bool:
 
 
 def _plan(conn) -> dict:
+    from .adapter import DEFAULT_ROUTES
+
     rules = conn.settings.rules
     return {"repositories": [r.full_name for r in conn.settings.repositories], "mode": conn.settings.mode,
             "workflow": conn.config.workflow, "label": rules.label, "mentions": rules.mentions,
-            "routes": {t: rules.route(t) for t in ("mention", "label", "pull_request", "ci_failure")}}
+            "routes": {t: rules.route(t) for t in DEFAULT_ROUTES}}
 
 
 def _print_connected(hub, cid, out, as_json, *, yes: bool, ask: bool) -> None:

@@ -88,6 +88,34 @@ def test_unsafe_settings_fail(hub, monkeypatch):
     assert c.status == "fail" and "OPENROUTER_API_KEY" in c.summary
 
 
+def test_model_credentials_ask_the_logins_not_folders(hub, monkeypatch, tmp_path):
+    from hubzoid import factory_claude, factory_codex, runtime
+    from hubzoid.logins import Login
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()                       # a leftover folder is not a login
+    monkeypatch.setenv("MODEL", "claude-local")
+    for key in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    assert doc._model(hub).status == "fail"
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "team"))
+    check = doc._model(hub)
+    assert check.status == "ok" and "Team plan" in check.summary
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: None)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
+    assert doc._model(hub).status == "ok"                # an env token still counts
+
+    class CodexRuntime:
+        name = "codex-local"
+
+    monkeypatch.setattr(runtime, "build", lambda hub_dir: CodexRuntime())
+    monkeypatch.setattr(factory_codex, "codex_login",
+                        lambda: Login("codex-local", True, problem="not_file_backed", fix="codex login --file"))
+    check = _by_id(doc._hub_checks(hub))["runtime.codex_login"]
+    assert check.status == "fail" and "not in a file the runtime can use" in check.summary
+    assert "codex login --file" in check.summary
+
+
 def test_schema_backup_and_schedule_checks(hub, tmp_path):
     from hubzoid import backup as bk
     from hubzoid.access import store_for
