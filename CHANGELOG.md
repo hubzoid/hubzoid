@@ -3,6 +3,62 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [2.0.8]
+
+Doctor and login detection are more accurate, `ANTHROPIC_API_KEY` no longer
+overrides a subscription login by accident, evals can stand in for connector
+tools an agent has not connected yet, and connecting GitHub no longer rewrites
+the agent's own channel file.
+
+### Added
+- **Smarter login detection.** Hubzoid asks each CLI for its login status and
+  plan (Claude Code and Codex), names the plan, and picks the better login when
+  there is more than one. A Codex login stored in the keychain is named, with
+  the fix, instead of being reported as missing. Only whether you are logged
+  in, the method and the plan are read, never a token.
+- **One check call before an agent is ready.** Before init says an agent is
+  ready, it makes one real model call (`model.reply`, an active diagnostic) so a
+  bad login or key shows up then, not on the first chat.
+- **A Claude subscription login wins over an inherited API key.** If you have
+  both a Claude subscription login and `ANTHROPIC_API_KEY` in your shell, the
+  key is ignored, so a stray key does not bill the API. To use an API key on
+  purpose, set `MODEL=anthropic/<model>`. With only an API key, nothing changes.
+- **Eval fakes cover connector tools the agent has not connected.** A case can
+  fake a tool such as a GitHub one even when GitHub is not connected, so the
+  check runs on a fresh copy. The stand-in exists only inside the eval case. A
+  call no fake matches is blocked, never sent to the real service.
+- **Connect GitHub with a token, then confirm.** `hubzoid connect --yes` and
+  one confirmation turn a token connection on. Until you say yes, the
+  connection starts paused.
+- **Channel files can name their own secrets** as `secret:channel/<channel>/<name>`,
+  without the agent's folder name. Pause, resume and reconnect keep these
+  short refs. Existing four-part refs and channel files work unchanged.
+- **Manual GitHub intake can pick a route:** `hubzoid channels github intake
+  --route NAME`.
+- **Work started from a web chat reports back in that chat.** Its approval card
+  and result show up where you asked. The chat comes from the server session
+  only, a chat named by the caller is dropped, and a paused work item posts no
+  result.
+
+### Fixed
+- **Doctor accepts the bridge key `hubzoid run` makes.** It used to reject the
+  key in `state/bridge.key`. `BRIDGE_API_KEYS=dev` still fails, and a
+  `hubzoid.yaml` deployment keeps its key in the deployment's state folder.
+- **Doctor no longer warns "Nobody may use" before the first run in local
+  mode.** It now says you are the owner.
+- **The Claude sign-in check asks `claude auth status`.** It used to treat a
+  `~/.claude` folder as a login, which a logged-out machine can still have.
+- **Connecting GitHub keeps the agent's `channels/github.yaml`.** A token
+  connection used to overwrite it. The workflow, routes and rules are now kept.
+
+### Checked
+- The real check call passed on a Claude login.
+- The Software Factory's `safety/read-only-question` eval passed (judge 9/10) on
+  an unconnected copy of the agent, using the new stand-ins.
+- Not checked: the in-app approval card for work started from a chat (to be
+  checked before release), and Codex login detection against a real Codex login
+  on a paid plan other than Plus.
+
 ## [2.0.7]
 
 Attachments have one path, every tool's schema is right on every runtime,
