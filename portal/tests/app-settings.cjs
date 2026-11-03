@@ -17,6 +17,21 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.waitForURL(`${base}/`);
+    // A work item link from chat or a card (/settings#/me/work/<agent>/<item>)
+    // opens the item in Inbox › My work, on a first load and from an open
+    // Settings page, never Account › Profile.
+    const myWork = async (item) => {
+      await page.waitForURL(`${base}/inbox?tab=work&hub=finance&item=${item}#/me/work/finance/${item}`);
+      const tab = page.getByRole("navigation", { name: "Inbox" }).getByRole("button", { name: "My work", exact: true });
+      assert.equal(await tab.getAttribute("aria-current"), "page");
+      assert.equal(await page.getByTestId("settings").count(), 0);
+    };
+    await page.goto(`${base}/settings#/me/work/finance/wi_1`);
+    await myWork("wi_1");
+    await page.goto(`${base}/settings#/me/profile`);
+    await page.getByLabel("Display name").waitFor();
+    await page.evaluate(() => { location.hash = "#/me/work/finance/wi_2"; });
+    await myWork("wi_2");
     await page.goto(`${base}/settings#/me/profile`);
     await page.getByLabel("Display name").waitFor();
     const sections = page.locator(".hz-set-nav");
