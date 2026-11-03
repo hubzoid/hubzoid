@@ -20,7 +20,8 @@ workflow, rules and routes.
 - **One check call after init picks a sign-in.** When init sets up an agent on
   a Claude Code or Codex sign-in, it makes one real model call, so a bad login
   shows up then, not on the first chat. A pasted API key is not checked this
-  way. The same call is an active diagnostic, `model.reply`.
+  way. If a key-only Claude Code setup fails the call, init says to check the
+  key. The same call is an active diagnostic, `model.reply`.
 - **A Claude subscription login wins over an inherited API key.** If you have
   both a Claude subscription login (or `CLAUDE_CODE_OAUTH_TOKEN`) and
   `ANTHROPIC_API_KEY` in your shell, the key is ignored, so a stray key does not
@@ -28,7 +29,8 @@ workflow, rules and routes.
   removed, so it sees the plan login even when a key is set, and doctor says the
   key is ignored. To use an API key on purpose, set `MODEL=anthropic/<model>`.
   With only an API key, a key-only setup still counts as signed in and keeps its
-  key. With `ANTHROPIC_BASE_URL` set for a gateway, nothing changes.
+  key. With `ANTHROPIC_BASE_URL` set for a gateway, nothing changes. If the
+  login cannot be read while a key is set, a warning says the key will be used.
 - **Eval fakes cover GitHub tools the agent has not connected.** A case can
   fake a GitHub tool even when GitHub is not connected, so the check runs on a
   fresh copy. The stand-in exists only inside the eval case, for the agent (not
@@ -46,8 +48,9 @@ workflow, rules and routes.
   (questions and approvals) and its result show up where you asked. The chat
   comes from the server session only, and a chat named by the caller is
   dropped. A result that arrives after the chat stopped waiting shows the
-  workflow's `reply` or `answer` text, not every key. A paused work item posts
-  no result; a stopped one says why, in a fixed sentence.
+  workflow's `reply`, `refused` or `answer` text, not every key, cut at the
+  same lengths as a quick result, and the agent reads it as data. A paused work
+  item posts no result; a stopped one says why, in a fixed sentence.
 
 ### Fixed
 - **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`
@@ -56,16 +59,22 @@ workflow, rules and routes.
 - **Evals on a never-started agent run as its owner when sign-in is off.** A
   case run as the local owner on a fresh copy used to be refused the agent's
   tools. With sign-in on, nothing changes.
-- **Dollar limits skip a model with no price when another limit bounds the
-  call.** A model such as `codex-local` has no price, so a dollar limit cannot
-  apply to it. If a turn or token limit still bounds the call, it runs under
-  that limit, and `hubzoid budgets show` says so. With dollar limits only, such
-  calls are still refused, and `budgets show` says what to add.
+- **Dollar limits skip `codex-local` when another limit bounds the call.** A
+  Codex login has no per-call charge, so a dollar limit cannot count it. If a
+  turn or token limit still bounds the call, it runs under that limit, and
+  `hubzoid budgets show` says so. With dollar limits only, its calls are still
+  refused, and `budgets show` says what to add. Any other model with no price
+  is refused under a dollar limit, as before.
 - **The secret-ref error suggests the right form.** A reference to another
-  agent's secret now points to `secret:channel/<id>/<name>` for this agent's own
-  slot.
-- **A refused GitHub connect leaves no token behind.** The token is stored only
-  after the connection's other checks pass.
+  agent's or another channel's secret now points to `secret:channel/<id>/<name>`
+  for this agent's own slot.
+- **A refused GitHub connect leaves no token behind.** If the connection is
+  refused, a new token is removed, and a reconnect keeps the old one.
+- **Backup Claude tokens work with an inherited API key.** With
+  `CLAUDE_CODE_OAUTH_TOKEN_SECONDARY` or `_TERTIARY` set, a stray
+  `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` stopped every turn. The key is
+  now ignored, as with one token. With `ANTHROPIC_BASE_URL`, Bedrock, Vertex or
+  Foundry, failover is still refused.
 - **`hubzoid stations doctor` asks Claude Code about its login only when a
   station uses it.**
 - **The sandbox image has a `python` command.** It is rebuilt on the next
@@ -94,10 +103,11 @@ workflow, rules and routes.
 - The real check with a fake inherited API key, in a clean environment, reports
   the plan login (`subscription team True`).
 - The follow link `/settings#/me/work/<agent>/<item>` was checked in a browser.
-- Not checked: the rebuilt sandbox image (Docker was not running), the in-app
-  approval card for work started from a chat (to be checked before release), and
-  Codex login detection against a real Codex login on a paid plan other than
-  Plus.
+- The sandbox base image was built from the new Dockerfile (Docker 29.8.2), and
+  `python --version` reported Python 3.11.2.
+- Not checked: the in-app approval card for work started from a chat (to be
+  checked before release), and Codex login detection against a real Codex login
+  on a paid plan other than Plus.
 
 ### Known limits
 - Connecting GitHub rewrites `channels/github.yaml` without its comments.
