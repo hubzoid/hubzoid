@@ -581,10 +581,11 @@ export const en = {
     checking: "Checking…",
     checkAgain: "Check again",
     hide: "Hide",
+    hideLabel: "Hide Get started",
     show: "Get started",
     howToFix: (title: string) => `How to fix: ${title}`,
     invalid: "Get started cards need fixing.",
-    why: "Why",
+    why: "Why the cards need fixing",
   },
 
   shortcuts: {
