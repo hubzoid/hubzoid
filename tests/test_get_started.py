@@ -165,11 +165,7 @@ def test_a_manager_gets_each_cards_status_line_and_fix(hub, monkeypatch):
 
     check_file(hub, "docker", 'def check(ctx):\n    return {"status": "ok", "summary": "Docker running"}\n')
     assert tc.get(URL).json() == body  # cached
-    assert tc.get(URL + "?refresh=1").json() == body  # Check again within 10 seconds of the run
-    from hubzoid.hubs import routes
-
-    monkeypatch.setattr(routes, "GET_STARTED_AGAIN", 0)
-    fresh = tc.get(URL + "?refresh=1").json()
+    fresh = tc.get(URL + "?refresh=1").json()  # Check again always looks again, even right after a run
     assert fresh["ready"] is True and fresh["checked_at"] >= body["checked_at"]
 
 
@@ -195,7 +191,6 @@ def test_the_model_card_follows_the_sign_in_check(hub, monkeypatch):
 def test_the_model_card_asks_each_cli_once_and_check_again_asks_anew(hub, monkeypatch):
     from hubzoid.hubs import routes
 
-    monkeypatch.setattr(routes, "GET_STARTED_AGAIN", 0)
     factory_claude.clear_login_cache()
     monkeypatch.setattr(factory_claude.shutil, "which", lambda name: "/bin/claude" if name == "claude" else None)
     status, claude_runs, codex_runs = {"out": '{"loggedIn": false}'}, [], []
@@ -260,7 +255,6 @@ def test_another_site_cannot_make_a_managers_browser_run_the_checks(hub, monkeyp
 def test_requests_while_the_checks_run_get_that_run(hub, monkeypatch):
     from hubzoid.hubs import routes
 
-    monkeypatch.setattr(routes, "GET_STARTED_AGAIN", 0)  # only the run in progress can answer the second
     cards(hub, "version: 1\ncards:\n  - {id: results, title: Results, line: Reviewed branches}\n")
     tc = client(hub)
     asked, runs, doctor = [], [], []

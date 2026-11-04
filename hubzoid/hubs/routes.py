@@ -7,7 +7,7 @@
     PUT  /api/hubs/{hub_id}/settings            the same body with expected_revision -> written
     POST /api/hubs/{hub_id}/doctor              run the hub's own checks now
     GET  /api/hubs/{hub_id}/get-started         the Get started cards, checked in the last
-                                                30 seconds, else now (?refresh=1: 10 seconds)
+                                                30 seconds, else now (?refresh=1: always now)
 
 This hub's administrators read, change values and run checks. Anyone else
 gets 404, as if the route did not exist. Changing a secret reference needs an
@@ -40,8 +40,7 @@ from .yamlfile import HubFileError
 
 _NO_STORE = {"Cache-Control": "no-store"}
 DOCTOR_EVERY = 10.0  # seconds between two runs of a hub's checks
-GET_STARTED_EVERY = 30.0  # seconds the Get started cards are kept
-GET_STARTED_AGAIN = 10.0  # seconds after a run in which Check again (?refresh=1) gets that run's cards
+GET_STARTED_EVERY = 30.0  # seconds the Get started cards are kept; Check again (?refresh=1) always looks again
 
 
 async def _document(request: Request) -> tuple[dict, object]:
@@ -213,7 +212,8 @@ def build_router(hub_dir: Path):
         if not get_started_lib.present(hub_dir):
             raise error(404, "not_found", "This agent has no Get started cards.")
         again = refresh in ("1", "true")
-        keep = GET_STARTED_AGAIN if again else GET_STARTED_EVERY
+        # Check again always looks again; a click while a run is going gets that run.
+        keep = 0.0 if again else GET_STARTED_EVERY
         with cards_lock:
             run, body = cards["run"], cards["body"]
             lead = run is None and (body is None or time.monotonic() - cards["at"] >= keep)

@@ -261,7 +261,7 @@ def run(hub_dir: Path, *, only: list[str] | None = None) -> list[Result]:
         if missing:
             results[probe.id] = Result(probe.id, "fail" if probe.required else "info",
                                        f"Not run: {', '.join(missing)} not set.",
-                                       "Set them with hubzoid hub configure, then run doctor again.")
+                                       "Set them with `hubzoid hub configure .`, then run doctor again.")
         else:
             runnable.append(probe)
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:

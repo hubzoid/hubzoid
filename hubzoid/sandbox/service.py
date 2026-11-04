@@ -541,7 +541,7 @@ def doctor(hub_dir) -> dict:
                     "Install it or use runtime: runc.")
         except WorkItemError as exc:
             providers[name] = {"reachable": False, "error": exc.message}
-            add(f"provider:{name}", False, exc.message, "Start Docker, then run doctor again.")
+            add(f"provider:{name}", False, exc.message, "Start Docker, then run `hubzoid sandbox doctor .` again.")
     profiles = {}
     for pid in config_lib.list_profiles(hub_dir):
         try:
