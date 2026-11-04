@@ -6,8 +6,11 @@
     POST /api/hubs/{hub_id}/settings/validate   {version: 1, values, secrets} -> every problem
     PUT  /api/hubs/{hub_id}/settings            the same body with expected_revision -> written
     POST /api/hubs/{hub_id}/doctor              run the hub's own checks now
+    GET  /api/hubs/{hub_id}/get-started         the Get started cards, checked now or in
+                                                the last 30 seconds (?refresh=1: now)
 
-This hub's administrators read, change values and run checks. Changing a
+This hub's administrators read, change values and run checks. Anyone else
+gets 404, or 403 from Get started (the chat then shows nothing). Changing a
 secret reference needs an organization administrator, because a reference
 decides which stored secret the hub's code receives. A secret value is never
 accepted or returned here. A saved change applies after the hub restarts.
@@ -32,6 +35,7 @@ from .yamlfile import HubFileError
 
 _NO_STORE = {"Cache-Control": "no-store"}
 DOCTOR_EVERY = 10.0  # seconds between two runs of a hub's checks
+GET_STARTED_EVERY = 30.0  # seconds the Get started cards are kept
 
 
 async def _document(request: Request) -> tuple[dict, object]:
@@ -54,6 +58,8 @@ def build_router(hub_dir: Path):
     router = hub_routes.router(hub_dir, tags=["settings"])
     doctor_lock = threading.Lock()
     last_run = {"at": 0.0}
+    cards_lock = threading.Lock()
+    cards = {"at": 0.0, "body": None}
 
     def candidate(document: dict) -> hs.ValuesFile:
         try:
@@ -171,6 +177,25 @@ def build_router(hub_dir: Path):
             doctor_lock.release()
         return JSONResponse({"ok": not any(c.status == "fail" for c in checks),
                              "checks": [asdict(c) for c in checks]}, headers=_NO_STORE)
+
+    @router.get("/get-started")
+    def get_started(request: Request, refresh: str = ""):
+        from . import get_started as get_started_lib
+
+        if not hub_access.viewer(request, hub_dir).hub_admin:
+            raise error(403, "permission_denied", "Only this agent's managers see its setup.")
+        if not get_started_lib.present(hub_dir):
+            raise error(404, "not_found", "This agent has no Get started cards.")
+        with cards_lock:  # one run of the checks at a time; a waiting request reuses it
+            fresh = cards["body"] is not None and time.monotonic() - cards["at"] < GET_STARTED_EVERY
+            if fresh and refresh not in ("1", "true"):
+                body = cards["body"]
+            else:
+                body = get_started_lib.build(hub_dir)
+                cards.update(at=time.monotonic(), body=body if body and "error" not in body else None)
+        if body is None:
+            raise error(404, "not_found", "This agent has no Get started cards.")
+        return JSONResponse(body, headers=_NO_STORE)
 
     return router
 

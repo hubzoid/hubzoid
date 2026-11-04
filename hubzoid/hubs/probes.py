@@ -9,9 +9,11 @@
         required: true             # a failure fails doctor (else it warns)
 
 ``check(context)`` returns ``{"status": "ok"|"info"|"warn"|"fail", "summary": "...",
-"recovery": "...", "details": ...}``. ``context`` holds ``hub_dir``, the hub's
-non-secret ``settings`` and, for secret settings, only whether each is
-``available``.
+"recovery": "...", "details": ..., "card": {"line": "...", "detail": "..."}}``.
+``context`` holds ``hub_dir``, the hub's non-secret ``settings`` and, for
+secret settings, only whether each is ``available``. ``card`` is optional: what
+a Get started card shows for this check (``hubzoid.hubs.get_started``), a line
+of at most 60 characters and a detail of at most 80.
 
 Each check runs in its own process group with a deadline, at most four at
 once and 64 KiB of output each. A check that overruns either is killed with
@@ -19,7 +21,8 @@ everything it started, so a crash or a hang becomes one failed row and never
 stops the others. A crash is reported by its exception class only, never its
 message or traceback, which may carry a credential from the environment.
 Checks are trusted hub code, like the hub's tools: Hubzoid runs them only when
-doctor runs, never when a hub is loaded or installed.
+doctor runs or a manager opens the agent's Get started cards (then only the
+checks the cards name), never when a hub is loaded or installed.
 """
 from __future__ import annotations
 
@@ -102,6 +105,23 @@ class Result:
     summary: str
     recovery: str | None = None
     details: object = None
+    card: dict | None = None  # {"line", "detail"}, each optional (see card_of)
+
+
+def cap(text: str, limit: int) -> str:
+    """One line of at most ``limit`` characters, cut with an ellipsis."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def card_of(value: object) -> dict | None:
+    """A check's ``card``: its ``line`` (at most 60 characters) and ``detail``
+    (at most 80), when they are text. Anything else is ignored."""
+    if not isinstance(value, dict):
+        return None
+    out = {key: cap(value[key], limit) for key, limit in (("line", 60), ("detail", 80))
+           if isinstance(value.get(key), str) and value[key].strip()}
+    return out or None
 
 
 _RUNNER = r"""
@@ -207,7 +227,8 @@ def _run(hub_dir: Path, probe: Probe, context: dict) -> Result:
     if not isinstance(data, dict) or data.get("status") not in STATUSES or not isinstance(data.get("summary"), str):
         return Result(probe.id, "fail", "The check must return {status: ok|info|warn|fail, summary: text}.")
     return Result(probe.id, data["status"], data["summary"][:500],
-                  str(data["recovery"])[:500] if data.get("recovery") else None, data.get("details"))
+                  str(data["recovery"])[:500] if data.get("recovery") else None, data.get("details"),
+                  card_of(data.get("card")))
 
 
 def run(hub_dir: Path, *, only: list[str] | None = None) -> list[Result]:

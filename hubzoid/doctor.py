@@ -735,16 +735,25 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
 
     settings.files   settings.yaml, hub.settings.yaml and hub.manifest.yaml parse
     settings.values  every declared setting has a valid value or reference
+    get_started      only when get-started.yaml is invalid
     probe.<id>       each check the hub declares in hub.manifest.yaml
     """
+    from .hubs import get_started
     from .hubs import probes as probes_lib
     from .hubs import settings as hub_settings
     from .hubs.yamlfile import HubFileError
 
+    def cards() -> list[Check]:
+        try:
+            get_started.load(hub)
+        except HubFileError as exc:
+            return [Check("get_started", "fail", str(exc), {"recovery": f"Fix {get_started.FILE} or remove it."})]
+        return []
+
     present = [n for n in (hub_settings.DECLARATIONS, hub_settings.VALUES, probes_lib.MANIFEST)
                if (hub / n).is_file()]
     if not present:
-        return []
+        return cards()
     out: list[Check] = []
     try:
         resolved, problems = hub_settings.validate(hub)
@@ -761,6 +770,7 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
             filled = sum(1 for r in resolved if r.is_set)
             out.append(Check("settings.values", "ok", f"{len(resolved)} declared, {filled} set",
                              [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
+    out += cards()
     for result in probes_lib.run(hub):
         detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \
             else None

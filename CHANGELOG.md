@@ -53,6 +53,12 @@ workflow, rules and routes.
   workflow's `reply`, `refused` or `answer` text, not every key, cut at the
   same lengths as a quick result, and the agent reads it as data. A paused work
   item posts no result; a stopped one says why, in a fixed sentence.
+- **Get started cards in the chat.** An agent's `get-started.yaml` names up to
+  six setup cards: its model sign-in, any of its doctor checks, or a fixed
+  line. A manager sees them on the chat's empty screen, with each check's
+  status, a short line and the fix. A check can return a `card` with its own
+  line and detail. Doctor reports an invalid file. See
+  [Hub settings and checks](docs/hub-settings.md#get-started-cards-get-startedyaml).
 
 ### Fixed
 - **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`

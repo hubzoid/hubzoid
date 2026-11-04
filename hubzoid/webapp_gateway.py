@@ -159,7 +159,7 @@ def agent_card(hub_dir: Path, *, model_label: str | None = None, api_base: str =
         slug = name = fallback_name or hub_dir.name
         description, suggestions = "", []
     logo = _find(hub_dir / "branding", _LOGO_CANDIDATES, custom=True)
-    return {
+    card = {
         "id": model_label or _slugify(slug),
         "name": name,
         "description": description,
@@ -168,6 +168,11 @@ def agent_card(hub_dir: Path, *, model_label: str | None = None, api_base: str =
         "api_base": api_base,
         "avatar_url": f"{api_base}/branding/{logo}" if logo else None,
     }
+    from .hubs import get_started
+
+    if get_started.present(hub_dir):  # a file check only: the cards are read and checked on request
+        card["get_started"] = True
+    return card
 
 
 def _may_use(gs, hub_key: str, email: str) -> bool:
