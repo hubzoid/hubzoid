@@ -183,9 +183,13 @@ cards:                      # 1 to 6, ids unique
   card's own `detail`, and the summary for the line), and its recovery as the fix.
 - `hubzoid hub doctor` adds a failed `get_started` row when the file is invalid.
 
-`GET /api/hubs/{hub_id}/get-started` answers the hub's administrators (anyone
-else gets 403, and an agent without the file 404). It runs only the checks the
-cards name and keeps the answer for 30 seconds; `?refresh=1` checks again:
+`GET /api/hubs/{hub_id}/get-started` answers the hub's administrators from
+the site's own pages. Anyone else gets 404, like the other routes here, and so
+does an agent without the file. It runs only the checks the cards name and
+keeps the answer for 30 seconds. `?refresh=1` checks again, and the logins too,
+unless the last check ended under 10 seconds ago. A request while the cards
+are being checked waits for that run, and the cards and `POST .../doctor`
+never run checks at once (doctor answers 429 meanwhile):
 
 ```json
 {"title": "Get started", "ready": false,

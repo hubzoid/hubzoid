@@ -57,6 +57,13 @@ class Card(BaseModel):
             raise ValueError("an id is lowercase letters, digits, dots, dashes or underscores")
         return value
 
+    @field_validator("check")
+    @classmethod
+    def _check(cls, value: str | None) -> str | None:
+        if value is not None and not _ID_RE.match(value):
+            raise ValueError(f"a check is {MODEL} or the id of a check in {probes.MANIFEST}")
+        return value
+
     @model_validator(mode="after")
     def _check_or_line(self) -> Card:
         if (self.check is None) == (self.line is None):
@@ -129,19 +136,22 @@ def _also(login, *, agent_signed_in: bool) -> str:
     return f"{name} {'also' if agent_signed_in else 'is'} signed in" + (f" ({how})" if how else "")
 
 
-def model_result(hub_dir: Path) -> probes.Result:
+def model_result(hub_dir: Path, *, fresh: bool = False) -> probes.Result:
     """The built-in ``model`` card: the ``model.signin`` diagnostic's status and
     fix. The line names the login the agent uses (an API model: its name), the
-    detail another signed-in login."""
+    detail another signed-in login. Each CLI is asked once; ``fresh`` asks
+    again instead of using the login kept for a few minutes."""
     from .. import logins
     from ..admin import diagnostics
 
     try:
-        check = diagnostics.check_model_auth(Path(hub_dir))
+        model = (os.environ.get("MODEL") or "claude-local").strip().lower()
+        found = logins.detect(fresh=fresh) if model.startswith(("claude-local", "codex-local")) else None
+        check = diagnostics.check_model_auth(Path(hub_dir), found=found)
         runtime = (check.details or {}).get("runtime")
         line = detail = None
         if runtime in ("claude-local", "codex-local"):
-            usable = [lg for lg in logins.detect() if lg.signed_in and not lg.problem]
+            usable = [lg for lg in found or [] if lg.signed_in and not lg.problem]
             own = next((lg for lg in usable if lg.runtime == runtime), None)
             other = next((lg for lg in usable if lg.runtime != runtime), None)
             line = logins.describe(own) if own else None
@@ -165,10 +175,10 @@ def _card(card: Card, result: probes.Result | None) -> dict:
             "detail": own.get("detail") or card.detail, "fix": result.recovery}
 
 
-def build(hub_dir: Path) -> dict | None:
+def build(hub_dir: Path, *, fresh: bool = False) -> dict | None:
     """What the chat's Get started cards show: runs the checks the cards name,
-    and the model card, now. None without the file; an invalid file gives
-    ``{"error": "<one line>", "cards": []}``."""
+    and the model card, now (``fresh``: the logins are read again too). None
+    without the file; an invalid file gives ``{"error": "<one line>", "cards": []}``."""
     hub_dir = Path(hub_dir)
     try:
         parsed = load(hub_dir)
@@ -179,7 +189,8 @@ def build(hub_dir: Path) -> dict | None:
     checks = list(dict.fromkeys(c.check for c in parsed.cards if c.check and c.check != MODEL))
     results: dict[str, probes.Result] = {}
     with ThreadPoolExecutor(max_workers=1) as pool:
-        model = pool.submit(model_result, hub_dir) if any(c.check == MODEL for c in parsed.cards) else None
+        model = pool.submit(model_result, hub_dir, fresh=fresh) \
+            if any(c.check == MODEL for c in parsed.cards) else None
         if checks:
             try:
                 results.update((r.id, r) for r in probes.run(hub_dir, only=checks))

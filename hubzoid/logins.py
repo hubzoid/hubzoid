@@ -58,10 +58,13 @@ def tier(runtime: str, method: str | None, plan: str | None) -> int:
     return 1 if plan in STANDARD.get(runtime, ()) else 0
 
 
-def detect() -> list[Login]:
-    """Each installed CLI's login; a CLI that isn't installed is left out."""
+def detect(*, fresh: bool = False) -> list[Login]:
+    """Each installed CLI's login; a CLI that isn't installed is left out.
+    ``fresh`` asks again instead of using a login kept for a few minutes."""
     from . import factory_claude, factory_codex
 
+    if fresh:
+        factory_claude.clear_login_cache()
     found = (factory_claude.claude_login(), factory_codex.codex_login())
     return [login for login in found if login is not None]
 

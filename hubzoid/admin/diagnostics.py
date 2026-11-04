@@ -215,13 +215,19 @@ def check_disk(hub: Path) -> Result:
     return Result("ok", f"{free_gb:.1f} GB free on the deployment disk.", details)
 
 
-def check_model_auth(hub: Path) -> Result:
+def check_model_auth(hub: Path, found: list | None = None) -> Result:
+    """``found``: the logins already read (``logins.detect()``), so the CLIs
+    aren't asked again."""
     model = (os.environ.get("MODEL") or "claude-local").strip()
     low = model.lower()
+
+    def login_of(runtime: str, read):
+        return read() if found is None else next((lg for lg in found if lg.runtime == runtime), None)
+
     if low.startswith("claude-local"):
         from .. import factory_claude, logins
 
-        login = factory_claude.claude_login()
+        login = login_of("claude-local", factory_claude.claude_login)
         if login and login.signed_in:
             note = factory_claude.ignored_key_note(login)
             return Result("ok", f"Signed in: {logins.describe(login)}." + (f" {note}" if note else ""),
@@ -237,7 +243,7 @@ def check_model_auth(hub: Path) -> Result:
         from .. import logins
         from ..factory_codex import REVIEWED_CODEX_VERSIONS, codex_login
 
-        login = codex_login()
+        login = login_of("codex-local", codex_login)
         if login and login.signed_in and not login.problem:
             return Result("ok", f"Signed in: {logins.describe(login)}.", {"runtime": "codex-local"})
         if login and login.problem:
