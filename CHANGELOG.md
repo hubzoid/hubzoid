@@ -44,8 +44,10 @@ workflow, rules and routes.
   form. Existing four-part refs and channel files work unchanged.
 - **Manual GitHub intake can pick a route:** `hubzoid channels github intake
   --route NAME`, any route the connection's workflow declares.
-- **Work started from a web chat reports back in that chat.** Its requests
-  (questions and approvals) and its result show up where you asked. The chat
+- **Work items started from a web chat report back in that chat.** A workflow
+  run started from a chat already did. A work item (how the Software Factory
+  takes chat requests) showed its questions and approvals only under Inbox,
+  and its result never came back. Now both show up where you asked. The chat
   comes from the server session only, and a chat named by the caller is
   dropped. A result that arrives after the chat stopped waiting shows the
   workflow's `reply`, `refused` or `answer` text, not every key, cut at the
