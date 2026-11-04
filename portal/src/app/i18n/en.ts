@@ -570,6 +570,22 @@ export const en = {
       "This chat's agent isn't available to you anymore. You can still read the conversation.",
     requestedUnavailable: (name: string) => `The agent in that link isn't available to you, so this chat uses ${name}.`,
   },
+  /** The agent's setup cards on the empty chat (its managers only). */
+  getStarted: {
+    title: "Get started",
+    allSet: "All set",
+    needYou: (n: number) => (n === 1 ? "1 needs you" : `${n} need you`),
+    ready: "Ready",
+    check: "Check",
+    needsYou: "Needs you",
+    checking: "Checking…",
+    checkAgain: "Check again",
+    hide: "Hide",
+    show: "Get started",
+    howToFix: (title: string) => `How to fix: ${title}`,
+    invalid: "Get started cards need fixing.",
+    why: "Why",
+  },
 
   shortcuts: {
     title: "Keyboard shortcuts",

@@ -3,7 +3,8 @@
 // user bubbles, quoting a selection into the reply, the branch picker, the
 // composer (+ menu, model, dictation, send that becomes Stop, and Queue or
 // Interrupt while a reply streams), the flat queue above it, and the quiet
-// empty state with the composer in the middle.
+// empty state with the composer in the middle (and, for an agent's managers,
+// its Get started cards under the suggestions).
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { DropdownMenu as Menu, Popover } from "radix-ui";
 import { enc, get, hubUrl, post } from "../lib/api";
@@ -69,6 +70,7 @@ import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models"
 import { PromptPicker } from "./prompts";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry, ToolGroup } from "./parts";
 import { FeedbackControls } from "./feedback";
+import { GetStartedCards } from "./GetStarted";
 
 export type ThreadProps = {
   agent: Agent;
@@ -298,6 +300,7 @@ function EmptyThread(props: ThreadProps) {
           ))}
         </section>
       )}
+      {agent.get_started && <GetStartedCards key={agent.hub || agent.id} agent={agent} />}
     </div>
   );
 }
