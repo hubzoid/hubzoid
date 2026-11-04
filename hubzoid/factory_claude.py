@@ -278,7 +278,7 @@ def _child_env(model: str | None = None) -> dict[str, str]:
             out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"] = ""
             if keys and not _billing_logged:
                 _billing_logged = True
-                log.info("Using the Claude subscription (%s); ignoring %s", reason, " and ".join(keys))
+                log.warning("Using the Claude subscription (%s); ignoring %s", reason, " and ".join(keys))
     if os.environ.get("HUBZOID_MCP_TIMEOUT", "").strip() and not os.environ.get("MCP_TOOL_TIMEOUT"):
         from .loaders.mcp import call_timeout
 

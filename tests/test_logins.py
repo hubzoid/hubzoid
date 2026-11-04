@@ -313,12 +313,15 @@ def test_billing_logs_only_a_key_it_blanked_and_why(monkeypatch, caplog):
 
     monkeypatch.setattr(factory_claude, "_billing_logged", False)
     monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
-    caplog.set_level(logging.INFO, logger="hubzoid.claude")
+    caplog.set_level(logging.WARNING, logger="hubzoid.claude")  # a warning: INFO never reaches the hub log
     factory_claude._child_env()                                  # no key to ignore: nothing said
     assert "ignoring" not in caplog.text
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited-secret-value")  # gitleaks:allow
     factory_claude._child_env()
+    factory_claude._child_env()                                  # once per process
     assert "ignoring ANTHROPIC_API_KEY" in caplog.text and "claude login" in caplog.text
+    assert caplog.text.count("ignoring") == 1 and "inherited-secret-value" not in caplog.text
+    assert all(r.levelno == logging.WARNING for r in caplog.records if "ignoring" in r.getMessage())
     monkeypatch.setattr(factory_claude, "_billing_logged", False)
     caplog.clear()
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
