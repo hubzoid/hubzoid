@@ -243,6 +243,18 @@ def test_available_tools_is_empty_for_an_unknown_runtime():
     assert judge_lib.available_tools(object()) == []
 
 
+def test_hidden_tools_reads_the_openai_backend_gates():
+    """A gated tool whose check says no is hidden; an ungated one never is."""
+    def no(*_a, **_k):
+        return False
+
+    no.hubzoid_permission = "manage_hub"
+    rt = _OpenAIRuntime(["read_knowledge", "propose_hub_change"])
+    rt._agent.tools[1].is_enabled = no
+    assert judge_lib.hidden_tools(rt) == {"propose_hub_change"}
+    assert judge_lib.hidden_tools(object()) == set()
+
+
 def test_inventory_reaches_the_judge_prompt(tmp_path):
     """Regression: a real run listing Hubzoid's genuine web_search /
     read_knowledge / grep_data built-ins was marked down for "inventing"

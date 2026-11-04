@@ -59,6 +59,10 @@ workflow, rules and routes.
 - **Evals on a never-started agent run as its owner when sign-in is off.** A
   case run as the local owner on a fresh copy used to be refused the agent's
   tools. With sign-in on, nothing changes.
+- **The eval judge sees only the tools the agent was offered.** A tool hidden
+  from the agent, such as `propose_hub_change` while in-app editing is off, was
+  still in the judge's list, so the judge marked answers down for not calling
+  it.
 - **Dollar limits skip `codex-local` when another limit bounds the call.** A
   Codex login has no per-call charge, so a dollar limit cannot count it. If a
   turn or token limit still bounds the call, it runs under that limit, and
@@ -105,9 +109,11 @@ workflow, rules and routes.
 - The follow link `/settings#/me/work/<agent>/<item>` was checked in a browser.
 - The sandbox base image was built from the new Dockerfile (Docker 29.8.2), and
   `python --version` reported Python 3.11.2.
-- Not checked: the in-app approval card for work started from a chat (to be
-  checked before release), and Codex login detection against a real Codex login
-  on a paid plan other than Plus.
+- Work started from a chat showed its plan approval card in that chat. It was
+  approved there, and the result came back to the same chat (Software Factory,
+  local repository mode, Claude login).
+- Not checked: Codex login detection against a real Codex login on a paid plan
+  other than Plus.
 
 ### Known limits
 - Connecting GitHub rewrites `channels/github.yaml` without its comments.

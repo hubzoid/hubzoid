@@ -75,6 +75,21 @@ def judge_tools(rt) -> list[str]:
         return []
 
 
+def offered_tools(rt, available: list[str] | None) -> list[str] | None:
+    """`available` without the tools this case's caller is not shown, so the
+    judge never expects a call to a tool the agent could not see. Asked inside
+    the case's scope. Never fails the run: on error the full list stays."""
+    if not available:
+        return available
+    try:
+        from .judge import hidden_tools
+        hidden = hidden_tools(rt)
+    except Exception as exc:  # noqa: BLE001 — a fuller inventory is survivable
+        log.debug("could not tell which tools are hidden: %s", exc)
+        return available
+    return [name for name in available if name not in hidden]
+
+
 def _chat_id(case: EvalCase) -> str:
     """Per-case chat scope, so uploads and artifacts never bleed across cases."""
     import uuid
@@ -312,6 +327,8 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
         from .. import tool_fakes
 
         with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes):
+            if judge_fn is not None and case.is_judged:
+                tools_available = offered_tools(rt, tools_available)
             for turn_no, text in enumerate(case.prompts, start=1):
                 if turn_no > 1 and ident is not None:
                     # The account may have been blocked since the last turn.

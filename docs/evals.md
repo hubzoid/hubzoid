@@ -177,7 +177,9 @@ added, not as a regression.
 
 A judged case is scored 1–10 by a model that sees four things: your hub's
 `AGENTS.md`, the case's `## Criteria`, the answer, and — as observed ground
-truth — **which tools ran and which tools this hub has**. It is a plain
+truth — **which tools ran and which tools the agent was offered**. A tool the
+case's account can't see, or one switched off for the hub (`propose_hub_change`
+while in-app editing is off), is left out of that list. It is a plain
 single-turn call with no tools and no hub persona: it grades, it does not
 answer.
 
