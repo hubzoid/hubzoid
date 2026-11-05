@@ -190,9 +190,9 @@ Wait for `Hubzoid is ready` in the log. Each hub on one machine needs its own
 `--bridge-port`. Restart after every change to `.env`, `hitl.yaml`,
 `budgets.yaml` or `connectors/`: stop that PID, start again, wait for ready.
 
-Do this before step 11. Once sign-in is on, an administrator needs two-step
-sign-in set up in the browser before `hubzoid auth login` or a new personal key
-works for them. Then stop and start the hub once more and ask the running hub the real request. The
+Do this before step 11. If the deployment requires two-step sign-in for
+administrators (`HUBZOID_MFA_REQUIRED`, off by default), an administrator sets it
+up in the browser before `hubzoid auth login` or a new personal key works for them. Then stop and start the hub once more and ask the running hub the real request. The
 answer must show the corrected rule (check the facts, not the wording). The
 OpenAI-compatible API needs a personal key (`docs/auth.md`, Personal API keys).
 Keep it out of arguments and revoke it after:
@@ -245,8 +245,8 @@ Nobody gets an agent without a grant.
    to choose their own password: that is their sign-in, not your step.
 4. `hubzoid grant <teammate-email> use_hub <hub>`, plus any capability the task
    needs. Check with `hubzoid access check <teammate-email> <hub>`.
-5. Through the API, signed in as the owner (after the owner has set up two-step
-   sign-in in the browser, which has no CLI path yet: report it if not done):
+5. Through the API, signed in as the owner (if two-step sign-in is required, the
+   owner sets it up in the browser first, which has no CLI path yet: report it if not done):
    `hubzoid auth login --server $S --email <owner> --password-stdin < <file>`,
    then `hubzoid api GET "/portal/api/access?hub=<hub>" --server $S`. Changes go
    to `POST /portal/api/access/grant` with `subject`, `hub` and `permission`.

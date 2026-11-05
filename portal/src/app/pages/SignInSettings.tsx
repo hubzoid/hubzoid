@@ -45,7 +45,7 @@ const cancelled = (e: unknown) => (e as { code?: string })?.code === "reauth_can
 function MfaRule({ run }: { run: Run }) {
   const [policy, setPolicy] = useState<string | null>(null);
   useEffect(() => {
-    get<{ policy: string }>("/api/auth/mfa/policy").then((r) => setPolicy(r.policy)).catch(() => setPolicy("admins"));
+    get<{ policy: string }>("/api/auth/mfa/policy").then((r) => setPolicy(r.policy)).catch(() => setPolicy("none"));
   }, []);
   if (!policy) return <PageSpinner />;
   const choose = async (next: string) => {

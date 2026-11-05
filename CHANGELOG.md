@@ -61,6 +61,14 @@ chat, and a new chat shows an agent's managers its Get started cards.
   line and detail. Doctor reports an invalid file. See
   [Hub settings and checks](docs/hub-settings.md#get-started-cards-get-startedyaml).
 
+### Changed
+- **Two-step sign-in is optional by default.** A new deployment no longer asks
+  administrators to set up an authenticator at their first sign-in. Anyone can
+  still turn it on under Settings → Security, and anyone who has it keeps being
+  asked for a code. To require it, choose who under Settings → Organization →
+  Sign-in, or set `HUBZOID_MFA_REQUIRED=admins` (or `all`). A deployment that
+  already chose a rule keeps it.
+
 ### Fixed
 - **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`
   opened the Profile page when Settings was loaded fresh. It now opens the work
