@@ -79,6 +79,9 @@ people see it, and the WhatsApp listener answers only its own number.
   already chose a rule keeps it.
 
 ### Fixed
+- **A fresh install imports GitHub support again.** hishel 2.0.0, released on
+  5 November, removed the `CachePolicy` that githubkit 0.16 imports, and
+  githubkit allowed it. Hubzoid now requires `hishel>=1.3.0,<2`.
 - **WhatsApp answers only its own number.** One WhatsApp Business Account can
   hold several numbers, and Meta sends every number's messages to every app
   subscribed to it. The env-based WhatsApp listener (`WHATSAPP_*` in the hub
