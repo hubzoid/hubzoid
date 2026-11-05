@@ -388,7 +388,11 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
             payload = json.loads(raw)
         except json.JSONDecodeError:
             return PlainTextResponse("bad request", status_code=400)
-        fresh = [m for m in parse_messages(payload) if dedup.claim(m.id)]
+        # Only messages sent to this hub's own number: on a shared WhatsApp
+        # Business Account Meta also delivers other numbers' messages here.
+        # Filtered before dedup, so a skipped message takes no dedup slot.
+        mine = parse_messages(payload, phone_number_id=wa.phone_number_id)
+        fresh = [m for m in mine if dedup.claim(m.id)]
         return PlainTextResponse("ok", background=BackgroundTask(_process_wa, fresh))
 
     def _process_wa(messages):

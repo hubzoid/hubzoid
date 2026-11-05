@@ -10,6 +10,8 @@ overrides a subscription login by accident, evals can stand in for GitHub tools
 an agent has not connected yet, and connecting GitHub keeps the agent's
 workflow, rules and routes. Work started from a chat reports back in that
 chat, and a new chat shows an agent's managers its Get started cards.
+Two-step sign-in is optional by default, a brand's name replaces Hubzoid where
+people see it, and the WhatsApp listener answers only its own number.
 
 ### Added
 - **Smarter login detection.** Hubzoid asks each CLI for its login status and
@@ -77,6 +79,14 @@ chat, and a new chat shows an agent's managers its Get started cards.
   already chose a rule keeps it.
 
 ### Fixed
+- **WhatsApp answers only its own number.** One WhatsApp Business Account can
+  hold several numbers, and Meta sends every number's messages to every app
+  subscribed to it. The env-based WhatsApp listener (`WHATSAPP_*` in the hub
+  `.env`) now skips any message not sent to its `WHATSAPP_PHONE_NUMBER_ID`,
+  before dedup, the sender lookup, read receipts or a reply. Before, a hub on a
+  shared account answered messages sent to other teams' numbers, and told
+  their senders they were not registered. The channel-file path already did
+  this. No new setting.
 - **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`
   opened the Profile page when Settings was loaded fresh. It now opens the work
   item, on wide and narrow screens.
