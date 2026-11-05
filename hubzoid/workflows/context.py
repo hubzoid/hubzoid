@@ -624,7 +624,7 @@ class Hub:
             who = f"{title_for(ctx.workflow)} on {ctx.hub}"
             self.send_email(f"Waiting for you: {spec['title'][:150]}",
                             f"{who} is waiting for your answer:\n\n{what}\n\n"
-                            f"Answer it in Hubzoid: {requests_url()}\n", raise_on_failure=False)
+                            f"Answer it here: {requests_url()}\n", raise_on_failure=False)
         while req["status"] == "pending":
             if not _hitl_receive(req["id"]):
                 import time

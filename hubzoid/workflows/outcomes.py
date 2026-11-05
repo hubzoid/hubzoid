@@ -25,6 +25,25 @@ CAUSES = {
     "removed": "the workflow was removed",
     "error": "it stopped with an error",
     "dispatch": "it could not be queued",
+    # a work item's clean stop (see STOPS)
+    "denied": "a person denied it",
+    "abandoned": "a person stopped it",
+    "refused": "the other system refused it",
+    "unattended": "nobody could approve it",
+    "scope": "it went beyond what it may do",
+    "not_allowed": "it was not allowed",
+    "stopped": "it could not go on",
+}
+
+#: A work item's clean stop code -> its cause in CAUSES. Chat is told only
+#: these, never the stop's own message, which can quote a model or a request.
+STOPS = {
+    "approval_denied": "denied",
+    "operation_abandoned": "abandoned",
+    "operation_rejected": "refused",
+    "approval_unavailable": "unattended",
+    "scope_exceeded": "scope",
+    "permission_denied": "not_allowed",
 }
 
 
@@ -47,7 +66,10 @@ def cause_of(error: BaseException | None) -> str:
 
 def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bool,
              error: BaseException | None = None, published: list | None = None,
-             tool_wait: float = 60.0, result=None) -> None:
+             tool_wait: float = 60.0, result=None, parked: bool = False,
+             stopped: str | None = None) -> None:
+    """``parked``: the run waits for a person (not an outcome). ``stopped``: a
+    work item's clean stop code; the run is ok, and its chat is told why it stopped."""
     hub_dir = Path(hub_dir)
     trigger = env.get("trigger")
     try:
@@ -72,12 +94,16 @@ def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bo
                 _ready_email(hub_dir, hub, workflow, run_id, env, list(published or []))
     except Exception:  # noqa: BLE001
         log.exception("workflows: could not finish bookkeeping for run %s", run_id)
-    if env.get("chat"):  # started from a chat: the outcome goes back there
+    if env.get("chat") and not parked:  # started from a chat: the outcome goes back there (a pause is not one)
         try:
             from .chat_link import post_result
 
-            post_result(hub_dir, env, workflow, run_id, ok=ok, result=result, cause=cause,
-                        published=list(published or []), tool_wait=tool_wait)
+            if stopped:
+                post_result(hub_dir, env, workflow, run_id, ok=False, cause=STOPS.get(stopped, "stopped"),
+                            published=list(published or []), tool_wait=tool_wait)
+            else:
+                post_result(hub_dir, env, workflow, run_id, ok=ok, result=result, cause=cause,
+                            published=list(published or []), tool_wait=tool_wait)
         except Exception:  # noqa: BLE001 - never changes the run's own outcome
             log.exception("workflows: could not post run %s back to its chat", run_id)
 

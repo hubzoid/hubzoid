@@ -7,8 +7,8 @@ a gateway reads the same values:
     it is needed, with the value it already had (a hash of the deployment
     folder), so moving or restoring the folder elsewhere keeps the id and every
     record that carries it.
-  * ``mfa_required``: who must use two-step sign-in: ``none``, ``admins``
-    (the default) or ``all``. ``HUBZOID_MFA_REQUIRED`` gives the default
+  * ``mfa_required``: who must use two-step sign-in: ``none`` (the default),
+    ``admins`` or ``all``. ``HUBZOID_MFA_REQUIRED`` gives the default
     before anyone sets it.
 
 Reads are cached per process for a few seconds; a write clears the cache.
@@ -86,7 +86,7 @@ def mfa_policy(hub_dir: Path) -> str:
     if stored in MFA_POLICIES:
         return stored
     env = (os.environ.get("HUBZOID_MFA_REQUIRED") or "").strip().lower()
-    return env if env in MFA_POLICIES else "admins"
+    return env if env in MFA_POLICIES else "none"
 
 
 def set_mfa_policy(hub_dir: Path, policy: str, *, actor: str) -> str:

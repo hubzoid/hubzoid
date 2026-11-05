@@ -65,8 +65,11 @@ class Pool:
             raise ValueError("Claude backup credentials require CLAUDE_CODE_OAUTH_TOKEN")
         if hub_dir is None:
             raise ValueError("Claude credential failover requires a Hub directory")
-        if any(os.environ.get(k, "").strip() for k in (
-                "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")) or any(
+        # factory_claude._child_env blanks an inherited API key for the child
+        # unless ANTHROPIC_BASE_URL is set, so a key is refused only with one.
+        refused = ("ANTHROPIC_BASE_URL",) + (
+            ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") if os.environ.get("ANTHROPIC_BASE_URL") else ())
+        if any(os.environ.get(k, "").strip() for k in refused) or any(
                 os.environ.get(k, "").lower() in {"1", "true", "yes", "on"} for k in (
                     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")):
             raise ValueError("Claude OAuth failover cannot be combined with API-key or alternate-provider authentication")

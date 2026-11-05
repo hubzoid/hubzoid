@@ -223,6 +223,17 @@ def test_password_reset_keeps_mfa_and_moves_the_counter(hub):
     assert sign_in(c, password="a brand new password").json()["state"] == "mfa_required"
 
 
+def test_default_rule_is_optional_for_everyone(hub, monkeypatch):
+    """With no rule chosen and no HUBZOID_MFA_REQUIRED, nobody is asked to set up
+    an authenticator: an administrator's first sign-in goes straight in."""
+    monkeypatch.delenv("HUBZOID_MFA_REQUIRED")
+    auth_settings.clear_cache()
+    assert auth_settings.mfa_policy(hub) == "none"
+    assert not auth_settings.mfa_required_for(hub, "admin")
+    person(hub, email="boss@example.com", role="admin")
+    assert sign_in(client(hub), email="boss@example.com").json().get("state") not in ("mfa_setup", "mfa_required")
+
+
 def test_policy_changes_are_admin_only(hub):
     person(hub, email="boss@example.com", role="admin")
     person(hub)

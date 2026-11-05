@@ -34,6 +34,13 @@ WORKFLOW = textwrap.dedent('''
 ''')
 
 
+def _only_run(run):
+    """A stand-in for the `subprocess` a module sees, so no other module gets the fake."""
+    import subprocess as real
+    import types
+    return types.SimpleNamespace(**{**vars(real), "run": run})
+
+
 def station_file(name, *, tools="[]", extra="", body="Do the analysis."):
     return f"---\nname: {name}\ndescription: {name} station\nisolated: true\nengine: claude-local\n" \
            f"tools: {tools}\nresponse_schema: schemas/result.json\n{extra}---\n{body}\n"
@@ -433,3 +440,61 @@ def test_station_tools_pass_the_approval_gate(hub_dir):
     registry = hub_tool_registry(hub_dir)
     assert registry and all(getattr(t, "hitl_wrapped", False) for n, t in registry.items() if n not in EXEMPT)
     assert "ask_question" not in registry
+
+
+def test_stations_doctor_asks_the_claude_login(hub_dir, monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from hubzoid import factory_claude
+    from hubzoid.cli import app
+    from hubzoid.logins import Login
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude.json").write_text("{}")         # a leftover file is not a login
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    def available():
+        out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
+        return {s["credentials_available"] for s in json.loads(out.output)["stations"].values()}
+
+    assert available() == {False}
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
+    assert available() == {True}
+
+
+def test_stations_doctor_skips_the_claude_probe_without_a_claude_station(hub_dir, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hubzoid import factory_claude
+    from hubzoid.cli import app
+
+    probes = []
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: probes.append(1))
+    for name in ("analyst", "reviewer"):
+        path = hub_dir / "agents" / name / "AGENTS.md"
+        path.write_text(path.read_text().replace("claude-local", "codex-local"))
+    out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
+    stations = json.loads(out.output)["stations"]
+    assert {s["engine"] for s in stations.values()} == {"codex-local"} and probes == []
+
+
+@pytest.mark.real_logins
+def test_stations_doctor_counts_a_key_only_claude_setup(hub_dir, monkeypatch):
+    import subprocess
+
+    from typer.testing import CliRunner
+
+    from hubzoid import factory_claude
+    from hubzoid.cli import app
+
+    factory_claude.clear_login_cache()
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', "")))
+    try:
+        out = CliRunner().invoke(app, ["stations", "doctor", str(hub_dir), "--json"])
+        stations = json.loads(out.output)["stations"].values()
+        assert {s["credentials_available"] for s in stations if s["engine"] != "codex-local"} == {True}
+    finally:
+        factory_claude.clear_login_cache()

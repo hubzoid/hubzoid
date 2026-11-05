@@ -137,20 +137,28 @@ def _public_scheme(env: dict, *urls: str) -> str:
 # init
 # ---------------------------------------------------------------------------
 def _available_local_models() -> list[str]:
-    """Only authenticated CLIs are offered; never reads credentials into output."""
-    available = []
-    claude = shutil.which("claude")
-    if claude:
-        try:
-            result = subprocess.run([claude, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0 and json.loads(result.stdout).get("loggedIn") is True:
-                available.append("claude-local")
-        except (OSError, subprocess.SubprocessError, ValueError):
-            pass
-    from .factory_codex import codex_available
-    if codex_available():
-        available.append("codex-local")
-    return available
+    """Signed-in, usable CLIs, the better login first; never reads credentials
+    into output. A login that can't be used is named with its fix."""
+    from . import logins
+
+    found = logins.detect()
+    for lg in found:
+        if lg.signed_in and lg.problem:
+            console.print(f"[yellow]{escape(_login_problem(lg))}[/yellow]")
+    best = logins.choose(found)
+    usable = [lg for lg in found if lg.signed_in and not lg.problem]
+    usable.sort(key=lambda lg: lg is not best)
+    return [lg.runtime for lg in usable]
+
+
+def _login_problem(login) -> str:
+    """The same words Diagnostics uses: what is wrong, then the one fix."""
+    from . import logins
+
+    return f"{logins.problem(login) or 'This login cannot be used.'} Run `{login.fix}`."
+
+
+_LOCAL_NAMES = {"claude-local": "Claude Code", "codex-local": "Codex"}
 
 
 def _choose_initial_model() -> str | None:
@@ -160,6 +168,8 @@ def _choose_initial_model() -> str | None:
     if len(choices) == 1:
         console.print(f"Using authenticated local runtime: {choices[0]}")
         return choices[0]
+    others = ", ".join(_LOCAL_NAMES.get(c, c) for c in choices[1:])
+    console.print(f"Best sign-in first. {others} also signed in.")
     console.print("Available local runtimes:")
     for i, choice in enumerate(choices, 1):
         console.print(f"  {i}. {choice}")
@@ -168,6 +178,47 @@ def _choose_initial_model() -> str | None:
         if 1 <= selected <= len(choices):
             return choices[selected - 1]
         console.print("Choose one of the listed numbers.")
+
+
+def _hub_model(hub_dir: Path) -> str:
+    """The hub's effective MODEL, read without loading its settings into this
+    process: its files (and secrets), else this shell, else AGENTS.md."""
+    from types import SimpleNamespace
+
+    from . import config_secrets, runtime
+
+    try:
+        value, _layer = config_secrets.resolve_key(hub_dir, "MODEL")
+    except Exception:  # noqa: BLE001 - an unreadable secret: the shell and AGENTS.md decide
+        value = None
+    return runtime._resolve_model_id(hub_dir, SimpleNamespace(model=value or os.environ.get("MODEL")))
+
+
+def _check_local_reply(hub_dir: Path) -> None:
+    """One real call after init, when the hub's model is a signed-in Claude Code
+    or Codex: say that login answered, or why not. Never stops init."""
+    from . import factory_claude, factory_codex, logins, runtime
+
+    model = _hub_model(hub_dir)
+    low = model.lower()
+    login = factory_claude.claude_login() if low.startswith("claude-local") else (
+        factory_codex.codex_login() if low.startswith("codex-local") else None)
+    if not (login and login.signed_in):
+        return
+    if login.problem:
+        console.print(f"[yellow]{escape(_login_problem(login))}[/yellow]")
+        return
+    ok, reason = runtime.reply_check(hub_dir, model=model)
+    if ok:
+        console.print(f"{escape(logins.describe(login))} answered.")
+    else:
+        if login.runtime == "claude-local" and login.method == "api_key":   # a key-only setup: the key failed
+            hint = f"Check {' and '.join(factory_claude.api_key_vars()) or 'ANTHROPIC_API_KEY'}"
+        else:
+            fix = "claude auth login" if login.runtime == "claude-local" else factory_codex.LOGIN_FIX
+            hint = f"Sign in again (`{fix}`)"
+        console.print(f"[yellow]{escape(logins.describe(login))} did not answer: {escape(reason)}. "
+                      f"{escape(hint)}, then run `hubzoid run`.[/yellow]")
 
 
 # The ready-to-use hubs `hubzoid init` points to: (name, what it does, clone command).
@@ -487,6 +538,9 @@ def init(
         console.print(f"\n[green]Bootstrapped agents-repo wrapper at[/green] {parent}")
         for p in parent_written:
             console.print(f"  + {p.name}")
+
+    if selected_model and not saved_key:
+        _check_local_reply(hub_dir)
 
     console.print("\nNext:")
     step = 1

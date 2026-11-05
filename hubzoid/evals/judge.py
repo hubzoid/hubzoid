@@ -151,6 +151,24 @@ def available_tools(rt) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))
 
 
+def hidden_tools(rt) -> set[str]:
+    """Short names of the tools the current caller is not offered: a gated tool
+    whose permission they lack, or one switched off for the hub (in-app editing
+    off hides propose_hub_change). The decision each runtime makes per turn
+    (`access.guard.visible_map`), so ask it under the case's identity.
+
+    Duck-typed like `available_tools`: the Claude runtime keeps its registry in
+    `_registry`, Codex in `registry`, the OpenAI Agents one on `_agent.tools`."""
+    from ..access.guard import visible_map
+    from ..tool_events import short_name
+
+    registry = getattr(rt, "_registry", None) or getattr(rt, "registry", None)
+    if not isinstance(registry, dict):
+        agent = getattr(rt, "_agent", None)
+        registry = {t.name: t for t in getattr(agent, "tools", None) or [] if getattr(t, "name", None)}
+    return {short_name(str(n)) for n, shown in visible_map(registry).items() if not shown}
+
+
 def _call_lines(tools: list) -> str:
     """One line per call: name, JSON arguments, outcome, result preview."""
     multi = len({getattr(t, "turn", 1) for t in tools}) > 1

@@ -21,6 +21,13 @@ from hubzoid.cli import _parent_looks_fresh, app
 runner = CliRunner()
 
 
+def _only_run(run):
+    """A stand-in for the `subprocess` a module sees, so no other module gets the fake."""
+    import subprocess as real
+    import types
+    return types.SimpleNamespace(**{**vars(real), "run": run})
+
+
 def _run_init(tmp_path: Path, *args: str):
     """Invoke `hubzoid init` with cwd set to tmp_path."""
     import os
@@ -363,3 +370,121 @@ def test_private_files_are_never_readable_by_others(tmp_path):
     path.chmod(0o644)
     _write_private(path, "KEY=value\n")
     assert path.read_text() == "KEY=value\n" and (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_both_logins_offer_the_better_one_first_and_name_the_other(monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import logins
+
+    both = [logins.Login("codex-local", True, "subscription", "plus", 1),
+            logins.Login("claude-local", True, "subscription", "max", 2)]
+    monkeypatch.setattr(logins, "detect", lambda: both)
+    assert cli._available_local_models() == ["claude-local", "codex-local"]
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **kw: 1)
+    assert cli._choose_initial_model() == "claude-local"
+    assert "Codex also signed in" in capsys.readouterr().out
+
+
+def test_init_checks_the_model_answers_before_the_next_steps(tmp_path, monkeypatch):
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    calls = []
+    _interactive(monkeypatch, local=["claude-local"])
+    monkeypatch.setattr(factory_claude, "claude_login",
+                        lambda: Login("claude-local", True, "subscription", "max"))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: calls.append(hub) or (True, ""))
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    assert len(calls) == 1
+    assert "Claude Code, Max plan answered." in res.output
+    assert res.output.index("answered.") < res.output.index("Next:")
+
+
+def test_init_survives_a_failed_reply_check_and_skips_it_for_a_key(tmp_path, monkeypatch):
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    _interactive(monkeypatch, local=["claude-local"])
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription"))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub, **kw: (False, "timed out"))
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0 and "did not answer: timed out" in res.output
+    monkeypatch.setattr(runtime, "reply_check", lambda *a, **k: pytest.fail("no call for a key"))
+    _interactive(monkeypatch, answers=["sk-or-v1-" + "a" * 40])
+    assert _run_init(tmp_path, "hub2").exit_code == 0
+
+
+def test_unit_tests_never_start_a_real_cli_or_model(tmp_path):
+    """tests/conftest.py stands in for the login probes and the one check call
+    (tests of those mark themselves `real_logins`)."""
+    from hubzoid import factory_claude, factory_codex, runtime
+
+    assert factory_claude.claude_login() is None and factory_codex.codex_login() is None
+    assert runtime.reply_check(tmp_path) == (True, "")
+
+
+def test_init_names_the_fix_for_a_login_it_cannot_use(monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import logins
+
+    monkeypatch.setattr(logins, "detect", lambda: [
+        logins.Login("codex-local", True, problem="not_file_backed", fix="codex login --file")])
+    assert cli._available_local_models() == []
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Codex is signed in, but not in a file the runtime can use. Run `codex login --file`." in out
+
+
+def test_the_reply_check_names_the_login_of_the_hubs_model(tmp_path, monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, factory_codex, runtime
+    from hubzoid.logins import Login
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=codex-local\n")
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "max"))
+    monkeypatch.setattr(factory_codex, "codex_login", lambda: Login("codex-local", True, "subscription", "plus"))
+    used = []
+    monkeypatch.setattr(runtime, "reply_check", lambda hub_dir, **kw: used.append(kw.get("model")) or (False, "slow"))
+    cli._check_local_reply(hub)
+    out = " ".join(capsys.readouterr().out.split())
+    assert used == ["codex-local"] and "Codex, Plus plan did not answer: slow" in out
+    assert "cli_auth_credentials_store" in out and "claude auth login" not in out
+
+
+def test_a_key_only_claude_login_that_does_not_answer_points_to_the_key(tmp_path, monkeypatch, capsys):
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, runtime
+    from hubzoid.logins import Login
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=claude-local\n")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude, "claude_login",
+                        lambda: Login("claude-local", True, "api_key", None, 0, api_key_in_env=True))
+    monkeypatch.setattr(runtime, "reply_check", lambda hub_dir, **kw: (False, "invalid key"))
+    cli._check_local_reply(hub)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Claude Code, API key did not answer: invalid key. Check ANTHROPIC_API_KEY" in out
+    assert "claude auth login" not in out and "fake-key" not in out
+
+
+@pytest.mark.real_logins
+def test_a_key_only_claude_setup_is_offered_by_init(monkeypatch):
+    import subprocess
+
+    import hubzoid.cli as cli
+    from hubzoid import factory_claude, factory_codex
+
+    factory_claude.clear_login_cache()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "inherited")  # gitleaks:allow
+    monkeypatch.setattr(factory_claude.shutil, "which", lambda n: "/bin/claude" if n == "claude" else None)
+    monkeypatch.setattr(factory_claude, "subprocess", _only_run(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '{"loggedIn": false}', "")))
+    monkeypatch.setattr(factory_codex, "codex_login", lambda: None)
+    try:
+        assert cli._available_local_models() == ["claude-local"]
+    finally:
+        factory_claude.clear_login_cache()

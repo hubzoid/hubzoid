@@ -561,3 +561,15 @@ def _define(hub, body, *, actor="test"):
     from tests.connectors_fakes import define
 
     return define(hub, body, actor=actor)
+
+
+def test_dynamic_registration_uses_the_brand_name(hub, provider):
+    """The provider shows people the name a client registers with: the brand's."""
+    import yaml
+
+    (hub / "hubzoid.yaml").write_text(yaml.safe_dump(
+        {"version": 1, "hubs": ["."], "brand": {"identity": {"name": "Example Operations"}}}))
+    add(hub)
+    start(hub)
+    (reg,) = provider.registered
+    assert reg["client_name"] == "Example Operations"

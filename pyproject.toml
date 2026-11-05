@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "2.0.7"
+version = "2.0.8"
 description = "Hubzoid is an open-source platform for internal AI agents. Give it your team's knowledge, rules and tools once, then use them in chat, workflows and the AI assistants you already use."
 readme = "README.md"
 license = "Apache-2.0"
@@ -92,6 +92,7 @@ dependencies = [
   "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
   "githubkit[auth-app]>=0.16.1,<0.17",  # hubzoid.channels.github: App tokens narrowed to one repository (MIT)
+  "hishel>=1.3.0,<2",       # githubkit 0.16 allows hishel 2.0.0, which removed the CachePolicy it imports
   "dkimpy>=1.1.8,<1.2",     # hubzoid.channels.email: verify a sender's DKIM signature before admitting mail (BSD)
   "imapclient>=3.1.0,<3.2", # hubzoid.channels.email: read a mailbox over IMAP without marking anything read (BSD-3)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
@@ -168,5 +169,6 @@ markers = [
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
   "real_ports: port planning sees which ports are busy on this machine (otherwise every port counts as free)",
+  "real_logins: the Claude Code / Codex login probes and runtime.reply_check run as written (otherwise neither CLI is installed and the check answers)",
   "e2e_browser: end-to-end test that spawns the shared playwright-mcp sidecar and drives a real browser (needs Node/npx; pooled-mode cases also need Docker)",
 ]

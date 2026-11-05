@@ -106,7 +106,7 @@ Environment variables explicitly supported:
   ENABLE_OAUTH_SIGNUP    Automatic account creation through SSO. Default: false;
                          explicitly opt in for an SSO onboarding deployment.
   HUBZOID_MFA_REQUIRED   Who must use two-step sign-in until an administrator
-                         picks a rule in Settings: none, admins (default) or all.
+                         picks a rule in Settings: none (default), admins or all.
   HUBZOID_SUPPORT_CONTACT  Who people are told to ask for access ("My access",
                          sign-in help). Default: "your administrator".
   HUBZOID_SERVER / HUBZOID_API_KEY  The remote CLI's deployment URL and a personal

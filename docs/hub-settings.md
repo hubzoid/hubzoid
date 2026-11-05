@@ -114,6 +114,7 @@ The API is:
 - `POST .../settings/validate`
 - `PUT .../settings`, with `expected_revision`
 - `POST .../doctor`
+- `GET .../get-started`, the [Get started cards](#get-started-cards-get-startedyaml)
 
 ## The hub's own checks: `hub.manifest.yaml`
 
@@ -133,7 +134,8 @@ def check(context):
     repo = context["settings"]["FACTORY_REPO"]
     if not context["available"]["GITHUB_TOKEN"]:
         return {"status": "warn", "summary": "No GitHub token yet", "recovery": "hubzoid secrets set . --name GITHUB_TOKEN"}
-    return {"status": "ok", "summary": f"{repo} is configured"}
+    return {"status": "ok", "summary": f"{repo} is configured",
+            "card": {"line": repo, "detail": "GitHub connected"}}  # optional, for Get started
 ```
 
 How checks run:
@@ -142,7 +144,59 @@ How checks run:
   A crash or a hang becomes one failed row and never stops the others.
 - `context` holds `hub_dir`, the non-secret `settings`, and for secret settings
   only whether each is `available`.
-- Checks are trusted hub code, like tools. They run only when doctor runs.
+- Checks are trusted hub code, like tools. They run only when doctor runs, or
+  when a manager opens the agent's Get started cards (only the checks the cards
+  name).
+- `card` is optional: a `line` (at most 60 characters) and a `detail` (at most
+  80) for the check's Get started card. Doctor's output does not show it.
 
 `hubzoid doctor` includes `settings.files`, `settings.values` and one
 `probe.<id>` row per check. `hubzoid hub doctor .` runs just these.
+
+## Get started cards: `get-started.yaml`
+
+An optional file at the hub root. A manager sees these cards on the chat's
+empty screen, with the status of each check they name. Older Hubzoid versions
+ignore the file.
+
+```yaml
+version: 1
+title: Get started          # optional, at most 40 characters
+cards:                      # 1 to 6, ids unique
+  - id: model
+    title: Model            # at most 24 characters
+    check: model            # built in: the agent's model sign-in
+  - id: code
+    title: Code
+    check: repository       # a check in hub.manifest.yaml
+  - id: results
+    title: Results
+    line: Reviewed branches # a static card: a line (at most 60) and an optional detail (at most 80)
+    detail: After you approve the plan
+```
+
+- A card has a `check` or a `line`, not both. Unknown keys are refused.
+- `check: model` shows the login the agent uses (for example "Claude Code, Team
+  plan"), or the model's name for an API model, with the same status and fix as
+  the `model.signin` diagnostic.
+- A checked card shows the check's status, its `card` line and detail (else the
+  card's own `detail`, and the summary for the line), and its recovery as the fix.
+- `hubzoid hub doctor` adds a failed `get_started` row when the file is invalid.
+
+`GET /api/hubs/{hub_id}/get-started` answers the hub's administrators from
+the site's own pages. Anyone else gets 404, like the other routes here, and so
+does an agent without the file. It runs only the checks the cards name and
+keeps the answer for 30 seconds. `?refresh=1` checks again, and the logins too.
+A request while the cards are being checked waits for that run, and the cards
+and `POST .../doctor` never run checks at once (doctor answers 429 meanwhile):
+
+```json
+{"title": "Get started", "ready": false,
+ "cards": [{"id": "code", "title": "Code", "status": "ok", "line": "acme/widgets",
+            "detail": "GitHub connected", "fix": null}],
+ "checked_at": "2026-11-04T12:00:00Z"}
+```
+
+`status` is `ok`, `info`, `warn`, `fail`, or `null` for a static card. `ready`
+is true when no card is `warn` or `fail`. An invalid file answers
+`{"error": "...", "cards": []}`.

@@ -3,6 +3,158 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [2.0.8]
+
+Doctor and login detection are more accurate, `ANTHROPIC_API_KEY` no longer
+overrides a subscription login by accident, evals can stand in for GitHub tools
+an agent has not connected yet, and connecting GitHub keeps the agent's
+workflow, rules and routes. Work started from a chat reports back in that
+chat, and a new chat shows an agent's managers its Get started cards.
+Two-step sign-in is optional by default, a brand's name replaces Hubzoid where
+people see it, and the WhatsApp listener answers only its own number.
+
+### Added
+- **Smarter login detection.** Hubzoid asks each CLI for its login status and
+  plan (Claude Code and Codex), names the plan, and picks the better login when
+  there is more than one. For Codex it reads `auth.json` and the plan claim in
+  its login token; the token is never shown, logged or stored. A Codex login
+  stored in the keychain is named, with the fix, by Diagnostics, doctor and
+  `hubzoid init`, instead of being reported as missing.
+- **One check call after init picks a sign-in.** When init sets up an agent on
+  a Claude Code or Codex sign-in, it makes one real model call, so a bad login
+  shows up then, not on the first chat. A pasted API key is not checked this
+  way. If a key-only Claude Code setup fails the call, init says to check the
+  key. The same call is an active diagnostic, `model.reply`.
+- **A Claude subscription login wins over an inherited API key.** If you have
+  both a Claude subscription login (or `CLAUDE_CODE_OAUTH_TOKEN`) and
+  `ANTHROPIC_API_KEY` in your shell, the key is ignored, so a stray key does not
+  bill the API. The login check asks Claude Code with the API-key variables
+  removed, so it sees the plan login even when a key is set, and doctor says the
+  key is ignored. To use an API key on purpose, set `MODEL=anthropic/<model>`.
+  With only an API key, a key-only setup still counts as signed in and keeps its
+  key. With `ANTHROPIC_BASE_URL` set for a gateway, nothing changes. If the
+  login cannot be read while a key is set, a warning says the key will be used.
+- **Eval fakes cover GitHub tools the agent has not connected.** A case can
+  fake a GitHub tool even when GitHub is not connected, so the check runs on a
+  fresh copy. The stand-in exists only inside the eval case, for the agent (not
+  for isolated agents). A call no fake matches is blocked, never sent to GitHub.
+- **Connect GitHub with a token, then confirm.** `hubzoid channels github
+  connect ... --mode pat` turns intake on with `--yes`, or a yes at the prompt.
+  Without one, a new connection starts paused, and connect prints the
+  `hubzoid channels resume` command that turns it on.
+- **Channel files can name their own secrets** as `secret:channel/<channel>/<name>`,
+  without the agent's folder name, and every reference Hubzoid writes uses that
+  form. Existing four-part refs and channel files work unchanged.
+- **Manual GitHub intake can pick a route:** `hubzoid channels github intake
+  --route NAME`, any route the connection's workflow declares.
+- **Work items started from a web chat report back in that chat.** A workflow
+  run started from a chat already did. A work item (how the Software Factory
+  takes chat requests) showed its questions and approvals only under Inbox,
+  and its result never came back. Now both show up where you asked. The chat
+  comes from the server session only, and a chat named by the caller is
+  dropped. A result that arrives after the chat stopped waiting shows the
+  workflow's `reply`, `refused` or `answer` text, not every key, cut at the
+  same lengths as a quick result, and the agent reads it as data. A paused work
+  item posts no result; a stopped one says why, in a fixed sentence.
+- **Get started cards in the chat.** An agent's `get-started.yaml` names up to
+  six setup cards: its model sign-in, any of its doctor checks, or a fixed
+  line. A manager sees them on the chat's empty screen, with each check's
+  status, a short line and the fix. A check can return a `card` with its own
+  line and detail. Doctor reports an invalid file. See
+  [Hub settings and checks](docs/hub-settings.md#get-started-cards-get-startedyaml).
+- **The brand's name everywhere people see it.** With a brand, the browser
+  tab before the app loads, the pages for connecting an assistant over MCP,
+  workflow alert emails and Slack messages, the email draft check and the app
+  name a provider shows for a connector use `identity.name`. Messages in chat
+  channels and web app errors no longer name Hubzoid. A brand can hide the
+  small hubzoid mark on the sign-in page with `hidden_features: [hubzoid_mark]`.
+  The version line and GitHub star in Settings stay.
+
+### Changed
+- **Two-step sign-in is optional by default.** A new deployment no longer asks
+  administrators to set up an authenticator at their first sign-in. Anyone can
+  still turn it on under Settings → Security, and anyone who has it keeps being
+  asked for a code. To require it, choose who under Settings → Organization →
+  Sign-in, or set `HUBZOID_MFA_REQUIRED=admins` (or `all`). A deployment that
+  already chose a rule keeps it.
+
+### Fixed
+- **A fresh install imports GitHub support again.** hishel 2.0.0, released on
+  5 November, removed the `CachePolicy` that githubkit 0.16 imports, and
+  githubkit allowed it. Hubzoid now requires `hishel>=1.3.0,<2`.
+- **WhatsApp answers only its own number.** One WhatsApp Business Account can
+  hold several numbers, and Meta sends every number's messages to every app
+  subscribed to it. The env-based WhatsApp listener (`WHATSAPP_*` in the hub
+  `.env`) now skips any message not sent to its `WHATSAPP_PHONE_NUMBER_ID`,
+  before dedup, the sender lookup, read receipts or a reply. Before, a hub on a
+  shared account answered messages sent to other teams' numbers, and told
+  their senders they were not registered. The channel-file path already did
+  this. No new setting.
+- **The follow link opens the work item.** `/settings#/me/work/<agent>/<item>`
+  opened the Profile page when Settings was loaded fresh. It now opens the work
+  item, on wide and narrow screens.
+- **Evals on a never-started agent run as its owner when sign-in is off.** A
+  case run as the local owner on a fresh copy used to be refused the agent's
+  tools. With sign-in on, nothing changes.
+- **The eval judge sees only the tools the agent was offered.** A tool hidden
+  from the agent, such as `propose_hub_change` while in-app editing is off, was
+  still in the judge's list, so the judge marked answers down for not calling
+  it.
+- **Dollar limits skip `codex-local` when another limit bounds the call.** A
+  Codex login has no per-call charge, so a dollar limit cannot count it. If a
+  turn or token limit still bounds the call, it runs under that limit, and
+  `hubzoid budgets show` says so. With dollar limits only, its calls are still
+  refused, and `budgets show` says what to add. Any other model with no price
+  is refused under a dollar limit, as before.
+- **The secret-ref error suggests the right form.** A reference to another
+  agent's or another channel's secret now points to `secret:channel/<id>/<name>`
+  for this agent's own slot.
+- **A refused GitHub connect leaves no token behind.** If the connection is
+  refused, a new token is removed, and a reconnect keeps the old one.
+- **Backup Claude tokens work with an inherited API key.** With
+  `CLAUDE_CODE_OAUTH_TOKEN_SECONDARY` or `_TERTIARY` set, a stray
+  `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` stopped every turn. The key is
+  now ignored, as with one token. With `ANTHROPIC_BASE_URL`, Bedrock, Vertex or
+  Foundry, failover is still refused.
+- **`hubzoid stations doctor` asks Claude Code about its login only when a
+  station uses it.**
+- **The sandbox image has a `python` command.** It is rebuilt on the next
+  `hubzoid sandbox profiles prepare`.
+- **Doctor accepts the bridge key `hubzoid run` makes.** It used to reject the
+  key in `state/bridge.key`. `BRIDGE_API_KEYS=dev` still fails, and a
+  `hubzoid.yaml` deployment keeps its key in the deployment's state folder.
+- **Doctor no longer warns "Nobody may use" before the first run in local
+  mode.** It now says you are the owner.
+- **The Claude sign-in checks ask `claude auth status`.** Diagnostics,
+  `hubzoid doctor` and `hubzoid stations doctor` used to take a `~/.claude`
+  folder, a `~/.claude.json` file or an installed `claude` as a login, which a
+  logged-out machine can still have. The environment tokens each accepted
+  before still count.
+- **Connecting GitHub keeps the agent's `channels/github.yaml`.** A token
+  connection used to overwrite it. The workflow, routes and rules are now kept.
+- **Pause, resume, connect and configure keep your edits to a channel file.**
+  They change only their own settings in the file as it is now. If the file is
+  not valid, they stop and name it, except a pause, which still works and
+  replaces the file so intake stops.
+
+### Checked
+- The real check call passed on a Claude login.
+- The Software Factory's `safety/read-only-question` eval passed (judge 9/10) on
+  an unconnected copy of the agent, using the new stand-ins.
+- The real check with a fake inherited API key, in a clean environment, reports
+  the plan login (`subscription team True`).
+- The follow link `/settings#/me/work/<agent>/<item>` was checked in a browser.
+- The sandbox base image was built from the new Dockerfile (Docker 29.8.2), and
+  `python --version` reported Python 3.11.2.
+- Work started from a chat showed its plan approval card in that chat. It was
+  approved there, and the result came back to the same chat (Software Factory,
+  local repository mode, Claude login).
+- Not checked: Codex login detection against a real Codex login on a paid plan
+  other than Plus.
+
+### Known limits
+- Connecting GitHub rewrites `channels/github.yaml` without its comments.
+
 ## [2.0.7]
 
 Attachments have one path, every tool's schema is right on every runtime,

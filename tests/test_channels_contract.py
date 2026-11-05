@@ -97,6 +97,74 @@ def test_secret_ref_grammar(hub_dir):
     assert not other_hub.valid and not other_channel.valid and not garbage.valid
 
 
+def test_a_foreign_secret_ref_message_names_the_own_slot(hub_dir):
+    slot = "secret:channel/fake-main/<name> (or secret:channel/desk/fake-main/<name>)"   # the short form first
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/other/fake-main/s"}))
+    assert v.errors[0]["message"] == f"A channel can use only this agent's secrets: write {slot}."
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/desk/x/s"}))
+    assert v.errors[0]["message"] == f"This channel's secrets are under {slot}."    # another channel's slot
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "env:HUBZOID_SECRET_KEY"}))
+    with pytest.raises(ChannelError) as exc:
+        config.apply(hub_dir, v.data, expected_revision="absent", actor="hub-admin", any_secret=False)
+    assert exc.value.extra["fields"][0]["message"] == f"Use {slot}, or ask an organization administrator."
+
+
+def test_a_short_secret_ref_means_this_hubs_slot_for_this_channel(hub_dir):
+    short = "secret:channel/fake-main/sig"
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": short}))
+    assert v.valid, v.errors
+    assert v.settings.secret_ref == "secret:channel/desk/fake-main/sig"
+    out = config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    # the file keeps what the person wrote; the stored form and resolution see the full ref
+    assert short in config.file_for(hub_dir, "fake-main").read_text()
+    exported = config.export(hub_dir, "fake-main")
+    assert exported["config"]["provider_config"]["secret_ref"] == "secret:channel/desk/fake-main/sig"
+    assert exported["file_matches"] is True and exported["digest"] == out["digest"]
+    assert config.active(hub_dir, "fake-main").settings.secret_ref == "secret:channel/desk/fake-main/sig"
+    # it is the same connection as one written with the full ref
+    full = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": "secret:channel/desk/fake-main/sig"}))
+    assert config.canonical.digest(config.normalized(full.config, full.settings)) == out["digest"]
+    # a hub admin may use it: it is the connection's own secret
+    config.apply(hub_dir, v.data, expected_revision=1, actor="hub-admin", any_secret=False)
+    # another hub's full ref and another channel's short ref are still refused
+    for bad in ("secret:channel/other/fake-main/sig", "secret:channel/slack/sig"):
+        assert not config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": bad})).valid
+    # parse alone still refuses the short form, and says what it means
+    from hubzoid.secretstore import RefError, parse
+    with pytest.raises(RefError, match="this agent's slot"):
+        parse(short)
+
+
+def test_pause_and_resume_keep_the_files_short_refs_and_its_edits(hub_dir):
+    short = "secret:channel/fake-main/sig"
+    path = config.file_for(hub_dir, "fake-main")
+    v = config.load_text(hub_dir, yaml_for(provider_config={"secret_ref": short}))
+    config.apply(hub_dir, v.data, expected_revision="absent", actor="test")
+    config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="test")
+    assert short in path.read_text() and "enabled: false" in path.read_text()
+    config.set_enabled(hub_dir, "fake-main", True, expected_revision=2, actor="test")
+    assert short in path.read_text() and "desk" not in path.read_text()
+    assert config.export(hub_dir, "fake-main")["config"]["provider_config"]["secret_ref"] == \
+        "secret:channel/desk/fake-main/sig"
+    # The file is the configuration: an edit made after the last sync is kept, and applied.
+    path.write_text(path.read_text() + "queue_limit: 7\n")
+    config.set_enabled(hub_dir, "fake-main", False, expected_revision=3, actor="test")
+    assert "queue_limit: 7" in path.read_text() and short in path.read_text()
+    assert config.export(hub_dir, "fake-main")["config"]["queue_limit"] == 7
+
+
+def test_an_unreadable_file_is_replaced_to_pause_but_never_to_resume(hub_dir):
+    applied(hub_dir)
+    path = config.file_for(hub_dir, "fake-main")
+    path.write_text("enabled: [unclosed\n")
+    with pytest.raises(ChannelError) as exc:
+        config.set_enabled(hub_dir, "fake-main", True, expected_revision=1, actor="test")
+    assert "channels/fake-main.yaml" in exc.value.message and "unclosed" in path.read_text()
+    out = config.set_enabled(hub_dir, "fake-main", False, expected_revision=1, actor="test")
+    assert out["status"] == "disabled" and "replaced" in out["message"]
+    assert "enabled: false" in path.read_text()
+
+
 def test_a_hub_admin_names_only_the_connections_own_secrets(hub_dir):
     # A reference decides which value the connection sends to its host: a hub
     # administrator can't point it at the deployment's environment or secrets.

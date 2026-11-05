@@ -7,7 +7,7 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from hubzoid import cli
+from hubzoid import cli, datadir
 from hubzoid import doctor as doc
 
 # Every id doctor can report. Ids are only ever added: a rename breaks scripts.
@@ -58,7 +58,7 @@ def test_ids_are_stable_and_doctor_creates_nothing(hub):
 
 def test_unsafe_settings_fail(hub, monkeypatch):
     c = _by_id(doc.run(hub))
-    assert c["auth.bridge_keys"].status == "fail"  # unset means the public key 'dev'
+    assert c["auth.bridge_keys"].status == "info"  # unset: `hubzoid run` makes a random key
 
     monkeypatch.setenv("BRIDGE_API_KEYS", "dev,other-key-long-enough")
     assert _by_id(doc.run(hub))["auth.bridge_keys"].status == "fail"
@@ -86,6 +86,34 @@ def test_unsafe_settings_fail(hub, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY")
     c = _by_id(doc.run(hub))["model.credentials"]
     assert c.status == "fail" and "OPENROUTER_API_KEY" in c.summary
+
+
+def test_model_credentials_ask_the_logins_not_folders(hub, monkeypatch, tmp_path):
+    from hubzoid import factory_claude, factory_codex, runtime
+    from hubzoid.logins import Login
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()                       # a leftover folder is not a login
+    monkeypatch.setenv("MODEL", "claude-local")
+    for key in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    assert doc._model(hub).status == "fail"
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: Login("claude-local", True, "subscription", "team"))
+    check = doc._model(hub)
+    assert check.status == "ok" and "Team plan" in check.summary
+    monkeypatch.setattr(factory_claude, "claude_login", lambda: None)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "dummy")  # gitleaks:allow
+    assert doc._model(hub).status == "ok"                # an env token still counts
+
+    class CodexRuntime:
+        name = "codex-local"
+
+    monkeypatch.setattr(runtime, "build", lambda hub_dir: CodexRuntime())
+    monkeypatch.setattr(factory_codex, "codex_login",
+                        lambda: Login("codex-local", True, problem="not_file_backed", fix="codex login --file"))
+    check = _by_id(doc._hub_checks(hub))["runtime.codex_login"]
+    assert check.status == "fail" and "not in a file the runtime can use" in check.summary
+    assert "codex login --file" in check.summary
 
 
 def test_schema_backup_and_schedule_checks(hub, tmp_path):
@@ -124,8 +152,9 @@ def test_unknown_schema_revision_fails(hub):
 
 
 def test_json_output_and_exit_code(hub, monkeypatch):
+    monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
     r = CliRunner().invoke(cli.app, ["doctor", str(hub), "--json"])
-    assert r.exit_code == 1  # the bridge key is unset
+    assert r.exit_code == 1  # the bridge key is the public 'dev'
     body = json.loads(r.output)
     assert body["format"] == 1 and body["ok"] is False
     assert {"id", "status", "summary", "detail"} <= set(body["checks"][0])
@@ -170,12 +199,54 @@ def test_deprecated_management_flag_warns(hub, monkeypatch):
     assert check.status == "warn" and "access_tools" in check.summary
 
 
+def _write_key(state):
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "bridge.key").write_text("hzb_" + "a" * 32)
+
+
+def _key_row(hub):
+    return _by_id(doc._auth(hub))["auth.bridge_keys"]
+
+
+def test_doctor_accepts_the_key_hubzoid_run_made(hub):
+    _write_key(datadir.state(hub))
+    assert _key_row(hub).status == "ok"
+
+
+def test_before_the_first_run_doctor_says_a_key_will_be_made(hub):
+    row = _key_row(hub)
+    assert row.status == "info" and "hubzoid run" in row.summary
+    assert not (datadir.state(hub) / "bridge.key").exists()
+
+
+def test_a_dev_key_still_fails_with_a_key_file(hub, monkeypatch):
+    monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    _write_key(datadir.state(hub))
+    assert _key_row(hub).status == "fail"
+
+
+def test_doctor_finds_a_deployments_key(tmp_path, monkeypatch):
+    from hubzoid import deployfile
+
+    monkeypatch.delenv("BRIDGE_API_KEYS", raising=False)
+    monkeypatch.delenv("HUBZOID_DATA_DIR", raising=False)
+    (tmp_path / "ops").mkdir()
+    (tmp_path / "ops" / "AGENTS.md").write_text("---\nname: ops\ndescription: d\n---\nbody")
+    (tmp_path / "hubzoid.yaml").write_text("version: 1\nhubs:\n  - ops\n")
+    _write_key(cli._deployment_state_dir(deployfile.load(tmp_path / "hubzoid.yaml")))
+    assert _key_row(tmp_path / "ops").status == "ok"
+
+
 def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
     from hubzoid.access import store_for
 
     gs = store_for(hub)
     check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "info" and "owner" in check.summary and "hubzoid run" in check.summary
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    check = _by_id(doc.run(hub))["access.who"]
     assert check.status == "warn" and "Nobody may use hub" in check.summary
+    monkeypatch.delenv("HUBZOID_AUTH")
     gs.provision_owner("owner@example.org", "hub")
     check = _by_id(doc.run(hub))["access.who"]
     assert check.status == "info" and "owner@example.org" in check.summary

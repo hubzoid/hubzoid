@@ -15,7 +15,6 @@ secret once to prove it is reachable (skip with `fetch_secrets=False`, the
 from __future__ import annotations
 
 import os
-import shutil
 import time
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
@@ -51,10 +50,16 @@ def _hub_checks(hub: Path) -> list[Check]:
         rt = runtime_lib.build(hub)
         out.append(Check("runtime.build", "ok", f"Agent builds: {rt.name!r} via {type(rt).__name__}"))
         if type(rt).__name__ == "CodexRuntime":
-            from .factory_codex import codex_available, REVIEWED_CODEX_VERSIONS
-            ready = codex_available()
-            out.append(Check("runtime.codex_login", "ok" if ready else "fail",
-                             "Codex CLI login available" if ready else f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
+            from . import logins
+            from .factory_codex import REVIEWED_CODEX_VERSIONS, codex_login
+
+            login = codex_login()
+            if login and login.signed_in and not login.problem:
+                out.append(Check("runtime.codex_login", "ok", f"Codex CLI login available: {logins.describe(login)}"))
+            elif login and login.problem:
+                out.append(Check("runtime.codex_login", "fail", f"{logins.problem(login)} Run `{login.fix}`"))
+            else:
+                out.append(Check("runtime.codex_login", "fail", f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
     try:
@@ -302,8 +307,10 @@ def _auth(hub: Path | None = None) -> list[Check]:
     out = []
     keys = [k.strip() for k in os.environ.get("BRIDGE_API_KEYS", "").split(",") if k.strip()]
     if not keys:
-        out.append(Check("auth.bridge_keys", "fail",
-                         "BRIDGE_API_KEYS is not set, so the bridge accepts the public key 'dev'"))
+        out.append(Check("auth.bridge_keys", "ok", "A random bridge key is made by hubzoid run")
+                   if _run_key_exists(hub) else
+                   Check("auth.bridge_keys", "info",
+                         "hubzoid run makes a random bridge key on first start"))
     elif "dev" in keys:
         out.append(Check("auth.bridge_keys", "fail", "BRIDGE_API_KEYS includes the public key 'dev'"))
     elif any(len(k) < 16 for k in keys):
@@ -313,6 +320,27 @@ def _auth(hub: Path | None = None) -> list[Check]:
 
     out.append(_web_app_signin(hub))
     return out
+
+
+def _run_key_exists(hub: Path | None) -> bool:
+    """Whether `hubzoid run` already made its bridge key: in the deployment's
+    state folder when the hub belongs to a hubzoid.yaml, else the hub's own.
+    Only reads: the key is made by `hubzoid run`, never by doctor."""
+    from . import datadir, deployfile
+
+    if hub is None:
+        return False
+    found = deployfile.owning(hub)
+    try:
+        if found is not None:
+            from .cli import _deployment_state_dir
+
+            state = _deployment_state_dir(deployfile.load(found))
+        else:
+            state = datadir.state(hub)
+        return bool((state / "bridge.key").read_text().strip())
+    except (OSError, deployfile.DeployFileError):
+        return False
 
 
 def _web_app_signin(hub: Path | None) -> Check:
@@ -460,13 +488,18 @@ def _model(hub: Path) -> Check:
 
     model = runtime_lib._resolve_model_id(hub, settingslib.load(hub))
     if model == "claude-local" or model.startswith("claude-local/"):
+        from . import factory_claude, logins
+
+        login = factory_claude.claude_login()   # first: a plan login means an inherited key is ignored
+        if login and login.signed_in:
+            note = factory_claude.ignored_key_note(login)
+            return Check("model.credentials", "ok",
+                         f"{model}: signed in ({logins.describe(login)})" + (f". {note}" if note else ""))
         if any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")):
             return Check("model.credentials", "ok", f"{model}: Anthropic credentials set")
-        if shutil.which("claude"):
-            return Check("model.credentials", "info",
-                         f"{model}: uses the local `claude` login (check it with `claude /status`)")
         return Check("model.credentials", "fail",
-                     f"{model}: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or `claude` login")
+                     f"{model}: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or `claude` login "
+                     "(run `claude auth login`)")
     try:
         import litellm
 
@@ -560,6 +593,11 @@ def _who_may_use(hub: Path, engine) -> Check:
             "AND (permission='use_hub' OR permission='*')"), {"h": key})})
     owner = _meta_text(engine, "initial_owner:" + key)
     if not holders:
+        from . import appmode
+
+        if not appmode.auth_enabled(hub):
+            return Check("access.who", "info", f"You are the owner of {key}. "
+                         "Access is set up the first time you run `hubzoid run`.")
         return Check("access.who", "warn", f"Nobody may use {key}. Grant \"Use this agent\" "
                      "in Settings, on the agent's Access tab, or sign in once as the configured owner.")
     if "*" in holders:
@@ -697,16 +735,25 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
 
     settings.files   settings.yaml, hub.settings.yaml and hub.manifest.yaml parse
     settings.values  every declared setting has a valid value or reference
+    get_started      only when get-started.yaml is invalid
     probe.<id>       each check the hub declares in hub.manifest.yaml
     """
+    from .hubs import get_started
     from .hubs import probes as probes_lib
     from .hubs import settings as hub_settings
     from .hubs.yamlfile import HubFileError
 
+    def cards() -> list[Check]:
+        try:
+            get_started.load(hub)
+        except HubFileError as exc:
+            return [Check("get_started", "fail", str(exc), {"recovery": f"Fix {get_started.FILE} or remove it."})]
+        return []
+
     present = [n for n in (hub_settings.DECLARATIONS, hub_settings.VALUES, probes_lib.MANIFEST)
                if (hub / n).is_file()]
     if not present:
-        return []
+        return cards()
     out: list[Check] = []
     try:
         resolved, problems = hub_settings.validate(hub)
@@ -723,6 +770,7 @@ def _hub_setup_checks(hub: Path) -> list[Check]:
             filled = sum(1 for r in resolved if r.is_set)
             out.append(Check("settings.values", "ok", f"{len(resolved)} declared, {filled} set",
                              [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
+    out += cards()
     for result in probes_lib.run(hub):
         detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \
             else None

@@ -6,7 +6,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates coreutils curl findutils git gnupg grep less procps \
-      python3 python3-pip python3-venv ripgrep sed tini xz-utils nodejs npm \
+      python3 python-is-python3 python3-pip python3-venv ripgrep sed tini xz-utils nodejs npm \
  && rm -rf /var/lib/apt/lists/* \
  && pip3 install --no-cache-dir --break-system-packages uv \
  && useradd --uid 1000 --create-home --home-dir /home/hubzoid --shell /bin/bash hubzoid \

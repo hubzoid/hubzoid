@@ -169,7 +169,8 @@ def _pre_registered_method(supported: list[str] | None, has_secret: bool) -> str
                          "the client authentication methods Hubzoid supports.", 502)
 
 
-def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None) -> dict:
+def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None,
+              client_name: str = "Hubzoid") -> dict:
     from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
 
     supported = disc.token_auth_methods
@@ -179,7 +180,7 @@ def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None
         meta = OAuthClientMetadata(
             redirect_uris=[redirect], token_endpoint_auth_method=method,
             grant_types=["authorization_code", "refresh_token"], response_types=["code"],
-            scope=scope, client_name="Hubzoid", software_id="hubzoid")
+            scope=scope, client_name=client_name, software_id="hubzoid")
         body = meta.model_dump(by_alias=True, mode="json", exclude_none=True)
         try:
             status, resp = net.post_json(c, disc.registration_endpoint, json_body=body)
@@ -233,8 +234,10 @@ def client_for(hub_dir, connector: registry.Connector, disc: Discovery, redirect
         raise ConnectorError("registration_unavailable", "This server does not let Hubzoid "
                              "register itself. An administrator can register Hubzoid with the "
                              "provider and enter its client ID on the connector.", 409)
+    from ..ui.branding_store import brand_name  # the name the provider shows people
+
     return registry.save_registration(hub_dir, connector.id, redirect,
-                                      _register(c, disc, redirect, scope))
+                                      _register(c, disc, redirect, scope, brand_name(hub_dir)))
 
 
 # ---------------------------------------------------------------------------

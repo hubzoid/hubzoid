@@ -224,8 +224,11 @@ export default function SettingsPage({ section }: { section: string | null }) {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     }
   }, [hash]);
-  // ?section= (from links elsewhere in the app) becomes the hash.
+  // ?section= (from links elsewhere in the app) becomes the hash. An old
+  // address is the effect above's: it may already have left Settings (a work
+  // item opens in the Inbox), so this must not send it back to a section.
   useEffect(() => {
+    if (movedTo(hash)) return;
     const fromQuery = section && items.find((i) => i.key === section);
     if (fromQuery) {
       history.replaceState(null, "", `/settings#${fromQuery.hash}`);

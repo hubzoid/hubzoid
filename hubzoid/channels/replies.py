@@ -25,7 +25,7 @@ from .models import Origin, Outbound, Receipt
 log = logging.getLogger("hubzoid.channels.replies")
 
 #: what does not fit in the parts a provider allows goes behind a link
-OVERFLOW_NOTE = "\n\n(The full reply is longer than this channel allows. Open it in Hubzoid.)"
+OVERFLOW_NOTE = "\n\n(The full reply is longer than this channel allows. Open it in the web app.)"
 
 
 def marker(thread_id: str, key: str, part: int) -> str:

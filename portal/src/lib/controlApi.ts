@@ -30,7 +30,7 @@ export async function control<T>(
   try {
     response = await fetch(path, { method: options.method ?? (body ? "POST" : "GET"), credentials: "same-origin", headers, body });
   } catch {
-    throw new ControlError(0, "network", "Can't reach Hubzoid. Check your connection and try again.", {});
+    throw new ControlError(0, "network", "Can't reach the server. Check your connection and try again.", {});
   }
   if (!response.ok) {
     let detail: Record<string, unknown> = {};

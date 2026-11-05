@@ -51,7 +51,7 @@ presentation:
 | `links.help`, `privacy`, `terms` | `https://` URLs or paths starting with `/` |
 | `legal.version`, `require_acceptance` | `require_acceptance: true` needs a version and `links.terms`. People accept once per version |
 | `announcement` | `{id, text_by_locale: {en: ...}, dismissible}`. Each person can dismiss it |
-| `presentation.hidden_features` | Hides navigation items (`connections`, `schedules`, `console_link`, ...). Concealment only: the server still decides what each person may do |
+| `presentation.hidden_features` | Hides navigation items (`connections`, `schedules`, `console_link`, ...). Concealment only: the server still decides what each person may do. `hubzoid_mark` hides the small hubzoid mark under the sign-in page footer |
 | `presentation.response_watermark` | Text shown under each answer |
 | `presentation.decorative_css` | A `.css` file under `branding/` for the three brand slots only (below) |
 
@@ -68,6 +68,21 @@ Decorative CSS may style exactly `[data-brand-slot="brand.logoFrame"]`,
 `background-color` and `border-color` (six-digit hex), `border-radius` (0 to
 24px) and `padding` (0 to 32px). Approval cards, errors and permission notices
 are never inside a brand slot. `custom.css` is no longer served.
+
+### Where the name appears
+
+`identity.name` is also the name the server writes itself: the browser tab
+before the app loads, the pages where people connect an assistant over MCP,
+workflow alert emails and Slack messages, the email draft check, and the app
+name a provider shows when the deployment registers itself for a connector
+(a provider keeps the name it was first given). Messages to people in chat
+channels and in the web app say "the web app" or "your account", never a
+product name. Without a brand, all of these say Hubzoid.
+
+Two places stay Hubzoid's for administrators: the version line and the
+GitHub star in Settings (`hidden_features: [github_star]` hides the star). On
+the sign-in page a small hubzoid mark sits under the brand's footer, and
+`hidden_features: [hubzoid_mark]` hides it.
 
 ### Changing the brand
 

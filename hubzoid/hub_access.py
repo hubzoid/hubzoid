@@ -82,5 +82,15 @@ def same_origin(request: Request) -> None:
         raise error(403, "cross_origin", "This request must come from this site's own pages.") from None
 
 
+def same_origin_read(request: Request) -> None:
+    """Refuse a read that runs hub code when another site asked for it (a link
+    or an image there). A same-origin GET carries no Origin, so the browser's
+    Sec-Fetch-Site decides: ``same-origin``, or ``none`` for an address typed or
+    bookmarked. Without it, or for any other value, the check writes use."""
+    if request.headers.get("sec-fetch-site") in ("same-origin", "none"):
+        return
+    same_origin(request)
+
+
 def request_id(request: Request) -> str | None:
     return (request.headers.get("x-request-id") or "").strip()[:128] or None

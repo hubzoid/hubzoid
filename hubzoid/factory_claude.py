@@ -33,6 +33,9 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import time
 from typing import Any, AsyncIterator
 
 from . import _request_ctx
@@ -59,6 +62,97 @@ _MCP_NAMESPACE = "hubzoid"
 # the model dispatch our AgentDefinition delegates while Bash/Read/etc. stay
 # off — verified live on claude CLI 2.1.198.
 SUBAGENT_SPAWN_TOOL = "Agent"
+
+
+_API_KEY_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+_LOGIN_TTL = 300  # seconds; every child start reads the login
+_login_cache: tuple[float, Any] | None = None
+_probe_warned = False
+
+
+def clear_login_cache() -> None:
+    global _login_cache, _probe_warned
+    _login_cache, _probe_warned = None, False
+
+
+def api_key_vars() -> list[str]:
+    """The Anthropic API-key variables set in this environment (names only)."""
+    return [k for k in _API_KEY_VARS if os.environ.get(k)]
+
+
+def _key_kept(why: str) -> None:
+    """Warn once that, with no login read, an inherited key is what the child
+    uses. Not for a gateway or CLAUDE_CODE_OAUTH_TOKEN: their keys are decided."""
+    global _probe_warned
+    keys = api_key_vars()
+    if _probe_warned or not keys or os.environ.get("ANTHROPIC_BASE_URL") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return
+    _probe_warned = True
+    log.warning("Could not read the Claude Code login (%s), so %s in the environment will be used.",
+                why, " and ".join(keys))
+
+
+def ignored_key_note(login) -> str:
+    """Diagnostics' and doctor's words when a plan login means an inherited key
+    is ignored (the rule in `_child_env`), else ""."""
+    keys = api_key_vars()
+    if not keys or os.environ.get("ANTHROPIC_BASE_URL") or not (login and login.signed_in) \
+            or login.method != "subscription":
+        return ""
+    if len(keys) > 1:
+        return f"{' and '.join(keys)} in the environment are ignored."
+    return f"An {keys[0]} in the environment is ignored."
+
+
+def claude_login():
+    """The Claude Code login (`logins.Login`), or None when `claude` isn't installed.
+    Reads only loggedIn, authMethod and subscriptionType from `claude auth status`.
+
+    Only a definite answer is kept for a few minutes: signed in, or the CLI
+    saying cleanly that it is not. A probe that fails or times out is asked
+    again next time. The chat runtime reads the login when it is built, so a
+    running hub sees a new login after `hubzoid restart`."""
+    global _login_cache
+    if _login_cache and time.monotonic() - _login_cache[0] < _LOGIN_TTL:
+        return _login_cache[1]
+    from .logins import Login, tier
+
+    binary = shutil.which("claude")
+    if not binary:
+        _key_kept("no `claude` on PATH")
+        return None
+    # The CLI reports `api_key` whenever a key is in its environment and hides the
+    # login. Ask without the keys: that is the login the child uses once they are
+    # blanked. With a gateway (ANTHROPIC_BASE_URL) the child keeps them, so ask with them.
+    key_set = any(os.environ.get(k) for k in _API_KEY_VARS)
+    gateway = bool(os.environ.get("ANTHROPIC_BASE_URL"))
+    probe_env = {k: v for k, v in os.environ.items() if gateway or k not in _API_KEY_VARS}
+    login, definite = Login("claude-local", False, api_key_in_env=key_set), False
+    why = "`claude auth status` gave no readable answer"
+    try:
+        result = subprocess.run([binary, "auth", "status", "--json"], capture_output=True, text=True, timeout=10,
+                                env=probe_env)
+        status = json.loads(result.stdout)
+        if isinstance(status, dict) and status.get("loggedIn") is True and result.returncode == 0:
+            # claude.ai login, or `claude setup-token` / CLAUDE_CODE_OAUTH_TOKEN
+            method = "subscription" if status.get("authMethod") in ("claude.ai", "oauth_token") else "api_key"
+            plan = status.get("subscriptionType")
+            plan = plan if isinstance(plan, str) and plan else None
+            login, definite = Login("claude-local", True, method, plan, tier("claude-local", method, plan),
+                                    api_key_in_env=key_set), True
+        elif isinstance(status, dict) and status.get("loggedIn") is False:
+            definite = True
+            if key_set:   # only a key: it is the login, and the child keeps it
+                login = Login("claude-local", True, "api_key", None, 0, api_key_in_env=True)
+    except subprocess.TimeoutExpired:
+        why = "`claude auth status` timed out"
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    if definite:
+        _login_cache = (time.monotonic(), login)
+    else:
+        _key_kept(why)
+    return login
 
 
 def claude_options(**kwargs):
@@ -143,26 +237,48 @@ class PrivateMcpConfig:
         self.close()
 
 
-def tool_free_options(system: str, model_pin: str | None = None):
+def tool_free_options(system: str, model_pin: str | None = None, model: str | None = None):
     """One plain model turn: no tools, no MCP servers, no settings, one turn.
-    Used by `hub.call_llm` on claude-local and the eval judge."""
+    Used by `hub.call_llm` on claude-local and the eval judge. `model` is the
+    call's own model setting, which decides whether an inherited key is blanked."""
     opts: dict[str, Any] = dict(
         system_prompt=system, tools=[], allowed_tools=[], mcp_servers={},
         setting_sources=[], max_turns=1,
     )
     if model_pin is not None:
         opts["model"] = model_pin
-    child_env = _child_env()
+    child_env = _child_env(model)
     if child_env:
         opts["env"] = child_env
     return claude_options(**opts)
 
 
-def _child_env() -> dict[str, str]:
+_billing_logged = False
+
+
+def _child_env(model: str | None = None) -> dict[str, str]:
     """The claude child's environment overrides. An explicit
     HUBZOID_MCP_TIMEOUT (seconds) becomes the CLI's MCP_TOOL_TIMEOUT
-    (milliseconds) unless that is set; unset, the CLI keeps its own default."""
+    (milliseconds) unless that is set; unset, the CLI keeps its own default.
+
+    On claude-local with a subscription login (or CLAUDE_CODE_OAUTH_TOKEN), an
+    inherited ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is blanked so the CLI
+    never bills the API silently. To use a key on purpose, set MODEL=anthropic/<model>.
+    With ANTHROPIC_BASE_URL set (a deliberate gateway), the keys are left alone."""
+    global _billing_logged
     out = config_secrets.child_env_overrides(os.environ)
+    model = (model or os.environ.get("MODEL") or "claude-local").strip().lower()
+    if model.startswith("claude-local") and not os.environ.get("ANTHROPIC_BASE_URL"):
+        reason = "CLAUDE_CODE_OAUTH_TOKEN" if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else None
+        if reason is None:
+            login = claude_login()
+            reason = "the claude login" if login and login.signed_in and login.method == "subscription" else None
+        if reason:
+            keys = [k for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") if os.environ.get(k)]
+            out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"] = ""
+            if keys and not _billing_logged:
+                _billing_logged = True
+                log.warning("Using the Claude subscription (%s); ignoring %s", reason, " and ".join(keys))
     if os.environ.get("HUBZOID_MCP_TIMEOUT", "").strip() and not os.environ.get("MCP_TOOL_TIMEOUT"):
         from .loaders.mcp import call_timeout
 
@@ -373,7 +489,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl, tool_fakes
-    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # evals: fake tool results (and stand-ins for faked tools not connected yet), inert otherwise
+    registry = tool_fakes.wrap_registry(registry, stand_ins=True)
     # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
     registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
 
@@ -440,7 +557,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
-    child_env = _child_env()
+    child_env = _child_env(hub_model)
     if child_env:
         opts_kwargs["env"] = child_env
     if agent_defs:
@@ -1455,7 +1572,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
 
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
     options = tool_free_options(
-        system or "You are a precise assistant. Answer the request directly.", pin)
+        system or "You are a precise assistant. Answer the request directly.", pin, model_setting)
     if output_schema is not None:
         import dataclasses
 
@@ -1522,7 +1639,7 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
         opts["output_format"] = {"type": "json_schema", "schema": schema}
     if pin is not None:
         opts["model"] = pin
-    child_env = _child_env()
+    child_env = _child_env(model_setting)
     if child_env:
         opts["env"] = child_env
     options = _budget_caps(claude_options(**opts))

@@ -74,6 +74,12 @@ Credentials are references, never values: `secret:channel/<hub>/<id>/<name>`
 (set with `hubzoid secrets set <hub> --ref <reference> --stdin --apply`) or
 `env:NAME`. Validation refuses a value pasted into the file.
 
+In a channel file you can leave the agent's folder name out:
+`secret:channel/<id>/<name>` means this agent's secret for the channel with that
+`id` (in `channels/github.yaml`, `secret:channel/github/private-key`). The file
+keeps what you wrote, so it works in a clone under any folder name. Everywhere
+else, such as `hubzoid secrets set --ref`, write the full form.
+
 ## Setting it up
 
 These commands work the same from a terminal or from Claude Code or Codex:
@@ -148,6 +154,11 @@ Set `enabled: false` and apply it (`hubzoid channels pause <hub> <id>
 --expected-revision N`). New deliveries are still verified and recorded, but
 start no work. Work that already started finishes and still replies.
 `resume` reverses it. Run `doctor` first.
+
+Pause, resume, connecting and `configure` change only their own settings in
+the file as it is now, so your other edits stay. If the file is not valid, they
+stop and name it, except `pause`: it still works, and replaces the file with the
+last applied configuration so intake stops.
 
 ## Workflows that answer in a thread
 

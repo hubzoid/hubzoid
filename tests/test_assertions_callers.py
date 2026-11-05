@@ -182,7 +182,7 @@ def test_inbound_harness_signs_through_the_real_dispatch(hub, monkeypatch):
     app = build_app(hub_dir=hub, bridge_url="http://bridge/v1", api_key="k", model="m",
                     resolver=lambda _s, handle: roster.get(handle), whatsapp=wa)
     payload = {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
-        "messaging_product": "whatsapp", "contacts": [{"wa_id": "919800000001"}],
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550100", "phone_number_id": "PNID"}, "contacts": [{"wa_id": "919800000001"}],
         "messages": [{"from": "919800000001", "id": "wamid.A1", "type": "text", "text": {"body": "hi"}}]}}]}]}
     raw = json.dumps(payload).encode()
     sig = "sha256=" + hmac.new(b"SEC", raw, hashlib.sha256).hexdigest()

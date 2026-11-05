@@ -21,6 +21,35 @@ def _limit_line(scope: str, caps: dict) -> str:
     return f"{scope}: " + ", ".join(parts)
 
 
+def _unpriced_model(hub: Path) -> str | None:
+    """The hub's configured model when it has no price, else None."""
+    from . import budgets
+
+    try:
+        from .cli import _hub_model
+
+        model = _hub_model(_hub(hub))
+    except Exception:  # noqa: BLE001 - no readable model: the note is only a hint
+        return None
+    return model if model and not budgets.priced(model) else None
+
+
+def _unpriced_note(model: str, limits: dict) -> str:
+    """What the dollar limits mean for a model with no price, by `admit`'s own rule:
+    a call in a work item meets every scope, any other call (a chat reply) the rest."""
+    from . import budgets
+
+    in_item = budgets.unpriced_refused(limits, list(limits), model)
+    other = budgets.unpriced_refused(limits, [s for s in limits if s != "work_item"], model)
+    if not in_item and not other:
+        return f"Dollar limits don't apply to {model}; turn and token limits do."
+    if not in_item:
+        return (f"Dollar limits don't apply to {model} in a work item. Other calls, such as chat replies, are "
+                "refused until a run or month turn or token limit is added.")
+    why = "until a turn or token limit is added" if budgets.no_charge(model) else "while a dollar limit applies"
+    return f"Calls on {model}{'' if other else ' in a work item'} are refused {why}."
+
+
 @budgets_app.command("show")
 def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(False, "--json")) -> None:
     """The limits in force, this month's usage and reservations still open."""
@@ -33,6 +62,9 @@ def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(Fal
                                                       else ""))
         for scope, caps in v["limits"].items():
             console.print(_limit_line(scope, caps))
+        unpriced = _unpriced_model(hub) if any("max_cost_usd" in c for c in v["limits"].values()) else None
+        if unpriced:
+            console.print(escape(_unpriced_note(unpriced, v["limits"])))
         m = v["month"]
         console.print(f"This month ({m['key']}): {m['input_tokens']:,} input tokens, {m['output_tokens']:,} output "
                       f"tokens, {float(m['cost_usd']):.4f} USD"

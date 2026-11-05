@@ -181,7 +181,8 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl, tool_fakes
-    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # evals: fake tool results (and stand-ins for faked tools not connected yet), inert otherwise
+    registry = tool_fakes.wrap_registry(registry, stand_ins=True)
     # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
     registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
 

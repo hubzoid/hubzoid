@@ -371,6 +371,38 @@ def test_judge_runs_when_free_checks_pass(tmp_path, patched_build):
     assert suite.cases[0].judge.score == 9
 
 
+def test_judge_sees_only_the_tools_the_agent_was_offered(tmp_path, patched_build):
+    """Regression: with in-app editing off, propose_hub_change is hidden from
+    the agent, yet the judge's list still had it, so the judge marked a correct
+    answer down for "never calling" a tool the agent never saw. The judge gets
+    the decision the runtimes make each turn, asked while the case runs."""
+    import types
+
+    hub = _hub(tmp_path, {"j.md": "## Prompt\nhi\n\n## Criteria\nbe polite\n"})
+    asked = []
+
+    def gate(*_a, **_k):
+        asked.append(True)
+        return False
+
+    gate.hubzoid_permission = "manage_hub"
+    rt = FakeRuntime(replies={"hi": "hello"})
+    rt._options = types.SimpleNamespace(allowed_tools=["mcp__hubzoid__read_knowledge",
+                                                       "mcp__hubzoid__propose_hub_change"])
+    rt._registry = {"read_knowledge": types.SimpleNamespace(name="read_knowledge", is_enabled=True),
+                    "propose_hub_change": types.SimpleNamespace(name="propose_hub_change", is_enabled=gate)}
+    patched_build(rt)
+    seen = []
+
+    async def judge(case, response, tool_calls=None, tools_available=None):
+        seen.append(tools_available)
+        return JudgeResult(score=9, threshold=7)
+
+    assert runner.run_suite(hub, cases.discover(hub), judge_fn=judge).ok
+    assert seen == [["read_knowledge"]]
+    assert asked
+
+
 def test_judge_below_threshold_fails_the_case(tmp_path, patched_build):
     hub = _hub(tmp_path, {"j.md": (
         "---\nthreshold: 8\n---\n## Prompt\nhi\n\n## Criteria\nbe polite\n"

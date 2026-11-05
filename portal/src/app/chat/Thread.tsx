@@ -3,8 +3,9 @@
 // user bubbles, quoting a selection into the reply, the branch picker, the
 // composer (+ menu, model, dictation, send that becomes Stop, and Queue or
 // Interrupt while a reply streams), the flat queue above it, and the quiet
-// empty state with the composer in the middle.
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+// empty state with the composer in the middle (and, for an agent's managers,
+// its Get started cards under the suggestions, with the screen from the top).
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { DropdownMenu as Menu, Popover } from "radix-ui";
 import { enc, get, hubUrl, post } from "../lib/api";
 import { navigate } from "../lib/router";
@@ -69,6 +70,8 @@ import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models"
 import { PromptPicker } from "./prompts";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry, ToolGroup } from "./parts";
 import { FeedbackControls } from "./feedback";
+import { GetStartedCards } from "./GetStarted";
+import { getStartedKey, refusedCards } from "../lib/getStarted";
 
 export type ThreadProps = {
   agent: Agent;
@@ -265,15 +268,21 @@ function EmptyThread(props: ThreadProps) {
   const name = displayName(agent.name);
   // The deployment's welcome copy and workspace suggestions (its brand),
   // kept apart from the agent's own suggestions.
-  const brandCopy = useApp().branding.manifest?.copy;
+  const { branding, user } = useApp();
+  const brandCopy = branding.manifest?.copy;
   const workspaceSuggestions = (brandCopy?.suggestions ?? []).filter((s) => s.trim()).slice(0, 6);
   const suggestions = (agent.suggestions ?? []).map(suggestionText).filter(Boolean).slice(0, 4) as {
     label: string;
     prompt: string;
   }[];
   const pills = [...suggestions, ...workspaceSuggestions.map((s) => ({ label: s, prompt: s }))].slice(0, 6);
+  // Where Get started cards may come, the screen starts at the top, so they
+  // grow downward and the composer stays put. Fixed for this screen: a 403
+  // centres only the next one.
+  const cardsKey = getStartedKey(agent, user);
+  const fromTop = useMemo(() => cardsKey !== null && !refusedCards.has(cardsKey), [cardsKey]);
   return (
-    <div className="hz-empty">
+    <div className={cx("hz-empty", fromTop && "hz-empty-top")}>
       {requestedMissing && (
         <Notice tone="warning" className="mb-6 w-full max-w-[768px]">
           {t.agents.requestedUnavailable(name)}
@@ -298,6 +307,7 @@ function EmptyThread(props: ThreadProps) {
           ))}
         </section>
       )}
+      {cardsKey && <GetStartedCards key={cardsKey} agent={agent} cardsKey={cardsKey} />}
     </div>
   );
 }

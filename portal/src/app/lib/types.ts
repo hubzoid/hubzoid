@@ -48,6 +48,28 @@ export type Agent = {
   avatar_url?: string | null;
   hub?: string;
   api_base?: string;
+  /** The agent has Get started cards (its get-started.yaml); its managers read them. */
+  get_started?: boolean;
+};
+
+/** GET /api/hubs/<key>/get-started: the agent's setup cards and their checks. */
+export type GetStartedCard = {
+  id: string;
+  title: string;
+  /** null for a static card (no check). */
+  status: "ok" | "info" | "warn" | "fail" | null;
+  line?: string | null;
+  detail?: string | null;
+  /** The check's recovery text. */
+  fix?: string | null;
+};
+export type GetStarted = {
+  title?: string;
+  ready?: boolean;
+  cards: GetStartedCard[];
+  checked_at?: string;
+  /** The file is invalid: one line saying why, and no cards. */
+  error?: string;
 };
 
 export type AgentsResponse = { agents: Agent[]; default_agent?: string | null };

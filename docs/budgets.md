@@ -45,8 +45,13 @@ Amounts are text such as `"2.00"`; `"0"` blocks paid work.
 - **Prices.** Claude reports the cost of each run. Other models are priced
   from the price table pinned with the installed LiteLLM (never one fetched at
   start-up). Subscription logins work with token and turn
-  limits. A model with no price (a Codex login) is refused while a dollar
-  limit applies (`unpriced_model`) rather than run without a bound.
+  limits. A Codex login (`codex-local`) has no per-call charge, so it skips
+  the dollar limits, and nothing is counted in dollars, as long as a turn or
+  token limit that applies to the call still bounds it. With only dollar
+  limits it is refused (`unpriced_model`) rather than run without a bound.
+  Any other model with no price (for example an OpenRouter model missing from
+  the table) is refused while a dollar limit applies, because its calls still
+  cost money. `hubzoid budgets show` says which applies to the agent's model.
 - **Usage that never reported.** A call's hold is settled in the same write as
   its usage record. If Hubzoid stops in the middle of a call, or the record
   cannot be written, the hold keeps counting (across a month boundary too)
@@ -74,7 +79,7 @@ changes need `workflows_manage`.
 | Code | What to do |
 |---|---|
 | `budget_exhausted` | Wait for the next month, or raise the limit in budgets.yaml. |
-| `unpriced_model` | Use token or turn limits for this model. |
+| `unpriced_model` | For `codex-local`, add a turn or token limit. For another model with no price, remove the dollar limits or use a priced model. |
 | `invalid_budgets` | Fix the file at the line shown. |
 | `revision_conflict` | Someone changed the file; reload, review, apply again. |
 

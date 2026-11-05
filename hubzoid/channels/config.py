@@ -124,7 +124,9 @@ def validate(hub_dir, data: dict, *, lines: dict | None = None, path: str | None
     if not isinstance(data, dict):
         return Validation(False, [_err("invalid_config", "/", "The file must be a mapping.")])
     try:
-        cfg = ChannelConfig.model_validate(data)
+        # Everything after this sees full references; `data`, the file's own
+        # content, keeps the short form the person wrote.
+        cfg = ChannelConfig.model_validate(_expanded(hub_dir, data))
     except ValidationError as exc:
         for e in exc.errors():
             loc = [p for p in e.get("loc", ()) if p != "__root__"]
@@ -185,6 +187,44 @@ def _walk_refs(value, path: str):
             yield from _walk_refs(v, f"{path}/{i}")
 
 
+def _expanded(hub_dir: Path, data: dict) -> dict:
+    """``data`` with each short ``secret:channel/<id>/<name>`` reference written
+    in full for this hub; a copy, never the caller's mapping."""
+    from ..secretstore.refs import expand
+
+    return _refs_rewritten(hub_dir, data, expand)
+
+
+def _shortened(hub_dir: Path, data: dict) -> dict:
+    """``data`` with this connection's own full references in the short form a
+    channel file uses, so a file Hubzoid writes never names the agent's folder."""
+    from ..secretstore.refs import shorten
+
+    return _refs_rewritten(hub_dir, data, shorten)
+
+
+def _refs_rewritten(hub_dir: Path, data: dict, rewrite) -> dict:
+    cid, pc = data.get("id"), data.get("provider_config")
+    if not isinstance(cid, str) or not isinstance(pc, dict):
+        return data
+    hub = hub_of(hub_dir)
+
+    def walk(value):
+        if isinstance(value, dict):
+            return {k: (rewrite(v, hub=hub, channel=cid) if isinstance(k, str) and _REF_KEY.match(k)
+                        and isinstance(v, str) else walk(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        return value
+
+    return {**data, "provider_config": walk(pc)}
+
+
+def _own_slot(hub: str, cid: str) -> str:
+    """A channel's own secrets, the short form first."""
+    return f"secret:channel/{cid}/<name> (or secret:channel/{hub}/{cid}/<name>)"
+
+
 def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:
     from ..secretstore import RefError, parse
 
@@ -201,11 +241,11 @@ def _check_refs(hub_dir: Path, cfg: ChannelConfig, lines) -> list[dict]:
             out.append(_err("invalid_config", path, str(exc), lines))
             continue
         if ref.provider == "secret" and ref.scope in ("hub", "channel") and ref.hub != hub:
-            out.append(_err("invalid_config", path, f"A channel can use only this hub's secrets "
-                                                    f"(secret:channel/{hub}/{cfg.id}/<name>).", lines))
+            out.append(_err("invalid_config", path, f"A channel can use only this agent's secrets: write "
+                                                    f"{_own_slot(hub, cfg.id)}.", lines))
         if ref.provider == "secret" and ref.scope == "channel" and ref.channel != cfg.id:
-            out.append(_err("invalid_config", path, f"This channel's secrets are under "
-                                                    f"secret:channel/{hub}/{cfg.id}/<name>.", lines))
+            out.append(_err("invalid_config", path, f"This channel's secrets are under {_own_slot(hub, cfg.id)}.",
+                            lines))
     # a literal credential in a non-reference key is a mistake worth catching
     for key in ("token", "secret", "password", "private_key", "client_secret", "api_key"):
         if key in cfg.provider_config and cfg.provider_config[key]:
@@ -273,6 +313,20 @@ def load_file(hub_dir, path: Path, *, expected_id: str | None = None) -> Validat
         return Validation(False, [{"code": "invalid_config", "field": "/", "line": None,
                                    "message": f"Cannot read {path}: {exc.strerror}."}])
     return load_text(hub_dir, text, path=str(path), expected_id=expected_id)
+
+
+def file_config(hub_dir, cid: str) -> dict | None:
+    """The hub's own ``channels/<cid>.yaml`` as written, applied or not. None
+    when there is no file or it cannot be read as a mapping. A file that reads
+    but does not validate yet (for example it is enabled before its App is
+    installed) is still returned: the caller changes what it must and ``apply``
+    validates the result, so the file's workflow, rules and routes are never
+    dropped for a bare default."""
+    path = file_for(hub_dir, cid)
+    if not path.is_file():
+        return None
+    data = load_file(hub_dir, path, expected_id=cid).data
+    return json.loads(json.dumps(data)) if isinstance(data, dict) else None
 
 
 def render(data: dict) -> str:
@@ -490,11 +544,11 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
         foreign = _foreign_refs(hub, cfg.id, norm.get("provider_config") or {})
         before = (current["config_json"] or {}).get("provider_config") if current else None
         if foreign and norm.get("provider_config") != before:
-            own = f"secret:channel/{hub}/{cfg.id}/<name>"
             raise ChannelError("permission_denied", f"Only organization administrators set or change a connection "
-                               f"that uses a secret other than its own ({own}).", status=403,
-                               fields=[_err("permission_denied", f, f"Use {own}, or ask an organization "
-                                                                    "administrator.", lines) for f in foreign])
+                               f"that uses a secret other than its own (secret:channel/{cfg.id}/<name>).", status=403,
+                               fields=[_err("permission_denied", f, f"Use {_own_slot(hub, cfg.id)}, or ask an "
+                                                                    "organization administrator.", lines)
+                                       for f in foreign])
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)
@@ -539,13 +593,51 @@ def export(hub_dir, cid: str) -> dict:
             "applied_by": row["applied_by"], "updated": row["updated"]}
 
 
+def _shown(hub_dir: Path, path: Path) -> str:
+    return str(path.relative_to(hub_dir)) if path.is_relative_to(hub_dir) else str(path)
+
+
+def _stored(hub_dir: Path, cid: str) -> dict:
+    """The stored configuration, with its own references in the file's short form."""
+    return _shortened(hub_dir, json.loads(json.dumps(export(hub_dir, cid)["config"])))
+
+
+def applied_base(hub_dir, cid: str) -> dict:
+    """The configuration a change starts from. The file is the configuration, so
+    it is the file as written (short secret references, edits made since the
+    last sync) whenever it exists and is valid; the stored configuration only
+    when there is no file. A file that is there but not valid is refused,
+    naming it: nothing replaces a file the person has to fix."""
+    hub_dir = Path(hub_dir)
+    path = file_for(hub_dir, cid)
+    if not path.is_file():
+        return _stored(hub_dir, cid)
+    v = load_file(hub_dir, path, expected_id=cid)
+    if not v.valid or not isinstance(v.data, dict):
+        raise ChannelError("validation_failed", f"{_shown(hub_dir, path)} is not valid. Fix it, then try again.",
+                           status=422, fields=v.errors)
+    return json.loads(json.dumps(v.data))
+
+
 def set_enabled(hub_dir, cid: str, enabled: bool, *, expected_revision: int, actor: str) -> dict:
     """Pause or resume: rewrite `enabled` in the file and apply it. The one
-    disable rule for every adapter."""
-    current = export(hub_dir, cid)
-    data = json.loads(json.dumps(current["config"]))
+    disable rule for every adapter. A file that is not valid stops a resume.
+    A pause replaces it with the stored configuration instead, because
+    stopping intake must always work; the result's message says so."""
+    hub_dir = Path(hub_dir)
+    replaced = False
+    try:
+        data = applied_base(hub_dir, cid)
+    except ChannelError as exc:
+        if enabled or exc.code != "validation_failed":
+            raise
+        data, replaced = _stored(hub_dir, cid), True
     data["enabled"] = bool(enabled)
-    return apply(hub_dir, data, expected_revision=expected_revision, actor=actor, expected_id=cid)
+    out = apply(hub_dir, data, expected_revision=expected_revision, actor=actor, expected_id=cid)
+    if replaced:
+        out["message"] = (f"{_shown(hub_dir, file_for(hub_dir, cid))} could not be read, so it was replaced "
+                          "with the last applied configuration to pause intake.")
+    return out
 
 
 def audit(hub_dir, actor: str, action: str, subject: str, *, request_id: str | None = None) -> None:

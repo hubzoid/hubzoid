@@ -487,3 +487,152 @@ def test_a_requirement_that_matches_nothing_fails(tmp_path, monkeypatch):
     assert doctor._eval_checks(make_hub(tmp_path / "b", {"x.md": "Hi"})) == []
     monkeypatch.setattr(quality, "evidence", lambda hub_dir: 1 / 0)       # unreadable results never pass
     assert [(c.id, c.status) for c in doctor._eval_checks(hub)] == [("evals.quality", "fail")]
+
+
+# ---------------------------------------------------------------------------
+# Fakes for connector tools the hub has not connected yet
+# ---------------------------------------------------------------------------
+def test_a_faked_unconnected_github_tool_gets_a_stand_in_in_a_case_only():
+    assert tool_fakes.wrap_registry({}, stand_ins=True) == {}             # outside a case nothing changes
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__getRepository", output={"full_name": "acme/app"}),
+                                        tool_fakes.Fake(tool="crm__lookup", output="x")])
+    with tool_fakes.scope(session):
+        registry = tool_fakes.wrap_registry({}, stand_ins=True)
+        assert list(registry) == ["github__getRepository"]  # a name with no provider stays out
+        out = asyncio.run(registry["github__getRepository"].on_invoke_tool(None, "{}"))
+    assert json.loads(out) == {"full_name": "acme/app"} and session.used == ["github__getRepository"]
+    assert tool_fakes.wrap_registry({}, stand_ins=True) == {}
+
+
+def test_a_github_stand_in_is_the_real_tool_without_the_network(monkeypatch):
+    from hubzoid import tool_classes
+    from hubzoid.channels.github import client as gh
+    from hubzoid.channels.github import operations
+    from hubzoid.tools import github_tools
+
+    monkeypatch.setattr(gh, "request", lambda *a, **k: pytest.fail("network call"), raising=False)
+    stand = github_tools.stand_ins()["github__createIssue"]
+    op = operations.OPS["createIssue"]
+    assert stand.description == f"GitHub: {op.description}" and stand.params_json_schema == operations.schema(op)
+    assert tool_classes.classify(stand) == "external_write"
+    assert tool_classes.classify(github_tools.stand_ins()["github__getRepository"]) == "read"
+    assert set(github_tools.stand_ins()) == {f"github__{n}" for n in operations.OPS}
+    assert json.loads(asyncio.run(stand.on_invoke_tool(None, "{}"))) == {
+        "error": "not_connected", "message": "GitHub isn't connected to this agent."}
+
+
+def test_a_call_no_fake_matches_on_an_unconnected_stand_in_is_blocked():
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__createIssue", args={"title": "a"}, output="ok")])
+    with tool_fakes.scope(session):
+        tool_ = tool_fakes.wrap_registry({}, stand_ins=True)["github__createIssue"]
+        out = asyncio.run(tool_.on_invoke_tool(None, json.dumps({"title": "b"})))
+    assert out.startswith("Blocked in this eval") and session.used == []
+    assert session.blocked == [("github__createIssue", {"title": "b"})]
+
+
+def test_a_suite_builds_its_runtime_with_the_cases_faked_unconnected_tools(tmp_path, monkeypatch):
+    """The runtime is built once per suite, before any case: a stand-in for a
+    faked, unconnected tool has to be in it, and only in a suite that fakes."""
+    hub = make_hub(tmp_path, {"read.md": CASE.replace("{prompt}", "Read it").replace(
+        "lookup_order", "github__getRepository")})
+    built: list = []
+
+    def build(*_a, **_k):
+        built.append(sorted(tool_fakes.wrap_registry({}, stand_ins=True)))
+        return ToolRuntime({}, {})
+
+    monkeypatch.setattr("hubzoid.runtime.build", build)
+    asyncio.run(arun_suite(hub, cases_lib.discover(hub), judge_fn=None))
+    assert built == [["github__getRepository"]]
+    assert tool_fakes.wrap_registry({}, stand_ins=True) == {}                     # nothing leaks out of the build
+    plain = make_hub(tmp_path / "p", {"plain.md": "Hello"})
+    built.clear()
+    asyncio.run(arun_suite(plain, cases_lib.discover(plain), judge_fn=None))
+    assert built == [[]]
+
+
+def test_a_mixed_suite_gives_stand_ins_only_to_the_faked_cases_runtime(tmp_path, monkeypatch):
+    hub = make_hub(tmp_path, {
+        "a-plain.md": "Hello",
+        "b-faked.md": CASE.replace("{prompt}", "Read it").replace("lookup_order", "github__getRepository")})
+    built: list = []
+    closed: list = []
+
+    class Rt(ToolRuntime):
+        async def aclose(self):
+            closed.append(self)
+
+    def build(*_a, **_k):
+        rt = Rt(tool_fakes.wrap_registry({}, stand_ins=True), {})
+        built.append(rt)
+        return rt
+
+    monkeypatch.setattr("hubzoid.runtime.build", build)
+    suite = asyncio.run(arun_suite(hub, cases_lib.discover(hub), judge_fn=None))
+    assert [list(rt.registry) for rt in built] == [[], ["github__getRepository"]]
+    assert len(closed) == 2 and [c.name for c in suite.cases] == ["a-plain", "b-faked"]
+
+
+def test_a_write_stand_in_goes_through_the_approval_gate(tmp_path, monkeypatch):
+    """A stand-in is added after access.apply, before hitl.equip, as factory.build
+    orders it: its approval rule (hitl.yaml) applies as it does to the real tool."""
+    from hubzoid import hitl, tool_classes
+    from hubzoid.hitl import gate, service
+
+    asked: list = []
+    monkeypatch.setattr(gate, "evaluate", lambda hub_dir, tool, args, **k: asked.append((tool, k.get("read_only")))
+                        or service.Verdict("refuse", message="Waiting for approval: it has not run."))
+    hub = make_hub(tmp_path, {})
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__createIssue", output="created")])
+    with tool_fakes.scope(session):
+        registry = tool_fakes.wrap_registry({}, stand_ins=True)
+        registry = tool_fakes.wrap_added(registry, hitl.equip(hub, registry, questions=False))
+        out = asyncio.run(registry["github__createIssue"].on_invoke_tool(None, "{}"))
+    assert tool_classes.classify(registry["github__createIssue"]) == "external_write"
+    assert asked == [("github__createIssue", None)] and "has not run" in out
+    assert session.used == []                                  # the gate answered first; the fake never ran
+
+
+def test_a_station_gets_exactly_the_tools_it_lists_in_a_faked_case(tmp_path):
+    """Stand-ins are for the agent's own runtime: a station's tools stay
+    exactly the names it lists, and the hub registry it picks from gets none."""
+    from hubzoid.factory import hub_tool_registry
+    from hubzoid.stations import tools as station_tools
+
+    hub = make_hub(tmp_path, {})
+    session = tool_fakes.Session(fakes=[tool_fakes.Fake(tool="github__getRepository", output="x")])
+    with tool_fakes.scope(session):
+        assert list(station_tools.for_station(hub, ["save_handoff"])) == ["save_handoff"]
+        assert "github__getRepository" not in hub_tool_registry(hub)
+
+
+# ---------------------------------------------------------------------------
+# A fresh clone runs as the agent's owner (sign-in off)
+# ---------------------------------------------------------------------------
+def _run_as_owner(tmp_path, monkeypatch, *, auth: bool):
+    from hubzoid.access import store_for
+    from hubzoid.access.session import LOCAL_OWNER
+    from hubzoid.access.store import USE_HUB
+
+    monkeypatch.setenv("HUBZOID_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HUBZOID_AUTH", "true" if auth else "false")
+    hub = make_hub(tmp_path, {"c.md": "---\nrun_as: admin@localhost\n---\nRead it"})
+    assert not store_for(hub).can(LOCAL_OWNER, hub.name, USE_HUB)    # a fresh clone: no grants
+    real: list = []
+    from hubzoid.access.guard import run_checked
+
+    # As a hub's own tools are wrapped: it checks the run's account holds use_hub.
+    rt = ToolRuntime({"read_knowledge": run_checked(tool("read_knowledge", real), hub)},
+                     {"Read it": [("read_knowledge", {})]})
+    return run(hub, rt, monkeypatch).cases[0], real
+
+
+def test_a_fresh_clone_with_sign_in_off_runs_the_case_as_the_local_owner(tmp_path, monkeypatch):
+    case, real = _run_as_owner(tmp_path, monkeypatch, auth=False)
+    assert case.error is None and case.run_as == "admin@localhost"
+    assert real == [("read_knowledge", "{}")]
+
+
+def test_with_sign_in_on_an_owner_without_access_is_still_refused(tmp_path, monkeypatch):
+    case, real = _run_as_owner(tmp_path, monkeypatch, auth=True)
+    assert case.error and real == []

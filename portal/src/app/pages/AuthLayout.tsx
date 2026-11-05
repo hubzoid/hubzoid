@@ -64,7 +64,7 @@ export function AuthLayout({ title, children }: { title: string; children: React
       </main>
       <footer className="px-5 py-5 text-center text-xs text-mute">
         <BrandFooter manifest={app.branding.manifest} className="mb-2" />
-        {app.brandName !== t.product && (
+        {app.brandName !== t.product && !app.branding.manifest?.presentation?.hidden_features?.includes("hubzoid_mark") && (
           <span>
             <span className="text-brand">/</span>
             {t.wordmark}

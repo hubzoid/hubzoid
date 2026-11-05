@@ -2391,6 +2391,53 @@
   }
 }
 
+/* Get started cards on the empty chat, under the suggestions (chat/GetStarted.tsx) */
+@layer components {
+  /* Where cards may come the screen starts at the top (about where the centred
+     one starts), so they grow downward and the composer stays put. */
+  .hz-empty.hz-empty-top { justify-content: flex-start; padding-top: clamp(24px, 15vh, 180px); }
+  .hz-gs { width: 100%; max-width: 768px; margin-top: 28px; }
+  .hz-gs-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 32px; margin-bottom: 8px; }
+  .hz-gs-title { margin: 0; font-size: 0.9643rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-gs-status { font-size: 12.5px; color: var(--hz-mute); }
+  .hz-gs-status[data-tone="ok"] { color: var(--hz-success); }
+  .hz-gs-status[data-tone="warn"] { color: var(--hz-warning); }
+  .hz-gs-acts { display: inline-flex; gap: 2px; margin-left: auto; }
+  .hz-gs-acts .hz-btn { color: var(--hz-mute); }
+  .hz-gs-acts .hz-btn:hover:not(:disabled, [aria-disabled="true"]) { color: var(--hz-ink); }
+  .hz-gs-acts .hz-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; background: transparent; }
+  .hz-gs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0;
+    list-style: none; }
+  .hz-gs-card { min-width: 0; padding: 10px 12px 11px; border: 1px solid var(--hz-line); border-radius: 12px;
+    background: var(--hz-raised); }
+  .hz-gs-card-head { display: flex; align-items: center; gap: 6px; min-height: 22px; }
+  .hz-gs-card-title { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 14px; font-weight: 600; font-variant-caps: all-small-caps; letter-spacing: 0.05em; color: var(--hz-mute); }
+  .hz-icon-btn.hz-gs-help { width: 22px; height: 22px; border-radius: 6px; }
+  .hz-pill-check { background: var(--hz-warning-soft); color: var(--hz-warning); }
+  .hz-gs-line { margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--hz-ink); overflow-wrap: anywhere; }
+  .hz-gs-detail { margin: 2px 0 0; font-size: 12px; line-height: 1.4; color: var(--hz-mute); overflow-wrap: anywhere; }
+  .hz-gs-fix { width: min(320px, 90vw); max-height: min(320px, var(--radix-popover-content-available-height, 320px));
+    overflow-y: auto; padding: 10px 12px; font-size: 12.5px; line-height: 1.55; color: var(--hz-body);
+    overflow-wrap: anywhere; }
+  .hz-gs-fix code { padding: 1px 4px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.92em;
+    background: var(--hz-sunken); color: var(--hz-ink); }
+  .hz-gs-show { margin-top: 18px; font-size: 12.5px; color: var(--hz-mute); text-decoration: underline;
+    text-decoration-color: var(--hz-line); text-underline-offset: 3px; }
+  .hz-gs-show:hover { color: var(--hz-ink); text-decoration-color: currentColor; }
+  .hz-gs-notice { width: 100%; max-width: 768px; margin-top: 20px; }
+  .hz-gs-notice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+  .hz-gs-notice-row .hz-btn { margin-block: -6px; color: inherit; }
+  @media (max-width: 640px) {
+    .hz-gs-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  /* Touch targets grow to 44px (controls.css); the card doesn't grow with them. */
+  @media (max-width: 767px), (pointer: coarse) {
+    .hz-icon-btn.hz-gs-help { margin-block: -11px; }
+    .hz-gs-show { min-height: 44px; margin-top: 8px; }
+  }
+}
+
 /* ==== Settings ======================================================================= */
 .hz-preference-tabs {
   display: flex;

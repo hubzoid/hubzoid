@@ -288,8 +288,8 @@ People can turn on a second step under **Settings → Security**: after the
 password (or Google, or OIDC), a 6-digit code from an authenticator app such
 as Google Authenticator, 1Password or Microsoft Authenticator.
 
-- **Who must use it.** `none`, `admins` (the default) or `all`, chosen by an
-  administrator under **Workspace settings → Sign-in**, through
+- **Who must use it.** `none` (the default), `admins` or `all`, chosen by an
+  administrator under **Settings → Organization → Sign-in**, through
   `PUT /api/auth/mfa/policy`, or with `hubzoid auth mfa policy admins
   --server ...`. Before anyone chooses, `HUBZOID_MFA_REQUIRED` gives the
   default. Someone who must use it and hasn't set it up is taken through set-up

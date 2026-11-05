@@ -211,16 +211,16 @@ def installed(conn, installation_id: int, state: str | None, *, actor: str | Non
     if str(account.get("id")) != str(setup.get("owner_id")) or int(inst.get("app_id") or 0) != int(setup["app_id"]):
         raise ChannelError("installation_mismatch", "That installation belongs to another account or App.",
                            status=409)
-    data = config_lib.export(conn.hub_dir, conn.id)
-    cfg = json.loads(json.dumps(data["config"]))
-    pc = cfg["provider_config"]
+    revision = config_lib.export(conn.hub_dir, conn.id)["revision"]
+    cfg = config_lib.applied_base(conn.hub_dir, conn.id)
+    pc = cfg.setdefault("provider_config", {})
     pc.update({"mode": "app", "app_id": int(setup["app_id"]), "installation_id": int(installation_id),
                "owner": {"type": setup["owner_type"], "login": account.get("login") or setup["owner"],
                          "id": account.get("id")},
-               "private_key_ref": f"secret:channel/{conn.hub}/{conn.id}/private-key",
-               "webhook_secret_ref": f"secret:channel/{conn.hub}/{conn.id}/webhook-secret",
+               "private_key_ref": f"secret:channel/{conn.id}/private-key",
+               "webhook_secret_ref": f"secret:channel/{conn.id}/webhook-secret",
                "token_ref": None})
-    out = config_lib.apply(conn.hub_dir, cfg, expected_revision=data["revision"],
+    out = config_lib.apply(conn.hub_dir, cfg, expected_revision=revision,
                            actor=actor or setup.get("actor") or "github-setup", expected_id=conn.id)
     store.set_connection_state(conn.hub_dir, conn.hub, conn.id,
                                github_setup={**setup, "status": "ready", "installation_id": int(installation_id)},
@@ -284,7 +284,7 @@ def resolve_names(conn, names: list[str]) -> list[dict]:
 
 def configure(conn, *, expected_revision: int, actor: str, repositories_: list[str] | None = None,
               sets: dict | None = None, any_secret: bool = True) -> dict:
-    data = json.loads(json.dumps(config_lib.export(conn.hub_dir, conn.id)["config"]))
+    data = config_lib.applied_base(conn.hub_dir, conn.id)
     if repositories_:
         data["provider_config"]["repositories"] = resolve_names(conn, repositories_)
     for key, value in (sets or {}).items():
@@ -313,28 +313,72 @@ def connect_pat(hub_dir, cid: str, *, token: str, repositories_: list[str], acto
         except Exception as exc:  # noqa: BLE001
             raise ChannelError("repository_not_installed", f"The token cannot read {name}.", status=409) from exc
         repos.append({"id": r["id"], "full_name": r["full_name"]})
-    from ...secretstore import store as secret_store
-
-    secret_store.put(Path(hub_dir), scope="channel", target=f"{hub}/{cid}", name="token", value=token, actor=actor)
     existing = None
     try:
         existing = config_lib.export(hub_dir, cid)
     except ChannelError:
         pass
-    data = json.loads(json.dumps(existing["config"])) if existing else {
-        "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
-        "provider_config": {}}
-    data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
-                                  if k not in ("app_id", "installation_id", "private_key_ref")},
-                               "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
-                               "repositories": repos, "token_ref": f"secret:channel/{hub}/{cid}/token"}
-    return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
-                            actor=actor, expected_id=cid)
+    base = config_lib.applied_base(hub_dir, cid) if existing else config_lib.file_config(hub_dir, cid)
+    if base is not None and not existing:
+        base = {**base, "enabled": False}  # the hub's unapplied file: intake waits for the person's yes
+    if base is None and config_lib.file_for(hub_dir, cid).is_file():
+        raise ChannelError("validation_failed", f"channels/{cid}.yaml cannot be read. Fix it, then connect again.",
+                           status=422)
+    from ...secretstore import store as secret_store
+
+    # A refused connect leaves the slot as it was: the old token, or none.
+    slot = {"scope": "channel", "target": f"{hub}/{cid}", "name": "token"}
+    try:
+        old = secret_store.value(Path(hub_dir), **slot)
+    except secret_store.SecretError:
+        old = None  # the deployment key cannot read it: nothing usable to put back
+    secret_store.put(Path(hub_dir), **slot, value=token, actor=actor)
+    try:
+        data = json.loads(json.dumps(base)) if base else {
+            "version": 1, "id": cid, "provider": "github", "enabled": False, "agent": "main", "allowed_groups": [],
+            "provider_config": {}}
+        data["provider_config"] = {**{k: v for k, v in data.get("provider_config", {}).items()
+                                      if k not in ("app_id", "installation_id", "private_key_ref")},
+                                   "mode": "pat", "owner": {"type": "user", "login": me["login"], "id": me["id"]},
+                                   "repositories": repos, "token_ref": f"secret:channel/{cid}/token"}
+        return config_lib.apply(hub_dir, data, expected_revision=existing["revision"] if existing else "absent",
+                                actor=actor, expected_id=cid)
+    except BaseException:
+        try:
+            if old is None:
+                secret_store.delete(Path(hub_dir), **slot, actor=actor)
+            else:
+                secret_store.put(Path(hub_dir), **slot, value=old, actor=actor)
+        except Exception as exc:  # noqa: BLE001 - the refusal is what the person needs to see
+            log.warning("github: could not restore the token of %s after a refused connect (%s)", cid,
+                        type(exc).__name__)
+        raise
 
 
-def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
+def apply_hub_file(hub_dir, cid: str, *, actor: str) -> bool:
+    """Apply the hub's own channel file, paused, when it is not applied yet.
+    True if it did. A file that already loads is left alone."""
+    try:
+        config_lib.active(hub_dir, cid)
+        return False
+    except ChannelError:
+        pass
+    data = config_lib.file_config(hub_dir, cid)
+    if data is None:
+        return False
+    data["enabled"] = False
+    try:
+        revision = config_lib.export(hub_dir, cid)["revision"]
+    except ChannelError:
+        revision = "absent"
+    config_lib.apply(hub_dir, data, expected_revision=revision, actor=actor, expected_id=cid)
+    return True
+
+
+def manual_intake(conn, *, url: str, task: str, key: str | None = None, route: str = "plan") -> dict:
     """Local token mode: start work from an issue URL, acting as the token's
-    owner. Never accepts a caller-supplied sender."""
+    owner. Never accepts a caller-supplied sender. A route other than the
+    default must be one the connection's workflow declares."""
     import re
 
     from .. import admission
@@ -347,6 +391,17 @@ def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
     if not m:
         raise ChannelError("validation_failed", "Use an issue or pull request URL on github.com.", status=422)
     full, kind, number = m.group(1), m.group(2), int(m.group(3))
+    if route != "plan":
+        from ...work_items import service as wi
+        from ...work_items.errors import WorkItemError
+
+        try:
+            declared = isinstance(route, str) and route in wi._definition(conn.hub_dir, conn.config.workflow)[1]
+        except WorkItemError:
+            declared = False
+        if not declared:
+            raise ChannelError("validation_failed", f"This connection's workflow has no route {route!r}.",
+                               status=422)
     repo = next((r for r in conn.settings.repositories if r.full_name.lower() == full.lower()), None)
     if repo is None:
         raise ChannelError("repository_not_configured", f"{full} is not in this connection's repositories.",
@@ -361,7 +416,7 @@ def manual_intake(conn, *, url: str, task: str, key: str | None = None) -> dict:
     event = InboundEvent(semantic_key=f"manual:{did}", kind="manual", origin=origin,
                          actor=ExternalActor(str(me["id"]), me["login"], False, {"source": "token_owner"}),
                          text=task, trigger=True, message_id=did,
-                         data={"route": "plan", "provider_trusted": True, "title": issue.get("title"),
+                         data={"route": route, "provider_trusted": True, "title": issue.get("title"),
                                "is_pull_request": kind == "pull"})
     verified = Verified(delivery_id=did, workspace_id=origin.workspace_id, method="pat-manual",
                         body=json.dumps({"url": url, "task": task}).encode())

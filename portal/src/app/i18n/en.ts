@@ -56,14 +56,14 @@ export const en = {
   },
 
   errors: {
-    network: "Can't reach Hubzoid. Check your connection and try again.",
+    network: "Can't reach the server. Check your connection and try again.",
     generic: "Something went wrong. Try again in a moment.",
-    bootTitle: "Hubzoid didn't load",
-    boot: "The server answered unexpectedly. Try again, or ask whoever runs Hubzoid.",
+    bootTitle: "This page didn't load",
+    boot: "The server answered unexpectedly. Try again, or ask your administrator.",
     crashTitle: "This page stopped working",
     crash: "Reload to try again. Your chats are saved.",
     reload: "Reload",
-    server: "Hubzoid had a problem handling that. Try again in a moment.",
+    server: "The server had a problem handling that. Try again in a moment.",
     sessionExpired: "Your session ended. Sign in again to continue.",
     forbidden: "You don't have access to this.",
     notFound: "We couldn't find that.",
@@ -94,7 +94,7 @@ export const en = {
       "Your account is waiting for an administrator to approve it. You can sign in once it's approved.",
     passwordHint: "At least 8 characters.",
     noMethods:
-      "Sign-in isn't set up on this server yet. Ask the person who runs Hubzoid for your team.",
+      "Sign-in isn't set up on this server yet. Ask your administrator.",
     missingEmail: "Enter your email address.",
     missingPassword: "Enter your password.",
     missingName: "Enter your name.",
@@ -486,8 +486,8 @@ export const en = {
     password: "Password",
     passwordHelp: "Changing your password signs you out on your other devices.",
     noPassword: (method?: string) =>
-      method === "google" ? "You sign in with Google, so there's no Hubzoid password to change."
-        : "You sign in with your company's sign-in, so there's no Hubzoid password to change.",
+      method === "google" ? "You sign in with Google, so there's no password to change here."
+        : "You sign in with your company's sign-in, so there's no password to change here.",
     currentPassword: "Current password",
     newPassword: "New password",
     confirmPassword: "Confirm new password",
@@ -500,7 +500,7 @@ export const en = {
     appearance: "Appearance",
     appearanceHelp: "Your appearance settings sync across devices when signed in.",
     session: "Session",
-    sessionHelp: "Sign out of Hubzoid on this device.",
+    sessionHelp: "Sign out on this device.",
   },
 
   connections: {
@@ -569,6 +569,23 @@ export const en = {
     unavailable:
       "This chat's agent isn't available to you anymore. You can still read the conversation.",
     requestedUnavailable: (name: string) => `The agent in that link isn't available to you, so this chat uses ${name}.`,
+  },
+  /** The agent's setup cards on the empty chat (its managers only). */
+  getStarted: {
+    title: "Get started",
+    allSet: "All set",
+    needYou: (n: number) => (n === 1 ? "1 needs you" : `${n} need you`),
+    ready: "Ready",
+    check: "Check",
+    needsYou: "Needs you",
+    checking: "Checking…",
+    checkAgain: "Check again",
+    hide: "Hide",
+    hideLabel: "Hide Get started",
+    show: "Get started",
+    howToFix: (title: string) => `How to fix: ${title}`,
+    invalid: "Get started cards need fixing.",
+    why: "Why the cards need fixing",
   },
 
   shortcuts: {

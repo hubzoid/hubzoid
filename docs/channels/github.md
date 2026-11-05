@@ -84,6 +84,16 @@ hubzoid channels github intake ./company-hub github-local --url https://github.c
 The token is read hidden (or `--token-stdin`), stored in the secret store, and
 never printed. Intake fetches the issue and acts as the token's owner.
 
+`connect` keeps the agent's own `channels/<id>.yaml` (its workflow, rules and
+routes), says what will run, and asks once at the terminal whether to turn
+intake on. `--yes` turns it on without asking. With the token from standard
+input, or with no terminal, nothing asks: the connection starts paused and
+`connect` prints the command that turns it on, such as
+`hubzoid channels resume ./company-hub github-local --expected-revision 1`.
+
+`intake --route NAME` asks for another route the connection's workflow
+declares; without it, intake asks for the default route.
+
 ## What triggers work
 
 | Trigger | Rule |

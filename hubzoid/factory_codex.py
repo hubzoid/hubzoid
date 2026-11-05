@@ -7,6 +7,7 @@ an isolated configuration directory, with only the operator's login copied in.
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 import json
@@ -139,6 +140,49 @@ def codex_available() -> bool:
         return subprocess.run([binary, "login", "status"], capture_output=True, timeout=10).returncode == 0
     except (OSError, subprocess.SubprocessError, RuntimeError):
         return False
+
+
+LOGIN_FIX = "codex -c 'cli_auth_credentials_store=\"file\"' login"
+
+
+def _plan_from_login_file(data: dict) -> str | None:
+    """The plan claim in the login's id_token payload. Decoded only, never verified or kept."""
+    try:
+        payload = ((data.get("tokens") or {}).get("id_token") or "").split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        plan = claims["https://api.openai.com/auth"]["chatgpt_plan_type"]
+    except (IndexError, KeyError, TypeError, ValueError, AttributeError):
+        return None
+    return plan if isinstance(plan, str) and plan else None
+
+
+def codex_login():
+    """The Codex login (`logins.Login`), or None without a reviewed Codex CLI."""
+    from .logins import Login, tier
+
+    try:
+        binary, version = _codex()
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        return None
+    try:
+        signed_in = subprocess.run([binary, "login", "status"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        signed_in = False
+    if not signed_in:
+        return Login("codex-local", False, version=version)
+    try:
+        data = json.loads(_auth_file().read_text())
+    except (OSError, ValueError):
+        # Signed in, but not in the file the runtime copies into its CODEX_HOME.
+        return Login("codex-local", True, version=version, problem="not_file_backed", fix=LOGIN_FIX)
+    data = data if isinstance(data, dict) else {}
+    mode = data.get("auth_mode")
+    if mode is None:
+        mode = ("chatgpt" if (data.get("tokens") or {}).get("id_token")
+                else "apikey" if data.get("OPENAI_API_KEY") else None)
+    method = {"chatgpt": "subscription", "apikey": "api_key"}.get(mode)
+    plan = _plan_from_login_file(data) if method == "subscription" else None
+    return Login("codex-local", True, method, plan, tier("codex-local", method, plan), version)
 
 
 class CodexRuntime:
@@ -659,7 +703,8 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
     from . import hitl, tool_fakes
-    registry = tool_fakes.wrap_registry(registry)  # evals: fake tool results, inert otherwise
+    # evals: fake tool results (and stand-ins for faked tools not connected yet), inert otherwise
+    registry = tool_fakes.wrap_registry(registry, stand_ins=True)
     # Approval rules apply before a fake; the tools they add (ask_question) are faked too.
     registry = tool_fakes.wrap_added(registry, hitl.equip(hub_dir, registry))
     from . import handover

@@ -211,7 +211,12 @@ def _toggle(hub: Path, cid: str, enabled: bool, expected_revision: int, as_json:
 
     hub = _hub(hub, as_json)
     out = _run(config.set_enabled, as_json, hub, cid, enabled, expected_revision=expected_revision, actor=_actor())
-    _out(out, as_json, lambda d: console.print(f"{d['id']} is {d['status']} (revision {d['revision']})."))
+    def show(d):
+        console.print(f"{d['id']} is {d['status']} (revision {d['revision']}).")
+        if d.get("message"):
+            console.print(f"[yellow]{escape(d['message'])}[/yellow]")
+
+    _out(out, as_json, show)
 
 
 @channels_app.command("pause")

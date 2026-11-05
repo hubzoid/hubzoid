@@ -96,7 +96,7 @@ def _app(hub, bridge, sent, *, journeys=None):
 
 def _post(app, phone, mid, body):
     payload = {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
-        "messaging_product": "whatsapp", "contacts": [{"wa_id": phone}],
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550100", "phone_number_id": "PNID"}, "contacts": [{"wa_id": phone}],
         "messages": [{"from": phone, "id": mid, "type": "text", "text": {"body": body}}]}}]}]}
     raw = json.dumps(payload).encode()
     sig = "sha256=" + hmac.new(b"SEC", raw, hashlib.sha256).hexdigest()

@@ -166,8 +166,10 @@ together), reinstall the previous version and re-enable the old units.
   `BYPASS_MODEL_ACCESS_CONTROL` give no access. Someone without a grant signs in
   to "No agents yet". The migration's dry run counts these people; grant them
   access in Settings → People & access before they move.
-- **Administrators set up two-step sign-in** at their first 2.0 sign-in (an
-  authenticator app), unless Settings → Security says otherwise.
+- **Two-step sign-in is optional by default** from 2.0.8. Anyone can turn it
+  on under Settings → Security. To require it for administrators or everyone,
+  choose that under Settings → Organization → Sign-in, or set
+  `HUBZOID_MFA_REQUIRED=admins` (or `all`).
 - **Behind a CDN, list it.** The public port believes `X-Forwarded-For` only
   from loopback and, while `HUBZOID_TRUSTED_PROXIES` is unset, private
   networks; setting it lists exactly which proxies to believe. With

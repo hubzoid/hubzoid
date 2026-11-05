@@ -144,9 +144,36 @@ def covered(ft):
     return ft
 
 
-def wrap_registry(registry: dict) -> dict:
-    """Every tool of a runtime's registry, wrapped (the factories' last step)."""
-    return {name: wrap(ft) for name, ft in registry.items()}
+def _github_stand_ins() -> dict:
+    from .tools import github_tools
+
+    return github_tools.stand_ins()
+
+
+#: Tool-name prefix -> the provider's stand-ins, for tools a hub has not connected.
+_STAND_INS = {"github__": _github_stand_ins}
+
+
+def wrap_registry(registry: dict, *, stand_ins: bool = False) -> dict:
+    """Every tool of a runtime's registry, wrapped (the factories' last step).
+    With ``stand_ins`` (an agent's own runtime, never a station's tools), in a
+    case a faked tool the registry lacks (its connector is not connected yet)
+    is added as its provider's stand-in, so the fake answers it."""
+    out = {name: wrap(ft) for name, ft in registry.items()}
+    session = _active.get()
+    if session is None or not stand_ins:
+        return out
+    cache: dict = {}
+    for fake in session.fakes:
+        if fake.tool in out:
+            continue
+        for prefix, build in _STAND_INS.items():
+            if fake.tool.startswith(prefix):
+                stand_ins = cache.setdefault(prefix, build())
+                if fake.tool in stand_ins:
+                    out[fake.tool] = wrap(stand_ins[fake.tool])
+                break
+    return out
 
 
 def wrap_added(before: dict, after: dict) -> dict:

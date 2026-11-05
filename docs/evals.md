@@ -177,7 +177,9 @@ added, not as a regression.
 
 A judged case is scored 1–10 by a model that sees four things: your hub's
 `AGENTS.md`, the case's `## Criteria`, the answer, and — as observed ground
-truth — **which tools ran and which tools this hub has**. It is a plain
+truth — **which tools ran and which tools the agent was offered**. A tool the
+case's account can't see, or one switched off for the hub (`propose_hub_change`
+while in-app editing is off), is left out of that list. It is a plain
 single-turn call with no tools and no hub persona: it grades, it does not
 answer.
 
@@ -457,6 +459,15 @@ How a faked case runs:
   case with `run_as` gets none of that person's own connectors either; the
   `fake_tools` check names the ones left out. `allow_real_mcp` takes `true`
   or `false`, unquoted.
+- **Tools the agent hasn't connected can be faked.** A case may fake a
+  connector tool that isn't connected yet, such as `github__getRepository` on
+  a fresh clone. While the case runs, the faked `github__` name is added as a
+  stand-in with the real tool's name, description, schema and class. It goes
+  through the eval's approval rules like the real tool. Restricted-tool access
+  checks, which cover the hub's own tools, don't wrap it. It never reaches the
+  network, a call no fake matches is blocked as above, and cases without
+  `fake_tools` run on a runtime that has none of these stand-ins. Isolated
+  agents keep exactly the tools they list, so they get no stand-ins.
 - **Other cases are untouched.** Cases without `fake_tools` run every tool for
   real, as before.
 
