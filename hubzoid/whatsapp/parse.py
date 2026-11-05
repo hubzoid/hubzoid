@@ -7,6 +7,12 @@ quick-reply/button messages carry answerable text; media messages (image,
 document, audio, video, voice, sticker) surface as `MediaRef`s the harness
 downloads and attaches, with any caption as the text. Defensive throughout — a
 malformed payload yields ``[]``, never an exception.
+
+One WhatsApp Business Account can hold several phone numbers, and Meta sends
+every number's webhooks to every app subscribed to the account. Pass the hub's
+own ``phone_number_id`` and a change addressed to any other number (or with no
+readable ``value.metadata.phone_number_id``) is skipped, so the hub never answers
+messages sent to someone else's number.
 """
 from __future__ import annotations
 
@@ -21,7 +27,7 @@ _MEDIA_TYPES = ("image", "document", "audio", "video", "voice", "sticker")
 _CAPTION_TYPES = ("image", "document", "video")
 
 
-def parse_messages(payload: dict) -> "list[InboundMessage]":
+def parse_messages(payload: dict, phone_number_id: "str | None" = None) -> "list[InboundMessage]":
     out: "list[InboundMessage]" = []
     if not isinstance(payload, dict):
         return out
@@ -34,12 +40,23 @@ def parse_messages(payload: dict) -> "list[InboundMessage]":
             value = change.get("value")
             if not isinstance(value, dict):
                 continue
+            if phone_number_id is not None and not _addressed_to(value, phone_number_id):
+                continue
             names = _names_by_wa_id(value.get("contacts"))
             for msg in value.get("messages") or []:
                 parsed = _parse_one(msg, names)
                 if parsed is not None:
                     out.append(parsed)
     return out
+
+
+def _addressed_to(value: dict, phone_number_id: str) -> bool:
+    """True when this change was sent to `phone_number_id`. Missing or malformed
+    metadata is not ours: Meta always names the receiving number."""
+    got = _sub(value, "metadata").get("phone_number_id")
+    if not isinstance(got, (str, int)) or isinstance(got, bool):
+        return False
+    return str(got).strip() == str(phone_number_id).strip()
 
 
 def _names_by_wa_id(contacts) -> "dict[str, str]":

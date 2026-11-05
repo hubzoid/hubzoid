@@ -3,6 +3,18 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Fixed
+- **WhatsApp answers only its own number.** One WhatsApp Business Account can
+  hold several numbers, and Meta sends every number's messages to every app
+  subscribed to it. The env-based WhatsApp listener (`WHATSAPP_*` in the hub
+  `.env`) now skips any message not sent to its `WHATSAPP_PHONE_NUMBER_ID`,
+  before dedup, the sender lookup, read receipts or a reply. Before, a hub on a
+  shared account answered messages sent to other teams' numbers, and told
+  their senders they were not registered. The channel-file path already did
+  this. No new setting.
+
 ## [2.0.7]
 
 Attachments have one path, every tool's schema is right on every runtime,

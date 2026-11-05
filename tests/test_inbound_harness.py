@@ -61,7 +61,7 @@ def _wa_post(payload):
 
 def _wa_text_payload(wa_id, mid, body):
     return {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
-        "messaging_product": "whatsapp",
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550100", "phone_number_id": "PNID"},
         "contacts": [{"profile": {"name": "Ravi"}, "wa_id": wa_id}],
         "messages": [{"from": wa_id, "id": mid, "type": "text", "text": {"body": body}}],
     }}]}]}
@@ -72,7 +72,7 @@ def _wa_image_payload(wa_id, mid, media_id, caption=None):
     if caption is not None:
         image["caption"] = caption
     return {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
-        "messaging_product": "whatsapp",
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "15550100", "phone_number_id": "PNID"},
         "contacts": [{"profile": {"name": "Ravi"}, "wa_id": wa_id}],
         "messages": [{"from": wa_id, "id": mid, "type": "image", "image": image}],
     }}]}]}
@@ -177,6 +177,31 @@ def test_whatsapp_duplicate_delivery_dispatched_once(tmp_path):
     client.post("/webhooks/whatsapp", content=raw, headers=headers)
     assert len(disp.calls) == 1
 
+
+
+def test_whatsapp_message_for_another_number_is_ignored(tmp_path):
+    """A shared WhatsApp Business Account delivers every number's messages to every
+    subscribed app. One sent to a different number gets no reply, no blue ticks and
+    no agent turn, and takes no dedup slot."""
+    send, disp, reads, looked_up = _recorder(), _dispatcher(), [], []
+    known = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
+
+    def resolver(surface, handle):
+        looked_up.append(handle)
+        return known(surface, handle)
+
+    app = _wa_app(tmp_path, resolver=resolver, send_text=send, dispatch_fn=disp,
+                  mark_read=lambda **kw: reads.append(kw) or {})
+    client = TestClient(app)
+    other = _wa_text_payload("919800000001", "wamid.X", "hi")
+    other["entry"][0]["changes"][0]["value"]["metadata"]["phone_number_id"] = "OTHER"
+    raw, headers = _wa_post(other)
+    assert client.post("/webhooks/whatsapp", content=raw, headers=headers).status_code == 200
+    assert (send.calls, disp.calls, reads, looked_up) == ([], [], [], [])
+
+    raw, headers = _wa_post(_wa_text_payload("919800000001", "wamid.X", "hi"))
+    client.post("/webhooks/whatsapp", content=raw, headers=headers)
+    assert len(disp.calls) == 1                    # same id to our number still runs
 
 # --- Telegram -------------------------------------------------------------
 def _tg_app(tmp_path, *, resolver, send_message, dispatch_fn, bindings,
