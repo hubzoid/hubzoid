@@ -8,7 +8,8 @@ All notable changes to Hubzoid. Versions follow the package version in
 Doctor and login detection are more accurate, `ANTHROPIC_API_KEY` no longer
 overrides a subscription login by accident, evals can stand in for GitHub tools
 an agent has not connected yet, and connecting GitHub keeps the agent's
-workflow, rules and routes.
+workflow, rules and routes. Work started from a chat reports back in that
+chat, and a new chat shows an agent's managers its Get started cards.
 
 ### Added
 - **Smarter login detection.** Hubzoid asks each CLI for its login status and
