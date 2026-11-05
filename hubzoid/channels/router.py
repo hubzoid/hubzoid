@@ -53,13 +53,12 @@ STALE_ROUTING_SECONDS = 120
 TICK_SECONDS = 5.0
 
 NOTICES = {
-    "identity_unmapped": ("I can't act for you here yet. Ask a Hubzoid administrator to link your "
-                          "{provider} account to your Hubzoid account."),
-    "account_inactive": "I can't act for you: your Hubzoid account is not active. Ask an administrator.",
-    "hub_access_denied": "I can't act for you: your Hubzoid account does not have access to this hub.",
+    "identity_unmapped": "I can't act for you here yet. Ask an administrator to link your {provider} account.",
+    "account_inactive": "I can't act for you: your account is not active. Ask an administrator.",
+    "hub_access_denied": "I can't act for you: your account does not have access to this hub.",
     "group_not_allowed": ("I can't act for you here yet. An administrator gives you \"Start work from\" this "
                           "channel in Settings, under the agent's Access."),
-    "terms_required": "Please open Hubzoid and accept the current terms of use first, then ask again.",
+    "terms_required": "Please open the web app and accept the current terms of use first, then ask again.",
     "empty_request": "Tell me what you want done, or attach a file.",
     "queue_full": "There are too many requests waiting in this thread. Try again once they finish.",
     "workflow_denied": "I can't start this work for you: you do not have permission to run it.",
@@ -372,7 +371,7 @@ def _stop(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEvent, app
             wi.cancel(hub_dir, item["id"], person.email, reason="stopped from the channel", surface="channel")
             stopped.append(item["id"])
     replies.post(conn, thread, kind="notice", key=f"stop:{row['id']}",
-                 text="Stopped. Anything already done stays done; see Hubzoid for details." if stopped
+                 text="Stopped. Anything already done stays done; see the web app for details." if stopped
                  else "Nothing was running to stop.")
     _finish(hub_dir, row["id"], "routed", None, target="stop", stopped=stopped, replied="stop")
     return "routed", None
@@ -723,7 +722,7 @@ def _chat_reply(hub_dir: Path, app, conn, thread: dict, row: dict) -> bool:
     else:
         results = replies.post(conn, thread, kind="error",
                                text=f"I could not finish this request (reply {run['message_id'][-8:]}). Try again, "
-                                    "or ask an administrator to check the run in Hubzoid.",
+                                    "or ask an administrator to check the run.",
                                key=f"result:{run['id']}", ref=ref)
     outcome = _outcome(results)
     if outcome is None:
@@ -775,10 +774,10 @@ def _final_text(state: str, result, error: str | None, item_id: str) -> str | No
                     return result[key].strip()
         return f"Done (work {short})."
     if state == "cancelled":
-        return f"Cancelled (work {short}). Anything already done is listed in Hubzoid."
+        return f"Cancelled (work {short}). Anything already done is listed in the web app."
     if state == "stopped":
-        return f"Stopped (work {short}). It needs a person to decide in Hubzoid before it can continue."
-    return f"This work could not finish (work {short}). An administrator can see why in Hubzoid."
+        return f"Stopped (work {short}). It needs a person to decide in the web app before it can continue."
+    return f"This work could not finish (work {short}). An administrator can see why in the web app."
 
 
 # -- recovery ----------------------------------------------------------------------------------

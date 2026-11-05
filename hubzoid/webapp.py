@@ -53,10 +53,19 @@ _MOUNTS = (
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
-def _shell() -> Response:
+def _shell(hub_dir: Path | None = None) -> Response:
     index = DIST / "index.html"
     if index.is_file():
-        return FileResponse(str(index), media_type="text/html", headers=_NO_CACHE)
+        if hub_dir is None:
+            return FileResponse(str(index), media_type="text/html", headers=_NO_CACHE)
+        # The tab shows the brand's name before the app loads and sets its own title.
+        from html import escape
+
+        from .ui.branding_store import brand_name
+
+        page = index.read_text(encoding="utf-8").replace(
+            "<title>Hubzoid</title>", f"<title>{escape(brand_name(hub_dir))}</title>", 1)
+        return HTMLResponse(page, headers=_NO_CACHE)
     return HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>Hubzoid</title>"
         "<p>The Hubzoid web app is not built in this checkout. "
@@ -79,8 +88,8 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
             raise
         module.mount(app, hub_dir, **ctx)
 
-    async def shell(request: Request) -> Response:  # noqa: ARG001
-        return _shell()
+    def shell(request: Request) -> Response:  # noqa: ARG001 - sync: reading the brand touches files
+        return _shell(hub_dir)
 
     for path in SHELL_PATHS:
         app.add_api_route(path, shell, methods=["GET"], include_in_schema=False)

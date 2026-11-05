@@ -91,11 +91,12 @@ article p{margin:4px 0 0}
 @media(max-width:600px){.tooltip{position:fixed;top:auto;bottom:24px;left:24px;right:24px;width:auto}}"""
 
 
-def page(title, body, status=200, *, own_heading=False):
+def page(title, body, status=200, *, own_heading=False, brand="Hubzoid"):
     heading = "" if own_heading else f"<h1>{escape(title)}</h1>"
+    mark = "<b>/</b>hubzoid" if brand == "Hubzoid" else escape(brand)
     return HTMLResponse(
-        f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · Hubzoid</title>
-<style>{_STYLE}</style></head><body><header><a class="mark" href="/" aria-label="Hubzoid home"><b>/</b>hubzoid</a></header>
+        f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · {escape(brand)}</title>
+<style>{_STYLE}</style></head><body><header><a class="mark" href="/" aria-label="{escape(brand)} home">{mark}</a></header>
 <main id="main"><div class="card">{heading}{body}</div></main></body></html>""",
         status_code=status,
         headers=HEADERS,
@@ -118,9 +119,9 @@ def _info(label, text, identifier):
             f'id="{identifier}" role="tooltip">{escape(text)}</span></span>')
 
 
-def _notice(title, message, status=200, *, path="/", action="Back to Hubzoid"):
+def _notice(title, message, status=200, *, path="/", action=None, brand="Hubzoid"):
     return page(title, f'<p>{escape(message)}</p><p><a class="button" '
-                f'href="{escape(path)}">{escape(action)}</a></p>', status)
+                f'href="{escape(path)}">{escape(action or "Back to " + brand)}</a></p>', status, brand=brand)
 
 
 def _date(timestamp):
@@ -130,9 +131,16 @@ def _date(timestamp):
 
 def browser_routes(provider):
     from .mcp_oauth import account, allowed, SCOPE, GRANT_SECONDS
+    from .ui.branding_store import brand_name
 
     store = provider.store
     cookie_name = "hz_mcp_" + digest(provider.resource)[:12]
+
+    def page_(title, body, status=200, **kw):
+        return page(title, body, status, brand=brand_name(provider.hub_dir), **kw)
+
+    def notice(title, message, status=200, **kw):
+        return _notice(title, message, status, brand=brand_name(provider.hub_dir), **kw)
 
     def viewer(request):
         email = session.verified_email(request, provider.hub_dir)
@@ -188,7 +196,7 @@ def browser_routes(provider):
         with store.engine.connect() as c:
             pending = store.get(c, ticket, "pending")
         if not pending or pending["_used"]:
-            return _notice(
+            return notice(
                 "Connection expired",
                 "Start connecting again from your assistant.",
             )
@@ -198,7 +206,7 @@ def browser_routes(provider):
                 provider.public_path + "/consent?ticket=" + quote(ticket, safe="")
             )
         if not allowed(provider.hub_dir, who["email"]):
-            return _notice(
+            return notice(
                 "Access needed",
                 f"{who['email']} can't use {_agent_name(provider.hub_dir)}. "
                 "Ask an administrator, then reconnect.",
@@ -206,7 +214,7 @@ def browser_routes(provider):
             )
         client = await provider.get_client(pending["client_id"])
         if not client:
-            return _notice(
+            return notice(
                 "Connection expired",
                 "Start connecting again from your assistant.",
                 400,
@@ -229,7 +237,7 @@ def browser_routes(provider):
             back = urlsplit(str(params["redirect_uri"]))
             yes = '<svg class="yes" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
             no = '<svg class="no" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
-            name_help = _info("About the app name", "The client supplies this name. Hubzoid does not verify it; check the return address before connecting.", "client-help")
+            name_help = _info("About the app name", f"The client supplies this name. {brand_name(provider.hub_dir)} does not verify it; check the return address before connecting.", "client-help")
             body = f"""<div class="consent">
 <div class="parties" aria-hidden="true"><span class="tile">{escape(app_name[:1].upper())}</span><span class="link"><i></i><i></i><i></i></span><span class="tile hub"><b>/</b>{escape(agent[:1].lower())}</span></div>
 <h1>{escape(app_name)} wants to use {escape(agent)}</h1>
@@ -250,7 +258,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
 <details><summary>Connection details</summary><dl><dt>MCP server</dt><dd><code>{escape(provider.resource)}</code></dd>
 <dt>Return address</dt><dd><code>{escape(str(params['redirect_uri']))}</code></dd></dl></details>
 </div>"""
-            response = page(f"Connect {app_name}", body, own_heading=True)
+            response = page_(f"Connect {app_name}", body, own_heading=True)
             response.headers.update(consent_headers)
             return set_cookie(response, csrf)
         form = await request.form()
@@ -258,7 +266,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
             if not valid_csrf(
                 request, form, who, "consent:" + ticket, c
             ) or not store.consume(c, ticket, "pending"):
-                return _notice(
+                return notice(
                     "Couldn’t confirm",
                     "This approval expired or was already used. Start connecting again from your assistant.",
                     403,
@@ -319,7 +327,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
             form = await request.form()
             with store.engine.begin() as c:
                 if not valid_csrf(request, form, who, "connections", c):
-                    return _notice("Couldn’t confirm", "Reload the page and try again.", 403,
+                    return notice("Couldn’t confirm", "Reload the page and try again.", 403,
                                    path=provider.public_path + "/connections", action="Reload connections")
                 grant = str(form.get("grant", ""))
                 g = store.get(c, grant, "grant")
@@ -328,7 +336,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
                     or g["account_id"] != who["account_id"]
                     or g["email"] != who["email"]
                 ):
-                    return _notice("Connection not found", "It may already be revoked.", 404,
+                    return notice("Connection not found", "It may already be revoked.", 404,
                                    path=provider.public_path + "/connections", action="Reload connections")
                 store.revoke(c, grant)
             return RedirectResponse(
@@ -348,7 +356,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
             body += f'<article><div><strong>{escape(g["client_name"])}</strong><p class="muted">Connected {_date(g["created"])} · Expires {_date(g["_expires"])}</p></div><form method="post"><input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="grant" value="{escape(g["id"])}"><button class="secondary">Revoke connection</button></form></article>'
         if not grants:
             body += "<p class='muted'>No assistants are connected. Start a connection from your assistant’s MCP settings.</p>"
-        return set_cookie(page("Your assistant connections", body), csrf)
+        return set_cookie(page_("Your assistant connections", body), csrf)
 
     return [
         Route("/mcp/oauth/consent", consent, methods=["GET", "POST"]),

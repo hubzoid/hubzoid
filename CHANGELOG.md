@@ -60,6 +60,13 @@ chat, and a new chat shows an agent's managers its Get started cards.
   status, a short line and the fix. A check can return a `card` with its own
   line and detail. Doctor reports an invalid file. See
   [Hub settings and checks](docs/hub-settings.md#get-started-cards-get-startedyaml).
+- **The brand's name everywhere people see it.** With a brand, the browser
+  tab before the app loads, the pages for connecting an assistant over MCP,
+  workflow alert emails and Slack messages, the email draft check and the app
+  name a provider shows for a connector use `identity.name`. Messages in chat
+  channels and web app errors no longer name Hubzoid. A brand can hide the
+  small hubzoid mark on the sign-in page with `hidden_features: [hubzoid_mark]`.
+  The version line and GitHub star in Settings stay.
 
 ### Changed
 - **Two-step sign-in is optional by default.** A new deployment no longer asks

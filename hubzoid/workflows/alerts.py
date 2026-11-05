@@ -104,7 +104,8 @@ async def send(hub_dir, row):
     url = ref if ref.startswith(('https://','http://')) else _env(hub_dir, ref)
     if not url:
         raise ValueError('Alert destination environment variable is missing')
-    content = {'text': f"Hubzoid {payload['kind']}: {payload.get('workflow',payload['hub'])}\n{payload['url']}"} if key == 'slack' else payload
+    from ..ui.branding_store import brand_name
+    content = {'text': f"{brand_name(hub_dir)} {payload['kind']}: {payload.get('workflow',payload['hub'])}\n{payload['url']}"} if key == 'slack' else payload
     body = json.dumps(content,separators=(',',':')).encode()
     stamp = str(int(time.time()))
     headers = {'Content-Type':'application/json','Idempotency-Key':row['id'],'X-Hubzoid-Timestamp':stamp}
@@ -127,7 +128,8 @@ def _email(hub_dir, row, recipient, payload):
         raise ValueError(problem)
     msg = EmailMessage()
     msg['From'],msg['To'] = cfg.sender,recipient
-    msg['Subject'] = f"Hubzoid: {payload['kind']} in {payload['hub']}"
+    from ..ui.branding_store import brand_name
+    msg['Subject'] = f"{brand_name(hub_dir)}: {payload['kind']} in {payload['hub']}"
     msg['Message-ID'] = '<'+row['id'].replace(':','-')+'@hubzoid.local>'
     msg.set_content(json.dumps(payload,indent=2))
     if cfg.mode == 'preview':

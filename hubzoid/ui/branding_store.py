@@ -424,3 +424,14 @@ def service_for(hub_dir: Path) -> BrandingService:
 
 def active_theme(hub_dir: Path) -> tuple[str, dict] | None:
     return service_for(hub_dir).active_theme()
+
+
+def brand_name(hub_dir: Path) -> str:
+    """The deployment's brand name for text the server writes itself: page
+    titles, email subjects, the name other services show when this deployment
+    registers with them. "Hubzoid" without a brand, or while it can't be read."""
+    try:
+        identity = (service_for(hub_dir).active_manifest() or {}).get("identity") or {}
+    except Exception:  # noqa: BLE001 - an unreadable brand never breaks a page or an email
+        return "Hubzoid"
+    return str(identity.get("name") or "").strip() or "Hubzoid"

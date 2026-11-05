@@ -122,10 +122,10 @@ export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () =
   const [note, setNote] = useState<string | null>(null);
   const text = codes.join("\n");
   const download = () => {
-    const url = URL.createObjectURL(new Blob([`Hubzoid recovery codes\n\n${text}\n`], { type: "text/plain" }));
+    const url = URL.createObjectURL(new Blob([`Recovery codes for ${window.location.host}\n\n${text}\n`], { type: "text/plain" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = "hubzoid-recovery-codes.txt";
+    a.download = "recovery-codes.txt";
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };

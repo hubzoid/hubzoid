@@ -46,9 +46,9 @@ UP, DOWN = ("👍",), ("👎",)
 _SKIN = re.compile("[\U0001F3FB-\U0001F3FF️]")
 
 NOTICES = {
-    "identity_unmapped": "I can't save your rating yet. Ask a Hubzoid administrator to link your Slack account.",
-    "account_inactive": "I can't save your rating: your Hubzoid account is not active.",
-    "hub_access_denied": "I can't save your rating: your Hubzoid account does not have access to this hub.",
+    "identity_unmapped": "I can't save your rating yet. Ask an administrator to link your Slack account.",
+    "account_inactive": "I can't save your rating: your account is not active.",
+    "hub_access_denied": "I can't save your rating: your account does not have access to this hub.",
     "feedback_off": "Ratings are turned off here, so nothing was saved.",
     "target_mismatch": "That rating doesn't match an answer in this thread, so nothing was saved.",
     "conflict": "Your rating changed at the same moment elsewhere. Nothing was overwritten. Try again.",

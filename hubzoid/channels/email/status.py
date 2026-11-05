@@ -27,12 +27,14 @@ def rehearse_draft(conn, *, actor: str) -> dict:
     """Save one real draft, addressed to the mailbox itself, and read it back.
     Nothing is sent. Afterwards `email.send: draft` is allowed for this mailbox."""
     from . import mime, transports
+    from ...ui.branding_store import brand_name
 
+    brand = brand_name(conn.hub_dir)
     domain = conn.settings.mailbox.rpartition("@")[2] or "hubzoid.local"
     msgid = f"<rehearsal-{secrets.token_hex(8)}@{domain}>"
     raw = mime.build_reply(mailbox=conn.settings.mailbox, to=conn.settings.mailbox,
-                           subject="Hubzoid draft check (safe to delete)",
-                           body="Hubzoid saved this draft to check it can. Nothing was sent. You can delete it.",
+                           subject=f"{brand} draft check (safe to delete)",
+                           body=f"{brand} saved this draft to check it can. Nothing was sent. You can delete it.",
                            in_reply_to=None, references=[], message_id=msgid)
     draft_id = transports.for_conn(conn).save_draft(conn, raw, message_id=msgid)
     store.set_connection_state(conn.hub_dir, conn.hub, conn.id, email_draft_verified=True,
