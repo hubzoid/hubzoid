@@ -452,12 +452,21 @@ def test_access_logs_never_hold_link_tokens_or_oauth_codes(hub):
     client(hub)  # mounting installs the filter
     logger = logging.getLogger("uvicorn.access")
     assert any(isinstance(f, logredact.RedactCredentials) for f in logger.filters)
-    record = logger.makeRecord(
-        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
-        ("203.0.113.7:5000", "GET", "/auth/set-password?token=SECRET-TOKEN&x=1", "1.1", 200), None)
+    def access_record():
+        return logger.makeRecord(
+            "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+            ("203.0.113.7:5000", "GET", "/auth/set-password?token=SECRET-TOKEN&x=1", "1.1", 200), None)
+
+    # Hubzoid's own filter, on its own.
+    record = access_record()
+    logredact.RedactCredentials().filter(record)
+    assert "SECRET-TOKEN" not in record.getMessage() and "token=[redacted]&x=1" in record.getMessage()
+    # The logger's whole chain. Other libraries may add their own filters here
+    # (litellm 1.102 redacts uvicorn.access query strings at import).
+    record = access_record()
     for f in logger.filters:
         f.filter(record)
-    assert "SECRET-TOKEN" not in record.getMessage() and "token=[redacted]&x=1" in record.getMessage()
+    assert "SECRET-TOKEN" not in record.getMessage()
     assert logredact.redact("/api/auth/link/SECRET-TOKEN") == "/api/auth/link/[redacted]"
     assert logredact.redact("/oauth/google/callback?code=C0DE&state=S7") == \
         "/oauth/google/callback?code=[redacted]&state=[redacted]"
