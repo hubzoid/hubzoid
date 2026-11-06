@@ -77,7 +77,10 @@ SAFE_ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
 # Consumer Google addresses have no Workspace domain (hd).
 GOOGLE_CONSUMER_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 _TID = re.compile(r"^[0-9a-fA-F-]{36}$")
-_TIMEOUT = httpx.Timeout(10.0)
+# A plain number, not httpx.Timeout: authlib 1.9's OAuth2Client is built on
+# httpx2 when it is installed (huggingface-hub pulls it in), and httpx2 rejects
+# an httpx.Timeout with a TypeError, which failed every code exchange.
+_TIMEOUT = 10.0
 _CACHE_SECONDS = 3600
 _JWKS_REFRESH_SECONDS = 60
 LEEWAY_SECONDS = 120
