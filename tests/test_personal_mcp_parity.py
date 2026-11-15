@@ -427,3 +427,61 @@ def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
     a = connector_tool_name("my_mail", "x" * 80 + "a")
     b = connector_tool_name("my_mail", "x" * 80 + "b")
     assert len(a) == len(b) == 64 and a != b and a.startswith("mcp__my_mail__")
+
+
+# ---------------------------------------------------------------------------
+# Hosted MCP: the hub's /mcp endpoint, the way Claude Code reaches it. A
+# fourth access path to the same per-person servers, not another backend.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def hosted(hub, monkeypatch):
+    """The hub's hosted MCP app, with an OAuth grant each for X and Y."""
+    from hubzoid import mcp_server
+    from tests.mcp_credentials import RESOURCE, seed
+
+    monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
+    seed(hub, token="mcp-x", email=X, account_id="ux")
+    seed(hub, token="mcp-y", email=Y, account_id="uy")
+    h.grant(hub, X, Y, permissions=("use_hub",))
+    return mcp_server.build_mcp_app(hub)
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_lists_each_callers_own_connected_tools(hosted):
+    x, y = await h.hosted(hosted, ("mcp-x", "tools/list", {}), ("mcp-y", "tools/list", {}))
+    assert {"my_mail__whoami", "my_mail__mail_search"} <= h.tool_names(x)
+    assert not {n for n in h.tool_names(x) if n.startswith("my_cal__")}
+    assert {"my_mail__whoami", "my_cal__cal_today"} <= h.tool_names(y)
+    assert "list_knowledge" in h.tool_names(x) & h.tool_names(y)   # hub tools stay
+    whoami = next(t for t in x["result"]["tools"] if t["name"] == "my_mail__whoami")
+    assert whoami["description"].startswith("Mail: ")               # the app's text, labelled
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_calls_reach_the_app_as_each_caller_at_once(hosted):
+    call = {"name": "my_mail__whoami", "arguments": {}}
+    x, y = await h.hosted(hosted, ("mcp-x", "tools/call", call), ("mcp-y", "tools/call", call))
+    assert h.text_of(x) == X and h.text_of(y) == Y
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_never_reaches_an_app_the_caller_did_not_connect(hosted):
+    (out,) = await h.hosted(hosted, ("mcp-x", "tools/call", {"name": "my_cal__cal_today", "arguments": {}}))
+    assert h.failed(out)
+    assert "calendar of" not in json.dumps(out)
+
+
+def test_hosted_aliases_are_valid_mcp_names_that_never_collapse():
+    """``<server key>__<tool>`` within MCP's 128 characters of [A-Za-z0-9_.-];
+    names that differ upstream stay different, and a plain name is unchanged."""
+    import re
+
+    from hubzoid.mcp_connected_apps import alias
+
+    assert alias("my_mail", "search") == "my_mail__search"
+    assert alias("my_jira", "issue.get") == "my_jira__issue.get"          # '.' is valid in MCP
+    spaced, slashed = alias("my_jira", "issue get"), alias("my_jira", "issue/get")
+    assert spaced != slashed and spaced.startswith("my_jira__issue_get_")
+    long_a, long_b = alias("my_mail", "x" * 200 + "a"), alias("my_mail", "x" * 200 + "b")
+    assert len(long_a) == len(long_b) == 128 and long_a != long_b
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", n) for n in (spaced, slashed, long_a))

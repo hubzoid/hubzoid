@@ -44,29 +44,46 @@ _DESCRIPTION = (
 )
 
 
-def _reply(result: dict) -> str:
+# Over hosted MCP an assistant sees a connected app's tools only when it lists
+# the hub's tools again (no list-changed notice: ``mcp_connected_apps``).
+_RELOAD = ("Its tools appear in their assistant after it reconnects to this agent "
+           "(in Claude Code: /mcp, then Reconnect).")
+
+
+def _on_mcp() -> bool:
+    from ..access.identity import current_identity
+
+    return current_identity().surface == "mcp"
+
+
+def _reply(result: dict, *, mcp: bool = False) -> str:
+    reload = f" {_RELOAD}" if mcp else ""
     if result["state"] == "connected":
-        return (f"{result['label']} is already connected for this user. They can use it "
-                "now. Call again with reconnect=true only if they ask to connect again.")
+        now = reload or " They can use it now."
+        return (f"{result['label']} is already connected for this user.{now} Call again "
+                "with reconnect=true only if they ask to connect again.")
     if result["state"] == "shared":
+        still = " still" if mcp else ""
         return (f"{result['label']} uses one shared company account, so there is nothing for "
-                "the user to connect. If its tools are missing, they should ask an "
-                f"administrator for \"Use {result['label']}\".")
+                f"the user to connect.{reload} If its tools are{still} missing, they should ask "
+                f"an administrator for \"Use {result['label']}\".")
     return (f"Reply in one short line with this link: \"{result['label']} isn't connected "
             f"yet. [Connect {result['label']}]({result['url']})\". It works only for this "
-            "user and expires soon.")
+            f"user and expires soon.{reload}")
 
 
-def _listing(rows: list[dict], page: str) -> str:
+def _listing(rows: list[dict], page: str, *, mcp: bool = False) -> str:
     if not rows:
         return "There is nothing this user can connect in this agent."
     words = {"connected": "connected", "none": "not connected", "expired": "expired, "
              "reconnect", "shared": "shared, nothing to connect", "unknown": "unknown"}
     items = "; ".join(f"{r['label']} ({r['app']}): {words.get(r['status'], r['status'])}"
                       for r in rows)
+    reload = (" After an app is connected, its tools appear in their assistant once it "
+              "reconnects to this agent (in Claude Code: /mcp, then Reconnect).") if mcp else ""
     return (f"What this user can connect here: {items}. To connect one, call connect_account "
             "again with its app (the ID in brackets) and send the user the personal link it "
-            f"returns. Later they can review their connections at {page}.")
+            f"returns. Later they can review their connections at {page}.{reload}")
 
 
 def make(ctx) -> list:
@@ -96,7 +113,7 @@ def make(ctx) -> list:
             except Exception:  # noqa: BLE001 — never leak internals to the model
                 log.exception("connect_account listing failed")
                 return "The connections could not be listed right now. Try again shortly."
-            return _listing(rows, connect_journey.public_base() + "/account/connections")
+            return _listing(rows, connect_journey.public_base() + "/account/connections", mcp=_on_mcp())
         try:
             # Blocking DB and provider I/O. `to_thread` copies the context, so
             # the trusted identity and chat id reach the worker thread.
@@ -109,11 +126,12 @@ def make(ctx) -> list:
                 rows = await asyncio.to_thread(connect_journey.list_for, hub_dir)
             except Exception:  # noqa: BLE001 — the refusal alone still answers
                 return err.message
-            return err.message + " " + _listing(rows, connect_journey.public_base() + "/account/connections")
+            return err.message + " " + _listing(rows, connect_journey.public_base() + "/account/connections",
+                                                mcp=_on_mcp())
         except Exception:  # noqa: BLE001 — never leak internals to the model
             log.exception("connect_account failed")
             return "The connection could not be started right now. Try again shortly."
-        return _reply(result)
+        return _reply(result, mcp=_on_mcp())
 
     return [FunctionTool(name=NAME, description=_DESCRIPTION, params_json_schema=_SCHEMA,
                          on_invoke_tool=invoke, strict_json_schema=False)]

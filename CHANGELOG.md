@@ -3,6 +3,20 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Added
+- **Connected apps reach assistants over MCP.** An assistant connected to an
+  agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
+  person connected in Settings, as `my_<id>__<tool>`, called as that person
+  with the same grants, allow-lists, approval rules and access log as chat.
+  After connecting an app, reconnect the assistant to load its tools (in
+  Claude Code: `/mcp`, then Reconnect).
+
+### Fixed
+- `connect_account` over MCP no longer tells the person a connected app can be
+  used now while their assistant cannot see its tools: it says to reconnect.
+
 ## [2.0.8]
 
 Doctor and login detection are more accurate, `ANTHROPIC_API_KEY` no longer

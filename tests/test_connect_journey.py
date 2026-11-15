@@ -281,6 +281,28 @@ async def test_tool_links_the_trusted_caller_whatever_the_model_says(hub):
 
 
 @pytest.mark.asyncio
+async def test_tool_tells_an_assistant_to_reconnect_to_load_the_tools(hub):
+    """Over hosted MCP the assistant only sees an app's tools after it lists the
+    hub's tools again, so every answer says to reconnect. Chat never does."""
+    tool = _tool(hub)
+
+    async def answers(surface):
+        with _as(ALICE, surface=surface):
+            link = await tool.on_invoke_tool(None, json.dumps({"app": "gmail"}))
+            listing = await tool.on_invoke_tool(None, "{}")
+        h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+        with _as(ALICE, surface=surface):
+            connected = await tool.on_invoke_tool(None, json.dumps({"app": "gmail"}))
+        return link, listing, connected
+
+    link, listing, connected = await answers("mcp")
+    assert "https://hub.example.org/portal/connect/" in link
+    assert "already connected" in connected
+    assert all("/mcp" in out and "Reconnect" in out for out in (link, listing, connected))
+    assert not any("/mcp" in out for out in await answers("whatsapp"))
+
+
+@pytest.mark.asyncio
 async def test_tool_reports_refusals_without_internals(hub):
     tool = _tool(hub)
     with _as(ALICE, surface="slack-channel"):

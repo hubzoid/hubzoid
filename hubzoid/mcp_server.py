@@ -22,7 +22,8 @@ Design points:
     guarded restricted/), minus chat-scoped tools (`write_artifact`,
     `read_upload`, ...) which have no chat directory to resolve outside a
     chat, and minus model-delegates (an MCP caller brings their own model;
-    the hub does not spend inference on their behalf).
+    the hub does not spend inference on their behalf). Plus, per request, the
+    caller's own connected apps (``mcp_connected_apps``).
   * Instructions: the initialize response carries the hub's AGENTS.md body
     (or the ``mcp_instructions:`` frontmatter override) so the connecting
     agent learns what the hub is and how to use its tools — the MCP-native
@@ -179,6 +180,34 @@ def _mcp_grant_id() -> str:
     return str((token.claims or {}).get("grant_id") or "")[:16] if token is not None else ""
 
 
+def _admitted(hub_dir: Path, run_id: str) -> tuple["access.Identity", str | None]:
+    """The identity one MCP call runs as, and the words refusing it, if any.
+
+    A signed-in caller's call is admitted as a run of their account under
+    their MCP grant (``run_identity``: an ended grant or a stopped account is
+    refused here, and ``check_run`` sees the credential on every tool). A
+    draining bridge refuses every call. Hub tools and connected-app tools
+    (``mcp_connected_apps``) are admitted the same way."""
+    from . import drain as drain_lib
+
+    ident = _mcp_identity(hub_dir)
+    if ident.user:
+        from .access import run_identity
+
+        try:
+            record = run_identity.admit_or_refuse(
+                hub_dir, run_kind="mcp", run_id=run_id,
+                acts_as_id=ident.account_id, acts_as_email=ident.user, started_from="mcp",
+                person_present=False, credential_kind="mcp_grant",
+                credential_id=_mcp_grant_id())
+        except run_identity.NotAdmitted as exc:
+            return ident, f"[{exc}]"
+        ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
+    if drain_lib.active():
+        return ident, f"[{drain_lib.MESSAGE}]"
+    return ident, None
+
+
 
 
 
@@ -233,24 +262,11 @@ def _registry_tool_class():
                 tool_arguments=args_json,
                 run_config=RunConfig(),
             )
-            ident = _mcp_identity(self._hub_dir)
-            if ident.user:
-                from .access import run_identity
-
-                try:
-                    record = run_identity.admit_or_refuse(
-                        self._hub_dir, run_kind="mcp", run_id=tool_ctx.tool_call_id,
-                        acts_as_id=ident.account_id, acts_as_email=ident.user, started_from="mcp",
-                        person_present=False, credential_kind="mcp_grant",
-                        credential_id=_mcp_grant_id())
-                except run_identity.NotAdmitted as exc:
-                    return ToolResult(content=f"[{exc}]", is_error=True)
-                ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
+            ident, refused = _admitted(self._hub_dir, tool_ctx.tool_call_id)
+            if refused is not None:
+                return ToolResult(content=refused, is_error=True)
             from . import _request_ctx
-            from . import drain as drain_lib
 
-            if drain_lib.active():
-                return ToolResult(content=f"[{drain_lib.MESSAGE}]", is_error=True)
             with access.identity_scope(ident), _request_ctx.card_scope():
                 try:
                     result = await fn.on_invoke_tool(tool_ctx, args_json)
@@ -363,39 +379,84 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
     by_capability = {name for name, ft in (registry or {}).items()
                      if getattr(ft, "hubzoid_capability", None)}
 
+    def _shown(tools, ident):
+        if by_capability:
+            from .admin import mcp_tools as admin_tools
+
+            if not admin_tools.allowed(hub_dir, ident.user):
+                tools = [t for t in tools if t.name not in by_capability]
+        surfaces = _allowed_surfaces()
+        # Use the SAME fail-closed decision as invocation, so a user sees a
+        # tool exactly when invoking it would be allowed.
+        shown = []
+        with access.identity_scope(ident):
+            try:
+                vis = visible_map({t.name: gated[t.name] for t in tools if t.name in gated})
+            except Exception:  # noqa: BLE001 — hide on doubt; invoke still decides
+                log.exception("mcp: visibility check failed")
+                vis = {}
+            for t in tools:
+                if t.name in by_capability:
+                    ok = True  # already filtered above; the tool checks again on invoke
+                elif t.name in gated:
+                    ok = vis.get(t.name, False)
+                else:
+                    ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
+                if ok:
+                    shown.append(t)
+        return shown
+
     class _AccessListFilter(Middleware):
         async def on_list_tools(self, context, call_next):
-            tools = await call_next(context)
-            if not permissions and not gated and not by_capability:
-                return tools
-            ident = _mcp_identity(hub_dir)
-            if by_capability:
-                from .admin import mcp_tools as admin_tools
+            from . import mcp_connected_apps
 
-                if not admin_tools.allowed(hub_dir, ident.user):
-                    tools = [t for t in tools if t.name not in by_capability]
-            surfaces = _allowed_surfaces()
-            # Use the SAME fail-closed decision as invocation, so a user sees a
-            # tool exactly when invoking it would be allowed.
-            shown = []
+            tools = list(await call_next(context))
+            # Every name the hub serves, hidden from this caller or not.
+            served = {t.name for t in tools} | set(registry or {})
+            ident = _mcp_identity(hub_dir)
+            if permissions or gated or by_capability:
+                tools = _shown(tools, ident)
+            # Then the caller's own connected apps, asked for on every list. A
+            # failure there never costs the caller the hub's own tools.
+            try:
+                return tools + await mcp_connected_apps.list_tools(hub_dir, ident, served)
+            except Exception:  # noqa: BLE001
+                log.exception("mcp: connected apps not listed")
+                return tools
+
+        async def on_call_tool(self, context, call_next):
+            from . import mcp_connected_apps
+
+            name = getattr(context.message, "name", None)
+            # A name the hub serves always goes to the hub's tool and its guards.
+            if (not mcp_connected_apps.may_be_alias(name) or name in (registry or {})
+                    or await _served(context, name)):
+                return await call_next(context)
+            import uuid
+
+            ident, refused = _admitted(hub_dir, f"hubzoid-mcp-{uuid.uuid4().hex[:12]}")
+            if refused is not None:
+                from fastmcp.tools.tool import ToolResult
+
+                return ToolResult(content=refused, is_error=True)
             with access.identity_scope(ident):
-                try:
-                    vis = visible_map({t.name: gated[t.name] for t in tools if t.name in gated})
-                except Exception:  # noqa: BLE001 — hide on doubt; invoke still decides
-                    log.exception("mcp: visibility check failed")
-                    vis = {}
-                for t in tools:
-                    if t.name in by_capability:
-                        ok = True  # already filtered above; the tool checks again on invoke
-                    elif t.name in gated:
-                        ok = vis.get(t.name, False)
-                    else:
-                        ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
-                    if ok:
-                        shown.append(t)
-            return shown
+                result = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
+            # Not one of the caller's connected-app tools: answered as any unknown name.
+            return result if result is not None else await call_next(context)
 
     return _AccessListFilter()
+
+
+async def _served(context, name: str) -> bool:
+    """Whether the FastMCP server itself has a tool called ``name`` (a card's
+    status tool, as well as the registry)."""
+    server = getattr(getattr(context, "fastmcp_context", None), "fastmcp", None)
+    if server is None:
+        return False
+    try:
+        return await server.get_tool(name) is not None
+    except Exception:  # noqa: BLE001 — not found, however FastMCP says it
+        return False
 
 
 # ---------------------------------------------------------------------------

@@ -149,12 +149,13 @@ def _free_port() -> int:
 
 
 @contextlib.contextmanager
-def mcp_server(name: str, bearers: dict[str, str], tools: dict):
+def mcp_server(name: str, bearers: dict[str, str], tools: dict, raw: dict | None = None):
     """Serve a FastMCP Streamable HTTP server on a loopback port.
 
     ``bearers`` maps an accepted bearer token to the person it belongs to. Any
     other (or no) bearer gets 401. ``tools`` maps a tool name to a function
-    ``fn(person) -> str``. Yields the server URL.
+    ``fn(person) -> str``. ``raw`` maps a tool name to a function registered
+    as it is (its own arguments, return type and errors). Yields the server URL.
     """
     import uvicorn
     from fastmcp import FastMCP
@@ -173,6 +174,8 @@ def mcp_server(name: str, bearers: dict[str, str], tools: dict):
                 return fn(person())
             return tool
         mcp.tool(name=tool_name)(make())
+    for tool_name, fn in (raw or {}).items():
+        mcp.tool(name=tool_name)(fn)
 
     inner = mcp.http_app(path="/mcp")
 
@@ -208,3 +211,45 @@ def _define(hub, body, *, actor="test"):
     from tests.connectors_fakes import define
 
     return define(hub, body, actor=actor)
+
+
+# ---------------------------------------------------------------------------
+# The hub's hosted MCP endpoint, as an assistant reaches it
+# ---------------------------------------------------------------------------
+async def hosted(app, *calls) -> list[dict]:
+    """Send ``(oauth token, method, params)`` JSON-RPC calls to the hub's hosted
+    MCP app over Streamable HTTP, all at once. Returns each JSON-RPC payload."""
+    import asyncio
+    import json
+
+    import httpx
+
+    async with app.lifespan(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://mcp", timeout=60) as c:
+            async def one(i, token, method, params):
+                r = await c.post("/mcp", json={"jsonrpc": "2.0", "id": i, "method": method,
+                                               "params": params or {}},
+                                 headers={"Accept": "application/json, text/event-stream",
+                                          "Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}"})
+                assert r.status_code == 200, r.text
+                if r.headers.get("content-type", "").startswith("application/json"):
+                    return r.json()
+                datas = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+                return datas[-1]
+
+            return list(await asyncio.gather(*(one(i, *call) for i, call in enumerate(calls, 1))))
+
+
+def tool_names(payload: dict) -> set[str]:
+    return {t["name"] for t in payload["result"]["tools"]}
+
+
+def failed(payload: dict) -> bool:
+    """A tools/call that did not succeed: a JSON-RPC error or an error result."""
+    return "error" in payload or bool(payload["result"].get("isError"))
+
+
+def text_of(payload: dict) -> str:
+    return payload["result"]["content"][0]["text"]
