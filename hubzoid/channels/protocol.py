@@ -84,6 +84,11 @@ class Adapter:
     #: ``feedback: true`` (``hubzoid.channels.feedback``): "agent" (a chat
     #: answer), "workflow" (a workflow's final reply), or "" for none
     feedback_target: ClassVar[str] = ""
+    #: event kinds whose text, from the person who asked, answers the one
+    #: question their work waits on (a ClickUp comment, a Linear session
+    #: prompt). Empty: replies in the thread are follow-ups only. Approvals are
+    #: never decided from thread text.
+    answer_kinds: ClassVar[tuple[str, ...]] = ()
 
     def route(self, hub_dir, conn: "Connection", row: dict, thread: dict, event: InboundEvent):
         """Take over routing for this provider (intake adapters hand events to

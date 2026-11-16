@@ -1,10 +1,10 @@
 # Channels
 
 A channel lets people start work from a Slack thread, a GitHub issue, a Linear
-agent session, an email or a WhatsApp chat, and get the answer back in that
-same place. Each provider has its own page:
+agent session, a ClickUp task, an email or a WhatsApp chat, and get the answer
+back in that same place. Each provider has its own page:
 [Slack](channels/slack.md), [GitHub](channels/github.md),
-[Linear](channels/linear.md), [email](channels/email.md) and
+[Linear](channels/linear.md), [ClickUp](channels/clickup.md), [email](channels/email.md) and
 [WhatsApp](channels/whatsapp.md). This page covers what they share.
 
 Every channel turns on by a file in the hub's `channels/` folder, never a flag,
@@ -59,7 +59,7 @@ provider_config:
 |---|---|
 | `version` | Always `1`. |
 | `id` | Lowercase letters, digits, `-` and `_`. Never changes. |
-| `provider` | `slack`, `github`, `linear`, `email` or `whatsapp_cloud`. Never changes. |
+| `provider` | `slack`, `github`, `linear`, `clickup`, `email` or `whatsapp_cloud`. Never changes. |
 | `enabled` | `false` records deliveries but starts no work. Default `false`. |
 | `agent` | Answer with the hub's agent (`main`). Each person gets their own conversation, so every reply uses their own access. |
 | `workflow` | Instead of `agent`: start this workflow as a work item for each request. The workflow needs `work_items=True`. |

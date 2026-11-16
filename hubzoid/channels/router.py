@@ -564,6 +564,10 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
         item = wstore.get_item(hub_dir, active)
         if item is not None and item["state"] not in wstore.TERMINAL:
             if person is not None and item.get("requester") == person.email:
+                if _answer_waiting_question(hub_dir, conn, row, item, person, event):
+                    _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=active,
+                            follow_up=True, replied="answered")
+                    return "routed", None
                 wi.message(hub_dir, active, person.email, event.text or "(no text)",
                            client_message_id=row["id"])
                 _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=active,
@@ -611,6 +615,36 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     if created:
         _acknowledge(conn, thread, event, row)
     return "routed", None
+
+
+def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person, event: InboundEvent) -> bool:
+    """A reply in the thread answers the one question the work waits on, when
+    the provider allows it for this kind of event (`Adapter.answer_kinds`).
+
+    The question is chosen once and recorded on the delivery before it is
+    answered, so a retry after a crash answers that same question, never the
+    next one. A reply written before the question was asked (`event.data["at"]`,
+    milliseconds) is a follow-up. Anything else (no question, two waiting, one
+    settled in the web app meanwhile) leaves it a follow-up."""
+    if event.kind not in (getattr(conn.adapter, "answer_kinds", ()) or ()) or not event.text.strip():
+        return False
+    from ..hitl import channels as hitl_channels
+
+    current = (store.get_delivery(hub_dir, row["id"]) or {}).get("route_json") or {}
+    pinned = current.get("answers")
+    if not pinned:
+        waiting = hitl_channels.pending_questions_for_run(hub_dir, item.get("workflow_id") or "", person.email)
+        if len(waiting) != 1:
+            return False
+        req = waiting[0]
+        at = str(event.data.get("at") or "")
+        if at.isdigit() and float(at) / 1000.0 < float(req.get("created_at") or 0):
+            return False
+        pinned = req["id"]
+        store.update_delivery(hub_dir, row["id"], route_json={**current, "answers": pinned})
+    outcome = hitl_channels.answer_in_thread(hub_dir, request_id=pinned, email=person.email, text=event.text,
+                                             via=conn.provider)
+    return outcome == "answered"
 
 
 # -- results back to the origin ---------------------------------------------------------------

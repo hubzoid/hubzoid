@@ -143,6 +143,8 @@ class LinearAdapter(Adapter):
     recovery = "reconcile"
     secret_keys = ("client_secret_ref", "webhook_secret_ref")
     webhook = True
+    #: a prompt in the agent session answers the question the work waits on
+    answer_kinds = ("session_prompted",)
 
     def check(self, config, settings):
         if config.run_as != "linked_requester":

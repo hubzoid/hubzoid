@@ -102,6 +102,51 @@ def answer_by_reply(hub_dir: Path, *, chat_id: str, email: str, text: str, via: 
     return None
 
 
+def pending_questions_for_run(hub_dir: Path, workflow_id: str, email: str) -> list[dict]:
+    """Questions a workflow run waits on that this person may answer."""
+    if not workflow_id:
+        return []
+    r = store.requests.c
+    q = sa.select(store.requests).where(r.hub_id == _hub(hub_dir), r.workflow_id == workflow_id,
+                                        r.status == "pending", r.kind == "question")
+    with service.engine(hub_dir).connect() as conn:
+        rows = [store.row_dict(x) for x in conn.execute(q.order_by(r.created_at)).fetchall()]
+    account_id = _account_for(hub_dir, email)
+    return [x for x in rows if service.eligible(x, account_id, email)]
+
+
+def answer_in_thread(hub_dir: Path, *, request_id: str, email: str, text: str, via: str) -> str:
+    """Answer one question from a person's reply in a work thread (a ClickUp
+    comment, a Linear session prompt). The caller picks the request and records
+    it on the delivery first, so a retry after a crash answers the same
+    question and never the next one. Returns "answered" (now, or by this same
+    person before a crash), or "taken" when it was settled another way and the
+    reply is an ordinary follow-up. Approvals are never decided from thread text."""
+    hub = _hub(hub_dir)
+    req = service.get(hub_dir, hub, request_id)
+    if req is None or req["kind"] != "question":
+        return "taken"
+    account_id = _account_for(hub_dir, email)
+    if req["status"] != "pending":
+        same = (req.get("decided_by_email") or "").lower() == (email or "").lower() and req.get("decided_via") == via
+        return "answered" if req["status"] == "answered" and same else "taken"
+    reply = (text or "").strip()
+    options = req.get("options") or []
+    if reply.isdigit() and 1 <= int(reply) <= len(options):
+        reply = options[int(reply) - 1]["label"]
+    if not reply:
+        return "taken"
+    try:
+        service.decide(hub_dir, hub, request_id, account_id=account_id, email=email, decision="answer",
+                       expected_revision=req["revision"], digest=req["digest"], answer=reply[:service.MAX_ANSWER],
+                       via=via)
+    except service.RequestError:
+        again = service.get(hub_dir, hub, request_id) or {}
+        same = (again.get("decided_by_email") or "").lower() == (email or "").lower() and again.get("decided_via") == via
+        return "answered" if again.get("status") == "answered" and same else "taken"
+    return "answered"
+
+
 def mark_continued(hub_dir: Path, request: dict) -> None:
     service.mark_continued(Path(hub_dir), request["id"])
 
