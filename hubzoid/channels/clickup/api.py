@@ -69,8 +69,16 @@ def call(conn, method: str, path: str, *, json: dict | None = None, params: dict
     raise ChannelError("provider_unavailable", f"ClickUp error {resp.status_code}: {message}", status=503)
 
 
+def is_custom_id(task_id: str) -> bool:
+    """A workspace's own task id (DEV-12) rather than ClickUp's (86abc123)."""
+    return "-" in (task_id or "")
+
+
 def get_task(conn, task_id: str) -> dict:
-    return call(conn, "GET", f"/task/{task_id}", params={"include_markdown_description": "true"})
+    params = {"include_markdown_description": "true"}
+    if is_custom_id(task_id):
+        params.update({"custom_task_ids": "true", "team_id": conn.settings.workspace_id})
+    return call(conn, "GET", f"/task/{task_id}", params=params)
 
 
 def me(conn, *, token: str | None = None) -> dict:

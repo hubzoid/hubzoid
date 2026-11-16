@@ -559,6 +559,12 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
             store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
             return "waiting", None
     requester = person.email if person is not None and not unattended else f"workflow:{conn.config.workflow}"
+    if person is not None and not unattended and _answered_before(hub_dir, conn, row, person, event):
+        # This reply already answered a question before a crash: never new work,
+        # even if the work it answered has finished since.
+        _finish(hub_dir, row["id"], "routed", None, target="work_item", work_item_id=thread.get("work_item_id"),
+                follow_up=True, replied="answered")
+        return "routed", None
     active = thread.get("work_item_id")
     if active:
         item = wstore.get_item(hub_dir, active)
@@ -615,6 +621,21 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     if created:
         _acknowledge(conn, thread, event, row)
     return "routed", None
+
+
+def _answered_before(hub_dir: Path, conn, row: dict, person, event: InboundEvent) -> bool:
+    """A delivery that pinned a question on an earlier pass: settle that same
+    question now (answering it if the crash came first), whatever state its
+    work is in."""
+    if event.kind not in (getattr(conn.adapter, "answer_kinds", ()) or ()):
+        return False
+    pinned = ((store.get_delivery(hub_dir, row["id"]) or {}).get("route_json") or {}).get("answers")
+    if not pinned:
+        return False
+    from ..hitl import channels as hitl_channels
+
+    return hitl_channels.answer_in_thread(hub_dir, request_id=pinned, email=person.email, text=event.text,
+                                          via=conn.provider) == "answered"
 
 
 def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person, event: InboundEvent) -> bool:

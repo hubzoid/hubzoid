@@ -243,7 +243,7 @@ def test_authorize_reads_the_task_and_checks_list_and_trigger(hub_dir, api):
     assert conn.adapter.authorize(conn, ev) is None
     assert ev.data["task"]["name"] == "Add CSV export" and "Ignore previous" in ev.data["task"]["description"]
     assert "untrusted" in conn.adapter.context(conn, ev, first=True)
-    api.task(status="in progress")
+    api.task(status="to do")                              # moved back by a person: not ours
     assert conn.adapter.authorize(conn, ev) == "trigger_moved_on"
     api.task(list_id="999")
     assert conn.adapter.authorize(conn, ev) == "list_not_allowed"
@@ -302,3 +302,65 @@ def test_doctor_reads_only_and_names_missing_statuses(hub_dir, api):
     assert checks[f"clickup:status:{LIST}:result"].status == "warn"
     assert all(c.status == "ok" for k, c in checks.items() if k.startswith("clickup:webhook:"))
     assert len([c for c in api.calls if c[0] != "GET"]) == before
+
+
+def test_a_task_the_channel_itself_moved_is_still_recovered(hub_dir, api):
+    """Work that started and posted before a crash moved the task to statuses.ack."""
+    conn, _ = ready(hub_dir, api)
+    ev = event_of(hub_dir, deliver(conn, status_event()))
+    api.task(status="in progress")
+    assert conn.adapter.authorize(conn, ev) is None
+
+
+def test_custom_task_ids_are_looked_up_as_custom(hub_dir, api, monkeypatch):
+    from hubzoid.channels.clickup import api as cu_api
+
+    conn, _ = ready(hub_dir, api)
+    seen = {}
+    real = api.request
+
+    def spy(method, url, *, params=None, **kw):
+        seen[url.rsplit("/", 1)[1]] = dict(params or {})
+        return real(method, url, params=params, **kw)
+
+    monkeypatch.setattr(httpx, "request", spy)
+    api.task("DEV-12")
+    cu_api.get_task(conn, "DEV-12")
+    assert seen["DEV-12"]["custom_task_ids"] == "true" and seen["DEV-12"]["team_id"] == WS
+    api.task("86abc")
+    cu_api.get_task(conn, "86abc")
+    assert "custom_task_ids" not in seen["86abc"]
+
+
+def test_setup_keeps_what_it_made_when_a_later_list_fails(hub_dir, api, monkeypatch):
+    conn = conn_for(hub_dir)
+    real = api.request
+    calls = {"n": 0}
+
+    def flaky(method, url, *, json=None, **kw):
+        if method == "POST" and url.endswith(f"/team/{WS}/webhook"):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                return httpx.Response(500, json={"err": "boom"})
+        return real(method, url, json=json, **kw)
+
+    monkeypatch.setattr(httpx, "request", flaky)
+    with pytest.raises(Exception):
+        cu.setup(conn, actor="admin@example.org")
+    first = cu.hooks(config.active(hub_dir, "clickup"))
+    assert len(first) == 1                                  # the one made is owned, not orphaned
+    monkeypatch.setattr(httpx, "request", real)
+    out = cu.setup(config.active(hub_dir, "clickup"), actor="admin@example.org")
+    assert out["kept"] and out["made"] and len(api.hooks) == 2
+
+
+def test_setup_remakes_a_webhook_whose_secret_was_lost(hub_dir, api):
+    from hubzoid.secretstore import parse as parse_ref
+    from hubzoid.secretstore import store as secrets
+
+    conn, _ = ready(hub_dir, api)
+    lost = wid_for(conn)
+    ref = parse_ref(cu.webhook_secret_ref(conn, lost))
+    secrets.delete(hub_dir, scope="channel", target=ref.target, name=ref.name, actor="admin@example.org")
+    out = cu.setup(config.active(hub_dir, "clickup"), actor="admin@example.org")
+    assert lost in out["removed"] and out["made"] == [LIST] and lost not in api.hooks

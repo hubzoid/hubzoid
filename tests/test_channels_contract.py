@@ -705,3 +705,36 @@ def test_without_answer_kinds_a_reply_stays_a_follow_up(hub_dir, fake, monkeypat
     send(conn, ev(eid="e2", text="Red", trigger=False), delivery_id="d2")
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+
+
+def test_a_pinned_answer_is_never_new_work_after_its_work_finished(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False), delivery_id="d2")
+    row = store.open_deliveries(hub_dir, "desk")[0]
+    router._route_one(hub_dir, row, None)
+    # Crash before the delivery finished; meanwhile the work used the answer and finished.
+    store.update_delivery(hub_dir, row["id"], status="accepted")
+    item = wstore.get_item(hub_dir, item_id)
+    wstore.update_item(hub_dir, item_id, expected_revision=item["revision"], state="completed")
+    before = len(wstore.list_items(hub_dir, "desk"))
+    router._route_one(hub_dir, store.get_delivery(hub_dir, row["id"]), None)
+    again = store.get_delivery(hub_dir, row["id"])
+    assert again["status"] == "routed" and again["route_json"]["replied"] == "answered"
+    assert service.get(hub_dir, "desk", req["id"])["answer"] == "Red"
+    assert len(wstore.list_items(hub_dir, "desk")) == before
+
+
+def test_a_reply_written_before_the_question_is_a_follow_up(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": "1000"}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"

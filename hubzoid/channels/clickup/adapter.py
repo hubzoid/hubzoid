@@ -233,11 +233,17 @@ class ClickUpAdapter(Adapter):
             return "list_not_allowed"
         status = (task.get("status") or {}).get("status")
         tags = [(t or {}).get("name") for t in task.get("tags") or []]
-        if event.data.get("event") == "taskStatusUpdated" and not _same(status, cfg.trigger.status):
+        # The channel's own status moves (ack, question, result) mean this work
+        # already started and posted, before a crash: recover it, never orphan it.
+        ours = {x.lower() for x in (cfg.statuses.ack, cfg.statuses.question, cfg.statuses.result, cfg.statuses.error)
+                if x}
+        moved_by_us = (status or "").strip().lower() in ours
+        if event.data.get("event") == "taskStatusUpdated" and not _same(status, cfg.trigger.status) \
+                and not moved_by_us:
             return "trigger_moved_on"
         if event.data.get("event") == "taskTagUpdated" and not any(_same(t, cfg.trigger.tag) for t in tags):
             return "trigger_moved_on"
-        if cfg.trigger.status and cfg.trigger.tag and not (
+        if cfg.trigger.status and cfg.trigger.tag and not moved_by_us and not (
                 _same(status, cfg.trigger.status) and any(_same(t, cfg.trigger.tag) for t in tags)):
             return "trigger_incomplete"           # both named: both must hold
         description = task.get("markdown_description") or task.get("text_content") or task.get("description") or ""
@@ -379,12 +385,24 @@ def setup(conn, *, actor: str) -> dict:
     if not url:
         raise ChannelError("public_url_required", "Set HUBZOID_PUBLIC_URL to the deployment's HTTPS address first: "
                            "ClickUp needs somewhere to send deliveries.", status=422)
+    from ...secretstore import resolve
+
+    def save():
+        store.set_connection_state(conn.hub_dir, conn.hub, conn.id, clickup_webhooks=dict(recorded))
+
+    def secret_present(wid: str) -> bool:
+        try:
+            return bool(resolve(webhook_secret_ref(conn, wid), conn.hub_dir))
+        except Exception:  # noqa: BLE001 - missing or unreadable: the webhook is remade
+            return False
+
     live = {w.get("id"): w for w in api.webhooks(conn, cfg.workspace_id)}
     recorded = hooks(conn)
     kept, made, removed = [], [], []
     for wid in list(recorded):
         w = live.get(wid)
-        if w is None or w.get("endpoint") != url or recorded[wid].get("list_id") not in cfg.list_ids:
+        if w is None or w.get("endpoint") != url or recorded[wid].get("list_id") not in cfg.list_ids \
+                or not secret_present(wid):
             if w is not None:
                 try:
                     api.delete_webhook(conn, wid)
@@ -392,6 +410,7 @@ def setup(conn, *, actor: str) -> dict:
                     log.warning("clickup %s: could not delete webhook %s", conn.id, wid)
             recorded.pop(wid)
             removed.append(wid)
+    save()
     covered = {v.get("list_id") for v in recorded.values()}
     for list_id in cfg.list_ids:
         if list_id in covered:
@@ -404,13 +423,15 @@ def setup(conn, *, actor: str) -> dict:
             raise ChannelError("provider_unavailable", "ClickUp did not return the webhook and its secret.",
                                status=503)
         ref = parse_ref(webhook_secret_ref(conn, wid))
+        # Record the webhook before its secret: a crash in between leaves one this
+        # connection owns (and remakes on the next setup), never an orphan.
+        recorded[wid] = {"list_id": list_id}
+        save()
         secrets.put(conn.hub_dir, scope="channel", target=ref.target, name=ref.name, value=secret, actor=actor,
                     surface="cli")
-        recorded[wid] = {"list_id": list_id}
         made.append(list_id)
     me = api.me(conn)
-    store.set_connection_state(conn.hub_dir, conn.hub, conn.id, clickup_webhooks=recorded,
-                               clickup_user_id=str(me.get("id") or ""))
+    store.set_connection_state(conn.hub_dir, conn.hub, conn.id, clickup_user_id=str(me.get("id") or ""))
     return {"endpoint": url, "made": made, "kept": kept, "removed": removed, "webhooks": recorded}
 
 
