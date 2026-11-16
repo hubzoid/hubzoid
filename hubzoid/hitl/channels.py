@@ -110,7 +110,8 @@ def pending_questions_for_run(hub_dir: Path, workflow_id: str, email: str) -> li
     q = sa.select(store.requests).where(r.hub_id == _hub(hub_dir), r.workflow_id == workflow_id,
                                         r.status == "pending", r.kind == "question")
     with service.engine(hub_dir).connect() as conn:
-        rows = [store.row_dict(x) for x in conn.execute(q.order_by(r.created_at)).fetchall()]
+        rows = [{**store.row_dict(x), "created_epoch": float(x._mapping["created_at"] or 0)}
+                for x in conn.execute(q.order_by(r.created_at)).fetchall()]
     account_id = _account_for(hub_dir, email)
     return [x for x in rows if service.eligible(x, account_id, email)]
 

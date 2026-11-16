@@ -116,3 +116,15 @@ def test_a_server_whose_variable_is_unset_stays_off(tmp_path, monkeypatch):
     monkeypatch.setenv("HZ_TEST_GH_TOKEN", "t0ken")
     servers = mcp_loader.load_all_raw(tmp_path)
     assert servers["github"]["headers"]["Authorization"] == "Bearer t0ken"
+
+
+def test_an_empty_env_value_is_passed_not_a_reason_to_turn_off(tmp_path, monkeypatch):
+    import json
+
+    from hubzoid.loaders import mcp as mcp_loader
+
+    (tmp_path / "connectors").mkdir()
+    (tmp_path / "connectors" / ".mcp.json").write_text(json.dumps({"mcpServers": {
+        "tool": {"command": "echo", "env": {"HTTP_PROXY": "${HZ_TEST_PROXY}"}}}}))
+    monkeypatch.setenv("HZ_TEST_PROXY", "")
+    assert "tool" in mcp_loader.load_all_raw(tmp_path)

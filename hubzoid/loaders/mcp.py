@@ -145,7 +145,10 @@ def load_all_raw(hub_dir: Path) -> dict[str, dict]:
         # (a header "Bearer ${GITHUB_TOKEN}") and fail on every turn with an
         # error that blames a token the person never gave. It stays off until
         # the variable is set; the Console shows which one (`describe`).
-        missing = sorted(n for n in _var_names(spec) if not os.environ.get(n))
+        # A value passed through `env` may be empty on purpose (HTTP_PROXY="");
+        # the address, headers, command and arguments cannot.
+        missing = sorted(n for n in _var_names({k: v for k, v in spec.items() if k != "env"})
+                         if not os.environ.get(n))
         if missing:
             log.info("MCP server %s is off until %s is set", name, ", ".join(missing))
             continue

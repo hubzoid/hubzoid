@@ -672,7 +672,7 @@ def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person,
             return False
         req = waiting[0]
         at = str(event.data.get("at") or "")
-        if at.isdigit() and float(at) / 1000.0 < _epoch(req.get("created_at")):
+        if at.isdigit() and float(at) / 1000.0 < float(req.get("created_epoch") or _epoch(req.get("created_at"))):
             return False
         pinned = req["id"]
         store.update_delivery(hub_dir, row["id"], route_json={**current, "answers": pinned})

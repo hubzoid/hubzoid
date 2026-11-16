@@ -103,6 +103,20 @@ class ClickUpConfig(BaseModel):
         return v
 
 
+def _admitted_before(conn, event: InboundEvent) -> bool:
+    """Whether work was already admitted for this exact event (a crash after
+    admission, before routing finished). A status alone is never evidence:
+    a person may have moved the task there themselves."""
+    from sqlalchemy import text
+
+    from ...work_items import store as wstore
+
+    with wstore.engine(conn.hub_dir).connect() as c:
+        row = c.execute(text("SELECT 1 FROM hz_work_items WHERE hub=:h AND logical_key=:k LIMIT 1"),
+                        {"h": conn.hub, "k": f"channel:{conn.id}:{event.semantic_key}"}).first()
+    return row is not None
+
+
 def _same(a: str | None, b: str | None) -> bool:
     return (a or "").strip().lower() == (b or "").strip().lower()
 
@@ -237,7 +251,7 @@ class ClickUpAdapter(Adapter):
         # already started and posted, before a crash: recover it, never orphan it.
         ours = {x.lower() for x in (cfg.statuses.ack, cfg.statuses.question, cfg.statuses.result, cfg.statuses.error)
                 if x}
-        moved_by_us = (status or "").strip().lower() in ours
+        moved_by_us = (status or "").strip().lower() in ours and _admitted_before(conn, event)
         if event.data.get("event") == "taskStatusUpdated" and not _same(status, cfg.trigger.status) \
                 and not moved_by_us:
             return "trigger_moved_on"

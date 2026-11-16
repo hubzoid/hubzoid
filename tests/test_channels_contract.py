@@ -755,3 +755,17 @@ def test_a_reply_written_after_the_question_answers_it(hub_dir, fake, monkeypatc
     send(conn, ev(eid="e2", text="Blue", trigger=False, data={"at": later}), delivery_id="d2")
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     assert service.get(hub_dir, "desk", req["id"])["answer"] == "Blue"
+
+
+def test_a_reply_written_half_a_second_before_the_question_is_a_follow_up(hub_dir, fake, monkeypatch):
+    """The question's time is compared to the millisecond, not the second."""
+    from hubzoid.hitl import channels as hitl_channels
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    created = hitl_channels.pending_questions_for_run(hub_dir, "run-1", "ana@example.org")[0]["created_epoch"]
+    send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": str(int(created * 1000) - 500)}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"

@@ -305,11 +305,19 @@ def test_doctor_reads_only_and_names_missing_statuses(hub_dir, api):
 
 
 def test_a_task_the_channel_itself_moved_is_still_recovered(hub_dir, api):
-    """Work that started and posted before a crash moved the task to statuses.ack."""
+    """Work admitted before a crash already moved the task to statuses.ack."""
+    from hubzoid.work_items import service as wi
+
     conn, _ = ready(hub_dir, api)
     ev = event_of(hub_dir, deliver(conn, status_event()))
     api.task(status="in progress")
-    assert conn.adapter.authorize(conn, ev) is None
+    assert conn.adapter.authorize(conn, ev) == "trigger_moved_on"     # a person may have moved it: no work yet
+    (hub_dir / "workflows" / "intake").mkdir(parents=True)
+    (hub_dir / "workflows" / "intake" / "main.py").write_text(
+        "from hubzoid import workflow\n\n@workflow(work_items=True)\ndef intake():\n    return {}\n")
+    wi.admit(hub_dir, workflow="intake", key=f"channel:{conn.id}:{ev.semantic_key}", route=None, input={},
+             requester="ana@example.org", origin={"source": "test"})
+    assert conn.adapter.authorize(conn, ev) is None                   # its own work: recovered
 
 
 def test_custom_task_ids_are_looked_up_as_custom(hub_dir, api, monkeypatch):
