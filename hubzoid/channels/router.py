@@ -623,6 +623,19 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     return "routed", None
 
 
+def _epoch(value) -> float:
+    """A request time as epoch seconds: the store gives "2026-11-16T20:02:47Z"
+    (`hitl.store.row_dict`), older callers a number."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    import calendar
+
+    try:
+        return float(calendar.timegm(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _answered_before(hub_dir: Path, conn, row: dict, person, event: InboundEvent) -> bool:
     """A delivery that pinned a question on an earlier pass: settle that same
     question now (answering it if the crash came first), whatever state its
@@ -659,7 +672,7 @@ def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person,
             return False
         req = waiting[0]
         at = str(event.data.get("at") or "")
-        if at.isdigit() and float(at) / 1000.0 < float(req.get("created_at") or 0):
+        if at.isdigit() and float(at) / 1000.0 < _epoch(req.get("created_at")):
             return False
         pinned = req["id"]
         store.update_delivery(hub_dir, row["id"], route_json={**current, "answers": pinned})

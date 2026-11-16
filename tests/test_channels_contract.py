@@ -738,3 +738,20 @@ def test_a_reply_written_before_the_question_is_a_follow_up(hub_dir, fake, monke
     send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": "1000"}), delivery_id="d2")
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+    row = [r for r in store.list_deliveries(hub_dir, "desk", conn.id)["items"] if r["delivery_id"] == "d2"][0]
+    assert row["status"] == "routed" and row["route_json"].get("replied") != "answered"     # a follow-up, routed
+
+
+def test_a_reply_written_after_the_question_answers_it(hub_dir, fake, monkeypatch):
+    """ClickUp gives each comment its time in milliseconds (event.data["at"])."""
+    import time as _time
+
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    later = str(int((_time.time() + 5) * 1000))
+    send(conn, ev(eid="e2", text="Blue", trigger=False, data={"at": later}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["answer"] == "Blue"
