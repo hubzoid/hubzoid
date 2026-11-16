@@ -46,7 +46,7 @@ the hub's. A person stores it, never in the chat:
 
 ```sh
 hubzoid channels apply ./company-hub --file channels/clickup.yaml --expected-revision absent
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/clickup/token --stdin --apply
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/clickup/token --stdin
 hubzoid channels clickup setup ./company-hub clickup
 ```
 

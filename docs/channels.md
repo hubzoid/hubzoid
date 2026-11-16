@@ -71,7 +71,7 @@ provider_config:
 | `provider_config` | The provider's settings. Every credential is a reference ending in `_ref`. |
 
 Credentials are references, never values: `secret:channel/<hub>/<id>/<name>`
-(set with `hubzoid secrets set <hub> --ref <reference> --stdin --apply`) or
+(set with `hubzoid secrets set <hub> --ref <reference> --stdin`) or
 `env:NAME`. Validation refuses a value pasted into the file.
 
 In a channel file you can leave the agent's folder name out:

@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .._fs import resolve_bucket
 
+
 #: Seconds one MCP tool call may take, unless a server's own
 #: `client_session_timeout_seconds` says otherwise. HUBZOID_MCP_TIMEOUT changes it.
 DEFAULT_CALL_TIMEOUT = 30.0
@@ -136,11 +137,19 @@ def load_all_raw(hub_dir: Path) -> dict[str, dict]:
             if not isinstance(servers_cfg, dict):
                 raise ValueError(f"{mcp_file}: `mcpServers` must be a mapping.")
 
-    out = {
-        name: _interpolate(spec)
-        for name, spec in servers_cfg.items()
-        if isinstance(spec, dict)
-    }
+    out = {}
+    for name, spec in servers_cfg.items():
+        if not isinstance(spec, dict):
+            continue
+        # A server whose ${VAR} is not set would start with the literal text
+        # (a header "Bearer ${GITHUB_TOKEN}") and fail on every turn with an
+        # error that blames a token the person never gave. It stays off until
+        # the variable is set; the Console shows which one (`describe`).
+        missing = sorted(n for n in _var_names(spec) if not os.environ.get(n))
+        if missing:
+            log.info("MCP server %s is off until %s is set", name, ", ".join(missing))
+            continue
+        out[name] = _interpolate(spec)
 
     # Auto-inject the shared browser (HUBZOID_BROWSER=true) as a `playwright`
     # server, so every agent gets the tools with no per-hub config. A hub that
