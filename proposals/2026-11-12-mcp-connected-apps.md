@@ -1,12 +1,12 @@
 # Connected apps over hosted MCP
 
-Plan, 12 November 2026, against `origin/main` 2.0.8 (`fc8b6363`). The reviewed plan is the page
-"How Ishangam's tools would reach Claude Code through a Hubzoid hub" (Darshika). Built on branch
+Plan, 12 November 2026, against `origin/main` 2.0.8 (`fc8b6363`). The reviewed plan is an HTML page
+on how a connected app's tools would reach Claude Code through a hub (Darshika). Built on branch
 `implement/mcp-connected-apps`; not merged.
 
 ## Problem
 
-A person connects an app (a Settings connector, for example Ishangam) to an agent. Web chat and
+A person connects an app (a Settings connector, for example a CRM) to an agent. Web chat and
 WhatsApp give them its tools on every turn. An assistant connected to the same agent's hosted MCP
 endpoint (Claude Code, Claude) never does: the MCP server builds one tool list at startup and never
 asks which apps the caller connected. It still offers `connect_account`, which answers "already
@@ -55,7 +55,7 @@ notifications or session infrastructure. No new runtime and no hub model call fo
 
 ## Open questions
 
-- Ishangam itself: its endpoint, authentication flow, two people's accounts, refresh and
+- A real app with per-person sign-in: its endpoint, authentication flow, two people's accounts, refresh and
   reconnect, a read and an approved write, denial after revocation. Not tested; the GitHub
   connector and in-process fakes do not establish them.
 - Whether the access-log row per forwarded call (stricter than chat, which logs connector use
@@ -67,4 +67,4 @@ notifications or session infrastructure. No new runtime and no hub model call fo
 Over hosted MCP, two people each list and call only their own connected apps, concurrently; a
 revoked grant, an allow-list, a hub tool of the same name, approval rules and an unwritable
 access-log row each stop a call before it reaches the app; a broken app leaves the hub's tools
-listed; `connect_account` over MCP says to reconnect. Then the open Ishangam checks above.
+listed; `connect_account` over MCP says to reconnect. Then the open checks above with a real per-person app.

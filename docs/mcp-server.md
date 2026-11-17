@@ -62,7 +62,7 @@ key). Each app's tools follow the hub's own, named `my_<id>__<tool>`:
 
 | In the app | Over hosted MCP | In Claude Code |
 |---|---|---|
-| `whoami` | `my_ishangam__whoami` | `mcp__<server name>__my_ishangam__whoami` |
+| `whoami` | `my_crm__whoami` | `mcp__<server name>__my_crm__whoami` |
 
 A call goes to the app as the caller, with their own token (refreshed when
 due) or the connector's shared key, after the same checks as a hub tool and as

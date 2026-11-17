@@ -14,7 +14,7 @@ Here, on every ``tools/list`` and ``tools/call``:
     (``runtime.personal_mcp_server``, the approval gate
     ``hitl.gate.guard_mcp_server`` evaluated with the server key and the app's
     own tool name, and the run check ``access.guard.checked_server``).
-  * Its tools are offered as ``<server key>__<tool>`` (``my_ishangam__whoami``),
+  * Its tools are offered as ``<server key>__<tool>`` (``my_crm__whoami``),
     labelled with the connector's name. A call is forwarded only for an alias
     found again in the caller's own catalog, to the app's own tool name, after
     the run check, the allow-list and an access-log row (no row, no call). The
