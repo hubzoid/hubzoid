@@ -39,17 +39,40 @@ def _files(hub_dir: Path, files) -> tuple[str, ...]:
     files = list(files)
     if len(files) > MAX_FILES:
         raise ValueError(f"post at most {MAX_FILES} files")
-    out_root = datadir.resolve(hub_dir, "output").resolve()
     paths = []
     for f in files:
         path = Path(f) if Path(f).is_absolute() else datadir.resolve(hub_dir, f)
-        path = path.resolve()
-        if not path.is_relative_to(out_root) or not path.is_file():
-            raise ValueError(f"{f} is not a file under this hub's output folder")
-        if path.stat().st_size > MAX_FILE_BYTES:
-            raise ValueError(f"{path.name} is larger than 10 MB")
-        paths.append(str(path))
+        _check_output_file(hub_dir, path, shown=str(f))
+        paths.append(str(path.resolve()))
     return tuple(paths)
+
+
+def _check_output_file(hub_dir: Path, path: Path, *, shown: str) -> Path:
+    """`path` is a regular file under the hub's real output folder (not a
+    symlink to elsewhere) and nowhere under its state folder."""
+    from .. import datadir
+
+    out = datadir.resolve(hub_dir, "output")
+    if out.is_symlink():
+        raise ValueError("this hub's output folder is a symlink: files are not posted from it")
+    real = Path(path).resolve()
+    if (not real.is_relative_to(out.resolve()) or real.is_relative_to(datadir.state(hub_dir).resolve())
+            or not real.is_file()):
+        raise ValueError(f"{shown} is not a file under this hub's output folder")
+    if real.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError(f"{real.name} is larger than 10 MB")
+    return real
+
+
+def read_posted_file(hub_dir: Path, path: str) -> tuple[str, bytes]:
+    """Check a posted file again when it is sent and read it once: what is
+    uploaded is what passed the check, at most 10 MB."""
+    real = _check_output_file(Path(hub_dir), Path(path), shown=Path(path).name)
+    with open(real, "rb") as fh:
+        data = fh.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError(f"{real.name} is larger than 10 MB")
+    return real.name, data
 
 
 class Thread:
@@ -136,6 +159,12 @@ class Thread:
             if parked.kind == "approval" and conn.adapter.customer_facing and self._unattended():
                 self._stop_unapprovable(parked.operation_id, text)
             raise
+
+    def posted(self, key: str, *, kind: str = "result") -> bool:
+        """Whether this work item already recorded a post under `key` and
+        `kind` (sent, or waiting). A workflow that changes how it posts can
+        keep an earlier run's post as it was."""
+        return self._recorded_text(kind, key) is not None
 
     def _recorded_text(self, kind: str, key: str) -> str | None:
         """The last part of a reply already recorded under ``key`` (waiting

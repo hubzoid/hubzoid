@@ -63,8 +63,9 @@ class FakeClickUp:
         if path.startswith("/task/") and path.endswith("/attachment") and method == "POST":
             tid = path.split("/")[2]
             name, body = kw["files"]["attachment"]
-            self.tasks.setdefault(tid, self.task(tid)).setdefault("attachments", []).append(
-                {"id": f"a{self.n}", "title": name, "size": len(body)})
+            task = self.tasks[tid] if tid in self.tasks else self.task(tid)
+            task.setdefault("attachments", []).append(
+                {"id": f"a{self.n}", "title": name, "size": str(len(body))})
             assert "Content-Type" not in headers          # httpx sets the multipart boundary
             return httpx.Response(200, json={"id": "att", "title": name})
         if path.startswith("/task/") and path.endswith("/comment"):
@@ -430,14 +431,20 @@ def test_setup_remakes_a_webhook_made_before_task_creation_was_sent(hub_dir, api
 
 # -- plans: attached once, and the approval status ----------------------------------------
 
+def _out_file(hub_dir, rel, text):
+    path = hub_dir / "output" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
 def test_a_plan_reply_attaches_its_file_once_and_sets_the_approval_status(hub_dir, api, tmp_path):
     from hubzoid.channels.models import Outbound
 
     conn, _ = ready(hub_dir, api, statuses={"ack": "in progress", "question": "needs answer",
                                             "approval": "needs approval"})
     api.task()
-    plan = tmp_path / "plan-v1-0123abcd.md"
-    plan.write_text("# Plan\n1. Fix it\n")
+    plan = _out_file(hub_dir, "plan-v1-0123abcd.md", "# Plan\n1. Fix it\n")
     out = Outbound(kind="approval", text="Plan v1 is ready.", marker="hz-0123456789abcdef", files=(str(plan),))
     origin = Origin("clickup", WS, "clickup:task:t1", {"task_id": "t1"})
     conn.adapter.reply(conn, origin, out)
@@ -484,3 +491,44 @@ def test_posted_files_must_be_this_hubs_output(hub_dir, tmp_path):
             _files(hub_dir, [bad])
     with pytest.raises(ValueError):
         _files(hub_dir, [good] * 6)
+
+
+def test_a_same_named_file_with_other_bytes_is_attached_too(hub_dir, api):
+    from hubzoid.channels.models import Outbound
+
+    conn, _ = ready(hub_dir, api)
+    api.task()
+    origin = Origin("clickup", WS, "clickup:task:t1", {"task_id": "t1"})
+    v1 = _out_file(hub_dir, "v1/plan.md", "first")
+    v2 = _out_file(hub_dir, "v2/plan.md", "the second plan")
+    conn.adapter.reply(conn, origin, Outbound(kind="approval", text="v1", marker="hz-0123456789abcd01", files=(str(v1),)))
+    conn.adapter.reply(conn, origin, Outbound(kind="approval", text="v2", marker="hz-0123456789abcd02", files=(str(v2),)))
+    assert [a["size"] for a in api.tasks["t1"]["attachments"]] == ["5", "15"]
+
+
+def test_a_symlinked_output_folder_or_state_never_posts(hub_dir, tmp_path):
+    from hubzoid.channels.thread import _files, read_posted_file
+
+    state = hub_dir / ".hubzoid"
+    state.mkdir()
+    (state / "secret.key").write_text("k")
+    (hub_dir / "output").symlink_to(state)
+    with pytest.raises(ValueError):
+        _files(hub_dir, ["output/secret.key"])
+    (hub_dir / "output").unlink()
+    good = _out_file(hub_dir, "plan.md", "x")
+    assert read_posted_file(hub_dir, str(good)) == ("plan.md", b"x")
+    good.unlink()
+    good.symlink_to(state / "secret.key")                   # swapped after it was checked
+    with pytest.raises(ValueError):
+        read_posted_file(hub_dir, str(good))
+
+
+def test_the_approval_status_counts_as_the_channels_own_for_recovery(hub_dir, api, monkeypatch):
+    conn, _ = ready(hub_dir, api, statuses={"ack": "in progress", "approval": "needs approval"})
+    ev = event_of(hub_dir, deliver(conn, status_event()))
+    api.task(status="needs approval")
+    monkeypatch.setattr(cu, "_admitted_before", lambda conn, event: True)
+    assert conn.adapter.authorize(conn, ev) is None
+    monkeypatch.setattr(cu, "_admitted_before", lambda conn, event: False)
+    assert conn.adapter.authorize(conn, ev) == "trigger_moved_on"

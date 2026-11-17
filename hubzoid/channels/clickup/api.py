@@ -102,19 +102,23 @@ def _task_params(conn, task_id: str) -> dict | None:
     return None
 
 
-def attachment_titles(conn, task_id: str) -> set[str]:
+def attachments(conn, task_id: str) -> set[tuple[str, int]]:
+    """The task's attachments as (name, size): a file is the same one only
+    when both match."""
     task = call(conn, "GET", f"/task/{task_id}", params=_task_params(conn, task_id))
-    return {str(a.get("title") or "") for a in task.get("attachments") or []}
+    out = set()
+    for a in task.get("attachments") or []:
+        try:
+            out.add((str(a.get("title") or ""), int(a.get("size") or -1)))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
-def attach(conn, task_id: str, path: str) -> dict:
+def attach(conn, task_id: str, name: str, data: bytes) -> dict:
     """Attach one file to the task (ClickUp's multipart `attachment` field)."""
-    from pathlib import Path
-
-    name = Path(path).name
-    with open(path, "rb") as fh:
-        return call(conn, "POST", f"/task/{task_id}/attachment", params=_task_params(conn, task_id),
-                    files={"attachment": (name, fh.read())}, write=True)
+    return call(conn, "POST", f"/task/{task_id}/attachment", params=_task_params(conn, task_id),
+                files={"attachment": (name, data)}, write=True)
 
 
 def set_status(conn, task_id: str, status: str) -> dict:

@@ -267,8 +267,8 @@ class ClickUpAdapter(Adapter):
         tags = [(t or {}).get("name") for t in task.get("tags") or []]
         # The channel's own status moves (ack, question, result) mean this work
         # already started and posted, before a crash: recover it, never orphan it.
-        ours = {x.lower() for x in (cfg.statuses.ack, cfg.statuses.question, cfg.statuses.result, cfg.statuses.error)
-                if x}
+        ours = {x.lower() for x in (cfg.statuses.ack, cfg.statuses.question, cfg.statuses.approval,
+                                    cfg.statuses.result, cfg.statuses.error) if x}
         moved_by_us = (status or "").strip().lower() in ours and _admitted_before(conn, event)
         if event.data.get("event") == "taskStatusUpdated" and not _same(status, cfg.trigger.status) \
                 and not moved_by_us:
@@ -316,12 +316,13 @@ class ClickUpAdapter(Adapter):
         # Files first, each once: a retry after a lost comment finds them by
         # name and does not attach them again.
         if outbound.files:
-            have = api.attachment_titles(conn, task_id)
-            for path in outbound.files:
-                from pathlib import Path
+            from ..thread import read_posted_file
 
-                if Path(path).name not in have:
-                    api.attach(conn, task_id, path)
+            have = api.attachments(conn, task_id)
+            for path in outbound.files:
+                name, data = read_posted_file(conn.hub_dir, path)
+                if (name, len(data)) not in have:
+                    api.attach(conn, task_id, name, data)
         text = f"{outbound.text.rstrip()}\n\n(ref {outbound.marker})"
         posted = api.post_comment(conn, task_id, text)
         cid = str(posted.get("id") or "")
