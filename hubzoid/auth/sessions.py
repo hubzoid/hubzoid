@@ -143,7 +143,10 @@ def local_request_allowed(request: Request) -> bool:
     listening = server[0].strip("[]").lower() if server and isinstance(server[0], str) else ""
     peer = request.client.host if request.client is not None else None
     origin = (request.headers.get("origin") or "").strip()
-    origin_host = (urlparse(origin).hostname or "") if origin else ""
+    try:
+        origin_host = (urlparse(origin).hostname or "") if origin else ""
+    except ValueError:      # e.g. "http://[" : not a page of this machine
+        origin_host = ""
     if host and not (appmode.is_loopback_name(host) or host == listening):
         key, why = "local:host", f"addressed to {host[:100]!r}"
     elif appmode.is_forwarded(request.headers):

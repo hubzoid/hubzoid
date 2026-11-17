@@ -465,7 +465,7 @@ def _app_checks(hub: Path) -> list[Check]:
     found = _openwebui_data(hub, auth_on=summary["auth"])
     if found:
         out.append(found)
-    out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out.append(_local_mode_guard(auth_on=summary["auth"], hub=hub))
     out.append(_deployment_key(hub))
     return [c for c in out if c is not None]
 
@@ -500,16 +500,24 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
                  f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
 
 
-def _local_mode_guard(*, auth_on: bool) -> Check | None:
-    """`hubzoid run` keeps local mode (sign-in off) on loopback."""
-    from . import appmode, settings as settingslib
+def _local_mode_guard(*, auth_on: bool, hub: Path | None = None) -> Check | None:
+    """`hubzoid run` keeps local mode (sign-in off) on loopback. A public URL
+    recorded by `hubzoid gateway --public-url` counts like HUBZOID_PUBLIC_URL."""
+    from . import appmode, deployment, settings as settingslib
+
+    recorded = None
+    if hub is not None:
+        try:
+            recorded = deployment.read(hub).get("public_url")
+        except Exception:  # noqa: BLE001 - no deployment record: nothing recorded
+            recorded = None
 
     if auth_on:
         return None
     host = os.environ.get("HUBZOID_HOST", "127.0.0.1").strip()
     detail = {"host": host}
     if appmode.is_loopback_host(host):
-        remote = appmode.non_local_origins()
+        remote = appmode.non_local_origins(extra=recorded)
         if remote and appmode.unauthenticated_network_allowed():
             return Check("exposure.local_mode", "warn",
                          f"Sign-in is off and HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true: visitors through "

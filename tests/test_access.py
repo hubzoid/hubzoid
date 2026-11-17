@@ -347,3 +347,19 @@ def test_listing_uses_the_policy_the_guarded_tool_was_built_with(tmp_path, monke
     (tmp_path / "identity" / "permissions.yaml").write_text("erp:\n  surfaces: [mcpx]\n")   # edited, not restarted
     ident = Identity.make("p", [], surface="mcp")
     assert mcp_server._visible(tmp_path, ident, "erp_sales", registry, {"erp_sales": "erp"})
+
+
+@pytest.mark.parametrize("text, expect", [
+    ('reset:\n  "surf\\u0061ces": []\n', {"reset": frozenset()}),                      # an escaped key is still surfaces
+    ('reset:\n  "surf\\u0061ces": []\nreset:\n  label: Resets\n', ValueError),          # escaped + a duplicate hiding it
+    ("a: &lbl {label: A}\nb: *lbl\n", {}),                                               # labels only, anchors: as before
+])
+def test_surfaces_are_found_by_parsed_key_not_by_text(tmp_path, monkeypatch, text, expect):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(text)
+    if expect is ValueError:
+        with pytest.raises(ValueError, match="appears twice"):
+            loader.restricted_surfaces(tmp_path)
+    else:
+        assert loader.restricted_surfaces(tmp_path) == expect

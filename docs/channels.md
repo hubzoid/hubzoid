@@ -56,7 +56,9 @@ Then list the channels in `allowed_channel_ids`, link people
 (`hubzoid channels link`), grant who may ask (Settings), apply, run
 `hubzoid channels doctor <hub> slack-main`, remove
 `channels/slack-assistant.yaml`, set `enabled: true`, and apply again
-(`hubzoid channels apply`): until then the connection stays paused.
+(`hubzoid channels apply <hub> --file channels/slack-main.yaml
+--expected-revision <rev>`, with the revision `channels list` shows): until
+then the connection stays paused.
 
 | Symptom | Next step |
 |---|---|

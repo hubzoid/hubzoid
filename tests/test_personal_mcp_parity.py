@@ -489,12 +489,17 @@ async def test_claude_tool_lists_are_dropped_when_stale_and_bounded(servers, mon
     """A rotated token makes a new cache key; the old entry must not stay forever."""
     from hubzoid import factory_claude
 
+    import time
+
     factory_claude._tool_lists.clear()
     factory_claude._tool_lists[("http://old", "rotated")] = (0.0, ["x"])          # long expired
     monkeypatch.setattr(factory_claude, "_TOOL_LIST_MAX", 2)
-    factory_claude._tool_lists[("http://a", "1")] = (10**12, ["a"])
+    now = time.monotonic()
+    factory_claude._tool_lists[("http://a", "1")] = (now, ["a"])                   # oldest live entry
+    factory_claude._tool_lists[("http://b", "2")] = (now, ["b"])                   # the cache is now full
     await factory_claude._list_server_tools(
         {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}})
-    assert ("http://old", "rotated") not in factory_claude._tool_lists
-    assert len(factory_claude._tool_lists) <= 2
+    keys = list(factory_claude._tool_lists)
+    assert ("http://old", "rotated") not in keys and ("http://a", "1") not in keys     # expired, then oldest
+    assert ("http://b", "2") in keys and len(keys) == 2
     factory_claude._tool_lists.clear()

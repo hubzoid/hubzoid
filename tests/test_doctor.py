@@ -286,3 +286,13 @@ def test_the_gateway_public_url_flag_counts_for_the_start_warning(monkeypatch, c
         monkeypatch.delenv(k, raising=False)
     cli._note_public_url_in_local_mode(False, "https://hub.example")
     assert "https://hub.example" in " ".join(capsys.readouterr().out.split())
+
+
+def test_a_public_url_recorded_by_the_gateway_counts(hub, monkeypatch):
+    """`hubzoid gateway --public-url` records the address in the deployment, not the env."""
+    from hubzoid import deployment
+
+    monkeypatch.setattr(deployment, "read", lambda hub_dir, *a, **k: {"public_url": "https://gw.example.org"})
+    check = doc._local_mode_guard(auth_on=False, hub=hub)
+    assert check.status == "warn" and "https://gw.example.org" in check.summary
+    assert doc._local_mode_guard(auth_on=False).status == "ok"

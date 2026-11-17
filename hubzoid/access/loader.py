@@ -93,15 +93,17 @@ def restricted_surfaces(hub_dir: Path) -> dict[str, frozenset[str]]:
     if path is None or not path.is_file():
         return {}
     text = path.read_text(encoding="utf-8")
-    if "surfaces" not in text:
-        return {}  # labels only: the Settings reader (capabilities._metadata) handles those
     try:
         # Strict: a duplicate key (a second `reset:` without surfaces) or a
         # document that isn't a mapping must not fall back to the hub-wide list.
         data = yamlfile.loads(text, path=str(path)).data
     except yamlfile.YamlError as exc:
+        if not _mentions_surfaces(text):
+            return {}  # labels only: the Settings reader (capabilities._metadata) handles those
         where = f" (line {exc.line})" if exc.line else ""
         raise ValueError(f"{path}{where}: {exc.message} It sets surfaces:, so it must be valid.") from None
+    if not any(isinstance(meta, dict) and "surfaces" in meta for meta in data.values()):
+        return {}  # labels only
     out: dict[str, frozenset[str]] = {}
     for name, meta in data.items():
         if not isinstance(meta, dict):
@@ -127,3 +129,27 @@ def restricted_surfaces(hub_dir: Path) -> dict[str, frozenset[str]]:
                              f"Use any of: {', '.join(sorted(KNOWN_SURFACES))}")
         out[normalize(str(name))] = surfaces
     return out
+
+
+def _mentions_surfaces(text: str) -> bool:
+    """Whether any key in the YAML decodes to ``surfaces`` (an escaped
+    ``"surf\\u0061ces"`` counts), read from the node tree, which keeps every
+    duplicate pair. Unparseable text counts when it contains the word."""
+    import yaml
+    from yaml.nodes import MappingNode, ScalarNode, SequenceNode
+
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return "surfaces" in text
+    stack = [root] if root is not None else []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, MappingNode):
+            for key, value in node.value:
+                if isinstance(key, ScalarNode) and key.value == "surfaces":
+                    return True
+                stack.extend((key, value))
+        elif isinstance(node, SequenceNode):
+            stack.extend(node.value)
+    return False
