@@ -186,12 +186,13 @@ class InboundEvent:
 class Outbound:
     """One reply part, already rendered for the provider."""
 
-    kind: str           # ack, progress, result, notice, error
+    kind: str           # ack, progress, result, notice, error, question, approval
     text: str
     part: int = 1
     parts: int = 1
     marker: str = ""    # an opaque recovery marker the adapter embeds where it can
     blocks: Any = None
+    files: tuple = ()   # absolute paths under the hub's output folder, on the last part
 
 
 @dataclass(frozen=True)

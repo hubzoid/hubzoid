@@ -60,8 +60,8 @@ manifest**, paste the file, then **Install to Workspace**. Then you (not the
 assistant) store the tokens:
 
 ```sh
-hubzoid secrets set . --ref secret:channel/my-hub/slack-main/bot-token --stdin --apply
-hubzoid secrets set . --ref secret:channel/my-hub/slack-main/app-token --stdin --apply
+hubzoid secrets set . --ref secret:channel/my-hub/slack-main/bot-token --stdin
+hubzoid secrets set . --ref secret:channel/my-hub/slack-main/app-token --stdin
 ```
 
 Invite the bot to the channel (`/invite @bot`), link each person who may ask,

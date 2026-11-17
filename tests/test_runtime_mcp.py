@@ -97,3 +97,34 @@ def test_no_servers_is_noop():
 
     asyncio.run(go())
     assert rt._agent.mcp_servers == []
+
+
+def test_a_server_whose_variable_is_unset_stays_off(tmp_path, monkeypatch):
+    """`Bearer ${GITHUB_TOKEN}` with no token would fail on every turn with a
+    misleading error; the server stays off until the variable is set."""
+    import json
+
+    from hubzoid.loaders import mcp as mcp_loader
+
+    (tmp_path / "connectors").mkdir()
+    (tmp_path / "connectors" / ".mcp.json").write_text(json.dumps({"mcpServers": {
+        "github": {"transport": "streamable-http", "url": "https://api.example.test/mcp",
+                   "headers": {"Authorization": "Bearer ${HZ_TEST_GH_TOKEN}"}},
+        "plain": {"command": "echo", "args": ["hi"]}}}))
+    monkeypatch.delenv("HZ_TEST_GH_TOKEN", raising=False)
+    assert set(mcp_loader.load_all_raw(tmp_path)) == {"plain"}
+    monkeypatch.setenv("HZ_TEST_GH_TOKEN", "t0ken")
+    servers = mcp_loader.load_all_raw(tmp_path)
+    assert servers["github"]["headers"]["Authorization"] == "Bearer t0ken"
+
+
+def test_an_empty_env_value_is_passed_not_a_reason_to_turn_off(tmp_path, monkeypatch):
+    import json
+
+    from hubzoid.loaders import mcp as mcp_loader
+
+    (tmp_path / "connectors").mkdir()
+    (tmp_path / "connectors" / ".mcp.json").write_text(json.dumps({"mcpServers": {
+        "tool": {"command": "echo", "env": {"HTTP_PROXY": "${HZ_TEST_PROXY}"}}}}))
+    monkeypatch.setenv("HZ_TEST_PROXY", "")
+    assert "tool" in mcp_loader.load_all_raw(tmp_path)
