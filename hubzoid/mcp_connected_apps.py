@@ -255,6 +255,7 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
                 async with asyncio.timeout(LIST_SECONDS):
                     await stack.enter_async_context(server)
                     tools = _allowed(srv, await _all_tools(server))
+                _gate_reads(server, tools)
             except Exception as exc:  # noqa: BLE001
                 _cache.pop(_cache_key(hub_dir, ident, srv), None)
                 log.warning("mcp: connected app %r unavailable (%s)", srv.key, type(exc).__name__)
@@ -320,6 +321,16 @@ async def _refused_connector(hub_dir: Path, ident, name: str, ids: set[str]) -> 
     if any(name.startswith(server_key(cid) + "__") for cid in ids):
         await asyncio.to_thread(audit.record, hub_dir, user=ident.user, surface=ident.surface,
                                 tool=name, decision="deny", reason="connector")
+
+
+def _gate_reads(server, tools: list) -> None:
+    """The approval gate (``guard_mcp_server``) reads ``readOnlyHint``s with the
+    server's ``list_tools``, which in the Agents SDK returns page one only: give
+    it every page, allow-listed, so ``ask: writes`` sees the app's real hints."""
+    async def every_page(*_args, **_kwargs):
+        return tools
+
+    server.list_tools = every_page
 
 
 def _client(hub_dir: Path, srv):

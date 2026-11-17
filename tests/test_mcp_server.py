@@ -828,3 +828,48 @@ def test_a_cancelled_listing_stops_its_app_listings(monkeypatch):
         return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
     assert asyncio.run(go()) == []
+
+
+def test_read_only_hint_on_a_later_page_reaches_the_approval_gate(connected, monkeypatch):
+    """Under ``ask: writes`` a read-only tool runs at once, wherever it is in the
+    app's list: the gate gets every page's hints, not just page one's."""
+    from types import SimpleNamespace
+
+    from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
+
+    from hubzoid import access, runtime
+    from hubzoid import mcp_connected_apps as apps
+
+    hub, _ = connected()
+    (hub / "hitl.yaml").write_text("version: 1\nconnectors:\n  my_mail: {ask: writes}\n")
+    schema = {"type": "object", "properties": {}}
+    first = [Tool(name="whoami", inputSchema=schema)]
+    second = [Tool(name="peek", inputSchema=schema, annotations=ToolAnnotations(readOnlyHint=True))]
+    ran = []
+
+    class Paged:
+        name = "my_mail"
+
+        def __init__(self):
+            async def page(cursor=None):
+                return SimpleNamespace(tools=second if cursor else first, nextCursor=None if cursor else "p2")
+            self.session = SimpleNamespace(list_tools=page)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def list_tools(self, *a, **k):      # the SDK's: page one only
+            return first
+
+        async def call_tool(self, tool_name, arguments=None, *a, **k):
+            ran.append(tool_name)
+            return CallToolResult(content=[TextContent(type="text", text="peeked")])
+
+    monkeypatch.setattr(runtime, "personal_mcp_server", lambda srv: Paged())
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    with access.identity_scope(ana):
+        out = asyncio.run(apps.call(hub, ana, "my_mail__peek", {}))
+    assert ran == ["peek"] and out.content[0].text == "peeked"
