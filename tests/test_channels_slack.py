@@ -352,6 +352,25 @@ def test_doctor_checks_workspace_app_and_channel(hub_dir, web):
     assert checks["slack:workspace"]["code"] == "installation_mismatch"
 
 
+def test_doctor_public_url_follows_the_transport(hub_dir, web, monkeypatch):
+    """Socket Mode connects out, so it needs no public URL (it used to fail
+    doctor with public_url_required); HTTP does, and a local one only warns."""
+    from hubzoid.channels import doctor
+
+    socket = conn_for(hub_dir, transport="socket_mode", signing_secret_ref=None,
+                      app_token_ref="env:SLACK_TEST_APP")
+    out = doctor.run(socket)
+    checks = {c["id"]: c for c in out["checks"]}
+    assert checks["public_url"]["status"] == "skip" and out["webhook_url"] is None
+
+    import dataclasses
+
+    http = dataclasses.replace(socket, settings=socket.settings.model_copy(update={"transport": "http"}))
+    assert {c["id"]: c for c in doctor.run(http)["checks"]}["public_url"]["code"] == "public_url_required"
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://localhost:3080")
+    assert {c["id"]: c for c in doctor.run(http)["checks"]}["public_url"]["status"] == "warn"
+
+
 def test_legacy_listener_refuses_when_a_channel_serves_slack(hub_dir):
     from hubzoid.slack.adapter import _channel_conflict
 

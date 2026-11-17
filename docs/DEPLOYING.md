@@ -660,7 +660,7 @@ enabled: true
 server for WhatsApp (`WHATSAPP_*`), Telegram (`TELEGRAM_*`) and generic
 webhooks (`WEBHOOK_INBOUND_*`); they arrive on the public port at
 `/webhooks/<hub>/…`. A file whose secrets are missing stays off, and
-`hubzoid doctor` and the start say which are missing. See [channels](channels.md)
+the start and `hubzoid channels list` say which are missing. See [channels](channels.md)
 and the Slack walkthrough in [docs/slack.md](slack.md).
 
 ### 10. Troubleshooting

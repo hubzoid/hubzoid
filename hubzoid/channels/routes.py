@@ -125,7 +125,16 @@ def list_all(hub_dir: Path) -> dict:
     for path in config_lib.files(hub_dir):
         if path.stem not in applied:
             unapplied.append({"id": path.stem, "file": str(path.relative_to(hub_dir)), "status": "not_applied"})
-    return {"items": items, "not_applied": unapplied}
+    import os
+
+    from .. import gateway as gateway_lib
+    from . import legacy
+
+    try:
+        older = legacy.status(hub_dir, {**os.environ, **gateway_lib._own_env(hub_dir)})
+    except Exception:  # noqa: BLE001 - the 1.x rows are information only
+        older = []
+    return {"items": items, "not_applied": unapplied, "legacy": older}
 
 
 def thread_detail(hub_dir: Path, hub: str, cid: str, tid: str) -> dict:

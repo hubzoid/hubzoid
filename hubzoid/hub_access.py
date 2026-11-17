@@ -29,15 +29,13 @@ class Viewer:
 
 
 def _trusted_host(request: Request) -> None:
-    from . import appmode
-    from .connectors import http as net
-    from .connectors import oauth_flow
+    """Sign-in off: only a request made on this machine is the owner (the
+    rule in ``auth.sessions.local_request_allowed``); refuse the rest clearly."""
+    from .auth.sessions import local_request_allowed
 
-    if appmode.allowed_origins():
-        return
-    if not net.is_loopback_url(oauth_flow.request_origin(request)):
-        raise error(403, "untrusted_host", "Open Hubzoid at its local address, or set "
-                                           "HUBZOID_PUBLIC_URL to the address people use.")
+    if not local_request_allowed(request):
+        raise error(403, "untrusted_host", "Sign-in is off, so only this computer can use Hubzoid. Open it at "
+                                           "its local address, or turn sign-in on.")
 
 
 def viewer(request: Request, hub_dir: Path) -> Viewer:

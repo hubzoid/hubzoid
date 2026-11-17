@@ -251,16 +251,21 @@ def test_the_web_app_mounts_the_routes_before_the_console_files(hub):
 def test_sign_in_off_answers_only_requests_to_this_machine(hub, monkeypatch):
     """Every request is the owner when sign-in is off, so a page using DNS
     rebinding (Host: its own name) must not reach these routes."""
-    rebound = f.client_for(f.app_for(hub), "http://rebind.example:3599")
-    evil = {"origin": "http://rebind.example:3599"}
-    for r in (rebound.get("/portal/api/connectors"), rebound.get("/api/connections"),
+    # The socket listens on 127.0.0.1; the page names it by its own host.
+    rebound = f.client_for(f.app_for(hub), APP)
+    host = {"host": "rebind.example:3599"}
+    evil = {**host, "origin": "http://rebind.example:3599"}
+    for r in (rebound.get("/portal/api/connectors", headers=host), rebound.get("/api/connections", headers=host),
               rebound.post("/portal/api/connectors", json=body(), headers=evil),
               rebound.post("/api/connections/gmail/connect", json={}, headers=evil)):
         assert r.status_code == 403 and detail(r)["code"] == "untrusted_host"
     assert registry.list_all(hub) == []
-    # An operator who configured the public address may use it.
+    # A configured public address is not this machine; an operator who accepts
+    # unauthenticated network access (a trusted LAN) may use it.
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "http://rebind.example:3599")
-    assert rebound.get("/portal/api/connectors").status_code == 200
+    assert rebound.get("/portal/api/connectors", headers=host).status_code == 403
+    monkeypatch.setenv("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", "true")
+    assert rebound.get("/portal/api/connectors", headers=host).status_code == 200
 
 
 def test_a_connect_needs_a_trusted_redirect_origin(hub, monkeypatch):

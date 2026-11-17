@@ -362,6 +362,16 @@ def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -
     return out
 
 
+def surfaces_for(hub_dir: Path, permission: str) -> frozenset[str]:
+    """Where a restricted capability may be used: its own ``surfaces:`` in
+    ``identity/permissions.yaml`` when set, else ``HUBZOID_RESTRICTED_SURFACES``.
+    The one rule for listing tools, cards and the call-time check."""
+    from .loader import restricted_surfaces
+
+    own = restricted_surfaces(Path(hub_dir)).get(permission)
+    return _allowed_surfaces() if own is None else own
+
+
 def apply(hub_dir: Path, registry: dict) -> dict:
     """Merge guarded restricted tools into `registry`, and make every tool
     recheck the run's account before it runs (``run_checked``).
@@ -370,10 +380,13 @@ def apply(hub_dir: Path, registry: dict) -> dict:
     an unguarded built-in). Every runtime's factory calls this, so the check is
     the same on Claude, Codex and the Agents SDK.
     """
+    from .loader import restricted_surfaces
+
     restricted = load_restricted(Path(hub_dir))
+    own = restricted_surfaces(Path(hub_dir)) if restricted else {}
     out = dict(registry)
     for ft, permission in restricted:
-        out[ft.name] = guard_tool(ft, permission, hub_dir)
+        out[ft.name] = guard_tool(ft, permission, hub_dir, surfaces=own.get(permission))
     if restricted:
         log.info(
             "access: %d restricted tool(s) under %d permission(s) loaded",

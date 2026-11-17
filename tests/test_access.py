@@ -10,6 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from agents import function_tool
 from agents.tool_context import ToolContext
 
@@ -145,10 +146,58 @@ def test_restricted_surfaces_env_override(tmp_path, monkeypatch):
         assert guarded.is_enabled(None, None) is True
 
 
+def test_one_capability_can_open_a_surface_alone(tmp_path, monkeypatch):
+    """`surfaces:` on one restricted capability in identity/permissions.yaml
+    replaces HUBZOID_RESTRICTED_SURFACES for it alone: WhatsApp can reach the
+    password-reset tools without reaching every other restricted tool."""
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    rdir = tmp_path / "restricted"
+    rdir.mkdir()
+    (rdir / "reset.py").write_text(_RESTRICTED_TOOL_SRC.replace("erp_sales", "reset_password")
+                                   .replace("erp_stock", "unlock_account"))
+    (rdir / "erp.py").write_text(_RESTRICTED_TOOL_SRC)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(
+        "reset:\n  label: Password resets\n  surfaces: [web, whatsapp]\n")
+    for subject in ("p",):
+        _grant(tmp_path, subject, "reset")
+        _grant(tmp_path, subject, "erp")
+    registry = access.apply(tmp_path, {})
+    on = lambda name, surface: _visible_as(registry[name], surface)  # noqa: E731
+    assert on("reset_password", "whatsapp") and on("reset_password", "web")
+    assert not on("reset_password", "api")                     # its own list replaces the default
+    assert not on("erp_sales", "whatsapp") and on("erp_sales", "api")   # the others keep the default
+    assert guard.surfaces_for(tmp_path, "reset") == frozenset({"web", "whatsapp"})
+    assert guard.surfaces_for(tmp_path, "erp") == guard.allowed_surfaces()
+
+
+def _visible_as(tool, surface: str) -> bool:
+    with identity_scope(Identity.make("p", [], surface=surface)):
+        return tool.is_enabled(None, None)
+
+
+@pytest.mark.parametrize("surfaces, words", [
+    ("[slack-channel]", "never allowed"),
+    ("[kiosk]", "unknown surface 'kiosk'"),
+    ("whatsapp", "is a list of names"),
+])
+def test_capability_surfaces_are_checked(tmp_path, monkeypatch, surfaces, words):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(f"reset:\n  surfaces: {surfaces}\n")
+    with pytest.raises(ValueError, match=words):
+        loader.restricted_surfaces(tmp_path)
+    # A deployment's own surface name (listed in the env) is accepted.
+    if surfaces == "[kiosk]":
+        monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "web,kiosk")
+        assert loader.restricted_surfaces(tmp_path) == {"reset": frozenset({"kiosk"})}
+
+
 # ---------------------------------------------------------------------------
 # loader + apply
 # ---------------------------------------------------------------------------
 _RESTRICTED_TOOL_SRC = '''
+import pytest
 from agents import function_tool
 
 @function_tool

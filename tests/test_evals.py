@@ -517,3 +517,60 @@ def test_recorder_collects_and_then_stops():
     assert [c["name"] for c in calls] == ["a", "b"]
     _request_ctx.record_tool_call("c")
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Tool names an eval names must exist (a misspelled forbid_tools never fired)
+# ---------------------------------------------------------------------------
+def _named(**fields):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(expect_tools=fields.get("expect", []), forbid_tools=fields.get("forbid", []),
+                           expect_tool_args=fields.get("args", {}))
+
+
+def test_an_unknown_tool_name_fails_with_the_closest_one():
+    from hubzoid.evals.judge import ToolInventory
+
+    inv = ToolInventory(frozenset({"reset_password", "read_knowledge", "load_skill"}))
+    (check,) = assertions.check_tool_names(_named(forbid=["reset_pasword"]), inv)
+    assert not check.passed and check.kind == "tool_name"
+    assert "forbid_tools: no tool named reset_pasword" in check.detail and "closest: reset_password" in check.detail
+    assert assertions.check_tool_names(_named(expect=["mcp__hubzoid__read_knowledge"]), inv) == []
+    (skill,) = assertions.check_tool_names(_named(args={"triage_ticket": {"x": "y"}}), inv)
+    assert "load_skill" in skill.detail                      # a skill is not a tool
+    assert assertions.check_tool_names(_named(forbid=["nope"]), None) == []   # unknown inventory: no check
+
+
+def test_names_under_run_time_servers_are_not_failed():
+    """A server's or connector's tools are only known when a turn runs."""
+    from hubzoid.evals.judge import ToolInventory
+
+    inv = ToolInventory(frozenset({"whoami"}), servers=frozenset({"servicenow", "my_jira"}))
+    case = _named(forbid=["mcp__servicenow__delete_user", "mcp__my_jira__close_issue"])
+    assert assertions.check_tool_names(case, inv) == []
+    (wrong,) = assertions.check_tool_names(_named(forbid=["mcp__service_now__delete_user"]), inv)
+    assert "no tool named mcp__service_now__delete_user" in wrong.detail
+    # The OpenAI Agents backend lists its MCP servers' tools under bare names at run time.
+    open_ai = ToolInventory(frozenset({"whoami"}), servers=frozenset({"servicenow"}), bare_dynamic=True)
+    assert assertions.check_tool_names(_named(forbid=["delete_user"]), open_ai) == []
+
+
+def test_a_claude_delegate_call_reads_as_its_handover_tool():
+    from hubzoid.evals.results import ToolCallRecord
+
+    case = _named(expect=["handover_password_reset"])
+    case.contains, case.not_contains = [], []
+    calls = [ToolCallRecord(name="Agent", args={"subagent_type": "Password Reset"})]
+    checks = assertions.run_free_checks(case, response="", tool_calls=["Agent"], tools=calls)
+    assert checks and all(c.passed for c in checks)
+
+
+def test_the_runner_fails_a_case_whose_forbid_name_never_exists(tmp_path, patched_build):
+    hub = _hub(tmp_path, {"t.md": "---\nforbid_tools: [http_gett]\n---\nwho am i"})
+    rt = FakeRuntime(replies={"who am i": "you are shreya"})
+    rt.registry = {"whoami": object(), "http_get": object()}
+    patched_build(rt)
+    suite = runner.run_suite(hub, cases.discover(hub))
+    assert not suite.ok
+    assert "no tool named http_gett in this agent (closest: http_get)" in suite.cases[0].reason

@@ -8,9 +8,11 @@ only genuine difference is which LLM is deciding.
 
 How identity is preserved:
   * Skills, knowledge, MCP configs    -> same loaders, unchanged.
-  * `agents/` folder                  -> promoted to skills by the shared
-    `_load_skills_and_promoted_agents` helper; no Claude SDK sub-agents
-    are wired. The main agent loads them inline via `load_skill(<name>)`.
+  * `agents/` folder                  -> split by `handover.classify`: a
+    sub-agent on a different model of this engine is a Claude SDK sub-agent
+    (`AgentDefinition`, called with the `Agent` tool, answered within the
+    turn: background sub-agents are off); the rest load inline as skills via
+    `load_skill(<name>)`.
   * Tools (pre-shipped + hub-local)   -> same FunctionTool registry from
     `make_builtin_tools(ctx)` + `tools_local_loader.load_all`. Each
     FunctionTool is wrapped via `_to_claude_tool` and bundled into a
@@ -29,6 +31,7 @@ CLAUDE_* keys pass. See `config_secrets.child_env_overrides`.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -558,6 +561,12 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
     child_env = _child_env(hub_model)
+    if agent_defs:
+        # A delegate answers within the turn, as on the OpenAI and Codex
+        # backends: without this the model may start one in the background and
+        # the turn ends before its answer. It also keeps a long MCP call in the
+        # turn instead of moving it to the background, which Hubzoid wants too.
+        child_env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
     if child_env:
         opts_kwargs["env"] = child_env
     if agent_defs:
@@ -895,6 +904,97 @@ def _guarded(options, guard):
     return dataclasses.replace(options, hooks=hooks)
 
 
+def _connector_allowlists(options) -> dict[str, set[str]]:
+    """``{server key: allowed tool names}`` for this turn's MCP servers whose
+    tools are limited to an allow-list (a connector's ``tools:``), read from the
+    options: such a server has named ``mcp__<key>__<tool>`` entries in
+    ``allowed_tools`` and no ``mcp__<key>__*``."""
+    out: dict[str, set[str]] = {}
+    keys = sorted((str(k) for k in (getattr(options, "mcp_servers", None) or {}) if k != _MCP_NAMESPACE),
+                  key=len, reverse=True)
+    allowed = [str(t) for t in getattr(options, "allowed_tools", None) or []]
+    for key in keys:
+        prefix = f"mcp__{key}__"
+        names = {t[len(prefix):] for t in allowed if t.startswith(prefix)}
+        if names and "*" not in names:
+            out[key] = names
+    return out
+
+
+_TOOL_LIST_TTL = 60.0
+_tool_lists: dict[tuple[str, str], tuple[float, list[str]]] = {}
+
+
+async def _list_server_tools(spec: dict) -> list[str]:
+    """The tool names an HTTP MCP server offers this caller, cached for a minute
+    per URL and credential. Raises when the server can't be listed."""
+    import hashlib
+    import json
+    import time
+
+    from .loaders.mcp import call_timeout
+
+    key = (str(spec.get("url")), hashlib.sha256(json.dumps(spec.get("headers") or {}, sort_keys=True)
+                                                .encode()).hexdigest())
+    hit = _tool_lists.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _TOOL_LIST_TTL:
+        return hit[1]
+
+    async def fetch() -> list[str]:
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        names: list[str] = []
+        async with streamablehttp_client(str(spec["url"]), headers=dict(spec.get("headers") or {})) as (r, w, _):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                cursor = None
+                while True:
+                    page = await session.list_tools(cursor=cursor)
+                    names += [t.name for t in page.tools]
+                    cursor = page.nextCursor
+                    if not cursor:
+                        return names
+
+    # Its own task: the MCP client's cancel scopes must open and close in one task.
+    names = await asyncio.wait_for(asyncio.ensure_future(fetch()), timeout=min(call_timeout(), 10.0))
+    _tool_lists[key] = (time.monotonic(), names)
+    return names
+
+
+async def _hide_unlisted_connector_tools(options):
+    """Show the model only a connector's allowed tools, as the OpenAI and Codex
+    backends do (their MCP client filters the list). Claude's CLI lists a
+    server's tools itself, so the others are named in ``disallowed_tools``,
+    which removes them from what the model sees. A connector whose tools can't
+    be listed is left out of this turn (fail closed, like the other backends).
+    The PreToolUse hook (``_identity_checked``) also refuses a call outside the
+    allow-list, so a tool the server adds after this listing can't be used."""
+    import dataclasses
+
+    limits = _connector_allowlists(options)
+    if not limits:
+        return options
+    servers = dict(options.mcp_servers or {})
+    allowed = list(options.allowed_tools or [])
+    hidden = list(getattr(options, "disallowed_tools", None) or [])
+    for key, names in limits.items():
+        spec = servers.get(key)
+        if not isinstance(spec, dict) or spec.get("type") != "http" or not spec.get("url"):
+            continue
+        try:
+            listed = await _list_server_tools(spec)
+        except Exception as exc:  # noqa: BLE001 - can't tell what to hide: leave the connector out
+            log.warning("connector %s: its tools could not be listed (%s), so it is left out of this turn",
+                        key, type(exc).__name__)
+            servers.pop(key, None)
+            allowed = [t for t in allowed if not str(t).startswith(f"mcp__{key}__")]
+            continue
+        hidden += [f"mcp__{key}__{t}" for t in listed if t not in names]
+    return dataclasses.replace(options, mcp_servers=servers, allowed_tools=allowed,
+                               disallowed_tools=list(dict.fromkeys(hidden)))
+
+
 def _identity_checked(options, hub_dir, ident):
     """A PreToolUse hook for the tools Hubzoid does not wrap itself (outside
     MCP servers, Claude's own tools): the same per-call check as every hub
@@ -941,9 +1041,16 @@ def _identity_checked(options, hub_dir, ident):
         hub_server, connector = server_source(Path(hub_dir), key)
         return {"tool": full[len("mcp__") + len(key) + 2:], "server": hub_server, "connector": connector}
 
+    limits = _connector_allowlists(options)
+
     async def admit(tool_input, _tool_use_id, _context):
         full = str((tool_input or {}).get("tool_name") or "")
         found = owners(full) if full.startswith("mcp__") else []
+        if found and found[0] in limits and full[len("mcp__") + len(found[0]) + 2:] not in limits[found[0]]:
+            # Outside the connector's allowed tools: hidden from the model, and
+            # refused here too (a tool the server added after the listing).
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": "This connector does not allow this tool."}}
         if for_app and len(found) > 1:
             # "erp" and "erp__admin" both fit "mcp__erp__admin__x": which server
             # owns the tool can't be told from its name, so an app may not use it.
@@ -1366,7 +1473,7 @@ class ClaudeRuntime:
         stderr = _StderrTail()
         error_status: int | None = None
         try:
-            turn_options = self._options_for_turn()
+            turn_options = await _hide_unlisted_connector_tools(self._options_for_turn())
             if self._hub_dir is not None:
                 from .access import current_identity
 

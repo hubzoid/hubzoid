@@ -58,6 +58,23 @@ def classify(sub_model: str | None, hub_model: str | None) -> str:
     return "delegate"
 
 
+def skill_reason(sub_model: str | None, hub_model: str | None) -> str:
+    """Why `classify` makes this sub-agent a skill, in a few words ("" for a
+    delegate). Doctor and the load-time log say this, so a sub-agent that
+    quietly lost its own model and `tools:` list says why."""
+    sub, hub = (sub_model or "").strip(), (hub_model or "").strip()
+    if not sub:
+        return "it names no model:"
+    if not hub:
+        return "it is offered over MCP, where the caller brings its own model"
+    if engine(sub) != engine(hub):
+        return (f"its model {sub!r} runs on a different engine than the agent's {hub!r}; "
+                "a delegate must use the same engine")
+    if norm(sub) == norm(hub):
+        return f"its model {sub!r} is the same as the agent's {hub!r}"
+    return ""
+
+
 def tool_name(agent_name: str) -> str:
     """The tool name the main agent uses to call a delegate."""
     slug = re.sub(r"[^a-z0-9]+", "_", (agent_name or "").strip().lower()).strip("_")

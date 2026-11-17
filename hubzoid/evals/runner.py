@@ -75,6 +75,17 @@ def judge_tools(rt) -> list[str]:
         return []
 
 
+def tool_inventory(rt, hub_dir=None):
+    """Every tool this hub declares, for checking the names a case names.
+    Never fails the run: an unknown inventory skips that check."""
+    try:
+        from .judge import tool_inventory as inventory_of
+        return inventory_of(rt, hub_dir)
+    except Exception as exc:  # noqa: BLE001 — an unknown inventory is survivable
+        log.debug("could not read the tool inventory: %s", exc)
+        return None
+
+
 def offered_tools(rt, available: list[str] | None) -> list[str] | None:
     """`available` without the tools this case's caller is not shown, so the
     judge never expects a call to a tool the agent could not see. Asked inside
@@ -287,7 +298,8 @@ def _judge_extras(judge_fn) -> set[str]:
 async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                    tools_available: list[str] | None = None,
                    hub_dir: Path | None = None,
-                   run_as: str | None = None) -> CaseResult:
+                   run_as: str | None = None,
+                   inventory=None) -> CaseResult:
     """Run a single case to a verdict. Never raises — failures become results."""
     result = CaseResult(name=case.name, tags=list(case.tags), prompt=case.prompts[0],
                         case_digest=case.digest or None)
@@ -380,7 +392,8 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     if fakes is not None:
         _mark_blocked(result.tools, fakes.blocked)
     result.checks = assertions.run_free_checks(
-        case, response=result.response, tool_calls=result.tool_calls, tools=result.tools)
+        case, response=result.response, tool_calls=result.tool_calls, tools=result.tools,
+        inventory=inventory)
     if fakes is not None:
         result.checks.append(_fakes_check(fakes))
 
@@ -503,17 +516,19 @@ async def arun_suite(
     opened: list = []
     try:
         available: dict = {}
+        inventories: dict = {}
         for kind, rt in runtimes.items():
             await rt.aopen()
             opened.append(rt)
             # After aopen(), so MCP-provided tools are in the inventory too.
             available[kind] = judge_tools(rt) if judge_fn is not None else None
+            inventories[kind] = tool_inventory(rt, hub_dir)
         for case in cases:
             log.info("eval: running %s", case.name)
             kind = bool(case.is_faked)
             result = await _run_one(runtimes[kind], case, judge_fn=judge_fn,
                                     tools_available=available[kind],
-                                    hub_dir=hub_dir, run_as=run_as)
+                                    hub_dir=hub_dir, run_as=run_as, inventory=inventories[kind])
             suite.cases.append(result)
             if on_case is not None:
                 on_case(result)

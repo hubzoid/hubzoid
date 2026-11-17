@@ -151,12 +151,14 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
     return out
 
 
-def to_skill(loaded: "LoadedAgent"):
+def to_skill(loaded: "LoadedAgent", reason: str = "", *, over_mcp: bool = False):
     """Convert one sub-agent into a LoadedSkill (loaded inline by the main agent).
 
     A `tools:` whitelist is meaningless for a skill (the main agent owns the
-    whole registry), so it is dropped with a log warning if present — this
-    mirrors the historical behavior for promoted agents.
+    whole registry), so it is dropped with a log warning if present, naming
+    `reason` (``handover.skill_reason``). Over MCP every sub-agent is a skill
+    by design (the caller brings its own model), so that path logs at debug:
+    its warning was indistinguishable from a real misconfiguration.
     """
     import logging
 
@@ -164,10 +166,12 @@ def to_skill(loaded: "LoadedAgent"):
 
     log = logging.getLogger("hubzoid.loaders.agents")
     if loaded.spec.tools:
-        log.warning(
+        why = f" because {reason}" if reason else ""
+        log.log(
+            logging.DEBUG if over_mcp else logging.WARNING,
             "%s: tools whitelist %r is ignored — this agent is loaded as a "
-            "skill; the main agent owns all tools.",
-            loaded.source_path, loaded.spec.tools,
+            "skill%s; the main agent owns all tools.",
+            loaded.source_path, loaded.spec.tools, why,
         )
     spec = SkillSpec(name=loaded.spec.name, description=loaded.spec.description)
     return LoadedSkill(spec=spec, body=loaded.instructions,

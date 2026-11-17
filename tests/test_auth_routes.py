@@ -473,6 +473,26 @@ def test_access_logs_never_hold_link_tokens_or_oauth_codes(hub):
     assert logredact.redact("/c/abc?q=1") == "/c/abc?q=1"
 
 
+def test_the_edge_access_log_never_holds_an_api_key(monkeypatch):
+    """A client may put its key in the query string (``?api_key=``); the edge's
+    access log used to record it in full."""
+    import logging
+
+    from hubzoid import edge
+    from hubzoid.auth import logredact
+
+    edge._redact_oauth_callback_logs()   # what the edge does as it starts
+    logger = logging.getLogger("uvicorn.access")
+    assert any(isinstance(f, logredact.RedactCredentials) for f in logger.filters)
+    record = logger.makeRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("203.0.113.7:5000", "GET", "/v1/models?api_key=hz_SECRET1&x=1&Client_Secret=S2", "1.1", 200), None)  # gitleaks:allow
+    for f in logger.filters:
+        f.filter(record)
+    line = record.getMessage()
+    assert "hz_SECRET1" not in line and "S2" not in line and "x=1" in line
+
+
 def test_the_local_owner_never_signs_in_with_a_password(hub):
     """Open WebUI created admin@localhost with the password "admin"; with
     sign-in on, that account must not open with it (nor with a link)."""

@@ -334,7 +334,7 @@ def test_local_mode_is_the_local_owner(hub, monkeypatch):
 
 @pytest.mark.parametrize("host,allowed", [
     ("localhost:3080", True), ("127.0.0.1:3080", True), ("[::1]:3080", True),
-    ("192.168.1.20:3080", True), ("app.localhost", True), ("testserver", True),
+    ("192.168.1.20:3080", False), ("app.localhost", True), ("testserver", True),
     ("evil.example.com", False), ("evil.example.com:3080", False),
     ("my-laptop:3080", False), ("evil", False),
 ])
@@ -359,11 +359,38 @@ def test_a_forwarded_address_cannot_unlock_local_mode(hub, monkeypatch):
     assert r.json()["email"] is None
 
 
-def test_local_mode_accepts_configured_names(hub, monkeypatch):
+def test_a_configured_public_name_is_not_the_owner(hub, monkeypatch):
+    """Our docs once said to list a tunnel's address in HUBZOID_PUBLIC_URL,
+    which made every internet visitor the owner. A configured name no longer
+    makes a request local; HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK keeps the
+    earlier rule for an operator who accepts it (a trusted LAN, Docker)."""
     monkeypatch.delenv("HUBZOID_AUTH")
     monkeypatch.setenv("HUBZOID_ALLOWED_ORIGINS", "https://hub.example.com")
     c = client(hub)
+    assert c.get("/whoami", headers={"host": "hub.example.com"}).json()["email"] is None
+    monkeypatch.setenv("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", "true")
     assert c.get("/whoami", headers={"host": "hub.example.com"}).json()["email"] == "admin@localhost"
+    assert c.get("/whoami", headers={"host": "192.168.1.20:3080"}).json()["email"] == "admin@localhost"
+
+
+@pytest.mark.parametrize("headers,peer", [
+    ({"x-forwarded-for": "203.0.113.9"}, "127.0.0.1"),        # ngrok, nginx: the tunnel's local leg
+    ({"cf-connecting-ip": "203.0.113.9"}, "127.0.0.1"),       # Cloudflare Tunnel
+    ({"x-forwarded-host": "abc.ngrok-free.app"}, "127.0.0.1"),
+    ({"x-forwarded-for": "127.0.0.1"}, "127.0.0.1"),          # a forged loopback address
+    ({}, "203.0.113.9"),                                      # a connection from elsewhere
+    ({"origin": "https://evil.example.com"}, "127.0.0.1"),    # another site's page on this machine
+])
+def test_a_tunnel_or_proxy_is_not_the_local_owner(hub, monkeypatch, headers, peer):
+    """A tunnel's local leg connects to loopback with Host: localhost, so the
+    Host alone is not proof. Signed webhooks need no owner and still work."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("HUBZOID_AUTH")
+    c = TestClient(client(hub).app, base_url="http://localhost:3080", client=(peer, 50000))
+    assert c.get("/whoami", headers=headers).json()["email"] is None
+    local = TestClient(client(hub).app, base_url="http://localhost:3080")
+    assert local.get("/whoami", headers={"origin": "http://localhost:3080"}).json()["email"] == "admin@localhost"
 
 
 # ---- changes racing an administrator's action (review findings) ------------------------

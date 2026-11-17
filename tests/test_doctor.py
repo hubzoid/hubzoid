@@ -20,6 +20,7 @@ STABLE_IDS = {
     "secrets.names", "auth.google_merge",
     "ui.mode", "ui.openwebui_extra", "ui.openwebui_data", "exposure.local_mode", "deployment.key",
     "tools.legacy_management_flag", "access.who", "mcp.access_group", "tools.schemas", "files.s3",
+    "connectors.files", "agents.mode",
 }
 
 
@@ -254,3 +255,18 @@ def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
     assert _by_id(doc.run(hub))["access.who"].summary == "2 people may use hub"
     monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
     assert _by_id(doc.run(hub))["mcp.access_group"].status == "warn"
+
+
+def test_connector_files_that_do_not_load_are_named(hub):
+    """A connector file the loader leaves out (a hyphen in its name, a bad .yml)
+    used to leave doctor green while the connector was simply missing."""
+    folder = hub / "connectors"
+    folder.mkdir()
+    good = "name: Jira\nurl: https://jira-mcp.example.org/mcp\nsign_in: none\n"
+    (folder / "jira-cloud.yaml").write_text(good)
+    (folder / "helpdesk.yml").write_text("name: Desk\nurl: ftp://nope\n")
+    (folder / "tickets.yaml").write_text(good)
+    check = _by_id(doc._hub_checks(hub))["connectors.files"]
+    assert check.status == "warn" and "2 connector file(s)" in check.summary
+    joined = " ".join(check.detail)
+    assert "jira-cloud.yaml" in joined and "jira_cloud.yaml" in joined and "helpdesk.yml" in joined

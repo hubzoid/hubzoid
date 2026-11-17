@@ -42,10 +42,12 @@ _TOKEN_SHAPES = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
     r"|xox[abposr]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}"
     r"|AKIA[0-9A-Z]{16})\b")
-# One-time sign-in values in URLs and access-log lines.
+# Credentials in URLs and access-log lines: one-time sign-in values, and keys a
+# client puts in a query string (``?api_key=``, which the edge logged in full).
 _URL_PATTERNS = (
     (re.compile(r"(/api/auth/link/)[^/?#\s\"']+"), r"\1" + REDACTED),
-    (re.compile(r"([?&](?:token|code|state)=)[^&#\s\"']+"), r"\1" + REDACTED),
+    (re.compile(r"(?i)([?&](?:token|code|state|api[_-]?key|key|access_token|refresh_token|id_token"
+                r"|client_secret|password|secret|signature|sig)=)[^&#\s\"']+"), r"\1" + REDACTED),
 )
 
 

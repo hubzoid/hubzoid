@@ -85,3 +85,65 @@ class TestScopedToolNames:
     def test_empty_whitelist_returns_all_available(self):
         out = handover.scoped_tool_names([], ["read_file", "write_artifact"])
         assert out == ["read_file", "write_artifact"]
+
+
+class TestSkillReason:
+    """Why a sub-agent is loaded as a skill, for doctor and the load-time log."""
+
+    @pytest.mark.parametrize("sub, hub, words", [
+        (None, "claude-local", "names no model"),
+        ("claude-local/opus", None, "over MCP"),
+        ("openrouter/anthropic/claude-haiku-4.5", "claude-local", "different engine"),
+        ("claude-local/sonnet", "claude-local", "same as the agent's"),
+    ])
+    def test_reasons(self, sub, hub, words):
+        assert handover.classify(sub, hub) == "skill"
+        assert words in handover.skill_reason(sub, hub)
+
+    def test_a_delegate_has_no_reason(self):
+        assert handover.skill_reason("claude-local/opus", "claude-local/sonnet") == ""
+
+
+def _subagent(tmp_path, model):
+    from hubzoid.loaders import agents as agents_loader
+
+    hub = tmp_path / "hub"
+    (hub / "agents").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("---\nname: hub\n---\nMain.\n")
+    (hub / "agents" / "reset.md").write_text(
+        f"---\nname: reset\ndescription: Resets passwords.\nmodel: {model}\ntools: [read_knowledge]\n---\nReset.\n")
+    return hub, agents_loader.load_subagents(hub)[0]
+
+
+def test_the_mcp_path_does_not_warn_about_ignored_tools(tmp_path, caplog):
+    """Over MCP every sub-agent is a skill by design; its warning was the same
+    as a real misconfiguration's. The chat path still warns, with the reason."""
+    from hubzoid import factory
+
+    hub, _ = _subagent(tmp_path, "claude-local/opus")
+    with caplog.at_level(logging.WARNING, logger="hubzoid.loaders.agents"):
+        skills = factory._load_skills_and_promoted_agents(hub)
+    assert [s.spec.name for s in skills] == ["reset"]
+    assert not [r for r in caplog.records if "whitelist" in r.message]
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hubzoid.loaders.agents"):
+        factory._load_skills_and_delegates(hub, "claude-local/opus")
+    (record,) = [r for r in caplog.records if "whitelist" in r.getMessage()]
+    assert "same as the agent's" in record.getMessage()
+
+
+def test_doctor_says_which_subagents_lost_their_tools(tmp_path, monkeypatch):
+    from hubzoid import doctor
+
+    monkeypatch.setenv("MODEL", "claude-local")
+    hub, _ = _subagent(tmp_path, "openrouter/anthropic/claude-haiku-4.5")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.id == "agents.mode" and check.status == "warn"
+    assert any("reset: model: openrouter/anthropic/claude-haiku-4.5 and tools: ['read_knowledge']" in d
+               for d in check.detail)
+
+    (hub / "agents" / "reset.md").write_text(
+        "---\nname: reset\ndescription: Resets.\nmodel: claude-local/opus\ntools: [read_knowledge]\n---\nReset.\n")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.status == "ok" and check.detail == ["reset: runs on its own, on claude-local/opus"]

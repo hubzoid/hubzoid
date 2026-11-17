@@ -114,7 +114,11 @@ def list_cmd(hub: Path = HUB, as_json: bool = JSON):
         console.print(t)
         for c in d["not_applied"]:
             console.print(f"[yellow]{escape(c['file'])} is not applied yet (hubzoid channels apply).[/yellow]")
-        if not d["items"] and not d["not_applied"]:
+        for c in d.get("legacy") or []:
+            note = f" {c['note']}" if c.get("note") else ""
+            console.print(f"1.x channel {escape(c['provider'])} ({escape(c['source'])}): "
+                          f"{escape(c['status'])}.{escape(note)}")
+        if not d["items"] and not d["not_applied"] and not d.get("legacy"):
             console.print("No channels. Add channels/<id>.yaml and apply it.")
 
     _out(data, as_json, show)

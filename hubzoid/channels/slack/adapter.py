@@ -154,6 +154,11 @@ class SlackAdapter(Adapter):
     webhook = True
     feedback_target = "agent"
 
+    def receives_webhooks(self, conn) -> bool:
+        """Socket Mode connects out to Slack, so only `transport: http` needs
+        a public URL."""
+        return getattr(conn.settings, "transport", "http") == "http"
+
     # -- intake -----------------------------------------------------------------
     def verify(self, conn, raw: bytes, headers: dict, query: dict) -> Verified | Challenge:
         from slack_sdk.signature import SignatureVerifier

@@ -92,6 +92,53 @@ def _norm_tool(name: str) -> str:
     return short_name((name or "").strip()).lower()
 
 
+def _call_name(call) -> str:
+    """A call's tool name as every backend names it: Claude records a delegate
+    as its ``Agent`` tool with ``subagent_type``; the others as ``handover_<name>``."""
+    name = getattr(call, "name", "") or ""
+    args = getattr(call, "raw_args", None) or getattr(call, "args", None) or {}
+    if name == "Agent" and isinstance(args, dict) and args.get("subagent_type"):
+        from .. import handover
+
+        return handover.tool_name(str(args["subagent_type"]))
+    return name
+
+
+def _tool_known(name: str, inventory) -> bool:
+    norm = _norm_tool(name)
+    if norm in inventory.names:
+        return True
+    if norm.startswith("mcp__"):
+        server = norm[len("mcp__"):].split("__", 1)[0]
+        return server in inventory.servers           # its tools are only known when a turn runs
+    return inventory.bare_dynamic                    # may be an MCP tool listed at run time
+
+
+def check_tool_names(case, inventory) -> list[Check]:
+    """Each tool an eval names must exist in this agent, or the check can never
+    fire: a misspelled `forbid_tools` name used to pass forever. Names under an
+    MCP server or connector whose tools are only known at run time are not
+    failed. `inventory` is ``judge.tool_inventory``; None skips the check."""
+    if inventory is None or not inventory.names:
+        return []
+    import difflib
+
+    out: list[Check] = []
+    fields = (("expect_tools", case.expect_tools), ("forbid_tools", case.forbid_tools),
+              ("expect_tool_args", list((getattr(case, "expect_tool_args", None) or {}).keys())))
+    for field, names in fields:
+        for name in names or []:
+            if _tool_known(name, inventory):
+                continue
+            close = difflib.get_close_matches(_norm_tool(name), sorted(inventory.names), n=1, cutoff=0.6)
+            hint = f" (closest: {close[0]})" if close else ""
+            if not close and not _norm_tool(name).startswith("mcp__"):
+                hint = (" (an MCP server's tool is mcp__<server>__<tool>; a skill is loaded with load_skill, "
+                        "check it with expect_tool_args: {load_skill: {name: ...}})")
+            out.append(Check("tool_name", False, f"{field}: no tool named {name} in this agent{hint}"))
+    return out
+
+
 def check_contains(response: str, needles: list[str]) -> list[Check]:
     """Substring checks, **case-insensitive**.
 
@@ -171,6 +218,7 @@ def run_free_checks(
     response: str,
     tool_calls: list[str],
     tools: list | None = None,
+    inventory=None,
 ) -> list[Check]:
     """Every model-free assertion declared on `case`, in table order.
 
@@ -184,7 +232,10 @@ def run_free_checks(
         from .results import ToolCallRecord
 
         tools = [ToolCallRecord(name=n) for n in tool_calls]
-    checks: list[Check] = []
+    else:
+        # A Claude delegate call (Agent + subagent_type) reads as handover_<name>.
+        tool_calls = [_call_name(c) for c in tools] if len(tools) == len(tool_calls) else tool_calls
+    checks: list[Check] = check_tool_names(case, inventory)
     checks += check_expect_tools(tool_calls, case.expect_tools)
     checks += check_forbid_tools(tool_calls, case.forbid_tools, tools)
     checks += check_expect_tool_args(tools, getattr(case, "expect_tool_args", None) or {})

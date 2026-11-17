@@ -28,6 +28,21 @@ os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
 # about something else; tests/test_backup_verify.py runs the schedule itself.
 os.environ.setdefault("HUBZOID_BACKUPS", "off")
 
+# With sign-in off only a connection from this machine is the owner
+# (auth.sessions.local_request_allowed). Starlette's in-process client reports
+# the made-up peer "testclient", so tests connect as 127.0.0.1, which is what a
+# browser on this machine is. A test about another peer passes `client=`.
+from starlette import testclient as _starlette_testclient  # noqa: E402
+
+_testclient_init = _starlette_testclient.TestClient.__init__
+
+
+def _loopback_testclient_init(self, app, *args, client=("127.0.0.1", 50000), **kwargs):
+    _testclient_init(self, app, *args, client=client, **kwargs)
+
+
+_starlette_testclient.TestClient.__init__ = _loopback_testclient_init
+
 # A test must never signal "every process I own": os.kill(-1) or os.killpg(0/1)
 # (killpg(1) is kill(-1)). On a CI runner that kills the runner itself, and the
 # job hangs with no log. A stand-in process (MagicMock pid == 1) is the usual way in.

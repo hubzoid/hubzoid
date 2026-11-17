@@ -85,6 +85,13 @@ class Adapter:
     #: answer), "workflow" (a workflow's final reply), or "" for none
     feedback_target: ClassVar[str] = ""
 
+    def receives_webhooks(self, conn: "Connection") -> bool:
+        """Whether THIS connection takes deliveries by webhook, so it needs
+        HUBZOID_PUBLIC_URL. Defaults to the provider's `webhook`; a provider
+        whose connections choose a transport (Slack Socket Mode, GitHub
+        without a webhook secret) answers per connection."""
+        return self.webhook
+
     def route(self, hub_dir, conn: "Connection", row: dict, thread: dict, event: InboundEvent):
         """Take over routing for this provider (intake adapters hand events to
         the intake service). Return (outcome, plan) like the core router, or
