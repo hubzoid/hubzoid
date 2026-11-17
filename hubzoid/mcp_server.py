@@ -434,7 +434,10 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                 return await call_next(context)
             import uuid
 
-            ident, refused = _admitted(hub_dir, f"hubzoid-mcp-{uuid.uuid4().hex[:12]}")
+            import asyncio
+
+            # Blocking store work: in a thread (the request's context goes with it).
+            ident, refused = await asyncio.to_thread(_admitted, hub_dir, f"hubzoid-mcp-{uuid.uuid4().hex[:12]}")
             if refused is not None:
                 from fastmcp.tools.tool import ToolResult
 

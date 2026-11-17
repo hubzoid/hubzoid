@@ -759,3 +759,72 @@ def test_connected_app_call_rechecks_the_grant_after_connecting(connected, monke
     (out,) = _ana(app, _tool_call("my_mail__whoami"))
     assert h.failed(out) and _UPSTREAM == []
     assert [r["decision"] for r in audit.read(hub, tool="my_mail__whoami")] == ["deny"]
+
+
+def test_connected_app_call_rereads_the_allow_list_before_forwarding(connected, monkeypatch):
+    """An allow-list narrowed while the app was being reached stops the call."""
+    import yaml
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.connectors import registry
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    found = apps._servers(hub, ana)                       # the lookup made before the change
+    path = registry.folder(hub) / "mail.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["tools"] = ["mail_search"]
+    path.write_text(yaml.safe_dump(doc))
+    monkeypatch.setattr(apps, "_servers", lambda *a: found)
+    (out,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(out) and "Use Mail" in h.text_of(out) and _UPSTREAM == []
+
+
+def test_an_ambiguous_alias_is_not_forwarded_when_one_app_fails():
+    """``my_acme__delete__item`` could be acme's ``delete__item`` or acme__delete's
+    ``item``: with one of them down, it is still not called."""
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.personal_mcp import PerUserServer
+    from tests import connect_helpers as h
+
+    hits = []
+    with h.mcp_server("acme", {"tok": "ana"}, {}, raw={"delete__item": lambda: hits.append(1) or "deleted"}) as url:
+        ok = PerUserServer(key="my_acme", url=url, headers={"Authorization": "Bearer tok"},
+                           allowed_tools=None, server_id="acme", app="acme")
+        down = PerUserServer(key="my_acme__delete", url="http://127.0.0.1:9/mcp", headers={},
+                             allowed_tools=None, server_id="acme__delete", app="acme__delete")
+        apps_servers = ([ok, down], {}, set())
+        ident = access.Identity.make(user=ANA, groups=[], surface="mcp")
+        orig = apps._servers
+        apps._servers = lambda *a: apps_servers
+        try:
+            out = asyncio.run(apps.call(Path("."), ident, "my_acme__delete__item", {}))
+        finally:
+            apps._servers = orig
+    assert out is None and hits == []
+
+
+def test_a_cancelled_listing_stops_its_app_listings(monkeypatch):
+    from types import SimpleNamespace
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+
+    async def slow(_srv):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(apps, "_fetch", slow)
+    srv = SimpleNamespace(key="my_x", server_id="x", url="u", allowed_tools=None, headers={})
+
+    async def go():
+        task = asyncio.create_task(apps._list_all(Path("."), access.ANONYMOUS, [srv], 30))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+        return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+    assert asyncio.run(go()) == []

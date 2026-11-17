@@ -129,10 +129,17 @@ async def _list_all(hub_dir: Path, ident, servers: list, budget: float) -> list:
         return srv, _allowed(srv, tools)
 
     tasks = [asyncio.create_task(one(srv)) for srv in servers]
-    done, pending = await asyncio.wait(tasks, timeout=budget)
-    for task in pending:
-        log.warning("mcp: a connected app was still listing after %ss; left out", BUDGET_SECONDS)
-        task.cancel()
+    try:
+        done, pending = await asyncio.wait(tasks, timeout=budget)
+        for _task in pending:
+            log.warning("mcp: a connected app was still listing after %ss; left out", BUDGET_SECONDS)
+    finally:
+        # Also when this listing is cancelled: no app listing outlives it.
+        left = [t for t in tasks if not t.done()]
+        for task in left:
+            task.cancel()
+        if left:
+            await asyncio.wait(left, timeout=2)
     return [task.result() for task in tasks if task in done]
 
 
@@ -234,7 +241,6 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
     from .access import audit
     from .access.evaluator import check_run
     from .access.guard import refusal
-    from .personal_mcp import _connector_gate
 
     servers, labels, ids = await asyncio.to_thread(_servers, hub_dir, ident)
     candidates = [srv for srv in servers if name.startswith(srv.key + "__")]
@@ -242,7 +248,7 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
         await _refused_connector(hub_dir, ident, name, ids)
         return None
     async with AsyncExitStack() as stack:
-        found = []
+        found, unknown = [], 0
         for srv in candidates:
             server = _client(hub_dir, srv)
             try:
@@ -252,19 +258,22 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
             except Exception as exc:  # noqa: BLE001
                 _cache.pop(_cache_key(hub_dir, ident, srv), None)
                 log.warning("mcp: connected app %r unavailable (%s)", srv.key, type(exc).__name__)
+                unknown += 1
                 continue
             found += [(srv, server, t) for t in tools if alias(srv.key, t.name) == name]
-        if len(found) != 1:
+        # An app that did not answer might own the same name: never guess.
+        if len(found) != 1 or (unknown and len(candidates) > 1):
             if found:
-                log.warning("mcp: %r names more than one connected app tool; not forwarded", name)
+                log.warning("mcp: %r may name more than one connected app tool; not forwarded", name)
             return None
         srv, server, tool = found[0]
         label = labels.get(srv.server_id) or srv.app
         decision = await asyncio.to_thread(check_run, hub_dir, ident, tool=name, connector=srv.server_id)
         refused, reason = refusal(decision, name), decision.reason
-        if refused is None and not await asyncio.to_thread(_connector_gate(hub_dir, ident), srv.app):
-            # The grant went while the app was being reached: same gate as the lookup.
-            refused = f"[access denied: '{name}' needs \"Use {label}\" in this agent.]"
+        if refused is None and not await asyncio.to_thread(_still_offered, hub_dir, ident, srv, tool.name):
+            # Changed while the app was being reached: grant, offer, address or allow-list.
+            refused = (f"[access denied: '{name}' is no longer available here: it needs "
+                       f"\"Use {label}\" and the tool on {label}'s allowed list.]")
             reason = f"connector_{srv.server_id}"
         if refused is not None:
             await asyncio.to_thread(audit.record, hub_dir, user=ident.user, surface=ident.surface,
@@ -283,6 +292,23 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
             return _error(f"[{name}: {label} did not answer ({type(exc).__name__}). It was not "
                           f"retried, so check in {label} whether it took effect.]")
     return _result(result)
+
+
+def _still_offered(hub_dir: Path, ident, srv, tool: str) -> bool:
+    """The caller's apps read again, just before a call is forwarded: the
+    connector is still enabled, offered here and granted to them, at the same
+    address, with ``tool`` still on its allow-list."""
+    from . import personal_mcp
+
+    try:
+        current = personal_mcp.per_user_servers(hub_dir, ident)
+    except Exception:  # noqa: BLE001 - cannot tell: do not forward
+        log.warning("mcp: connected apps could not be read again; not forwarded", exc_info=True)
+        return False
+    for now in current:
+        if now.key == srv.key and now.url == srv.url:
+            return not now.allowed_tools or tool in now.allowed_tools
+    return False
 
 
 async def _refused_connector(hub_dir: Path, ident, name: str, ids: set[str]) -> None:
