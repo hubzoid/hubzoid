@@ -42,7 +42,6 @@ log = logging.getLogger("hubzoid.mcp")
 LIST_SECONDS = 10.0      # one app's listing
 BUDGET_SECONDS = 20.0    # every app's listing for one tools/list
 CONCURRENCY = 4          # apps listed at once for one caller
-MAX_PAGES = 10           # pages of one app's tool list
 CACHE_SECONDS = 60.0
 CACHE_SIZE = 256
 
@@ -145,18 +144,19 @@ async def _fetch(srv) -> list:
 
 
 async def _all_tools(server) -> list:
-    """Every page of a connected app's tool list. The Agents SDK's
-    ``list_tools`` reads only the first; the allow-list is applied after
-    (``_allowed``)."""
+    """Every page of a connected app's tool list, until the app gives no next
+    cursor (or repeats one). The Agents SDK's ``list_tools`` reads only the
+    first page; the allow-list is applied after (``_allowed``). Callers bound
+    the time (``LIST_SECONDS``)."""
     tools: list = []
-    cursor = None
-    for _ in range(MAX_PAGES):
+    cursor, seen = None, set()
+    while True:
         result = await server.session.list_tools(cursor=cursor)
         tools += list(result.tools or [])
         cursor = getattr(result, "nextCursor", None)
-        if not cursor:
-            break
-    return tools
+        if not cursor or cursor in seen:
+            return tools
+        seen.add(cursor)
 
 
 def _allowed(srv, tools: list) -> list:
@@ -246,8 +246,9 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
         for srv in candidates:
             server = _client(hub_dir, srv)
             try:
-                await stack.enter_async_context(server)
-                tools = _allowed(srv, await _all_tools(server))
+                async with asyncio.timeout(LIST_SECONDS):
+                    await stack.enter_async_context(server)
+                    tools = _allowed(srv, await _all_tools(server))
             except Exception as exc:  # noqa: BLE001
                 _cache.pop(_cache_key(hub_dir, ident, srv), None)
                 log.warning("mcp: connected app %r unavailable (%s)", srv.key, type(exc).__name__)

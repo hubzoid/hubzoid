@@ -707,7 +707,8 @@ def test_connected_app_catalog_reads_every_page():
 
     from hubzoid.mcp_connected_apps import _all_tools
 
-    pages = {None: (["a", "b"], "p2"), "p2": (["c"], None)}
+    pages = {None: (["a", "b"], "p1")}
+    pages.update({f"p{i}": ([f"t{i}"], f"p{i + 1}" if i < 12 else None) for i in range(1, 13)})
 
     class Session:
         async def list_tools(self, cursor=None):
@@ -715,7 +716,11 @@ def test_connected_app_catalog_reads_every_page():
             return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in names], nextCursor=nxt)
 
     tools = asyncio.run(_all_tools(SimpleNamespace(session=Session())))
-    assert [t.name for t in tools] == ["a", "b", "c"]
+    assert [t.name for t in tools] == ["a", "b"] + [f"t{i}" for i in range(1, 13)]   # 13 pages
+
+    looping = {None: (["a"], "same"), "same": (["b"], "same")}            # a cursor that never ends
+    pages.clear(); pages.update(looping)
+    assert [t.name for t in asyncio.run(_all_tools(SimpleNamespace(session=Session())))] == ["a", "b"]
 
 
 def test_slow_connected_app_lookup_never_holds_up_the_list(monkeypatch):
