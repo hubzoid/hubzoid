@@ -51,11 +51,14 @@ hubzoid channels clickup setup ./company-hub clickup
 ```
 
 `setup` makes one webhook per list, pointed at
-`$HUBZOID_PUBLIC_URL/api/hubs/<hub>/channels/clickup/webhook`, for task status
-changes, tag changes and comments. ClickUp gives every webhook its own secret;
+`$HUBZOID_PUBLIC_URL/api/hubs/<hub>/channels/clickup/webhook`, for new tasks,
+task status changes, tag changes and comments. A task made already carrying the
+tag (or already in the trigger status) starts work too, and other new tasks are
+skipped without a comment. ClickUp gives every webhook its own secret;
 `setup` keeps each in the channel's secret slot and never prints it. Run it
 again after you add a list or change `HUBZOID_PUBLIC_URL`: it keeps working
-webhooks, makes missing ones and removes stale ones. `teardown` deletes them.
+webhooks, makes missing ones and remakes stale ones (including webhooks from an
+earlier version that miss an event). `teardown` deletes them.
 
 Then link people and check:
 

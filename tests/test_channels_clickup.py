@@ -139,6 +139,12 @@ def tag_event(task="t1", tag="hubzoid", hid="h2"):
          "after": [{"name": tag}]}]}
 
 
+def created_event(task="t1", hid="h4", user=USER, items=True):
+    return {"event": "taskCreated", "task_id": task, "history_items": [
+        {"id": hid, "date": str(int(time.time() * 1000)), "field": "task_creation",
+         "user": {"id": user, "username": "Ana"}}] if items else []}
+
+
 def comment_event(task="t1", text="Blue please", hid="h3", user=USER, at=None):
     return {"event": "taskCommentPosted", "task_id": task, "history_items": [
         {"id": hid, "date": str(at if at is not None else int(time.time() * 1000)), "field": "comment",
@@ -372,3 +378,43 @@ def test_setup_remakes_a_webhook_whose_secret_was_lost(hub_dir, api):
     secrets.delete(hub_dir, scope="channel", target=ref.target, name=ref.name, actor="admin@example.org")
     out = cu.setup(config.active(hub_dir, "clickup"), actor="admin@example.org")
     assert lost in out["removed"] and out["made"] == [LIST] and lost not in api.hooks
+
+
+# -- a task made already carrying the trigger -------------------------------------------
+
+def test_a_task_created_with_the_tag_starts_work_and_one_without_it_is_skipped_silently(hub_dir, api):
+    conn, _ = ready(hub_dir, api, trigger={"tag": "hubzoid"})
+    assert all("taskCreated" in h["events"] for h in api.hooks.values())
+    ev = event_of(hub_dir, deliver(conn, created_event()))
+    assert ev.trigger and ev.kind == "task_ready" and ev.actor.external_id == str(USER)
+    api.task(status="to do", tags=("hubzoid",))
+    assert conn.adapter.authorize(conn, ev) is None and ev.data["task"]["tags"] == ["hubzoid"]
+    api.task(status="to do", tags=("bug",))                # an ordinary new task
+    assert conn.adapter.authorize(conn, ev) == "trigger_not_set"
+    posted = [c for c in api.calls if c[0] in ("POST", "PUT") and c[1].startswith("/task/")]
+    assert posted == []                                    # nothing is posted on it
+
+
+def test_a_task_created_in_the_trigger_status_starts_work(hub_dir, api):
+    conn, _ = ready(hub_dir, api)                          # status trigger "ready for agent"
+    ev = event_of(hub_dir, deliver(conn, created_event()))
+    api.task()
+    assert conn.adapter.authorize(conn, ev) is None
+    api.task(status="to do")
+    assert conn.adapter.authorize(conn, ev) == "trigger_not_set"
+
+
+def test_a_creation_without_a_history_item_is_still_one_event(hub_dir, api):
+    conn, _ = ready(hub_dir, api, trigger={"tag": "hubzoid"})
+    first = deliver(conn, created_event(items=False))
+    assert first.status == "accepted"
+    assert deliver(conn, created_event(items=False)).duplicate
+
+
+def test_setup_remakes_a_webhook_made_before_task_creation_was_sent(hub_dir, api):
+    conn, _ = ready(hub_dir, api)
+    old = wid_for(conn)
+    api.hooks[old]["events"] = ["taskStatusUpdated", "taskTagUpdated", "taskCommentPosted"]
+    out = cu.setup(conn, actor="admin@example.org")
+    assert old in out["removed"] and out["made"] == [LIST]
+    assert all("taskCreated" in h["events"] for h in api.hooks.values())

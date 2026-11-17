@@ -45,7 +45,9 @@ log = logging.getLogger("hubzoid.channels.clickup")
 DIGITS = re.compile(r"^[0-9]{1,30}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REF_RE = re.compile(r"\(ref (hz-[0-9a-f]{16})\)\s*$")
-EVENTS = ["taskStatusUpdated", "taskTagUpdated", "taskCommentPosted"]
+# taskCreated: a task made with the tag (or in the trigger status) sends no
+# tag or status change, only this event.
+EVENTS = ["taskCreated", "taskStatusUpdated", "taskTagUpdated", "taskCommentPosted"]
 #: reply kinds and the status each may set (from `statuses`)
 STATUS_KINDS = ("ack", "question", "result", "error")
 DESCRIPTION_LIMIT = 16000
@@ -181,6 +183,8 @@ class ClickUpAdapter(Adapter):
         items = payload.get("history_items") or []
         first = items[0] if items and isinstance(items[0], dict) else {}
         hid = str(first.get("id") or "")
+        if not hid and payload.get("event") == "taskCreated" and payload.get("task_id"):
+            hid = f"created-{payload['task_id']}"[:100]     # one creation per task
         if not hid or len(hid) > 100:
             raise fail(400, "invalid_request", "The ClickUp delivery has no history item id.")
         return Verified(delivery_id=f"{webhook_id}:{hid}", workspace_id=conn.settings.workspace_id,
@@ -194,6 +198,7 @@ class ClickUpAdapter(Adapter):
         if event not in EVENTS or not TASK_ID.match(task_id):
             return []
         item = (p.get("history_items") or [{}])[0] or {}
+        hid = str(item.get("id") or f"created-{task_id}")
         user = item.get("user") or {}
         uid = str(user.get("id") or "")
         list_id = hooks(conn).get(str(p.get("webhook_id")), {}).get("list_id", "")
@@ -202,7 +207,7 @@ class ClickUpAdapter(Adapter):
         actor = ExternalActor(uid, user.get("username") or "", False,
                               {"workspace": cfg.workspace_id, "email": (user.get("email") or "")[:200]}) \
             if uid else None
-        key = f"{event}:{item.get('id')}"
+        key = f"{event}:{hid}"
         data = {"task_id": task_id, "list_id": list_id, "event": event, "at": str(item.get("date") or "")}
         if event == "taskCommentPosted":
             comment = item.get("comment") or {}
@@ -214,7 +219,11 @@ class ClickUpAdapter(Adapter):
             elif not uid:
                 ev.ignore_reason = "no_human_actor"
             return [ev]
-        if event == "taskStatusUpdated":
+        if event == "taskCreated":
+            # The task is read at routing: it starts work only if it was made
+            # carrying the trigger (authorize checks).
+            fired = bool(cfg.trigger.status or cfg.trigger.tag)
+        elif event == "taskStatusUpdated":
             after = (item.get("after") or {}).get("status") if isinstance(item.get("after"), dict) else None
             fired = bool(cfg.trigger.status) and _same(after, cfg.trigger.status)
         else:  # taskTagUpdated: `after` lists the tags added
@@ -224,7 +233,7 @@ class ClickUpAdapter(Adapter):
             return []
         ev = InboundEvent(semantic_key=key, kind="task_ready", origin=origin, actor=actor,
                           text="Please work on this ClickUp task.", trigger=True,
-                          message_id=str(item.get("id")), data=data)
+                          message_id=hid, data=data)
         if not uid:
             ev.ignore_reason = "no_human_actor"
         return [ev]
@@ -257,6 +266,10 @@ class ClickUpAdapter(Adapter):
             return "trigger_moved_on"
         if event.data.get("event") == "taskTagUpdated" and not any(_same(t, cfg.trigger.tag) for t in tags):
             return "trigger_moved_on"
+        if event.data.get("event") == "taskCreated" and not moved_by_us and not (
+                (cfg.trigger.tag and any(_same(t, cfg.trigger.tag) for t in tags))
+                or (cfg.trigger.status and _same(status, cfg.trigger.status))):
+            return "trigger_not_set"              # an ordinary new task: nothing starts, nothing is posted
         if cfg.trigger.status and cfg.trigger.tag and not moved_by_us and not (
                 _same(status, cfg.trigger.status) and any(_same(t, cfg.trigger.tag) for t in tags)):
             return "trigger_incomplete"           # both named: both must hold
@@ -416,7 +429,7 @@ def setup(conn, *, actor: str) -> dict:
     for wid in list(recorded):
         w = live.get(wid)
         if w is None or w.get("endpoint") != url or recorded[wid].get("list_id") not in cfg.list_ids \
-                or not secret_present(wid):
+                or set(w.get("events") or []) != set(EVENTS) or not secret_present(wid):
             if w is not None:
                 try:
                     api.delete_webhook(conn, wid)
