@@ -28,8 +28,8 @@ when all of these hold (``local_request_allowed``):
   so a tunnel such as ngrok or Cloudflare Tunnel, whose local leg connects to
   loopback, does not make internet visitors the owner;
 * the connection comes from this machine (the client address is loopback);
-* an ``Origin``, when sent, is this machine too (another site's page is not
-  the owner).
+* an ``Origin``, when sent, is this machine too (another site's page, or a
+  sandboxed page whose origin is ``null``, is not the owner).
 
 A raw TCP forward (``ssh -R``) adds no header and can't be told apart from a
 local visit: turn sign-in on before exposing the port that way.
@@ -143,14 +143,15 @@ def local_request_allowed(request: Request) -> bool:
     listening = server[0].strip("[]").lower() if server and isinstance(server[0], str) else ""
     peer = request.client.host if request.client is not None else None
     origin = (request.headers.get("origin") or "").strip()
-    origin_host = (urlparse(origin).hostname or "") if origin and origin != "null" else ""
+    origin_host = (urlparse(origin).hostname or "") if origin else ""
     if host and not (appmode.is_loopback_name(host) or host == listening):
         key, why = "local:host", f"addressed to {host[:100]!r}"
     elif appmode.is_forwarded(request.headers):
         key, why = "local:proxy", "that came through a proxy or tunnel"
     elif peer is not None and not appmode.is_loopback_host(peer):
         key, why = "local:peer", f"from {peer[:64]!r}"
-    elif origin and origin != "null" and not (appmode.is_loopback_name(origin_host) or origin_host == host):
+    elif origin and not (origin_host and (appmode.is_loopback_name(origin_host) or origin_host == host)):
+        # `Origin: null` (a sandboxed page, an agent-written artifact) proves nothing local.
         key, why = "local:origin", f"from the page {origin[:100]!r}"
     else:
         return True

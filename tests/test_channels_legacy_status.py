@@ -52,3 +52,11 @@ def test_channels_list_shows_1x_channels(tmp_path, monkeypatch):
     out = " ".join(result.output.split())
     assert result.exit_code == 0, result.output
     assert "1.x channel webhook (channels/webhook.yaml): on." in out and "No channels." not in out
+
+
+def test_each_env_only_channel_gets_its_own_note(tmp_path):
+    """Both env-only notes mention .env; each row must name its own file."""
+    hub = _hub(tmp_path)
+    rows = {r["provider"]: r for r in legacy.status(hub, {**WEBHOOK_ENV, **SLACK_ENV})}
+    assert "channels/webhook.yaml" in rows["webhook"]["note"]
+    assert "channels/slack-assistant.yaml" in rows["slack_assistant"]["note"]

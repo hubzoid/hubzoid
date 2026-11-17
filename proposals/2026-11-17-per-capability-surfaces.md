@@ -26,9 +26,12 @@ reset:
 
 - The list replaces `HUBZOID_RESTRICTED_SURFACES` for that capability only.
   `[]` means no surface. Grants still decide who may use it.
-- One resolver (`access.guard.surfaces_for`) feeds the tool list, the MCP
-  listing, cards and the call-time check, so what a person sees and what they
-  may call never differ.
+- The policy is read once, when the agent loads, and kept with each guarded
+  tool (`access.guard.captured_surfaces`). The tool list, the MCP listing,
+  cards and the call-time check all use that copy, so what a person sees and
+  what they may call never differ; an edit applies on restart. A file that
+  sets `surfaces:` is parsed strictly: a duplicate key or a document that
+  isn't a mapping stops the load instead of falling back to the hub-wide list.
 - The names are request surfaces (`web`, `api`, `mcp`, `workflow`, `app`,
   `slack-dm`, `whatsapp`, `telegram`, `webhook`, `email`, `channel`, `cli`,
   `owui`, plus any name in `HUBZOID_RESTRICTED_SURFACES`). An unknown name stops

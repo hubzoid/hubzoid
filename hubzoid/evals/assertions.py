@@ -119,7 +119,7 @@ def check_tool_names(case, inventory) -> list[Check]:
     fire: a misspelled `forbid_tools` name used to pass forever. Names under an
     MCP server or connector whose tools are only known at run time are not
     failed. `inventory` is ``judge.tool_inventory``; None skips the check."""
-    if inventory is None or not inventory.names:
+    if inventory is None:
         return []
     import difflib
 
@@ -233,8 +233,14 @@ def run_free_checks(
 
         tools = [ToolCallRecord(name=n) for n in tool_calls]
     else:
-        # A Claude delegate call (Agent + subagent_type) reads as handover_<name>.
-        tool_calls = [_call_name(c) for c in tools] if len(tools) == len(tool_calls) else tool_calls
+        # A Claude delegate call (Agent + subagent_type) reads as handover_<name>,
+        # for every check: names, forbidden-call details and argument checks.
+        import dataclasses
+
+        tools = [dataclasses.replace(c, name=_call_name(c)) if dataclasses.is_dataclass(c) else c
+                 for c in tools]
+        if len(tools) == len(tool_calls):
+            tool_calls = [c.name for c in tools]
     checks: list[Check] = check_tool_names(case, inventory)
     checks += check_expect_tools(tool_calls, case.expect_tools)
     checks += check_forbid_tools(tool_calls, case.forbid_tools, tools)

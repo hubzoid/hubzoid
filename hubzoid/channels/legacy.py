@@ -165,8 +165,11 @@ def status(hub_dir: Path, env: Mapping[str, str]) -> list[dict]:
         if source is None:
             continue
         on = p.slack if process == "slack" else surface in p.inbound
-        why = [m for m in (*p.problems, *p.notes) if source in m or provider in m or
-               (provider == "slack_assistant" and "Slack app" in m)]
+        # A file's problems name the file; an env-only note names its provider
+        # (every env-only note mentions .env, so .env alone matches nothing).
+        why = [m for m in (*p.problems, *p.notes)
+               if (source != ".env" and source in m) or f"the {provider} settings" in m
+               or (provider == "slack_assistant" and "the Slack app settings" in m)]
         rows.append({"provider": provider, "source": source, "status": "on" if on else "off",
                      "note": why[0] if why else ""})
     return rows

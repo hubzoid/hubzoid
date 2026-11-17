@@ -18,6 +18,7 @@ ENV = (
     "WEBUI_ADMIN_EMAIL", "WEBUI_ADMIN_PASSWORD", "HUBZOID_GATEWAY_ADMIN_EMAIL",
     "HUBZOID_DEPLOYMENT", "DATABASE_URL", "HUBZOID_SESSION_DAYS", "HUBZOID_SESSION_IDLE_DAYS",
     "ENABLE_SIGNUP", "ENABLE_LOGIN_FORM", "ENABLE_PASSWORD_AUTH", "HUBZOID_AUTH_MAX_FAILURES",
+    "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK",
 )
 ORIGIN = {"origin": "http://testserver"}
 PASSWORD = "correct horse battery"
@@ -380,6 +381,7 @@ def test_a_configured_public_name_is_not_the_owner(hub, monkeypatch):
     ({"x-forwarded-for": "127.0.0.1"}, "127.0.0.1"),          # a forged loopback address
     ({}, "203.0.113.9"),                                      # a connection from elsewhere
     ({"origin": "https://evil.example.com"}, "127.0.0.1"),    # another site's page on this machine
+    ({"origin": "null"}, "127.0.0.1"),                        # a sandboxed page (opaque origin)
 ])
 def test_a_tunnel_or_proxy_is_not_the_local_owner(hub, monkeypatch, headers, peer):
     """A tunnel's local leg connects to loopback with Host: localhost, so the

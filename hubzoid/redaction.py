@@ -44,10 +44,25 @@ _TOKEN_SHAPES = re.compile(
     r"|AKIA[0-9A-Z]{16})\b")
 # Credentials in URLs and access-log lines: one-time sign-in values, and keys a
 # client puts in a query string (``?api_key=``, which the edge logged in full).
+_URL_CREDENTIAL_NAMES = frozenset({
+    "token", "code", "state", "api_key", "api-key", "apikey", "key", "access_token", "refresh_token",
+    "id_token", "client_secret", "password", "secret", "signature", "sig"})
+
+
+def _query_value(match: "re.Match") -> str:
+    """A query parameter, its value redacted when its name (percent-decoded,
+    so ``api%5Fkey`` counts as ``api_key``) is a credential's."""
+    from urllib.parse import unquote
+
+    sep, name, value = match.group(1), match.group(2), match.group(3)
+    if unquote(name).strip().lower() in _URL_CREDENTIAL_NAMES and value:
+        return f"{sep}{name}={REDACTED}"
+    return match.group(0)
+
+
 _URL_PATTERNS = (
     (re.compile(r"(/api/auth/link/)[^/?#\s\"']+"), r"\1" + REDACTED),
-    (re.compile(r"(?i)([?&](?:token|code|state|api[_-]?key|key|access_token|refresh_token|id_token"
-                r"|client_secret|password|secret|signature|sig)=)[^&#\s\"']+"), r"\1" + REDACTED),
+    (re.compile(r"([?&])([^=&#\s\"']{1,80})=([^&#\s\"']*)"), _query_value),
 )
 
 

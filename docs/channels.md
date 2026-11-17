@@ -55,7 +55,8 @@ Moving a 1.x Slack app to a connection:
 Then list the channels in `allowed_channel_ids`, link people
 (`hubzoid channels link`), grant who may ask (Settings), apply, run
 `hubzoid channels doctor <hub> slack-main`, remove
-`channels/slack-assistant.yaml`, and set `enabled: true`.
+`channels/slack-assistant.yaml`, set `enabled: true`, and apply again
+(`hubzoid channels apply`): until then the connection stays paused.
 
 | Symptom | Next step |
 |---|---|

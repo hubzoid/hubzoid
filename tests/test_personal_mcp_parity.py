@@ -482,3 +482,19 @@ async def test_claude_refuses_a_call_outside_the_allow_list(servers, tmp_path):
     assert "does not allow this tool" in refused["hookSpecificOutput"]["permissionDecisionReason"]
     other = await admit({"tool_name": "mcp__jira__whoami", "tool_input": {}}, "t2", None)
     assert "does not allow this tool" not in str(other)
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_lists_are_dropped_when_stale_and_bounded(servers, monkeypatch):
+    """A rotated token makes a new cache key; the old entry must not stay forever."""
+    from hubzoid import factory_claude
+
+    factory_claude._tool_lists.clear()
+    factory_claude._tool_lists[("http://old", "rotated")] = (0.0, ["x"])          # long expired
+    monkeypatch.setattr(factory_claude, "_TOOL_LIST_MAX", 2)
+    factory_claude._tool_lists[("http://a", "1")] = (10**12, ["a"])
+    await factory_claude._list_server_tools(
+        {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}})
+    assert ("http://old", "rotated") not in factory_claude._tool_lists
+    assert len(factory_claude._tool_lists) <= 2
+    factory_claude._tool_lists.clear()

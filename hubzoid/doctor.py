@@ -168,12 +168,22 @@ def _subagent_checks(hub: Path) -> list[Check]:
             rows.append(f"{spec.name}: station (called from workflows only)")
             continue
         why = handover.skill_reason(spec.model, hub_model)
+        if not why and handover.engine(spec.model) == "litellm":
+            # The OpenAI Agents factory builds each delegate's model up front and
+            # loads it as a skill when that fails (a missing provider key).
+            try:
+                from . import model as modellib
+
+                modellib.build(spec.model)
+            except Exception as exc:  # noqa: BLE001 - reported, never raised
+                why = f"its model {spec.model!r} could not be built ({type(exc).__name__}: {exc})"[:300]
         if not why:
             rows.append(f"{spec.name}: runs on its own, on {spec.model}")
             continue
         rows.append(f"{spec.name}: instructions for the main agent, because {why}")
         lost = [f"tools: {list(spec.tools)}"] if spec.tools else []
-        if spec.model and handover.engine(spec.model) != handover.engine(hub_model):
+        if spec.model and (handover.engine(spec.model) != handover.engine(hub_model)
+                           or "could not be built" in why):
             lost.insert(0, f"model: {spec.model}")
         if lost:
             dropped.append(f"{spec.name}: {' and '.join(lost)} do not apply, because {why}")
@@ -499,7 +509,12 @@ def _local_mode_guard(*, auth_on: bool) -> Check | None:
     host = os.environ.get("HUBZOID_HOST", "127.0.0.1").strip()
     detail = {"host": host}
     if appmode.is_loopback_host(host):
-        remote = [] if appmode.unauthenticated_network_allowed() else appmode.non_local_origins()
+        remote = appmode.non_local_origins()
+        if remote and appmode.unauthenticated_network_allowed():
+            return Check("exposure.local_mode", "warn",
+                         f"Sign-in is off and HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true: visitors through "
+                         f"{', '.join(remote)} act as the hub's owner. Turn sign-in on (HUBZOID_AUTH=true) "
+                         "unless only people you trust can reach that address", {**detail, "public": remote})
         if remote:
             return Check("exposure.local_mode", "warn",
                          f"Sign-in is off: only this computer is the owner. Visitors through {', '.join(remote)} "

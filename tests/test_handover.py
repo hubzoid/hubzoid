@@ -147,3 +147,27 @@ def test_doctor_says_which_subagents_lost_their_tools(tmp_path, monkeypatch):
         "---\nname: reset\ndescription: Resets.\nmodel: claude-local/opus\ntools: [read_knowledge]\n---\nReset.\n")
     (check,) = doctor._subagent_checks(hub)
     assert check.status == "ok" and check.detail == ["reset: runs on its own, on claude-local/opus"]
+
+
+def test_doctor_reports_a_delegate_whose_model_cannot_be_built(tmp_path, monkeypatch):
+    """The OpenAI Agents factory loads such a delegate as a skill; doctor must not say it runs on its own."""
+    from hubzoid import doctor
+
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-sonnet-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-key")  # gitleaks:allow
+    hub, _ = _subagent(tmp_path, "anthropic/claude-haiku-4-5")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.status == "warn" and any("could not be built" in d for d in check.detail)
+
+
+def test_doctor_prints_how_each_subagent_runs_when_all_is_well(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    monkeypatch.setenv("MODEL", "claude-local")
+    hub, _ = _subagent(tmp_path, "claude-local/opus")
+    out = " ".join(CliRunner().invoke(app, ["doctor", str(hub), "--skip-secret-fetch"]).output.split())
+    assert "reset: runs on its own, on claude-local/opus" in out

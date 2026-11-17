@@ -86,18 +86,30 @@ def restricted_surfaces(hub_dir: Path) -> dict[str, frozenset[str]]:
     capability can be opened to WhatsApp without opening every other one. An
     empty list means no surface. Raises ValueError naming the file for a
     surface that is unknown or never allowed (``slack-channel``)."""
-    import yaml
+    from ..control import yamlfile
 
     idir = resolve_bucket(hub_dir, "identity")
     path = idir / "permissions.yaml" if idir else None
     if path is None or not path.is_file():
         return {}
-    data = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(data, dict):
-        return {}  # the Settings reader (capabilities._metadata) reports the shape
+    text = path.read_text(encoding="utf-8")
+    if "surfaces" not in text:
+        return {}  # labels only: the Settings reader (capabilities._metadata) handles those
+    try:
+        # Strict: a duplicate key (a second `reset:` without surfaces) or a
+        # document that isn't a mapping must not fall back to the hub-wide list.
+        data = yamlfile.loads(text, path=str(path)).data
+    except yamlfile.YamlError as exc:
+        where = f" (line {exc.line})" if exc.line else ""
+        raise ValueError(f"{path}{where}: {exc.message} It sets surfaces:, so it must be valid.") from None
     out: dict[str, frozenset[str]] = {}
     for name, meta in data.items():
-        if not isinstance(meta, dict) or "surfaces" not in meta:
+        if not isinstance(meta, dict):
+            if meta is not None:
+                raise ValueError(f"{path}: {name}: each capability is a mapping, for example "
+                                 f"{name}: {{surfaces: [web]}}")
+            continue
+        if "surfaces" not in meta:
             continue
         raw = meta["surfaces"]
         if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):

@@ -70,7 +70,15 @@ def _direct_from_this_machine(request: Request) -> bool:
     from . import appmode
 
     peer = request.client.host if request.client else None
-    return bool(peer) and appmode.is_loopback_host(peer) and not appmode.is_forwarded(request.headers)
+    if not peer or not appmode.is_loopback_host(peer) or appmode.is_forwarded(request.headers):
+        return False
+    # Headers only a proxy sends. A bridge can't read these as evidence (the edge
+    # itself asserts X-Forwarded-Proto from the public URL), so they count here.
+    return not any(request.headers.get(h) is not None for h in _PROXY_HINTS)
+
+
+_PROXY_HINTS = ("x-forwarded-proto", "x-forwarded-port", "x-forwarded-server", "x-forwarded-ssl",
+                "front-end-https", "via")
 
 
 def _trusted_proxies() -> list:

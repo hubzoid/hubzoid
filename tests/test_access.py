@@ -167,8 +167,8 @@ def test_one_capability_can_open_a_surface_alone(tmp_path, monkeypatch):
     assert on("reset_password", "whatsapp") and on("reset_password", "web")
     assert not on("reset_password", "api")                     # its own list replaces the default
     assert not on("erp_sales", "whatsapp") and on("erp_sales", "api")   # the others keep the default
-    assert guard.surfaces_for(tmp_path, "reset") == frozenset({"web", "whatsapp"})
-    assert guard.surfaces_for(tmp_path, "erp") == guard.allowed_surfaces()
+    assert guard.captured_surfaces(registry["reset_password"]) == frozenset({"web", "whatsapp"})
+    assert guard.captured_surfaces(registry["erp_sales"]) == guard.allowed_surfaces()
 
 
 def _visible_as(tool, surface: str) -> bool:
@@ -315,3 +315,35 @@ def test_a_stopped_reply_runs_no_more_tools_on_any_runtime(tmp_path):
         slot.guard = lambda running=running: running
         with _request_ctx.native_session_scope(slot):
             assert _invoke(tool) == expected
+
+
+@pytest.mark.parametrize("text, words", [
+    ("reset:\n  surfaces: []\nreset:\n  label: Password resets\n", "appears twice"),   # the second would drop surfaces
+    ("- reset:\n    surfaces: []\n", "mapping"),
+    ("reset: [web]\nother:\n  surfaces: [web]\n", "each capability is a mapping"),
+])
+def test_a_surfaces_file_that_could_hide_a_restriction_stops_the_load(tmp_path, monkeypatch, text, words):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(text)
+    with pytest.raises(ValueError, match=words):
+        loader.restricted_surfaces(tmp_path)
+
+
+def test_listing_uses_the_policy_the_guarded_tool_was_built_with(tmp_path, monkeypatch):
+    """The MCP listing and cards read the surfaces captured with the guarded
+    tool, so an edit before a restart can't make listing and calling differ,
+    and a broken edit can't fail tools/list."""
+    from hubzoid import mcp_server
+
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "restricted").mkdir()
+    (tmp_path / "restricted" / "erp.py").write_text(_RESTRICTED_TOOL_SRC)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text("erp:\n  surfaces: [mcp]\n")
+    _grant(tmp_path, "p", "erp")
+    registry = access.apply(tmp_path, {})
+    assert guard.captured_surfaces(registry["erp_sales"]) == frozenset({"mcp"})
+    (tmp_path / "identity" / "permissions.yaml").write_text("erp:\n  surfaces: [mcpx]\n")   # edited, not restarted
+    ident = Identity.make("p", [], surface="mcp")
+    assert mcp_server._visible(tmp_path, ident, "erp_sales", registry, {"erp_sales": "erp"})

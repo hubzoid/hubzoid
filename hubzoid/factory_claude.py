@@ -922,6 +922,7 @@ def _connector_allowlists(options) -> dict[str, set[str]]:
 
 
 _TOOL_LIST_TTL = 60.0
+_TOOL_LIST_MAX = 256
 _tool_lists: dict[tuple[str, str], tuple[float, list[str]]] = {}
 
 
@@ -936,8 +937,11 @@ async def _list_server_tools(spec: dict) -> list[str]:
 
     key = (str(spec.get("url")), hashlib.sha256(json.dumps(spec.get("headers") or {}, sort_keys=True)
                                                 .encode()).hexdigest())
+    now = time.monotonic()
+    for stale in [k for k, (at, _names) in _tool_lists.items() if now - at >= _TOOL_LIST_TTL]:
+        _tool_lists.pop(stale, None)   # a rotated token's entry never comes back
     hit = _tool_lists.get(key)
-    if hit is not None and time.monotonic() - hit[0] < _TOOL_LIST_TTL:
+    if hit is not None:
         return hit[1]
 
     async def fetch() -> list[str]:
@@ -958,6 +962,8 @@ async def _list_server_tools(spec: dict) -> list[str]:
 
     # Its own task: the MCP client's cancel scopes must open and close in one task.
     names = await asyncio.wait_for(asyncio.ensure_future(fetch()), timeout=min(call_timeout(), 10.0))
+    while len(_tool_lists) >= _TOOL_LIST_MAX:
+        _tool_lists.pop(next(iter(_tool_lists)))       # the oldest entry
     _tool_lists[key] = (time.monotonic(), names)
     return names
 

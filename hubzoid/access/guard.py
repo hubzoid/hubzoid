@@ -362,14 +362,13 @@ def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -
     return out
 
 
-def surfaces_for(hub_dir: Path, permission: str) -> frozenset[str]:
-    """Where a restricted capability may be used: its own ``surfaces:`` in
-    ``identity/permissions.yaml`` when set, else ``HUBZOID_RESTRICTED_SURFACES``.
-    The one rule for listing tools, cards and the call-time check."""
-    from .loader import restricted_surfaces
-
-    own = restricted_surfaces(Path(hub_dir)).get(permission)
-    return _allowed_surfaces() if own is None else own
+def captured_surfaces(ft) -> "frozenset[str] | None":
+    """The surface policy a guarded tool was built with (``guard_tool``): its
+    capability's own ``surfaces:`` or the hub-wide list, read when the agent
+    loaded. Listing and cards use this, so what a caller is shown always
+    matches what the call-time check allows, until the agent restarts."""
+    key = getattr(getattr(ft, "is_enabled", None), "hubzoid_key", None)
+    return key[2] if isinstance(key, tuple) and len(key) == 3 else None
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

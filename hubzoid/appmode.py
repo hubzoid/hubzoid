@@ -286,12 +286,13 @@ def unauthenticated_network_allowed(env: Mapping[str, str] | None = None) -> boo
     return truthy(_env("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", env))
 
 
-def non_local_origins(env: Mapping[str, str] | None = None) -> list[str]:
-    """The configured public URL and allowed origins that are not this machine.
-    With sign-in off, visitors through them are not the owner (a tunnel for
-    signed webhooks still works); ``hubzoid run`` and doctor say so."""
+def non_local_origins(env: Mapping[str, str] | None = None, *, extra: str | None = None) -> list[str]:
+    """The configured public URL and allowed origins that are not this machine
+    (plus ``extra``, a public URL given on the command line). With sign-in off,
+    visitors through them are not the owner (a tunnel for signed webhooks still
+    works); ``hubzoid run`` and doctor say so."""
     out = []
-    for origin in [public_url(env)] + _env("HUBZOID_ALLOWED_ORIGINS", env).split(","):
+    for origin in [extra or "", public_url(env)] + _env("HUBZOID_ALLOWED_ORIGINS", env).split(","):
         o = normalize_origin(origin)
         if o and not is_loopback_name(urlparse(o).hostname) and o not in out:
             out.append(o)

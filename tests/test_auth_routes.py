@@ -481,16 +481,21 @@ def test_the_edge_access_log_never_holds_an_api_key(monkeypatch):
     from hubzoid import edge
     from hubzoid.auth import logredact
 
-    edge._redact_oauth_callback_logs()   # what the edge does as it starts
     logger = logging.getLogger("uvicorn.access")
-    assert any(isinstance(f, logredact.RedactCredentials) for f in logger.filters)
+    # Start from no Hubzoid filter, so the one found below is the edge's own,
+    # and run it alone (litellm adds its own uvicorn.access scrubber at import).
+    for f in [f for f in logger.filters if isinstance(f, logredact.RedactCredentials)]:
+        logger.removeFilter(f)
+    edge._redact_oauth_callback_logs()   # what the edge does as it starts
+    (mine,) = [f for f in logger.filters if isinstance(f, logredact.RedactCredentials)]
     record = logger.makeRecord(
         "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
-        ("203.0.113.7:5000", "GET", "/v1/models?api_key=hz_SECRET1&x=1&Client_Secret=S2", "1.1", 200), None)  # gitleaks:allow
-    for f in logger.filters:
-        f.filter(record)
+        ("203.0.113.7:5000", "GET", "/v1/models?api_key=hz_SECRET1&x=1&Client_Secret=S2&api%5Fkey=S3", "1.1", 200),  # gitleaks:allow
+        None)
+    mine.filter(record)
     line = record.getMessage()
-    assert "hz_SECRET1" not in line and "S2" not in line and "x=1" in line
+    assert "hz_SECRET1" not in line and "S2" not in line and "S3" not in line and "x=1" in line
+    assert "api%5Fkey=[redacted]" in line
 
 
 def test_the_local_owner_never_signs_in_with_a_password(hub):

@@ -270,3 +270,19 @@ def test_connector_files_that_do_not_load_are_named(hub):
     assert check.status == "warn" and "2 connector file(s)" in check.summary
     joined = " ".join(check.detail)
     assert "jira-cloud.yaml" in joined and "jira_cloud.yaml" in joined and "helpdesk.yml" in joined
+
+
+def test_the_network_opt_in_with_a_public_url_warns(hub, monkeypatch):
+    """With HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK a tunnel visitor is the owner again: say so."""
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.ngrok-free.app")
+    assert doc._local_mode_guard(auth_on=False).status == "warn"
+    monkeypatch.setenv("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", "true")
+    check = doc._local_mode_guard(auth_on=False)
+    assert check.status == "warn" and "act as the hub's owner" in check.summary
+
+
+def test_the_gateway_public_url_flag_counts_for_the_start_warning(monkeypatch, capsys):
+    for k in ("HUBZOID_PUBLIC_URL", "HUBZOID_ALLOWED_ORIGINS", "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK"):
+        monkeypatch.delenv(k, raising=False)
+    cli._note_public_url_in_local_mode(False, "https://hub.example")
+    assert "https://hub.example" in " ".join(capsys.readouterr().out.split())

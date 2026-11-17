@@ -574,3 +574,21 @@ def test_the_runner_fails_a_case_whose_forbid_name_never_exists(tmp_path, patche
     suite = runner.run_suite(hub, cases.discover(hub))
     assert not suite.ok
     assert "no tool named http_gett in this agent (closest: http_get)" in suite.cases[0].reason
+
+
+def test_a_known_empty_inventory_still_checks_names():
+    from hubzoid.evals.judge import ToolInventory
+
+    (check,) = assertions.check_tool_names(_named(forbid=["reset_pasword"]), ToolInventory(frozenset()))
+    assert not check.passed
+
+
+def test_a_claude_delegate_call_counts_for_argument_checks_too():
+    from hubzoid.evals.results import ToolCallRecord
+
+    case = _named(args={"handover_password_reset": {"prompt": "reset alice"}}, forbid=["handover_password_reset"])
+    case.contains, case.not_contains = [], []
+    calls = [ToolCallRecord(name="Agent", args={"subagent_type": "Password Reset", "prompt": "Please reset Alice"})]
+    by_kind = {c.kind: c for c in assertions.run_free_checks(case, response="", tool_calls=["Agent"], tools=calls)}
+    assert by_kind["expect_tool_args"].passed
+    assert not by_kind["forbid_tools"].passed and "reset" in by_kind["forbid_tools"].detail.lower()
