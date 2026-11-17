@@ -769,3 +769,85 @@ def test_a_reply_written_half_a_second_before_the_question_is_a_follow_up(hub_di
     send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": str(int(created * 1000) - 500)}), delivery_id="d2")
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+
+
+# -- plan approvals settled in the thread (a provider that verifies who wrote) -----------------
+
+def _ask_plan(hub_dir, workflow_id="run-1"):
+    from hubzoid.auth import users
+    from hubzoid.hitl import service
+
+    ana = users.find_by_email(hub_dir, "ana@example.org")
+    return service.create(hub_dir, "desk", service.Caller(account_id=ana["id"], email="ana@example.org",
+                                                         origin="workflow"),
+                          kind="approval", title="Plan v1",
+                          subject={"name": "Plan v1", "url": "https://hub.example/plan", "digest": "sha256:ab",
+                                   "plan": True}, workflow_id=workflow_id)
+
+
+def _thread_approvals(fake, monkeypatch, on=True):
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    monkeypatch.setattr(type(fake), "approvals_in_thread", lambda self, conn: on, raising=False)
+
+
+def _reply(hub_dir, conn, text, eid, sender=None):
+    send(conn, ev(eid=eid, text=text, trigger=False, **({"sender": sender} if sender else {})), delivery_id=eid)
+    router._route_one(hub_dir, [r for r in store.open_deliveries(hub_dir, "desk")][0], None)
+
+
+def test_the_requester_approves_the_plan_in_the_thread_when_the_channel_allows(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "Approve.", "d2")
+    settled = service.get(hub_dir, "desk", plan["id"])
+    assert settled["status"] == "approved" and settled["decided_via"] == "fake"
+    assert settled["decided_by_email"] == "ana@example.org"
+
+
+def test_change_sends_the_plan_back_with_the_note_and_looks_good_never_approves(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "looks good to me", "d2")            # not a decision: a follow-up
+    assert service.get(hub_dir, "desk", plan["id"])["status"] == "pending"
+    assert [m["text"] for m in wstore.get_item(hub_dir, item_id).get("inbox_json") or []] == ["looks good to me"]
+    _reply(hub_dir, conn, "Change: keep the old error code for the API", "d3")
+    settled = service.get(hub_dir, "desk", plan["id"])
+    assert settled["status"] == "rejected" and settled["decision"] == "request_changes"
+    assert settled["note"] == "keep the old error code for the API"
+
+
+def test_without_the_channel_setting_approve_in_the_thread_decides_nothing(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch, on=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "approve", "d2")
+    assert service.get(hub_dir, "desk", plan["id"])["status"] == "pending"
+
+
+def test_only_plan_approvals_settle_in_the_thread_never_a_tool_approval(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    tool = _ask(hub_dir, kind="approval")
+    _reply(hub_dir, conn, "approve", "d2")
+    assert service.get(hub_dir, "desk", tool["id"])["status"] == "pending"
+
+
+def test_thread_decisions_are_strict():
+    from hubzoid.hitl.channels import thread_decision
+
+    assert thread_decision(" APPROVED! ") == ("approve", None)
+    assert thread_decision("reject") == ("reject", None)
+    assert thread_decision("changes - use the v2 endpoint") == ("request_changes", "use the v2 endpoint")
+    for text in ("approve but change the name", "I approve", "ok", "yes", "change:", "1"):
+        assert thread_decision(text) is None, text

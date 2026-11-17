@@ -648,7 +648,8 @@ def _answered_before(hub_dir: Path, conn, row: dict, person, event: InboundEvent
     from ..hitl import channels as hitl_channels
 
     return hitl_channels.answer_in_thread(hub_dir, request_id=pinned, email=person.email, text=event.text,
-                                          via=conn.provider) == "answered"
+                                          via=conn.provider,
+                                          approvals=conn.adapter.approvals_in_thread(conn)) == "answered"
 
 
 def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person, event: InboundEvent) -> bool:
@@ -667,7 +668,9 @@ def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person,
     current = (store.get_delivery(hub_dir, row["id"]) or {}).get("route_json") or {}
     pinned = current.get("answers")
     if not pinned:
-        waiting = hitl_channels.pending_questions_for_run(hub_dir, item.get("workflow_id") or "", person.email)
+        approvals = conn.adapter.approvals_in_thread(conn)
+        waiting = hitl_channels.pending_questions_for_run(hub_dir, item.get("workflow_id") or "", person.email,
+                                                          approvals=approvals)
         if len(waiting) != 1:
             return False
         req = waiting[0]
@@ -677,7 +680,7 @@ def _answer_waiting_question(hub_dir: Path, conn, row: dict, item: dict, person,
         pinned = req["id"]
         store.update_delivery(hub_dir, row["id"], route_json={**current, "answers": pinned})
     outcome = hitl_channels.answer_in_thread(hub_dir, request_id=pinned, email=person.email, text=event.text,
-                                             via=conn.provider)
+                                             via=conn.provider, approvals=conn.adapter.approvals_in_thread(conn))
     return outcome == "answered"
 
 

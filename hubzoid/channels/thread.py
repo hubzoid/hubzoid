@@ -21,6 +21,37 @@ from . import replies, store
 from .errors import ChannelError
 
 
+KINDS = ("progress", "result", "notice", "question", "approval")
+MAX_FILES = 5
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def _files(hub_dir: Path, files) -> tuple[str, ...]:
+    """The files a post may carry: ones this hub wrote under its output
+    folder, at most five, each at most 10 MB. Anything else is refused, so a
+    workflow can never send a key, a database or the hub's own files out."""
+    from .. import datadir
+
+    if not files:
+        return ()
+    if isinstance(files, (str, Path)):
+        files = [files]
+    files = list(files)
+    if len(files) > MAX_FILES:
+        raise ValueError(f"post at most {MAX_FILES} files")
+    out_root = datadir.resolve(hub_dir, "output").resolve()
+    paths = []
+    for f in files:
+        path = Path(f) if Path(f).is_absolute() else datadir.resolve(hub_dir, f)
+        path = path.resolve()
+        if not path.is_relative_to(out_root) or not path.is_file():
+            raise ValueError(f"{f} is not a file under this hub's output folder")
+        if path.stat().st_size > MAX_FILE_BYTES:
+            raise ValueError(f"{path.name} is larger than 10 MB")
+        paths.append(str(path))
+    return tuple(paths)
+
+
 class Thread:
     def __init__(self, hub_dir: Path, thread: dict, item: dict):
         self._hub_dir = Path(hub_dir)
@@ -48,16 +79,39 @@ class Thread:
         """The verified provider account that asked (display data, not authority)."""
         return (self._item.get("origin_json") or {}).get("requested_by")
 
-    def post(self, text: str, *, key: str, kind: str = "result", actions=None) -> list[dict]:
+    @property
+    def approvals_here(self) -> bool:
+        """Whether the requester can settle a plan approval by replying in
+        this thread (the channel file allows it and the provider verifies
+        who wrote the reply). Otherwise approvals are decided in Hubzoid."""
+        try:
+            conn = config_lib.active(self._hub_dir, self.channel)
+        except Exception:  # noqa: BLE001 - no live connection: decide in Hubzoid
+            return False
+        return bool(conn.adapter.approvals_in_thread(conn))
+
+    @property
+    def attachments(self) -> bool:
+        """Whether files posted here are attached (otherwise left out)."""
+        try:
+            return bool(config_lib.active(self._hub_dir, self.channel).adapter.attachments)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def post(self, text: str, *, key: str, kind: str = "result", actions=None, files=None) -> list[dict]:
         """Post to this thread. `key` names this post within the work item
         (stage plus purpose, never an attempt id): posting the same key again
-        sends nothing new. `kind` is progress, result or notice. A
-        customer-visible reply names its action (`customer_reply.send`,
-        `email.send`) so the hub's write mode applies."""
-        if kind not in ("progress", "result", "notice", "question"):
-            raise ValueError("kind is progress, result, notice or question")
+        sends nothing new. `kind` is progress, result, notice, question or
+        approval (the work now waits for an approval). `files` are files this
+        hub wrote under its output folder, attached where the provider can
+        (`attachments`), else left out. A customer-visible reply names its
+        action (`customer_reply.send`, `email.send`) so the hub's write mode
+        applies."""
+        if kind not in KINDS:
+            raise ValueError("kind is " + ", ".join(KINDS))
         if not isinstance(key, str) or not key.strip() or len(key) > 200:
             raise ValueError("key names the post, 1 to 200 characters")
+        paths = _files(self._hub_dir, files)
         conn = config_lib.active(self._hub_dir, self.channel)
         if kind == "progress" and (not conn.config.progress or conn.adapter.customer_facing):
             return []                   # customers get answers, never progress chatter
@@ -77,7 +131,7 @@ class Thread:
                 text = f"{text.rstrip()}\n\n{footer}"
         try:
             return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
-                                draft=draft)
+                                draft=draft, files=paths if conn.adapter.attachments else ())
         except Parked as parked:
             if parked.kind == "approval" and conn.adapter.customer_facing and self._unattended():
                 self._stop_unapprovable(parked.operation_id, text)

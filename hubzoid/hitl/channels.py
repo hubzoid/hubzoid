@@ -18,6 +18,7 @@ private chat with the exact action, and answered there.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -25,6 +26,29 @@ import sqlalchemy as sa
 from . import service, store
 
 APPROVE, REJECT = "1", "2"
+
+#: a requester's reply in a work thread that settles a plan approval
+THREAD_APPROVE = re.compile(r"^\s*approved?\s*[.!]*\s*$", re.I)
+THREAD_REJECT = re.compile(r"^\s*reject(ed)?\s*[.!]*\s*$", re.I)
+THREAD_CHANGE = re.compile(r"^\s*changes?\s*[:\-]\s*(\S.*)$", re.I | re.S)
+
+
+def thread_decision(text: str) -> tuple[str, str | None] | None:
+    """`approve`, `reject` or `change: <what>` as a decision, else None (an
+    ordinary follow-up). Strict on purpose: "looks good" never approves."""
+    text = (text or "").strip()
+    if THREAD_APPROVE.match(text):
+        return "approve", None
+    if THREAD_REJECT.match(text):
+        return "reject", None
+    m = THREAD_CHANGE.match(text)
+    if m:
+        return "request_changes", m.group(1).strip()[:service.MAX_NOTE]
+    return None
+
+
+def _plan_approval(req: dict) -> bool:
+    return req.get("kind") == "approval" and bool((req.get("subject") or {}).get("plan"))
 
 
 def _hub(hub_dir: Path) -> str:
@@ -102,30 +126,40 @@ def answer_by_reply(hub_dir: Path, *, chat_id: str, email: str, text: str, via: 
     return None
 
 
-def pending_questions_for_run(hub_dir: Path, workflow_id: str, email: str) -> list[dict]:
-    """Questions a workflow run waits on that this person may answer."""
+def pending_questions_for_run(hub_dir: Path, workflow_id: str, email: str, *, approvals: bool = False) -> list[dict]:
+    """Questions a workflow run waits on that this person may answer, and its
+    plan approvals too when the thread may settle them (`approvals`)."""
     if not workflow_id:
         return []
     r = store.requests.c
+    kinds = ("question", "approval") if approvals else ("question",)
     q = sa.select(store.requests).where(r.hub_id == _hub(hub_dir), r.workflow_id == workflow_id,
-                                        r.status == "pending", r.kind == "question")
+                                        r.status == "pending", r.kind.in_(kinds))
     with service.engine(hub_dir).connect() as conn:
         rows = [{**store.row_dict(x), "created_epoch": float(x._mapping["created_at"] or 0)}
                 for x in conn.execute(q.order_by(r.created_at)).fetchall()]
     account_id = _account_for(hub_dir, email)
-    return [x for x in rows if service.eligible(x, account_id, email)]
+    return [x for x in rows if service.eligible(x, account_id, email)
+            and (x["kind"] == "question" or _plan_approval(x))]
 
 
-def answer_in_thread(hub_dir: Path, *, request_id: str, email: str, text: str, via: str) -> str:
+def answer_in_thread(hub_dir: Path, *, request_id: str, email: str, text: str, via: str,
+                     approvals: bool = False) -> str:
     """Answer one question from a person's reply in a work thread (a ClickUp
     comment, a Linear session prompt). The caller picks the request and records
     it on the delivery first, so a retry after a crash answers the same
     question and never the next one. Returns "answered" (now, or by this same
     person before a crash), or "taken" when it was settled another way and the
-    reply is an ordinary follow-up. Approvals are never decided from thread text."""
+    reply is an ordinary follow-up. A plan approval is settled from thread
+    text only when the thread allows it (`approvals`) and the text is a
+    decision (`thread_decision`); other approvals never are."""
     hub = _hub(hub_dir)
     req = service.get(hub_dir, hub, request_id)
-    if req is None or req["kind"] != "question":
+    if req is None:
+        return "taken"
+    if approvals and _plan_approval(req):
+        return _decide_in_thread(hub_dir, req, email=email, text=text, via=via)
+    if req["kind"] != "question":
         return "taken"
     account_id = _account_for(hub_dir, email)
     if req["status"] != "pending":
@@ -145,6 +179,28 @@ def answer_in_thread(hub_dir: Path, *, request_id: str, email: str, text: str, v
         again = service.get(hub_dir, hub, request_id) or {}
         same = (again.get("decided_by_email") or "").lower() == (email or "").lower() and again.get("decided_via") == via
         return "answered" if again.get("status") == "answered" and same else "taken"
+    return "answered"
+
+
+def _decide_in_thread(hub_dir: Path, req: dict, *, email: str, text: str, via: str) -> str:
+    hub = _hub(hub_dir)
+
+    def settled_by_this(r: dict) -> bool:
+        return (r.get("status") in ("approved", "rejected")
+                and (r.get("decided_by_email") or "").lower() == (email or "").lower()
+                and r.get("decided_via") == via)
+
+    if req["status"] != "pending":
+        return "answered" if settled_by_this(req) else "taken"
+    decision = thread_decision(text)
+    if decision is None:
+        return "taken"
+    what, note = decision
+    try:
+        service.decide(hub_dir, hub, req["id"], account_id=_account_for(hub_dir, email), email=email,
+                       decision=what, expected_revision=req["revision"], digest=req["digest"], note=note, via=via)
+    except service.RequestError:
+        return "answered" if settled_by_this(service.get(hub_dir, hub, req["id"]) or {}) else "taken"
     return "answered"
 
 

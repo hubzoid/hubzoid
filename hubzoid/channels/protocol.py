@@ -87,8 +87,17 @@ class Adapter:
     #: event kinds whose text, from the person who asked, answers the one
     #: question their work waits on (a ClickUp comment, a Linear session
     #: prompt). Empty: replies in the thread are follow-ups only. Approvals are
-    #: never decided from thread text.
+    #: never decided from thread text, unless `approvals_in_thread` says so.
     answer_kinds: ClassVar[tuple[str, ...]] = ()
+    #: whether `Outbound.files` are attached to the reply. Otherwise they are
+    #: left out and the reply's text stands alone.
+    attachments: ClassVar[bool] = False
+
+    def approvals_in_thread(self, conn: "Connection") -> bool:
+        """Whether the requester's reply in the thread (an `answer_kinds`
+        event) may settle a plan approval their work waits on. The provider
+        must verify who wrote it; the connection file opts in."""
+        return False
 
     def route(self, hub_dir, conn: "Connection", row: dict, thread: dict, event: InboundEvent):
         """Take over routing for this provider (intake adapters hand events to

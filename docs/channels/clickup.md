@@ -25,12 +25,18 @@ provider_config:
   statuses:                           # optional: where the task moves as the work goes
     ack: in progress                  # work started, and again when it moves on after an answer
     question: needs answer            # the work asked a question in a comment
+    approval: needs approval          # a plan waits for approval (unset: the question status)
     result: in review                 # the result (a draft pull request) was posted
     # error: blocked
+  approve_in_task: true               # the person who asked approves the plan with a comment
 ```
 
 The ids above are placeholders. Every status you name must exist in each list
-(doctor checks). Statuses compare without case.
+(doctor checks). Statuses compare without case. ClickUp's API cannot add
+statuses, so add them yourself in the list's (or its space's) status settings.
+A status the list lacks is skipped: the comment is still posted and the task
+stays where it is. Filter the board by `needs answer` and `needs approval` to
+see everything waiting on people.
 
 ## Setting it up
 
@@ -87,9 +93,17 @@ Access in Settings.
 - **Questions and answers.** When the work asks a question, it is posted as a
   comment (and the task moves to `statuses.question`). The next comment from
   the person who asked answers it, and the work continues. A number picks an
-  option. Approvals are never decided from a comment: the comment links to the
-  Inbox. Other comments while work runs are follow-ups the work reads at its
+  option. Other comments while work runs are follow-ups the work reads at its
   next step.
+- **Plan approvals.** When the work needs a plan approved, the plan is attached
+  to the task as a file and the comment says what to reply (the task moves to
+  `statuses.approval`). With `approve_in_task: true`, the person who asked
+  replies `approve`, or `change:` followed by what to change, or `reject`.
+  Nothing else decides it: "looks good" is an ordinary comment. Only plan
+  approvals settle this way; any other approval links to the Inbox, and the
+  plan can always be approved there too. Who wrote the comment comes from
+  ClickUp's signed webhook, matched to the person's account link, so give the
+  hub its own ClickUp user: a comment the hub posts never decides anything.
 - **Replies.** Each comment ends with a short reference (`ref hz-…`). It lets
   the hub find a comment whose post timed out instead of posting it twice, and
   keeps its own comments from starting work. A comment from the hub's ClickUp
@@ -105,5 +119,6 @@ Access in Settings.
 | Deliveries refused with `signature_invalid` | A webhook this connection did not make, or its secret was lost | `hubzoid channels clickup setup` again |
 | `trigger_moved_on` in the deliveries list | The task left the trigger status before the work started | Move it back |
 | `list_not_allowed` | The task is in a list not in `list_ids` | Add the list, then run `setup` |
-| Doctor: no status "…" | The list lacks a status the file names | Add it in ClickUp, or change the file |
+| Doctor: no status "…" | The list lacks a status the file names | Add it in ClickUp (the API cannot), or change the file |
+| "approve" did nothing | `approve_in_task` is off, it was not the person who asked, or the comment had other words | Turn it on, ask the requester, or approve in the Inbox |
 | "Ask an administrator to link your clickup account" | No account link for that ClickUp user | `hubzoid channels link` |

@@ -49,7 +49,7 @@ REF_RE = re.compile(r"\(ref (hz-[0-9a-f]{16})\)\s*$")
 # tag or status change, only this event.
 EVENTS = ["taskCreated", "taskStatusUpdated", "taskTagUpdated", "taskCommentPosted"]
 #: reply kinds and the status each may set (from `statuses`)
-STATUS_KINDS = ("ack", "question", "result", "error")
+STATUS_KINDS = ("ack", "question", "approval", "result", "error")
 DESCRIPTION_LIMIT = 16000
 
 
@@ -72,6 +72,7 @@ class Statuses(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ack: str | None = Field(default=None, max_length=100)
     question: str | None = Field(default=None, max_length=100)
+    approval: str | None = Field(default=None, max_length=100)   # unset: the question status
     result: str | None = Field(default=None, max_length=100)
     error: str | None = Field(default=None, max_length=100)
 
@@ -86,6 +87,9 @@ class ClickUpConfig(BaseModel):
     token_ref: str
     trigger: Trigger
     statuses: Statuses = Field(default_factory=Statuses)
+    #: the person who asked approves the plan with a comment ("approve", or
+    #: "change: ..."), as well as in Hubzoid
+    approve_in_task: bool = False
 
     @field_validator("workspace_id")
     @classmethod
@@ -144,6 +148,11 @@ class ClickUpAdapter(Adapter):
     webhook = True
     #: a person's comment on the task answers the one question its work waits on
     answer_kinds = ("comment",)
+    #: files on a reply (a plan) are attached to the task
+    attachments = True
+
+    def approvals_in_thread(self, conn) -> bool:
+        return bool(conn.settings.approve_in_task)
 
     def check(self, config, settings):
         if config.run_as != "linked_requester":
@@ -304,6 +313,15 @@ class ClickUpAdapter(Adapter):
         the file names for this kind of reply. A status that fails to set never
         undoes the comment."""
         task_id = origin.coordinates["task_id"]
+        # Files first, each once: a retry after a lost comment finds them by
+        # name and does not attach them again.
+        if outbound.files:
+            have = api.attachment_titles(conn, task_id)
+            for path in outbound.files:
+                from pathlib import Path
+
+                if Path(path).name not in have:
+                    api.attach(conn, task_id, path)
         text = f"{outbound.text.rstrip()}\n\n(ref {outbound.marker})"
         posted = api.post_comment(conn, task_id, text)
         cid = str(posted.get("id") or "")
@@ -312,7 +330,9 @@ class ClickUpAdapter(Adapter):
         # Progress after an answer means the work is moving again: the
         # "working" status (statuses.ack) comes back.
         kind = "ack" if outbound.kind == "progress" else outbound.kind
-        status = getattr(conn.settings.statuses, kind, None) if outbound.part == outbound.parts else None
+        statuses = conn.settings.statuses
+        status = (statuses.approval or statuses.question) if kind == "approval" else getattr(statuses, kind, None)
+        status = status if outbound.part == outbound.parts else None
         if status:
             try:
                 api.set_status(conn, task_id, status)
@@ -368,7 +388,9 @@ class ClickUpAdapter(Adapter):
                 if want and not any(_same(n, want) for n in names):
                     out.append(Check(f"clickup:status:{list_id}:{kind}", "warn",
                                      f"List {lst.get('name')} has no status {want!r} (statuses.{kind}).",
-                                     "status_missing", "Add it in ClickUp, or change statuses."))
+                                     "status_missing", "Add the status to this list (or its space) in ClickUp: "
+                                     "ClickUp's API cannot add statuses. Or remove it from statuses. Until then "
+                                     "the comment is posted and the task's status is left as it is."))
         url = webhook_url(conn)
         try:
             live = {w.get("id"): w for w in api.webhooks(conn, cfg.workspace_id)}

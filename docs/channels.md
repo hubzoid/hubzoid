@@ -183,6 +183,14 @@ so the hub's write mode in `work-items.yaml` applies (`off`, `draft` or
 `approve`). When the workflow returns without posting, the channel posts its
 result (a string, or `reply`, `summary` or `text` from a dict) or `Done`.
 
+`kind` is `progress`, `result`, `notice`, `question` or `approval` (the work
+now waits for an approval). `files=[...]` attaches files the hub wrote under
+its `output/` folder (at most five, 10 MB each) where the provider supports
+it (`hub.thread.attachments`, ClickUp today); elsewhere the text stands
+alone, so keep a link in it. `hub.thread.approvals_here` says whether the
+requester may settle a plan approval by replying in the thread (ClickUp with
+`approve_in_task: true`), so the text can say what to reply.
+
 ## Commands
 
 | Command | API |

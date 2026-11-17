@@ -91,7 +91,7 @@ def _balance_fences(parts: list[str]) -> list[str]:
 
 
 def post(conn: Connection, thread: dict, *, kind: str, text: str, key: str,
-         blocks=None, ref: str | None = None, actions=None, draft=None) -> list[dict]:
+         blocks=None, ref: str | None = None, actions=None, draft=None, files=()) -> list[dict]:
     """Post `text` to the thread's origin under `key`. Returns one result per
     part: `{"state": "succeeded" | "ambiguous" | "failed" | "waiting", ...}`.
     Repeating the same key and text is safe: parts already sent are not sent
@@ -109,8 +109,9 @@ def post(conn: Connection, thread: dict, *, kind: str, text: str, key: str,
     results = []
     for n, piece in enumerate(pieces, 1):
         mark = marker(thread["id"], key, n)
+        last = n == len(pieces)
         out = Outbound(kind=kind, text=piece, part=n, parts=len(pieces), marker=mark,
-                       blocks=blocks if n == len(pieces) else None)
+                       blocks=blocks if last else None, files=tuple(files) if last else ())
         results.append(_post_part(conn, thread, origin, out, key, ref, actions, draft))
         if results[-1]["state"] != "succeeded":
             break   # later parts wait: a gap in the middle would mislead
@@ -155,7 +156,8 @@ def _post_part(conn: Connection, thread: dict, origin: Origin, out: Outbound, ke
 
     recovery = "reconcile" if adapter.recovery == "reconcile" else "escalate"
     arguments = {"kind": out.kind, "text": out.text, "part": out.part, "parts": out.parts,
-                 "marker": out.marker, "op_key": f"{key}:{out.part}"}
+                 "marker": out.marker, "op_key": f"{key}:{out.part}",
+                 **({"files": list(out.files)} if out.files else {})}
     target = {"channel": conn.id, "thread": thread["id"], **({"ref": ref} if ref else {})}
     inside = _in_workflow()
     kwargs = dict(name=f"channel.{out.kind}", target=target, arguments=arguments, recovery=recovery,
@@ -287,7 +289,7 @@ def resolve(conn: Connection, op_id: str, *, decision: str, actor: str, evidence
         return {"id": op_id, "state": (out.get("operation") or {}).get("state")}
     # Send it again as the same recorded operation: same name, target and key.
     part = Outbound(kind=args["kind"], text=args["text"], part=int(args["part"]), parts=int(args["parts"]),
-                    marker=args["marker"])
+                    marker=args["marker"], files=tuple(args.get("files") or ()))
 
     def dispatch(a: dict) -> dict:
         receipt = conn.adapter.reply(conn, origin, part)

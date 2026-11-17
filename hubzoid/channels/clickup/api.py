@@ -28,7 +28,7 @@ def task_url(task_id: str) -> str:
 
 
 def call(conn, method: str, path: str, *, json: dict | None = None, params: dict | None = None,
-         write: bool = False, token: str | None = None) -> dict:
+         write: bool = False, token: str | None = None, files: dict | None = None) -> dict:
     """One API call. Returns the JSON body. Raises `Rejected` for a refused
     write, `ChannelError` (503) for a token ClickUp refuses or an outage on a
     read, and `RuntimeError` for an uncertain write."""
@@ -36,9 +36,11 @@ def call(conn, method: str, path: str, *, json: dict | None = None, params: dict
 
     token = token or conn.secret("token_ref")
     try:
-        resp = httpx.request(method, f"{base_url()}{path}", json=json, params=params, timeout=TIMEOUT,
-                             headers={"Authorization": token, "Content-Type": "application/json"},
-                             follow_redirects=False)
+        headers = {"Authorization": token}
+        if files is None:
+            headers["Content-Type"] = "application/json"
+        resp = httpx.request(method, f"{base_url()}{path}", json=json, params=params, timeout=TIMEOUT * 4 if files
+                             else TIMEOUT, headers=headers, files=files, follow_redirects=False)
     except httpx.HTTPError as exc:
         if write:
             raise RuntimeError(f"ClickUp did not answer: {type(exc).__name__}") from None
@@ -92,6 +94,27 @@ def comments(conn, task_id: str) -> list[dict]:
 def post_comment(conn, task_id: str, text: str) -> dict:
     return call(conn, "POST", f"/task/{task_id}/comment", json={"comment_text": text, "notify_all": False},
                 write=True)
+
+
+def _task_params(conn, task_id: str) -> dict | None:
+    if is_custom_id(task_id):
+        return {"custom_task_ids": "true", "team_id": conn.settings.workspace_id}
+    return None
+
+
+def attachment_titles(conn, task_id: str) -> set[str]:
+    task = call(conn, "GET", f"/task/{task_id}", params=_task_params(conn, task_id))
+    return {str(a.get("title") or "") for a in task.get("attachments") or []}
+
+
+def attach(conn, task_id: str, path: str) -> dict:
+    """Attach one file to the task (ClickUp's multipart `attachment` field)."""
+    from pathlib import Path
+
+    name = Path(path).name
+    with open(path, "rb") as fh:
+        return call(conn, "POST", f"/task/{task_id}/attachment", params=_task_params(conn, task_id),
+                    files={"attachment": (name, fh.read())}, write=True)
 
 
 def set_status(conn, task_id: str, status: str) -> dict:

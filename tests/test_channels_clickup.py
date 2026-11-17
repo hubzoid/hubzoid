@@ -14,6 +14,7 @@ import pytest
 from hubzoid.channels import admission, config, replies, router, store
 from hubzoid.channels.clickup import adapter as cu
 from hubzoid.channels.errors import ChannelError
+from hubzoid.channels.models import Origin
 
 TOKEN = "pk_test_token"          # gitleaks:allow (a test value)
 WS = "9001"
@@ -59,6 +60,13 @@ class FakeClickUp:
         if path.startswith("/list/"):
             return httpx.Response(200, json={"id": path.rsplit("/", 1)[1], "name": "Requests", "statuses": [
                 {"status": s} for s in ("to do", "ready for agent", "in progress", "needs answer", "in review")]})
+        if path.startswith("/task/") and path.endswith("/attachment") and method == "POST":
+            tid = path.split("/")[2]
+            name, body = kw["files"]["attachment"]
+            self.tasks.setdefault(tid, self.task(tid)).setdefault("attachments", []).append(
+                {"id": f"a{self.n}", "title": name, "size": len(body)})
+            assert "Content-Type" not in headers          # httpx sets the multipart boundary
+            return httpx.Response(200, json={"id": "att", "title": name})
         if path.startswith("/task/") and path.endswith("/comment"):
             tid = path.split("/")[2]
             if method == "POST":
@@ -418,3 +426,61 @@ def test_setup_remakes_a_webhook_made_before_task_creation_was_sent(hub_dir, api
     out = cu.setup(conn, actor="admin@example.org")
     assert old in out["removed"] and out["made"] == [LIST]
     assert all("taskCreated" in h["events"] for h in api.hooks.values())
+
+
+# -- plans: attached once, and the approval status ----------------------------------------
+
+def test_a_plan_reply_attaches_its_file_once_and_sets_the_approval_status(hub_dir, api, tmp_path):
+    from hubzoid.channels.models import Outbound
+
+    conn, _ = ready(hub_dir, api, statuses={"ack": "in progress", "question": "needs answer",
+                                            "approval": "needs approval"})
+    api.task()
+    plan = tmp_path / "plan-v1-0123abcd.md"
+    plan.write_text("# Plan\n1. Fix it\n")
+    out = Outbound(kind="approval", text="Plan v1 is ready.", marker="hz-0123456789abcdef", files=(str(plan),))
+    origin = Origin("clickup", WS, "clickup:task:t1", {"task_id": "t1"})
+    conn.adapter.reply(conn, origin, out)
+    conn.adapter.reply(conn, origin, out)                   # a retry: the file is already there
+    assert [a["title"] for a in api.tasks["t1"]["attachments"]] == ["plan-v1-0123abcd.md"]
+    assert api.statuses["t1"] == "needs approval"
+
+
+def test_without_an_approval_status_the_question_status_is_used(hub_dir, api):
+    from hubzoid.channels.models import Outbound
+
+    conn, _ = ready(hub_dir, api)
+    api.task()
+    conn.adapter.reply(conn, Origin("clickup", WS, "clickup:task:t1", {"task_id": "t1"}),
+                       Outbound(kind="approval", text="Plan ready.", marker="hz-0123456789abcdee"))
+    assert api.statuses["t1"] == "needs answer"
+
+
+def test_approve_in_task_is_off_unless_the_file_says_so(hub_dir, api):
+    conn, _ = ready(hub_dir, api)
+    assert conn.adapter.approvals_in_thread(conn) is False
+    on = cu.ClickUpConfig(workspace_id=WS, list_ids=[LIST], token_ref="env:X", trigger={"tag": "hubzoid"},
+                          approve_in_task=True)
+
+    class Conn:
+        settings = on
+
+    assert conn.adapter.approvals_in_thread(Conn()) is True
+
+
+def test_posted_files_must_be_this_hubs_output(hub_dir, tmp_path):
+    from hubzoid.channels.thread import _files
+
+    out = hub_dir / "output" / "factory"
+    out.mkdir(parents=True)
+    good = out / "plan.md"
+    good.write_text("x")
+    assert _files(hub_dir, [good]) == (str(good.resolve()),)
+    assert _files(hub_dir, "output/factory/plan.md") == (str(good.resolve()),)
+    secret = hub_dir / ".env"
+    secret.write_text("TOKEN=x")
+    for bad in (secret, tmp_path / "elsewhere.md", out / "missing.md", hub_dir / "output" / ".." / ".env"):
+        with pytest.raises(ValueError):
+            _files(hub_dir, [bad])
+    with pytest.raises(ValueError):
+        _files(hub_dir, [good] * 6)

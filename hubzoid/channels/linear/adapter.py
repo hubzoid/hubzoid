@@ -43,7 +43,7 @@ SKEW_MS = 60_000
 UPLOAD_HOST = "uploads.linear.app"
 UPLOAD_RE = re.compile(r"https://uploads\.linear\.app/[A-Za-z0-9/_\-.%]+")
 KINDS = {"ack": "thought", "progress": "thought", "result": "response", "notice": "response", "error": "error",
-         "question": "elicitation"}
+         "question": "elicitation", "approval": "elicitation"}
 
 
 class LinearConfig(BaseModel):
