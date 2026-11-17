@@ -699,3 +699,58 @@ def test_connected_app_calls_follow_the_hubs_approval_rules(connected, rules):
     (hub / "hitl.yaml").write_text(rules)
     (out,) = _ana(app, _tool_call("my_mail__whoami"))
     assert "waiting" in h.text_of(out).lower() and _UPSTREAM == []
+
+
+def test_connected_app_catalog_reads_every_page():
+    """The Agents SDK's list_tools reads only the first page of an app's tools."""
+    from types import SimpleNamespace
+
+    from hubzoid.mcp_connected_apps import _all_tools
+
+    pages = {None: (["a", "b"], "p2"), "p2": (["c"], None)}
+
+    class Session:
+        async def list_tools(self, cursor=None):
+            names, nxt = pages[cursor]
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in names], nextCursor=nxt)
+
+    tools = asyncio.run(_all_tools(SimpleNamespace(session=Session())))
+    assert [t.name for t in tools] == ["a", "b", "c"]
+
+
+def test_slow_connected_app_lookup_never_holds_up_the_list(monkeypatch):
+    """A token refresh that hangs is cut off by the listing budget: no apps,
+    answered in time."""
+    import time
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+
+    monkeypatch.setattr(apps, "BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(apps, "_servers", lambda *a: time.sleep(2) or ([], {}, set()))
+
+    async def timed():   # inside the loop: asyncio.run itself waits for the thread to end
+        started = time.monotonic()
+        out = await apps.list_tools(Path("."), access.Identity.make(user="a@x.io", surface="mcp"), set())
+        return out, time.monotonic() - started
+
+    out, took = asyncio.run(timed())
+    assert out == [] and took < 1.5
+
+
+def test_connected_app_call_rechecks_the_grant_after_connecting(connected, monkeypatch):
+    """A grant revoked between finding the caller's apps and forwarding the call
+    still stops it, with a denial in the access log."""
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.access import audit, store_for
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    found = apps._servers(hub, ana)                 # the lookup made before the grant goes
+    store_for(hub).revoke(ANA, hub.name, "connector_mail", actor="test")
+    monkeypatch.setattr(apps, "_servers", lambda *a: found)
+    (out,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(out) and _UPSTREAM == []
+    assert [r["decision"] for r in audit.read(hub, tool="my_mail__whoami")] == ["deny"]

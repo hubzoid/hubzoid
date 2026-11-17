@@ -42,6 +42,7 @@ log = logging.getLogger("hubzoid.mcp")
 LIST_SECONDS = 10.0      # one app's listing
 BUDGET_SECONDS = 20.0    # every app's listing for one tools/list
 CONCURRENCY = 4          # apps listed at once for one caller
+MAX_PAGES = 10           # pages of one app's tool list
 CACHE_SECONDS = 60.0
 CACHE_SIZE = 256
 
@@ -90,17 +91,26 @@ def forget() -> None:
 async def list_tools(hub_dir: Path, ident, reserved: set[str]) -> list:
     """FastMCP tools for the caller's connected apps. ``reserved``: every name
     the hub serves, hidden from this caller or not; an alias never takes one."""
-    servers, labels, _ids = await asyncio.to_thread(_servers, hub_dir, ident)
+    # One budget for finding the caller's apps (a token refresh can hang) and
+    # listing them, so the hub's own tools are never held up for longer. A
+    # lookup cut off here still finishes in its thread; it is just not waited for.
+    deadline = time.monotonic() + BUDGET_SECONDS
+    try:
+        servers, labels, _ids = await asyncio.wait_for(
+            asyncio.to_thread(_servers, hub_dir, ident), BUDGET_SECONDS)
+    except TimeoutError:
+        log.warning("mcp: connected apps not found within %ss; left out", BUDGET_SECONDS)
+        return []
     if not servers:
         return []
-    listed = await _list_all(hub_dir, ident, servers)
+    listed = await _list_all(hub_dir, ident, servers, max(0.0, deadline - time.monotonic()))
     out = []
     for name, (srv, tool) in _aliases(listed, reserved).items():
         out.append(_offered(name, labels.get(srv.server_id) or srv.app, tool))
     return out
 
 
-async def _list_all(hub_dir: Path, ident, servers: list) -> list:
+async def _list_all(hub_dir: Path, ident, servers: list, budget: float) -> list:
     """``[(server, tools)]`` within the listing budget. An app that fails, or is
     still listing when the budget runs out, is left out of this answer."""
     gate = asyncio.Semaphore(CONCURRENCY)
@@ -120,7 +130,7 @@ async def _list_all(hub_dir: Path, ident, servers: list) -> list:
         return srv, _allowed(srv, tools)
 
     tasks = [asyncio.create_task(one(srv)) for srv in servers]
-    done, pending = await asyncio.wait(tasks, timeout=BUDGET_SECONDS)
+    done, pending = await asyncio.wait(tasks, timeout=budget)
     for task in pending:
         log.warning("mcp: a connected app was still listing after %ss; left out", BUDGET_SECONDS)
         task.cancel()
@@ -131,7 +141,22 @@ async def _fetch(srv) -> list:
     from .runtime import personal_mcp_server
 
     async with personal_mcp_server(srv) as server:
-        return list(await server.list_tools())
+        return await _all_tools(server)
+
+
+async def _all_tools(server) -> list:
+    """Every page of a connected app's tool list. The Agents SDK's
+    ``list_tools`` reads only the first; the allow-list is applied after
+    (``_allowed``)."""
+    tools: list = []
+    cursor = None
+    for _ in range(MAX_PAGES):
+        result = await server.session.list_tools(cursor=cursor)
+        tools += list(result.tools or [])
+        cursor = getattr(result, "nextCursor", None)
+        if not cursor:
+            break
+    return tools
 
 
 def _allowed(srv, tools: list) -> list:
@@ -209,6 +234,7 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
     from .access import audit
     from .access.evaluator import check_run
     from .access.guard import refusal
+    from .personal_mcp import _connector_gate
 
     servers, labels, ids = await asyncio.to_thread(_servers, hub_dir, ident)
     candidates = [srv for srv in servers if name.startswith(srv.key + "__")]
@@ -221,7 +247,7 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
             server = _client(hub_dir, srv)
             try:
                 await stack.enter_async_context(server)
-                tools = _allowed(srv, await server.list_tools())
+                tools = _allowed(srv, await _all_tools(server))
             except Exception as exc:  # noqa: BLE001
                 _cache.pop(_cache_key(hub_dir, ident, srv), None)
                 log.warning("mcp: connected app %r unavailable (%s)", srv.key, type(exc).__name__)
@@ -234,10 +260,14 @@ async def call(hub_dir: Path, ident, name: str, arguments: dict | None):
         srv, server, tool = found[0]
         label = labels.get(srv.server_id) or srv.app
         decision = await asyncio.to_thread(check_run, hub_dir, ident, tool=name, connector=srv.server_id)
-        refused = refusal(decision, name)
+        refused, reason = refusal(decision, name), decision.reason
+        if refused is None and not await asyncio.to_thread(_connector_gate(hub_dir, ident), srv.app):
+            # The grant went while the app was being reached: same gate as the lookup.
+            refused = f"[access denied: '{name}' needs \"Use {label}\" in this agent.]"
+            reason = f"connector_{srv.server_id}"
         if refused is not None:
             await asyncio.to_thread(audit.record, hub_dir, user=ident.user, surface=ident.surface,
-                                    tool=name, decision="deny", reason=decision.reason)
+                                    tool=name, decision="deny", reason=reason)
             return _error(refused)
         recorded = await asyncio.to_thread(audit.record, hub_dir, user=ident.user, surface=ident.surface,
                                            tool=name, decision="allow", reason=f"connector_{srv.server_id}")
