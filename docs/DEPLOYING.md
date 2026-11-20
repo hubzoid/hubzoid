@@ -907,6 +907,7 @@ secrets, restarts and deploys.
   | Setting | Why |
   |---|---|
   | `HUBZOID_BRIDGE_HOST=0.0.0.0` | Listen on the task's network address, not only on loopback |
+  | `HUBZOID_INBOUND_HOST=0.0.0.0` | The same for the inbound service, only when the hub uses WhatsApp, Telegram or webhooks |
   | `HUBZOID_TRUSTED_PROXIES=10.0.0.0/16` | The edge's network. The hub trusts the client address the edge forwards from there only, so sign-in limits and audit records see each person's address |
   | `HUBZOID_AUTH=true` | A hub on the network refuses to start with sign-in off |
   | `DATABASE_URL` | The same database as the edge: accounts, sessions and conversations are shared |

@@ -106,6 +106,10 @@ one-time sign-in link; nothing is emailed.
    only their permitted tools.
 5. Review **Activity → Access changes** for who changed what and **Tool
    decisions** for actual allow/deny decisions. Both are scoped to the administrator.
+   With the audit log on (`HUBZOID_AUDIT=db` or `both`), **Tool calls** lists every
+   tool call and **Sign-in events** (organization administrators only) lists failed
+   sign-ins, lockouts and API key use, with **Export** for a security team. See
+   [the audit log](AUDIT.md).
    Filter by time range, agent, person, who-changed-it/action (access changes), or
    tool/outcome/channel (tool decisions); filters and paging are kept in the URL, so a
    filtered view is shareable and survives refresh and Back. **Details** on any row opens
