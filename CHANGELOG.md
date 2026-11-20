@@ -43,6 +43,43 @@ doctor, evals and the channel list say what used to fail silently.
   when authlib runs on httpx2.
 
 ### Added
+- **Each hub as its own service behind one web app.** A hub's `.env` may set
+  `HUBZOID_BRIDGE_UPSTREAM` (and `HUBZOID_INBOUND_UPSTREAM`) to where its bridge
+  runs. The edge routes that hub there and checks its health, so people see
+  "restarting" while it is down and the other hubs keep working. The hub's own
+  service runs `hubzoid run <hub> --behind <public URL>`, listens on
+  `HUBZOID_BRIDGE_HOST` and trusts forwarded client addresses only from
+  `HUBZOID_TRUSTED_PROXIES`. It refuses to start on the network with sign-in
+  off, or without the shared database, deployment key or trusted proxy range.
+  See docs/DEPLOYING.md, Path C.
+- **Audit log for security teams** (`HUBZOID_AUDIT=off|log|db|both`, off by
+  default). One redacted record per tool call (who, which tool, allowed or
+  refused, outcome, duration, result size, argument names and identifiers),
+  per sign-in event (failures, lockouts, API key use) and per admin change.
+  `log` writes JSON lines for CloudWatch or a SIEM, `db` keeps them for the
+  Activity page (`HUBZOID_AUDIT_RETENTION_DAYS`, default 90).
+  `HUBZOID_AUDIT_ARGS=redacted` keeps argument values after the credential
+  scrub and masks personal data. See docs/AUDIT.md.
+- **Activity: Tool calls and Sign-in events**, with filters for agent, time,
+  person, allowed or refused, finished or failed, tool and channel, and an
+  **Export** button.
+- **Audit export.** `GET /portal/api/audit/export` (admins) and `hubzoid audit
+  <hub> --export` write every stored record, oldest first, as JSON lines.
+- **JSON logs.** `HUBZOID_LOG_FORMAT=json` writes every log line as a JSON
+  object with the hub, person, surface, chat, workflow run, client address and
+  trace id, through the credential scrub.
+- **`/readyz`** beside `/healthz`, on the bridge and the edge: 503 while the
+  database does not answer or its schema is behind. For a load balancer's
+  target group.
+- **Hosted deployment settings.** `HUBZOID_REQUIRE_SECRET_KEY` refuses to make
+  a key file (`hubzoid secrets new-key` prints a key), `HUBZOID_DB_POOL_SIZE`,
+  `_MAX_OVERFLOW`, `_POOL_TIMEOUT`, `_POOL_RECYCLE` and
+  `HUBZOID_DB_CONNECT_TIMEOUT` size the database pool, `HUBZOID_OTEL_SIGNALS`
+  chooses traces, metrics and logs, and `HUBZOID_OTEL_CONTENT` (none, tools,
+  full) caps the content telemetry carries. With a tracer set up, every tool
+  call is an `execute_tool` span.
+- `hubzoid doctor` fails a SQLite database on a network filesystem (EFS), and
+  `hubzoid status` from another container says where the deployment runs.
 - **MCP at par with chat** (`proposals/2026-11-20-mcp-parity.md`). Over hosted
   MCP:
   - `write_artifact`, `make_excel`, `make_pdf`, `make_word` and
