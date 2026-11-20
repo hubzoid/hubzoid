@@ -237,3 +237,14 @@ carry the credential (13). `request.created` reads the persisted HITL events wit
 tests also resolve routes and post example bodies, and key operations are computed (16). Partly applied:
 (15) the RFC 8414 document is the primary discovery URL, and the small OpenID-style document stays because
 AWS's own API reference names only that pattern.
+
+## Implementation review
+
+Codex review of the implementation (gpt-6.1-sol, high), 20 November 2026, on the branch rebased onto the
+2.0.9 release head. All 11 findings were checked against the code and fixed, with tests: API-started
+workflow runs now carry the key or machine credential, remapping an API app ends work started as the old
+account, idempotent run ids are scoped to the hub and a concurrent conflict gets 409, the remote-engine path
+deduplicates active runs, the request.created cursor and payload failures recover, the deliverer stops with
+the app, malformed JWT headers give 401, the edge admits only real JWT-shaped bearers, and work-item audits
+name the deciding key. Before the review, the e2e had already found one more: an unknown JWT bearer was the
+local owner with sign-in off. Fixed. The release gets one fresh review of the whole 2.0.9 line before it ships.
