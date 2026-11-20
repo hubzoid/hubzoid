@@ -374,6 +374,7 @@ class Settings:
     show_tools: str = "compact"
     mcp_public_url: str = ""
     mcp_server: bool = False
+    mcp_stateless: bool = False   # MCP_STATELESS: no sessions (several replicas), no elicitation
     slack_identity_mapping: bool = False
     otel_endpoint: str | None = None
     otel_normalize: bool = False
@@ -459,6 +460,7 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
         mcp_public_url=(os.environ.get("MCP_PUBLIC_URL") or "").strip(),
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
+        mcp_stateless=truthy(os.environ.get("MCP_STATELESS")),
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
         otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
         otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),

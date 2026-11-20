@@ -21,7 +21,7 @@ Here, on every ``tools/list`` and ``tools/call``:
     result comes back as the app sent it: content, structured content, error.
 
 Only tool metadata is cached, briefly and per caller and credential, never a
-credential or a decision. The hosted transport is stateless and sends no
+credential or a decision. The hosted endpoint sends no
 list-changed notice: after connecting an app, a person reconnects their
 assistant to see its tools (``tools/connect_tools`` says so).
 """

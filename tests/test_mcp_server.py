@@ -187,7 +187,9 @@ def test_tools_list_includes_restricted_for_member(mcp_app):
     names = {t["name"] for t in result["tools"]}
     assert "read_knowledge" in names
     assert "clickup_echo" in names          # alice is in the clickup group
-    assert "write_artifact" not in names
+    # The file tools work over MCP (each person's own space), with upload_file.
+    assert {"write_artifact", "read_upload", "upload_file"} <= names
+    assert "record_feedback" not in names
 
 
 def test_tools_list_hides_restricted_for_nonmember(tmp_path, monkeypatch):

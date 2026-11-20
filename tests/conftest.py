@@ -168,6 +168,13 @@ def _planned_ports_ignore_this_machine(request, monkeypatch):
     monkeypatch.setattr(gateway, "port_free", lambda port, host="127.0.0.1": True)
 
 
+@pytest.fixture(autouse=True)
+def _mcp_without_sessions(monkeypatch):
+    """Most MCP tests post one JSON-RPC call per request, with no session. A
+    test of sessions (elicitation) removes this first."""
+    monkeypatch.setenv("MCP_STATELESS", "true")
+
+
 _REAL_MODEL_MARKERS = ("e2e", "e2e_llm", "e2e_ui", "e2e_browser", "real_logins")
 
 

@@ -19,17 +19,22 @@ Design points:
     the current account and hub permissions; tools run under identity_scope
     with surface ``mcp`` and the same access rules as chat.
   * Tool set: the same registry the chat agent gets (built-ins + hub-local +
-    guarded restricted/), minus chat-scoped tools (`write_artifact`,
-    `read_upload`, ...) which have no chat directory to resolve outside a
-    chat, and minus model-delegates (an MCP caller brings their own model;
-    the hub does not spend inference on their behalf). Plus, per request, the
-    caller's own connected apps (``mcp_connected_apps``).
+    guarded restricted/, the file tools, ``remember`` and the hub change
+    tools, core skills), minus ``record_feedback`` (it rates a hub answer in a
+    chat). The file tools work in the caller's own file space and
+    ``upload_file`` hands them a file (``mcp_parity``). Sub-agents on their
+    own model are offered only with the ``mcp_delegates`` grant, because the
+    hub pays for their model calls. Plus, per request, the caller's own
+    connected apps (``mcp_connected_apps``).
   * Instructions: the initialize response carries the hub's AGENTS.md body
     (or the ``mcp_instructions:`` frontmatter override) so the connecting
     agent learns what the hub is and how to use its tools — the MCP-native
     home for the system prompt it would otherwise never see.
-  * Stateless Streamable HTTP: every request is self-contained, so the
-    endpoint scales behind load balancers and survives bridge restarts.
+  * Streamable HTTP with a session per connected assistant (MCP SDK session
+    manager: idle timeout, session cap, a session bound to the token that
+    opened it), so a tool can ask the person a question through elicitation.
+    ``MCP_STATELESS=true`` serves every request on its own instead (several
+    replicas without sticky sessions), without elicitation.
 
 """
 from __future__ import annotations
@@ -51,20 +56,10 @@ log = logging.getLogger("hubzoid.mcp")
 #: one bot token speaks for everyone.
 MCP_SURFACE = "mcp"
 
-# Tools whose behaviour is bound to a live chat (ContextVar chat_id -> the
-# chat's uploads/artifacts dirs). An MCP call has no chat, so exposing them
-# would silently write to / read from the process fallback dir instead of
-# doing what their descriptions promise. Excluded until they grow a
-# non-chat scope.
+# Tools bound to a chat that MCP does not have. The file tools are not here:
+# over MCP they work in the caller's own file space (``mcp_parity.space_id``).
 CHAT_SCOPED_TOOLS = frozenset({
-    "write_artifact",
-    "make_excel",
-    "make_pdf",
-    "make_word",
-    "list_artifacts",
-    "read_upload",
-    "read_upload_full",
-    "record_feedback",   # rates an answer in the caller's chat conversation; MCP has none
+    "record_feedback",   # rates the hub's answer in a chat; over MCP the answer is the assistant's
 })
 
 
@@ -85,8 +80,9 @@ def build_registry(
                  actual enforcement.)
 
     Mirrors the front half of `factory.build_agent` but never touches a
-    model: sub-agents are all promoted to skills (no delegates — a delegate
-    runs on the hub's model budget, which an MCP caller does not get).
+    model: sub-agents are all promoted to skills, and the ones that run on
+    their own model are also offered as ``handover_<name>`` behind the
+    ``mcp_delegates`` grant (``mcp_parity.delegate_tools``).
     """
     from . import factory
     from .loaders import knowledge as knowledge_loader
@@ -103,7 +99,7 @@ def build_registry(
         output_dir=memlib.session_output_dir(hub_dir, session_id),
         session_id=session_id,
         settings=settings,
-        skills=factory._load_skills_and_promoted_agents(hub_dir),
+        skills=factory._with_core_skills(factory._load_skills_and_promoted_agents(hub_dir)),
         knowledge=knowledge_loader.load_all(hub_dir),
         delegates=[],
     )
@@ -120,8 +116,18 @@ def build_registry(
     # call waiting for a person never reaches a card.
     from . import hitl
     from .apps import cards
+    from . import mcp_parity
+
     registry = cards.wrap(hub_dir, access.apply(hub_dir, {**builtin, **local}))
-    registry = hitl.equip(hub_dir, registry, questions=False)
+    # As in chat: remember, the hub change tools and personal memory, with the
+    # same gate (Save shared knowledge or managing the hub, in-app editing on).
+    factory._add_curator_tool(ctx, registry, access)
+    registry.setdefault("upload_file", mcp_parity.upload_tool(hub_dir, settings.max_upload_bytes))
+    for name, ft in mcp_parity.delegate_tools(hub_dir, settings).items():
+        registry.setdefault(name, ft)
+    registry = hitl.equip(hub_dir, registry)
+    if "ask_question" in registry:
+        registry["ask_question"] = mcp_parity.ask_question_tool(registry["ask_question"])
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).
@@ -267,16 +273,24 @@ def _registry_tool_class():
                 return ToolResult(content=refused, is_error=True)
             from . import _request_ctx
 
-            with access.identity_scope(ident), _request_ctx.card_scope():
+            from . import mcp_parity
+
+            async def invoke():
+                out = await fn.on_invoke_tool(tool_ctx, args_json)
+                return out if isinstance(out, str) else json.dumps(out, default=str)
+
+            # The caller's own file space stands in for a chat (mcp_parity.space_id).
+            with access.identity_scope(ident), _request_ctx.card_scope(), \
+                    _request_ctx.chat_scope(mcp_parity.space_id(ident)), \
+                    _request_ctx.artifact_capture() as made:
                 try:
-                    result = await fn.on_invoke_tool(tool_ctx, args_json)
+                    text = await mcp_parity.settle_waiting(self._hub_dir, ident, await invoke(), invoke)
                 except Exception as exc:  # noqa: BLE001 — surface, don't crash the server
                     log.exception("mcp tool %s failed", fn.name)
                     return ToolResult(
                         content=f"[tool {fn.name} error: {type(exc).__name__}: {exc}]",
                         is_error=True,
                     )
-                text = result if isinstance(result, str) else json.dumps(result, default=str)
                 card = _request_ctx.take_card(text, tool=fn.name)
             if card is not None:
                 # A card: the text for the model, the checked result for the
@@ -286,6 +300,12 @@ def _registry_tool_class():
                 result_ = cards.call_tool_result(card)
                 return ToolResult(content=text, structured_content=result_["structuredContent"],
                                   meta=result_["_meta"])
+            if made:
+                from mcp.types import TextContent
+
+                return ToolResult(content=[TextContent(type="text", text=text),
+                                           *mcp_parity.resource_links(made)],
+                                  is_error=text.startswith(_DENIAL_PREFIX))
             return ToolResult(
                 content=text, is_error=text.startswith(_DENIAL_PREFIX)
             )
@@ -444,12 +464,33 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                 from fastmcp.tools.tool import ToolResult
 
                 return ToolResult(content=refused, is_error=True)
+            from . import mcp_parity
+
             with access.identity_scope(ident):
                 result = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
+                text = _first_text(result)
+                if result is not None and not result.is_error and mcp_parity._waiting(text):
+                    async def again():
+                        out = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
+                        return _first_text(out) if out is not None else text
+
+                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again)
+                    if settled != text:
+                        from fastmcp.tools.tool import ToolResult
+
+                        return ToolResult(content=settled)
             # Not one of the caller's connected-app tools: answered as any unknown name.
             return result if result is not None else await call_next(context)
 
     return _AccessListFilter()
+
+
+def _first_text(result) -> str:
+    """The first text block of a ToolResult, or ""."""
+    for block in getattr(result, "content", None) or ():
+        if getattr(block, "type", None) == "text":
+            return block.text
+    return ""
 
 
 async def _served(context, name: str) -> bool:
@@ -600,8 +641,9 @@ def build_mcp_app(
     from .mcp_oauth import HubOAuth
 
     mcp, count = build_server(hub_dir, settings=settings, auth=HubOAuth(hub_dir, settings.mcp_public_url))
-    log.info("mcp: serving %d tool(s) at %s (stateless)", count, path)
-    return mcp.http_app(path=path, stateless_http=True)
+    stateless = settings.mcp_stateless
+    log.info("mcp: serving %d tool(s) at %s (%s)", count, path, "stateless" if stateless else "sessions")
+    return mcp.http_app(path=path, stateless_http=stateless)
 
 
 def build_server(hub_dir: Path, *, settings: "settingslib.Settings | None" = None, auth=None):
@@ -623,4 +665,29 @@ def build_server(hub_dir: Path, *, settings: "settingslib.Settings | None" = Non
 
     if cards_lib.has_config(hub_dir):
         _add_cards(mcp, hub_dir, registry, permissions)
+    _add_file_resource(mcp, hub_dir)
     return mcp, len(registry)
+
+
+def _add_file_resource(mcp, hub_dir: Path) -> None:
+    """``hubzoid-file://artifacts/{name}``: a file the caller made, read back by
+    their assistant (each file result links to it). Only the caller's own."""
+    from fastmcp.resources import ResourceContent, ResourceResult
+
+    from . import mcp_parity
+
+    @mcp.resource("hubzoid-file://artifacts/{name}", name="hubzoid-file",
+                  description="A file this agent made for you over MCP.")
+    def own_file(name: str):
+        from urllib.parse import unquote
+
+        found = mcp_parity.read_own_file(hub_dir, _mcp_identity(hub_dir), unquote(name))
+        if found is None:
+            raise ValueError("No such file of yours here.")
+        data, mime = found
+        if mime.startswith("text/") or mime in ("application/json", "image/svg+xml"):
+            try:
+                return ResourceResult(contents=[ResourceContent(data.decode("utf-8"), mime_type=mime)])
+            except UnicodeDecodeError:
+                pass
+        return ResourceResult(contents=[ResourceContent(data, mime_type=mime)])

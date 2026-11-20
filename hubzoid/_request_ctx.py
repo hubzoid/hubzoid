@@ -162,6 +162,18 @@ def record_artifact(name: str, url: str) -> None:
     items.append({"name": name, "url": url})
 
 
+@contextmanager
+def artifact_capture() -> Iterator[list]:
+    """Collect the files recorded inside the block (``record_artifact``), for a
+    caller outside a chat run (the hosted MCP server)."""
+    items: list = []
+    token = _current_artifacts.set(items)
+    try:
+        yield items
+    finally:
+        _current_artifacts.reset(token)
+
+
 def drain_artifacts() -> list:
     """Return artifacts recorded this request and clear the registry."""
     items = _current_artifacts.get()

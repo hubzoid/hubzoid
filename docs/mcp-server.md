@@ -41,16 +41,29 @@ Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
 * The caller needs `use_hub` to connect, plus the named grant for each
-  restricted capability. Saving shared knowledge (`remember`) is a chat
-  tool and is not offered over MCP.
+  restricted capability. Saving shared knowledge (`remember`) and the hub
+  change tools work as in chat: they need **Save shared knowledge** or
+  managing the hub, and in-app editing on. A manager's knowledge change
+  applies, anyone else's is reviewed in Settings, Hub changes.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
 
-Chat-scoped tools (`write_artifact`, `make_excel`, `make_pdf`, `make_word`, `read_upload`, …) are not exposed —
-they need a live chat to resolve their directories. Model-delegates are not
-exposed either: an MCP caller brings their own model; the hub does not spend
-inference for them.
+## What an assistant can do, next to chat
+
+| In chat | Over hosted MCP |
+|---|---|
+| Files (`write_artifact`, `make_excel`, `make_pdf`, `make_word`, `list_artifacts`) | The same tools, in the person's own file space. Each result has the download link and an MCP `resource_link` (`hubzoid-file://artifacts/<name>`) the assistant can read back. Only the person who made a file can read it. |
+| Attach a file | `upload_file` (text, or base64 for anything else, up to 2.5 MB). `read_upload`, `read_upload_full` and the hub's own tools read it. Larger files: the web app. |
+| A follow-up question (`ask_question`) | Asked through MCP elicitation when the client supports it (Claude Code does), and the answer comes back in the result. Otherwise the assistant is told to ask the person itself. |
+| An approval card | When the caller may approve it and the client supports elicitation, asked in place and recorded as their decision, then the call runs once. Otherwise the result says where to approve, and calling again with the same arguments then runs it once. Approvals that need someone else wait in their inbox. |
+| `remember`, hub changes | The same, with the same gate (above). |
+| Core skills such as `dashboard` | Listed by `list_skills`, as in chat. |
+| Sub-agents with their own `model:` | `handover_<name>`, only for people with **Use sub-agents on this agent's model from an assistant** (`mcp_delegates`). The hub's runtime runs once as the caller and hands the task to that sub-agent, so the agent pays for those model calls. Without the grant the sub-agent is still offered as a skill for the assistant's own model. |
+| Workflows | `list_workflows`, `workflow_runs`, `run_workflow`, pause, resume, cancel, each "Run for me" report tool and personal schedules, under the same workflow access. |
+
+`record_feedback` stays in chat: it rates the hub's answer, and over MCP the
+answer is the assistant's own.
 
 ## Connected apps
 
@@ -82,8 +95,8 @@ What the app returns comes back as it sent it: content, structured content and
 the error flag. A call whose outcome is unknown (the app stopped answering) is
 not retried.
 
-**Reconnect after connecting an app.** The endpoint is stateless and sends no
-notice when a person's tools change, so an assistant sees a newly connected
+**Reconnect after connecting an app.** The endpoint sends no notice when a
+person's tools change, so an assistant sees a newly connected
 app once it lists tools again: in Claude Code, `/mcp`, then Reconnect.
 `connect_account` says so when it is called over MCP.
 
@@ -143,8 +156,12 @@ and MCP.
 
 ## Operational notes
 
-* Stateless Streamable HTTP: no sessions, safe behind load balancers and
-  across bridge restarts; one POST per JSON-RPC call.
+* Streamable HTTP with a session per connected assistant, which elicitation
+  needs. The MCP SDK ends a session after 30 idle minutes, caps the number of
+  sessions and binds each to the token that opened it. A bridge restart ends
+  every session and the client opens a new one. `MCP_STATELESS=true` serves
+  each request on its own instead (several replicas without sticky sessions),
+  and then questions and approvals fall back to the assistant asking.
 * Auth failures return 401 with OAuth discovery in `WWW-Authenticate`.
 * Keep the exposed tool list curated: each tool schema uses client context.
 * Revoke connections at `/mcp/oauth/connections` (under the hub prefix in a gateway).
