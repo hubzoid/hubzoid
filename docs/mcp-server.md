@@ -154,6 +154,52 @@ and MCP.
 `MCP_ACCESS_GROUP` is no longer read: groups grant nothing, and
 `hubzoid doctor` warns while it is set. See [access management](access-management.md).
 
+## Access tokens and outside verifiers
+
+Access tokens are JWTs ([RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)):
+`typ: at+jwt`, signed RS256 with a key of the deployment. Anything that can
+read the issuer's metadata can check them, for example a load balancer or AWS
+AgentCore's JWT authorizer:
+
+| What | Where |
+|---|---|
+| Issuer (`iss`) | `<MCP_PUBLIC_URL>/oauth` |
+| Audience (`aud`) | `MCP_PUBLIC_URL` |
+| Authorization server metadata, with `jwks_uri` | `/.well-known/oauth-authorization-server/<path of the issuer>` |
+| OpenID-style discovery (same fields, for verifiers that only read this) | `<issuer>/.well-known/openid-configuration` |
+| Public keys | `<issuer>/jwks` |
+
+Claims: `sub` (the Hubzoid account id), `client_id`, `scope` (`hub:access`),
+`iat`, `exp` (ten minutes), `jti` and `hz_grant` (the connection). There is
+no email or name in the token. Hubzoid still checks the connection and the
+person's access on every call, so a revoked connection or a blocked person
+stops on the next call, not when the token expires. Refresh tokens stay opaque
+and are replaced on every use. Hubzoid issues no ID tokens.
+
+**Signing keys.** One key set per deployment. By default Hubzoid creates the
+first key and keeps it in the operational database, encrypted with the
+deployment key, so back them up together. To manage the key yourself, set
+`HUBZOID_MCP_SIGNING_KEY` to a PEM RSA private key (from the secret store or
+AWS Secrets Manager). Then the database keys are not used.
+
+```sh
+hubzoid mcp signing-keys list
+hubzoid mcp signing-keys rotate          # new key signs; the old one verifies 11 more minutes
+hubzoid mcp signing-keys rotate --now    # the old key stops verifying at once
+```
+
+Other bridges pick up a rotation within 30 seconds. An outside verifier that
+cached the public keys may accept an old token until it expires (ten minutes
+at most). With an operator-managed key, rotate by moving the current PEM to
+`HUBZOID_MCP_SIGNING_KEYS_PREVIOUS`, setting a new one and restarting.
+
+**AWS AgentCore (not tested yet).** A Runtime's JWT authorizer can point its
+`discoveryUrl` at the metadata above and check `allowedAudience` (the MCP URL;
+Claude registers a new client id per install, so `allowedClients` does not
+fit). Still to test on AWS: an invocation URL that does not end in `/mcp`, how
+Claude finds the sign-in server through a Runtime, IAM and JWT callers on one
+Runtime, and forwarding `Authorization` so Hubzoid can check the connection.
+
 ## Operational notes
 
 * Streamable HTTP with a session per connected assistant, which elicitation
@@ -165,4 +211,6 @@ and MCP.
 * Auth failures return 401 with OAuth discovery in `WWW-Authenticate`.
 * Keep the exposed tool list curated: each tool schema uses client context.
 * Revoke connections at `/mcp/oauth/connections` (under the hub prefix in a gateway).
+* `my_requests` lists the approvals and questions waiting for the person, with
+  the Inbox link. It never decides.
 * The hub access audit log records tool authorization decisions.

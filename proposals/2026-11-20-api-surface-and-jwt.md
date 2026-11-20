@@ -117,23 +117,23 @@ Hubzoid has about 400 HTTP routes and a personal API key (`hzp_`) can reach most
 
 ### A4. Run a "Run for me" workflow over the API
 
-- New routes on the bridge (`hubzoid/workflows/api_routes.py`, mounted with the chat routes):
-  - `GET /api/workflows/mine`: the `as_tool` workflows this caller may run (same access check and
-    surfaces as the chat tool, surface `api`), with title, description and input schema.
-  - `POST /api/workflows/{name}/runs`: body `{"inputs": {...}, "confirm": true}`. Runs as the caller
-    through one start helper shared with `report_tools` (access, surfaces, input validation, backup hold,
-    envelope with `trigger: "api"`, `scope: "personal"`). A workflow with `confirm: true` needs
-    `"confirm": true`, the API's explicit equivalent of the chat yes. Returns `202` and the run id without
-    waiting.
-  - Idempotency: an `Idempotency-Key` header (1 to 128 printable characters) makes the run id
-    deterministic (`<personal prefix>k<sha256(key)[:16]>`), so DBOS admits it once even under concurrent
-    retries. The same key returns the same run while DBOS keeps it (`200`). The same key with different
-    inputs is `409`. Without a key, an active run with the same inputs is returned, as in chat.
-  - `GET /api/workflows/runs/{run_id}`: the run through the personal history reader
-    (`workflows/observe.py`), which already checks the envelope, the account id, the checkpointed identity
-    and each artifact's owner, and withholds output without a trusted identity. Its `trigger == "tool"`
-    filter also admits `"api"`, so API runs appear in the person's history and in chat's `my_reports`.
-- Key operations: `manage` to start, `read` to list and read. Team runs stay on the existing
+Built on the existing personal Settings routes, so listing and reading need nothing new:
+
+- `GET /portal/api/my` already lists the reports a person may run, with input schemas.
+- `POST /portal/api/my/runs` (new): body `{"hub", "workflow", "inputs", "confirm"}`. Runs as the caller
+  through one start helper shared with `report_tools` (access, the workflow's surfaces with surface `api`,
+  input validation, backup hold, envelope with `trigger: "api"`, `scope: "personal"`). A workflow with
+  `confirm: true` needs `"confirm": true`. Returns `202` with the run id and the address to read it.
+  When the engine runs in another process, the run is queued through its system database with the same
+  queue and per-person partition.
+- Idempotency: an `Idempotency-Key` (1 to 128 printable characters) makes the run id deterministic
+  (`<personal prefix>k<sha256(key)[:16]>`), so DBOS admits it once. The same key returns the same run
+  (`200`). The same key with different inputs is `409`. Without a key, an active run with the same inputs is
+  returned, as in chat.
+- `GET /portal/api/my/runs?hub=&run_id=` reads it through the personal history reader
+  (`workflows/observe.py`), whose filter now admits `trigger: "api"`, so API runs also appear in chat's
+  `my_reports` and the ready email.
+- Key operations: `manage` to start, `read` to list and read. Team runs stay on
   `POST /portal/api/workflows/run`, now published.
 
 ### A6. Documentation and the notification webhooks

@@ -118,9 +118,12 @@ and approves the connection. The local plugin template that used to be at
   actions. This version does **not** offer a read-only OAuth grant.
 - Access tokens last at most 10 minutes; rotating refresh tokens and consent
   grants expire at 30 days. Reusing an old refresh token revokes that grant.
-- Credentials are random opaque values stored as SHA256 digests in Hubzoid's
-  operational database, isolated by public MCP URL. Changing that URL requires
-  reconnecting. Client registrations expire after one year.
+- Access tokens are signed JWTs (RS256, ten minutes) that outside verifiers can
+  check from the issuer's metadata ([MCP server](mcp-server.md#access-tokens-and-outside-verifiers)).
+  Refresh tokens, codes and grants are random opaque values stored as SHA256
+  digests in Hubzoid's operational database, isolated by public MCP URL.
+  Changing that URL requires reconnecting. Client registrations expire after
+  one year.
 - Each call rechecks the current account and existing hub authorization.
   Account deletion, replacement, suspension or email changes invalidate access.
 - Only existing hosted MCP tools are exposed. This does not automatically export
