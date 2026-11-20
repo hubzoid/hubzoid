@@ -1006,9 +1006,11 @@ class FeedbackService:
                 e.created_at > now - self.REQUEST_LOOKBACK).order_by(e.sequence).limit(500)).mappings().all()
         queued = 0
         for row in rows:
-            self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
+            # The cursor moves only past events handled here: a failure leaves
+            # the event for the next pass.
             req = hitl.get(self.hub_dir, hub_id, row["request_id"])
             if req is None or req.get("status") != "pending":
+                self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
                 continue
             recipients = self._request_recipients(req)
             source = f"request.created:{req['id']}"
@@ -1016,6 +1018,7 @@ class FeedbackService:
             with self.engine.begin() as conn:
                 if conn.execute(sa.select(notification_events.c.id).where(
                         notification_events.c.source_event_id == source)).first():
+                    self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
                     continue
                 eid = str(uuid.uuid4())
                 conn.execute(notification_events.insert().values(
@@ -1035,6 +1038,7 @@ class FeedbackService:
                         attempt=0, next_attempt_at=t, provider_receipt=None, error_code=None,
                         created_at=t, updated_at=t))
                     queued += 1
+            self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
         return queued
 
     def delivery_needed(self) -> bool:
@@ -1233,7 +1237,13 @@ class FeedbackService:
             payload = {"type": ev.event_kind, "conversation_id": ev.conversation_id, "event_id": ev.id,
                        "occurred_at": ev.created_at}
             if ev.event_kind == "request.created":
-                payload = self._request_payload(ev)
+                try:
+                    payload = self._request_payload(ev)
+                except Exception:  # noqa: BLE001 - nothing was sent: try again later
+                    log.warning("chat: request.created payload unavailable; retrying", exc_info=True)
+                    self._set_delivery(d[0], state="pending", attempt=d.attempt,
+                                       next_attempt_at=now + RETRY_SECONDS[min(d.attempt + 1, len(RETRY_SECONDS) - 1)])
+                    continue
             try:
                 ok, receipt = (send or send_webhook)(d, payload)
             except TimeoutError:

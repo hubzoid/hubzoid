@@ -93,3 +93,10 @@ def test_the_deliverer_keeps_running_for_retries():
     d.start()
     time.sleep(0.6)
     assert calls.count("deliver") >= 3  # it did not stop after three idle passes
+    d.stop()
+    time.sleep(0.3)
+    seen = len(calls)
+    time.sleep(0.4)
+    assert len(calls) == seen and not d._running  # stopped with the app
+    d.kick()
+    assert not d._running

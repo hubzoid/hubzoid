@@ -227,3 +227,17 @@ def test_a_token_whose_subject_disagrees_with_its_grant_is_refused(setup):
         assert (await rpc(c, other)).status_code == 401
 
     run_flow(hub, flow)
+
+
+def test_malformed_headers_are_refused_not_errors(setup):
+    hub, _ = setup
+
+    async def flow(c):
+        _client, tokens = await _tokens(c)
+        _head, body, sig = tokens["access_token"].split(".")
+        for header in ([], {"alg": "RS256", "typ": "at+jwt", "kid": []},
+                       {"alg": "RS256", "typ": "at+jwt", "kid": {}}, "x"):
+            bad = _b64(header) + "." + body + "." + sig if not isinstance(header, str) else "!!." + body + "." + sig
+            assert (await rpc(c, bad)).status_code == 401
+
+    run_flow(hub, flow)

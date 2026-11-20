@@ -197,10 +197,13 @@ class KeyRing:
         self._fresh()
         try:
             header = json.loads(_b64(token.split(".", 1)[0]))
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, UnicodeDecodeError):
             return None
-        kid = header.get("kid") if isinstance(header, dict) else None
-        if header.get("alg") != ALG or str(header.get("typ", "")).lower() not in (TYP, "application/" + TYP):
+        if not isinstance(header, dict):
+            return None
+        kid = header.get("kid")
+        if (not isinstance(kid, str) or header.get("alg") != ALG
+                or str(header.get("typ", "")).lower() not in (TYP, "application/" + TYP)):
             return None
         key = self._verifiers.get(kid)
         if key is None:

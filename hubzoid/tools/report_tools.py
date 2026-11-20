@@ -353,7 +353,7 @@ def _run_tool(hub_dir: Path, wf):
 
 def start_personal(hub_dir: Path, wf, actor: str, data, shown: str, *, trigger: str = "tool",
                    via: str | None = None, workflow_id: str | None = None,
-                   chat: dict | None = None) -> tuple[str | None, bool, str]:
+                   chat: dict | None = None, extra: dict | None = None) -> tuple[str | None, bool, str]:
     """Start one "Run for me" run as ``actor`` on this process's engine:
     ``(run id, already running, refusal)``. Shared by the chat tool and the
     API (``workflows.api_runs``). Without ``workflow_id`` an active run with the
@@ -377,6 +377,7 @@ def start_personal(hub_dir: Path, wf, actor: str, data, shown: str, *, trigger: 
            "inputs_display": shown, "started_at": time.time()}
     if chat:
         env["chat"] = chat  # its questions and result come back to this chat
+    env.update(extra or {})
     runtime.start_run(wf.name, env, workflow_id=run_id)
     return run_id, False, ""
 

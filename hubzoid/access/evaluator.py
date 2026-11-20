@@ -187,7 +187,7 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
 
 
 def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
-                    expired_ok: bool = False) -> bool:
+                    expired_ok: bool = False, account: str | None = None) -> bool:
     """Whether the browser session or API key that started a run still works:
     not signed out, revoked or expired (``expired_ok``: only not signed out or
     revoked). One indexed read, never cached, so a revoke stops the next tool
@@ -218,7 +218,9 @@ def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
             app = service_for(Path(hub_dir)).all().get(credential_id.removeprefix("app:"))
         except AppsError:
             return False
-        return bool(app is not None and app.enabled and app.api_only)
+        # Remapping the app to another account ends work started as the old one.
+        same = account is None or app is None or not app.api_only or (account or "").strip().lower() == app.api.account
+        return bool(app is not None and app.enabled and app.api_only and same)
     else:
         return True
     with engine_for(Path(hub_dir)).connect() as conn:
@@ -240,7 +242,11 @@ def still_valid(hub_dir: Path, account_id: str, credential: dict | None, *,
     if epoch is not None and users.epoch(Path(hub_dir), account_id) != int(epoch):
         return False
     kind, cid = credential.get("kind"), credential.get("id")
-    return not (kind and cid) or credential_live(hub_dir, kind, cid, expired_ok=expired_ok)
+    account = None
+    if kind == "app_jwt":
+        found = users.get(Path(hub_dir), account_id)
+        account = (found or {}).get("email") or ""
+    return not (kind and cid) or credential_live(hub_dir, kind, cid, expired_ok=expired_ok, account=account)
 
 
 def check_run(hub_dir: Path, ident, *, tool: str | None = None, server: str | None = None,
@@ -264,7 +270,7 @@ def check_run(hub_dir: Path, ident, *, tool: str | None = None, server: str | No
     credential = getattr(ident, "credential", None)
     if decision.allowed and credential:
         try:
-            if not credential_live(hub_dir, *credential):
+            if not credential_live(hub_dir, *credential, account=getattr(ident, "user", None)):
                 return Decision(False, "credential_ended")
         except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
             log.exception("access: credential check unavailable; denying")

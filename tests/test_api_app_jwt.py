@@ -141,6 +141,8 @@ def test_removing_or_disabling_the_app_stops_running_work(hub):
     assert "app_jwt" in LIVE_CREDENTIALS
     _apps(hub, key)
     assert credential_live(hub, "app_jwt", "app:ci")
+    assert credential_live(hub, "app_jwt", "app:ci", account="robot@example.com")
+    assert not credential_live(hub, "app_jwt", "app:ci", account="someone@example.com")  # remapped
     _apps(hub, key, enabled=False)
     assert not credential_live(hub, "app_jwt", "app:ci")
     (hub.parent / "hubzoid.yaml").write_text("version: 1\nhubs: [sales]\napps: {}\n")
@@ -173,3 +175,17 @@ def test_machine_token_use_is_audited(hub, monkeypatch):
     c = _client(hub)
     assert c.get("/api/chat/ping", headers={"authorization": "Bearer " + _token(key)}).status_code == 200
     assert ("auth.app_token_used", "app:ci", "robot@example.com") in seen
+
+
+def test_the_edge_admits_real_jwts_not_dotted_bridge_keys():
+    from types import SimpleNamespace
+
+    from hubzoid import edge
+
+    def req(token):
+        return SimpleNamespace(headers={"authorization": "Bearer " + token})
+
+    real = jwt.encode({"alg": "RS256"}, {"sub": "x"}, RSAKey.generate_key(2048))
+    assert edge._personal_key(req(real)) and edge._personal_key(req("hzp_abc"))
+    assert not edge._personal_key(req("bridge.key.secret"))
+    assert not edge._personal_key(req("dev"))

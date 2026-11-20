@@ -900,9 +900,14 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
             raise HTTPException(403, "You no longer have access to this agent.")
         try:
+            from .access.session import credential as credential_of
+
+            via, credential_id = credential_of(request, hub_dir)
+            kind = {"api-key": "api_key", "app-jwt": "app_jwt"}.get(via)
             out = api_runs.start(path, payload.workflow, email=email, account=account, inputs=payload.inputs,
                                  confirm=payload.confirm,
-                                 idempotency_key=request.headers.get("idempotency-key"))
+                                 idempotency_key=request.headers.get("idempotency-key"),
+                                 credential=(kind, credential_id) if kind else None)
         except api_runs.RunRefused as exc:
             return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status)
         body = {**out, "hub": key,
