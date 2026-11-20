@@ -69,9 +69,10 @@ hubzoid budgets apply ./hub --file budgets.yaml --expected-revision absent
 hubzoid budgets release ./hub RESERVATION --reason "Provider shows no charge."
 ```
 
-`show` prints the revision to pass to `apply`. The Console's **Usage limits**
-page shows the same: limits in force, this month's usage, the file with Check
-and Save, and reservations that never reported. The API is
+`show` prints the revision to pass to `apply`. **Settings → Usage** shows the
+same: each agent's row has its monthly limit bar, and opening the row shows the
+limits as fields, the file with Check and Save, and reservations that never
+reported. See [the Usage page](ADMINISTRATION.md#the-usage-page). The API is
 `GET|PUT /portal/api/hubs/{hub}/budgets`, `POST .../budgets/validate` and
 `POST .../budgets/reservations/{id}/release`. Reading needs `workflows_view`,
 changes need `workflows_manage`.
