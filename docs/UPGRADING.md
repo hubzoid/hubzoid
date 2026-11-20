@@ -18,7 +18,7 @@ describe those releases as they were.
 
 ## Upgrading to 2.0.9
 
-Five changes in behaviour. Nothing to migrate.
+Eight changes in behaviour. Nothing to migrate.
 
 | What changes | What to do |
 |---|---|
@@ -27,6 +27,14 @@ Five changes in behaviour. Nothing to migrate.
 | **Hosted MCP keeps a session per connected assistant**, so the hub can ask the person a question or an approval through MCP elicitation. Over MCP, people also get the file tools, `upload_file`, `remember` (with chat's gate) and core skills. Sub-agents on their own model need the new `mcp_delegates` grant. | Nothing for one Hubzoid process per agent. A bridge restart ends the sessions and Claude Code opens new ones. Behind several replicas without sticky sessions, set `MCP_STATELESS=true` (no elicitation). Grant `mcp_delegates` to the people who may spend the agent's model from their assistant ([MCP server](mcp-server.md#what-an-assistant-can-do-next-to-chat)). |
 | **Optional `surfaces:` per restricted capability** in `identity/permissions.yaml`. It replaces `HUBZOID_RESTRICTED_SURFACES` for that capability alone. | Nothing, unless you want one capability on a new surface ([access management](access-management.md#surfaces-per-capability)). |
 | **Amazon Bedrock is an opt-in model provider.** A Claude id under `bedrock/` now runs on the Claude runtime instead of LiteLLM, and a Bedrock hub needs a region to start. `claude-local` hubs are unchanged, apart from the newer bundled Claude Code (claude-agent-sdk 0.2.162 or later). | Nothing for `claude-local`. A hub that set `CLAUDE_CODE_USE_BEDROCK` by hand keeps working, and can move to `MODEL=bedrock/sonnet` with `AWS_REGION` ([Amazon Bedrock](bedrock.md)). To keep a Claude model on LiteLLM, write `bedrock/converse/<id>`. |
+
+Also in 2.0.9:
+
+| What changes | What to do |
+|---|---|
+| **MCP access tokens are JWTs** (RS256, `typ: at+jwt`) that outside verifiers can check. Tokens issued before the upgrade keep working until they expire (ten minutes). Connected assistants need nothing. | Back up the operational database with the deployment key as before: the first signing key is kept there, encrypted. Or set `HUBZOID_MCP_SIGNING_KEY` ([MCP server](mcp-server.md#access-tokens-and-outside-verifiers)). |
+| **Only a key with the new `approve` operation decides.** A key with `manage` could approve, deny or resolve work-item operations through Settings; now only `approve` reaches those routes and `/api/requests/.../decisions`. `approve` is in no preset. | If a script decided work-item operations with a `manage` key, make a key with `--operations manage,approve` (or tick "Also decide approvals and questions" in Settings). |
+| **The API reference lists exactly the published routes**, with `stable` or `beta`, the key operations that may call each one, and the main shapes. It adds the chat engine, runs, hub changes, memory, notification webhooks, workflow runs and work-item decisions, and no longer lists the bridge-only `/v1/files`. | Nothing. See [the API](api.md#stability). |
 
 ## Templates moved out of the package
 

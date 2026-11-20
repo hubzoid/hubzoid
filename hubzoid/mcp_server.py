@@ -123,6 +123,7 @@ def build_registry(
     # same gate (Save shared knowledge or managing the hub, in-app editing on).
     factory._add_curator_tool(ctx, registry, access)
     registry.setdefault("upload_file", mcp_parity.upload_tool(hub_dir, settings.max_upload_bytes))
+    registry.setdefault("my_requests", mcp_parity.my_requests_tool(hub_dir))
     for name, ft in mcp_parity.delegate_tools(hub_dir, settings).items():
         registry.setdefault(name, ft)
     registry = hitl.equip(hub_dir, registry)

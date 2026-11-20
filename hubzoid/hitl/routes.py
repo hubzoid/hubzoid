@@ -9,9 +9,11 @@
   POST /api/hitl/config/validate       check a document, change nothing
   PUT  /api/hitl/config                write it (hitl.manage), compare-and-set
 
-Decisions come only from a person in a browser session from this site, or
-the local owner. An API key, an MCP token or a model never decides: those
-get ``human_action_required`` with the link to the request page.
+Decisions come from a person in a browser session from this site, the local
+owner, or a personal API key its owner made with the ``approve`` operation
+(the key acts as that person, ``decided_via="api_key"``). Any other API key,
+an MCP token, a machine JWT or a model never decides: those get
+``human_action_required`` with the link to the request page.
 """
 from __future__ import annotations
 
@@ -33,10 +35,25 @@ def _err(exc: service.RequestError):
     return error(exc.status, exc.code, exc.message, **exc.extra)
 
 
+def decision_credential(request: Request, user=None) -> str:
+    """How this decision is made: ``"web"`` for a person's own session or the
+    local owner, ``"api_key"`` for a personal key holding ``approve``. Anything
+    else (another key, an MCP token, a machine JWT, an embedding pass) is
+    refused: a person decides in Hubzoid."""
+    auth = (request.headers.get("authorization") or "").lower()
+    if (getattr(user, "credential", "") == "api_key"
+            and "approve" in (getattr(user, "operations", None) or ())):
+        return "api_key"
+    if auth.startswith("bearer ") or getattr(user, "via_key", False):
+        raise error(403, "human_action_required",
+                    "A person must decide this in Hubzoid. Open the request page and decide there, "
+                    "or use a personal API key made with the approve operation.")
+    return "web"
+
+
 def human_only(request: Request, user=None) -> None:
-    """Only a person's own session decides (milestone B's credential kinds:
-    "session" or "local"). A personal API key or any bearer token is
-    automation, whatever it is allowed to read."""
+    """Only a person's own session or the local owner (hub changes): no key,
+    whatever its operations, and no other bearer token."""
     auth = (request.headers.get("authorization") or "").lower()
     if auth.startswith("bearer ") or getattr(user, "via_key", False):
         raise error(403, "human_action_required",
@@ -80,14 +97,14 @@ def mount(app: FastAPI, ctx) -> None:
     @app.post("/api/requests/{rid}/decisions")
     async def decide(rid: str, request: Request):
         user = await ctx.mutation(request)
-        human_only(request, user)
+        via = decision_credential(request, user)
         uid, email = user.id, (getattr(user, "email", "") or "").lower()
         body = await read_json(request)
         try:
             out = await db(service.decide, hub_dir, hub, rid, account_id=uid, email=email,
                            decision=str(body.get("decision") or ""), expected_revision=body.get("expected_revision"),
                            digest=body.get("digest"), answer=body.get("answer"), note=body.get("note"),
-                           via="web")
+                           via=via, credential_id=getattr(user, "credential_id", "") if via == "api_key" else "")
         except service.RequestError as exc:
             raise _err(exc)
         await _continue_chat(ctx, out)

@@ -99,14 +99,16 @@ class PortalAdmin:
     is_org_admin: bool
     manageable: list[str]
     # How the identity was verified: "session" (the Hubzoid session, or the
-    # local dev override).
+    # local dev override), "api-key" or "app-jwt", with the key or app id.
     via: str = "session"
+    credential_id: str = ""
 
     def actor(self) -> Actor:
         return Actor(
             subject=normalize(self.subject),
-            surface="console",
+            surface="console" if self.via == "session" else "api",
             via=self.via,
+            credential_id=self.credential_id,
         )
 
 
@@ -157,6 +159,15 @@ class CompanyLinkAction(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     hub: str = Field(min_length=1, max_length=255)
     action: Literal["copy", "replace", "off"]
+
+
+class MyRun(BaseModel):
+    """Start a "Run for me" report as yourself (``POST /portal/api/my/runs``)."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    workflow: str = Field(min_length=1, max_length=255)
+    inputs: dict = Field(default_factory=dict)
+    confirm: bool = False
 
 
 class WorkflowRun(BaseModel):
@@ -292,8 +303,11 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
             raise HTTPException(exc.status, exc.message)
         if not scope.any:
             return None
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir)
         return PortalAdmin(subject=subject, is_org_admin=scope.org_admin,
-                           manageable=sorted(scope.hubs))
+                           manageable=sorted(scope.hubs), via=via, credential_id=credential_id)
 
     return resolve
 
@@ -400,7 +414,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         subject = subject or _verify_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
-        return Actor(normalize(subject), "console", "session")
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir) if not dev else ("session", "")
+        return Actor(normalize(subject), "console" if via == "session" else "api", via, credential_id)
 
     def allowed_hubs(admin):
         return [
@@ -865,6 +882,37 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
             raise HTTPException(403, "You no longer have access to this agent.")
         return {"runs": observe.personal_runs(path, email, account, run_id=run_id)}
+
+    @router.post("/my/runs", status_code=202)
+    @_denied
+    def my_run_start(request: Request, payload: MyRun):
+        """Start a "Run for me" report as yourself (``workflows.api_runs``):
+        the run the chat tool starts, recorded with ``trigger: "api"``. Read it
+        with ``GET /my/runs?hub=&run_id=``. ``Idempotency-Key`` makes a retry
+        return the same run."""
+        from .access.store import USE_HUB
+        from .workflows import api_runs
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        gs = store_for(path)
+        if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
+            raise HTTPException(403, "You no longer have access to this agent.")
+        try:
+            from .access.session import credential as credential_of
+
+            via, credential_id = credential_of(request, hub_dir)
+            kind = {"api-key": "api_key", "app-jwt": "app_jwt"}.get(via)
+            out = api_runs.start(path, payload.workflow, email=email, account=account, inputs=payload.inputs,
+                                 confirm=payload.confirm,
+                                 idempotency_key=request.headers.get("idempotency-key"),
+                                 credential=(kind, credential_id) if kind else None)
+        except api_runs.RunRefused as exc:
+            return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status)
+        body = {**out, "hub": key,
+                "result": f"/portal/api/my/runs?hub={quote(key)}&run_id={quote(out['run_id'])}"}
+        return JSONResponse(body, status_code=202 if out["created"] else 200)
 
     @router.get("/my/schedules/{schedule_id}")
     @_denied

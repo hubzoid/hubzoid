@@ -49,6 +49,7 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
             log.warning("chat: could not record the notice for run %s", kw.get("run_id"), exc_info=True)
 
     engine.on_terminal = on_terminal
+    _deliver_with_app(app, svc, deliverer)
 
     async def actor_of(request: Request, mutation: bool = False):
         user = await (ctx.mutation(request) if mutation else ctx.user(request))
@@ -219,8 +220,11 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
         key = await scope_key(request, user, actor)
         body = await er.read_json(request)
         owner = actor.id if key.startswith("user:") else None
-        return await call(svc.put_target, key, target_id, body, owner_id=owner,
-                          expected_revision=body.get("expected_revision", "absent"))
+        out = await call(svc.put_target, key, target_id, body, owner_id=owner,
+                         expected_revision=body.get("expected_revision", "absent"))
+        if out.get("enabled"):
+            deliverer.kick()  # an enabled target may want request.created
+        return out
 
     @app.delete("/api/chat/notification-targets/{target_id}", status_code=204)
     async def delete_target(target_id: str, request: Request):
@@ -245,33 +249,77 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
     return svc
 
 
+def _deliver_with_app(app: FastAPI, svc: FeedbackService, deliverer: "_Deliverer") -> None:
+    """Start the deliverer with the app when there is work (retries and
+    request.created survive a restart) and stop it when the app stops."""
+    from contextlib import asynccontextmanager
+
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(app_):
+        async with original(app_) as state:
+            try:
+                if await asyncio.to_thread(svc.delivery_needed):
+                    deliverer.start()
+            except Exception:  # noqa: BLE001 - the next run's end or target change starts it
+                log.warning("chat: could not check for pending webhook deliveries", exc_info=True)
+            try:
+                yield state
+            finally:
+                deliverer.stop()
+
+    app.router.lifespan_context = lifespan
+
+
 class _Deliverer:
-    """Sends due webhook deliveries in the background while there are any."""
+    """Sends webhook deliveries in the background: right away when a run ends
+    (``kick``), at their retry time, and for new approvals and questions
+    (``request.created``, read from the HITL event log). It sleeps until the
+    next due delivery, at most ``POLL`` seconds, and runs for the life of the
+    process once started (``start`` at boot)."""
+
+    POLL = 5.0
 
     def __init__(self, svc: FeedbackService):
         self.svc = svc
         self._lock = threading.Lock()
+        self._wake = threading.Event()
         self._running = False
+        self._stopped = False
 
     def kick(self) -> None:
+        self._wake.set()
         with self._lock:
-            if self._running:
+            if self._running or self._stopped:
                 return
             self._running = True
         threading.Thread(target=self._loop, name="hz-notify", daemon=True).start()
 
+    start = kick
+
+    def stop(self) -> None:
+        """End the loop (the app is stopping). Later kicks do nothing."""
+        with self._lock:
+            self._stopped = True
+        self._wake.set()
+
     def _loop(self) -> None:
-        idle = 0
         try:
-            while idle < 3:
+            while not self._stopped:
+                self._wake.clear()
                 try:
-                    sent = self.svc.deliver_due()
+                    self.svc.ingest_requests()
+                except Exception:  # noqa: BLE001
+                    log.warning("chat: reading new requests for webhooks failed", exc_info=True)
+                try:
+                    self.svc.deliver_due()
+                    due = self.svc.next_due()
                 except Exception:  # noqa: BLE001
                     log.warning("chat: delivery pass failed", exc_info=True)
-                    sent = 0
-                idle = 0 if sent else idle + 1
-                time.sleep(2)
+                    due = None
+                wait = self.POLL if due is None else max(0.05, min(self.POLL, due - time.time()))
+                self._wake.wait(wait)
         finally:
             with self._lock:
                 self._running = False
-

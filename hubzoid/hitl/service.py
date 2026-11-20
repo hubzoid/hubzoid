@@ -317,9 +317,10 @@ def list_for(hub_dir: Path, hub_id: str, account_id: str, email: str, *, status:
 
 def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, email: str, decision: str,
            expected_revision: int | None = None, digest: str | None = None, answer: str | None = None,
-           note: str | None = None, via: str = "web") -> dict:
+           note: str | None = None, via: str = "web", credential_id: str = "") -> dict:
     """Settle a pending request once. Raises RequestError for a stale card, a
-    second decision or someone who may not decide."""
+    second decision or someone who may not decide. ``credential_id`` names the
+    API key when ``via`` is ``"api_key"``; it goes into the settle event."""
     if decision not in DECISIONS:
         raise RequestError(422, "validation_failed", f"decision is one of: {', '.join(DECISIONS)}.")
     note = (note or "").strip() or None
@@ -379,7 +380,8 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
                     tool=req["tool"], digest=req["digest"], conversation_id=req.get("conversation_id"),
                     request_id=request_id, created_at=st.now()))
         st.emit(conn, hub_id, request_id, "request.settled", req["revision"] + 1,
-                {"status": status, "decision": decision})
+                {"status": status, "decision": decision, "via": via,
+                 **({"credential_id": credential_id} if credential_id else {})})
         settled = st.row_dict(conn.execute(sa.select(st.requests).where(r.id == request_id)).first())
     _continue(hub_dir, settled)
     return with_actions(settled, account_id, email)

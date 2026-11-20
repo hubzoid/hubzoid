@@ -17,6 +17,14 @@ too, one restricted capability can be opened to a new surface alone, and
 doctor, evals and the channel list say what used to fail silently.
 
 ### Security
+- **Only a key with the new `approve` operation decides.** A personal API key
+  with `manage` could approve, deny or resolve work-item operations through
+  Settings, while approvals and questions refused every key. Now `approve`, in
+  no preset, is the one operation that reaches `/api/requests/.../decisions` and
+  work-item approve, deny and resolve. The decision records the key
+  (`decided_via: api_key`, the key id in the settle event, `via` on work-item
+  decisions). Hub changes stay person-only. Portal actors keep their credential
+  kind, so a key can no longer pass the session-only check on access changes.
 - **Sign-in off: only this computer is the owner.** A request is the local
   owner only when it is addressed to a loopback name, comes from this machine,
   carries no proxy or tunnel header (`X-Forwarded-For`, `Cf-Connecting-Ip`,
@@ -97,6 +105,30 @@ doctor, evals and the channel list say what used to fail silently.
   name that matches no case, a required case that is off or checks nothing,
   or `--tag`, `--case`, `--no-judge` or `--model` with it). Every results file
   and JUnit report now records the Hubzoid version and the hub's Git commit.
+- **MCP access tokens are JWTs** (RFC 9068, RS256) that outside verifiers such
+  as AWS AgentCore can check from the issuer's metadata (`jwks_uri`) or an
+  OpenID-style discovery document. The live grant check still runs on every
+  call. One key set per deployment, encrypted in the operational database or
+  operator-managed (`HUBZOID_MCP_SIGNING_KEY`), with
+  `hubzoid mcp signing-keys list|rotate [--now]`. Refresh tokens, API keys and
+  sessions stay opaque.
+- **Machine callers with their own JWT.** An `apps:` entry with an `api:` block
+  lets a CI job or cloud workload call the API with a token from its own issuer
+  (GitHub Actions, a workload identity). It acts as one fixed account, every
+  token must carry the required claims, it gets a key's operation rules
+  without `approve`, and removing or disabling the app stops its running work.
+- **Start a "Run for me" report over the API:** `POST /portal/api/my/runs`, as
+  the caller, with `Idempotency-Key`, `confirm` for workflows that ask for a
+  yes, and the run in the person's history (`trigger: api`).
+- **The API reference lists exactly the published routes** with `stable` or
+  `beta`, the key operations that may call each one and the main request,
+  response and event shapes. It adds the chat engine, runs, hub changes,
+  memory, notification webhooks, workflow runs and work-item decisions, and a
+  snapshot test guards it.
+- **`my_requests` over MCP** lists the approvals and questions waiting for the
+  person, with the Inbox link. Read only.
+- `hubzoid auth keys create --operations` and an "Also decide approvals and
+  questions" option in Settings.
 - **MCP at par with chat** (`proposals/2026-11-20-mcp-parity.md`). Over hosted
   MCP:
   - `write_artifact`, `make_excel`, `make_pdf`, `make_word` and
@@ -196,6 +228,13 @@ doctor, evals and the channel list say what used to fail silently.
   runtime does (`.env`, then `AGENTS.md`), not `MODEL` from the environment only.
 
 ### Fixed
+- **`request.created` webhooks are delivered.** They were accepted in a
+  target's events but never sent. They now come from the persisted request
+  events (so a restart loses none), go to the people who may act, and carry the
+  request id, kind and Inbox link, never its content.
+- **Webhook retries no longer stall.** The deliverer stopped after three idle
+  passes, so a retry waited for the next chat reply. It now sleeps until the
+  next due delivery and starts at boot when there is work.
 - `connect_account` over MCP no longer tells the person a connected app can be
   used now while their assistant cannot see its tools: it says to reconnect.
 - `hubzoid channels doctor` no longer fails a Slack Socket Mode connection, or
@@ -222,6 +261,11 @@ doctor, evals and the channel list say what used to fail silently.
   Hubzoid version, and how to rehearse it.
 - [Guardrails](docs/guardrails.md): the frontmatter, what each mode does, and
   three starter safety cases to require with `required_tags: [safety]`.
+- `docs/api.md` rewritten around the published reference: credentials and key
+  operations, machine callers, conversations and events, approvals, workflows,
+  hub changes, webhooks with signature checking, and the stability rule.
+  `docs/mcp-server.md` describes the JWT access tokens, signing keys and what
+  is still untested on AWS AgentCore.
 - One section on the two ways to connect Slack and WhatsApp, with a before and
   after for moving over and a symptom table. Stale `--slack`/`--whatsapp`
   instructions are fixed, and the docs index links the channel pages.

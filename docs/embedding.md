@@ -11,6 +11,10 @@ using their own packages. Hubzoid ships no client or server library for this:
 this page has the snippets. A complete working app is in
 [`examples/embed-agui`](../examples/embed-agui/).
 
+For a program rather than a person (a CI job, a cloud workload) calling the
+Hubzoid API with its own JWT, register an API app instead: see
+[machine callers](api.md#machine-callers).
+
 ## How it works
 
 1. You register your app in `hubzoid.yaml` and get a **client id** and a

@@ -551,3 +551,61 @@ def _left_waiting(hub_dir: Path, ident, since: float) -> str:
                          f"({service.requests_url()}). Once approved, ask the sub-agent again.")
     return ("\n\n[" + " ".join(notes) + "]") if notes else ""
 
+
+
+# -- my_requests: what waits for the person ---------------------------------------------
+
+def _age(ts) -> str:
+    try:
+        minutes = max(0, int((time.time() - float(ts)) // 60))
+    except (TypeError, ValueError):
+        return ""
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    return f"{hours} h ago" if hours < 48 else f"{hours // 24} days ago"
+
+
+def my_requests_tool(hub_dir: Path):
+    """``my_requests``: the approvals and questions waiting for this person on
+    this agent, with the Inbox link. Read only: it never decides (the Inbox,
+    chat or MCP elicitation do)."""
+    from agents import FunctionTool
+
+    from .access import current_identity
+    from .hitl import gate, service
+
+    async def invoke(_ctx, _input: str) -> str:
+        ident = current_identity()
+        if ident is None or not getattr(ident, "user", None):
+            return "[my_requests: sign in to see what waits for you.]"
+        account, email = getattr(ident, "account_id", None) or ident.user or "", ident.user or ""
+        hub_id = gate.hub_id_of(hub_dir)
+        try:
+            items = await asyncio.to_thread(service.list_for, hub_dir, hub_id, account, email)
+        except Exception:  # noqa: BLE001
+            log.warning("mcp: my_requests could not read the requests", exc_info=True)
+            return "[my_requests: the requests can't be read right now. Try again shortly.]"
+        waiting = [service.with_actions(r, account, email) for r in items]
+        mine = [r for r in waiting if r.get("allowed_actions")]
+        link = service.requests_url()
+        if not mine:
+            return "Nothing is waiting for you on this agent." + (f" Inbox: {link}" if link else "")
+        lines = [f"{len(mine)} waiting for you on this agent:"]
+        for r in mine[:20]:
+            kind = "Question" if r.get("kind") == "question" else "Approval"
+            lines.append(f"- {kind}: {r.get('title') or r.get('tool') or 'a request'}"
+                         + (f" ({_age(r.get('created_at'))})" if r.get("created_at") else "")
+                         + f" [id {r['id']}]")
+        if len(mine) > 20:
+            lines.append(f"... and {len(mine) - 20} more.")
+        if link:
+            lines.append(f"Decide them in the Inbox: {link}")
+        return "\n".join(lines)
+
+    return FunctionTool(
+        name="my_requests", params_json_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        on_invoke_tool=invoke, strict_json_schema=False,
+        description=("List the approvals and questions waiting for the person on this agent, with the "
+                     "Inbox link. Read only. Use it when they ask what needs them, or after a call says "
+                     "something is waiting."))

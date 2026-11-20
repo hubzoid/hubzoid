@@ -215,7 +215,9 @@ class Orchestrator:
             if opts.get("tool_allowlist") is not None:
                 slot.tool_allowlist = list(opts["tool_allowlist"])
             # Who this reply acts for, for approvals and questions (hubzoid.hitl).
-            via_key = plan.credential == "api_key"
+            from ..auth import automated
+
+            via_key = automated(plan.credential)
             slot.hitl = {"account_id": plan.actor_id, "email": plan.actor_email, "present": not via_key,
                          "origin": "api" if via_key else "chat",
                          "conversation_id": plan.conversation_id, "branch_id": plan.branch_id,

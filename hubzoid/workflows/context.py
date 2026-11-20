@@ -861,7 +861,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
                 from ..access import Identity, identity_scope
 
                 with identity_scope(_workflow_identity(hub_dir, hub, workflow, run_id, identity,
-                                                       ctx.subject)):
+                                                       ctx.subject, run=ctx.run)):
                     yield
             else:
                 yield
@@ -869,7 +869,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         _run.reset(token)
 
 
-def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: str):
+def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: str, run: dict | None = None):
     """The request identity of a workflow run, with its run identity record
     (``access.run_identity``). Written once per run id: a run recovering after
     a restart gets its first record back, built from the account id stored
@@ -886,6 +886,12 @@ def _workflow_identity(hub_dir, hub, workflow, run_id, identity: dict, subject: 
                   acts_as_email=None if legacy else subject, requested_by=subject,
                   started_from="workflow", origin_id=workflow, person_present=False,
                   credential_kind="workflow", legacy=legacy)
+    # A "Run for me" report started over the API with a key or a machine
+    # token carries that credential, so revoking the key or removing the app
+    # stops it, queued or running (``evaluator.credential_live``).
+    cred = (run or {}).get("credential") if (run or {}).get("trigger") == "api" else None
+    if isinstance(cred, dict) and cred.get("kind") in ("api_key", "app_jwt") and cred.get("id"):
+        fields.update(credential_kind=cred["kind"], credential_id=str(cred["id"]))
     if legacy:
         # A legacy run gets no extra trust from its record: it runs on its
         # grants alone whether or not the record is written.

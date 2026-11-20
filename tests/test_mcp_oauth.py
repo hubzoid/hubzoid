@@ -441,9 +441,18 @@ def test_expired_access_and_grant(setup):
         q = await consent(c, client)
         tokens = (await exchange(c, client, q["code"][0])).json()
         store = OAuthStore(hub, RESOURCE)
-        with store.engine.begin() as con:
-            con.execute(text("UPDATE hz_mcp_oauth SET expires=0 WHERE kind='access'"))
-        assert (await rpc(c, tokens["access_token"])).status_code == 401
+        # Access tokens are JWTs (2.0.9): an expired one for the same grant fails.
+        import time as _time
+
+        import jwt as _pyjwt
+
+        from hubzoid import mcp_signing
+
+        claims = _pyjwt.decode(tokens["access_token"], options={"verify_signature": False})
+        expired = mcp_signing.ring(hub, 600).sign(
+            {**claims, "iat": int(_time.time()) - 4000, "exp": int(_time.time()) - 3000})
+        assert (await rpc(c, expired)).status_code == 401
+        assert (await rpc(c, tokens["access_token"])).status_code == 200
         with store.engine.begin() as con:
             con.execute(text("UPDATE hz_mcp_oauth SET expires=0 WHERE kind='grant'"))
         r = await c.post(

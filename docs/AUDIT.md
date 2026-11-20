@@ -49,7 +49,8 @@ has `"subject": "workflow:<name>"` and its `run_id`.
 accounts, wrong codes and re-checks too, with the address),
 `auth.locked_out` (with `locked_seconds`), `auth.api_key_created`,
 `auth.api_key_revoked`, `auth.api_key_used` (a key's first use from an address
-since the process started), and the two-step sign-in changes. Never a password,
+since the process started), `auth.app_token_used` (the same for a machine JWT
+from an API app, with `key` set to `app:<id>`), and the two-step sign-in changes. Never a password,
 code or key.
 
 **Admin changes** (`kind: admin`): grants and removals, blocked accounts,
@@ -107,7 +108,7 @@ metric filter or a SIEM rule with no Hubzoid code.
 | Many reads or large results for one person in a short time | `tool.call` by `subject`, `result_bytes` | Possible data exfiltration |
 | A person's first use of a new MCP server, connector or restricted tool | `tool.call` `server` | A change in scope worth a look |
 | Repeated sign-in failures or lockouts from one address | `auth.attempt_failed`, `auth.locked_out` by `client` | Password spraying, account takeover |
-| An API key used from a new address | `auth.api_key_used` | A leaked key |
+| An API key or machine token used from a new address | `auth.api_key_used`, `auth.app_token_used` | A leaked key or a misused issuer |
 | Grants given, secrets set or deleted | `admin.grant`, `admin.secret_set`, `admin.secret_delete` | Privilege changes |
 | Tool error rate | `tool.call` with `outcome = error` | A broken integration or abuse |
 

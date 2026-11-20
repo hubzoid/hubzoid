@@ -71,7 +71,8 @@ TRIGGERS = ("chat", "schedule", "manual", "event", "mcp", "eval")
 
 # A workflow run's own trigger (WorkflowContext.trigger) -> hz_usage.origin.
 _RUN_TRIGGERS = {"schedule": "schedule", "personal_schedule": "schedule", "operator": "manual",
-                 "cli": "manual", "webhook": "event", "update": "event", "work_item": "manual"}
+                 "cli": "manual", "webhook": "event", "update": "event", "work_item": "manual",
+                 "api": "manual"}  # a "Run for me" report started over the API (POST /portal/api/my/runs)
 # Surfaces a person talks to an agent on (the run's envelope `via`).
 _CONVERSATION = {"web", "api", "slack", "whatsapp", "telegram"}
 
