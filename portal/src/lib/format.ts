@@ -862,7 +862,8 @@ export function describeToolCall(row: AuditRow, ctx: ActivityContext): Sentence 
 }
 
 const AUTH_EVENTS: Record<string, { tag: string; phrase: string; tone: Sentence["tone"] }> = {
-  "auth.sign_in_failed": { tag: "Failed", phrase: " failed a sign-in step", tone: "negative" },
+  "auth.attempt_failed": { tag: "Failed", phrase: " failed a sign-in step", tone: "negative" },
+  "auth.sign_in_failed": { tag: "Failed", phrase: " entered a wrong password", tone: "negative" },
   "auth.locked_out": { tag: "Locked", phrase: " was locked out after too many tries", tone: "negative" },
   "auth.api_key_used": { tag: "Key", phrase: " used a personal API key", tone: "neutral" },
 };

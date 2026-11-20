@@ -44,7 +44,9 @@ that raised has `"outcome": "error"` and the `error` class. A workflow's call
 has `"subject": "workflow:<name>"` and its `run_id`.
 
 **Sign-in events** (`kind: auth`): `auth.signed_in`, `auth.signed_out`,
-`auth.sign_in_failed` (a wrong password, code or re-check, with the address),
+`auth.sign_in_failed` (a wrong password for a known account),
+`auth.attempt_failed` (every failed attempt the sign-in limits count: unknown
+accounts, wrong codes and re-checks too, with the address),
 `auth.locked_out` (with `locked_seconds`), `auth.api_key_created`,
 `auth.api_key_revoked`, `auth.api_key_used` (a key's first use from an address
 since the process started), and the two-step sign-in changes. Never a password,
@@ -104,7 +106,7 @@ metric filter or a SIEM rule with no Hubzoid code.
 | Any tool call refused because an account was removed or its sign-in revoked | `reason` in `account_inactive`, `credentials_revoked`, `credential_ended` | A session or key that should be dead |
 | Many reads or large results for one person in a short time | `tool.call` by `subject`, `result_bytes` | Possible data exfiltration |
 | A person's first use of a new MCP server, connector or restricted tool | `tool.call` `server` | A change in scope worth a look |
-| Repeated sign-in failures or lockouts from one address | `auth.sign_in_failed`, `auth.locked_out` by `client` | Password spraying, account takeover |
+| Repeated sign-in failures or lockouts from one address | `auth.attempt_failed`, `auth.locked_out` by `client` | Password spraying, account takeover |
 | An API key used from a new address | `auth.api_key_used` | A leaked key |
 | Grants given, secrets set or deleted | `admin.grant`, `admin.secret_set`, `admin.secret_delete` | Privilege changes |
 | Tool error rate | `tool.call` with `outcome = error` | A broken integration or abuse |

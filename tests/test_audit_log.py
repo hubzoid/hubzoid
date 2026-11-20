@@ -105,7 +105,7 @@ def test_sign_in_failures_and_lockouts_are_auth_events(tmp_path, monkeypatch, au
         locked = ratelimit.record_failure(tmp_path, ip="203.0.113.9", email="a@example.com")
     assert locked
     events = [r["event"] for r in audit_lines]
-    assert events.count("auth.sign_in_failed") == ratelimit.max_failures()
+    assert events.count("auth.attempt_failed") == ratelimit.max_failures()
     assert events[-1] == "auth.locked_out"
     assert audit_lines[-1]["client"] == "203.0.113.9" and audit_lines[-1]["actor"] == "a@example.com"
 
