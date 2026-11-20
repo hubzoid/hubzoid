@@ -12,7 +12,7 @@ a follow-up question or an approval in place (`ask_question` is off, and an appr
 "the card under this message asks them"), cannot save shared knowledge (`remember` and the hub
 change tools are never added), and never reaches a sub-agent that runs on its own model
 (`delegates=[]`). Core skills such as `dashboard` are left out because their delivery tool is
-missing. Isha's IRS hub (Odoo tools, ClickUp, skills from agents) uses these surfaces from chat,
+missing. A customer's IT helpdesk hub (Odoo tools, ClickUp, skills from agents) uses these surfaces from chat,
 and its people want the same from their own assistants.
 
 ## What should happen

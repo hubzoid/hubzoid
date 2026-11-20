@@ -16,11 +16,11 @@ the items that were cut are in HubzoidAgent `docs/sdk-cicd-release-gate-suggesti
   tool classes), but has no prompt-injection check, moderation, or personal-data masking. Mastra
   (`PromptInjectionDetector`, `ModerationProcessor`, `PIIDetector`) and Agno
   (`PromptInjectionGuardrail`, `OpenAIModerationGuardrail`, `PIIDetectionGuardrail`) both ship
-  these three. Isha's AI governance brief asks for prompt-injection controls.
+  these three. A customer's AI governance brief asks for prompt-injection controls.
 
 ## Why now
 
-Isha's security brief asks for a release gate and prompt-injection controls, and the founder
+A customer's security brief asks for a release gate and prompt-injection controls, and the founder
 wants Hubzoid on par with Mastra and Agno for guards both of them ship.
 
 ## What should happen

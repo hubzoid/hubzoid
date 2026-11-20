@@ -148,7 +148,7 @@ The CLI features used need Claude Code 2.1.242 (`CLAUDE_CODE_PROMPT_CACHE_TTL`) 
 
 ## The trade-off
 
-LiteLLM uses the same `bedrock/` prefix. After this change, a Claude id under `bedrock/` runs on the Claude Agent SDK instead of LiteLLM. Checked on 20 November 2026: no SDK code, test, sample hub or Isha hub uses `bedrock/` today, and the only mention is the one line in `docs/providers.md`. A hub that wants LiteLLM for a Claude model writes `bedrock/converse/<id>`. The changelog says so.
+LiteLLM uses the same `bedrock/` prefix. After this change, a Claude id under `bedrock/` runs on the Claude Agent SDK instead of LiteLLM. Checked on 20 November 2026: no SDK code, test, sample hub or known customer hub uses `bedrock/` today, and the only mention is the one line in `docs/providers.md`. A hub that wants LiteLLM for a Claude model writes `bedrock/converse/<id>`. The changelog says so.
 
 ## Scope and non-goals
 
@@ -199,7 +199,7 @@ The record names the release, CLI version, region, profile prefix, models and th
 
 1. **Tier versions.** Each tier is pinned to what it means on `claude-local` at release.
 2. **Explicit `claude-local/<tier>` on a Bedrock hub** runs on the subscription, as written (founder). Bare tiers follow the hub's provider. See "Bare names follow the hub" above.
-3. **Region prefix.** In ap-south-1 the default stays `apac.`, which keeps calls in the geography. If a pinned tier has no `apac.` profile, doctor fails and names it. Hubzoid never switches to `global.` on its own. An operator who accepts cross-geography routing sets `ANTHROPIC_BEDROCK_REGION_PREFIX=global` in `.env`. For Isha, that choice is theirs to make if they adopt Bedrock.
+3. **Region prefix.** In ap-south-1 the default stays `apac.`, which keeps calls in the geography. If a pinned tier has no `apac.` profile, doctor fails and names it. Hubzoid never switches to `global.` on its own. An operator who accepts cross-geography routing sets `ANTHROPIC_BEDROCK_REGION_PREFIX=global` in `.env`. For a customer, that choice is theirs to make if they adopt Bedrock.
 4. **Non-Claude proof model:** Amazon Nova Pro (founder).
 5. **Release:** 2.0.9, with the MCP parity work (founder, 20 November 2026).
 
@@ -253,7 +253,7 @@ Also found against a real account: ap-south-1 offers the 5.5 models only as `glo
 
 ## Proof record (20 November 2026)
 
-Real AWS run on the Isha test account `isha-bedrock` (960645510865, role Ai-Bedrock-access), region ap-south-1, Hubzoid `feat/bedrock-s1` with claude-agent-sdk 0.2.162 (Claude Code 2.1.285), from a laptop, on the test hub `HubzoidTestHub/bedrock-e2e`. Pins kept in India: `ANTHROPIC_BEDROCK_REGION_PREFIX=in`, Sonnet `in.anthropic.claude-sonnet-5`, Opus `in.anthropic.claude-opus-5`, Haiku `in.anthropic.claude-haiku-4-5-20251001-v1:0`.
+Real AWS run on a test AWS account with a Bedrock access role, region ap-south-1, Hubzoid `feat/bedrock-s1` with claude-agent-sdk 0.2.162 (Claude Code 2.1.285), from a laptop, on the test hub `HubzoidTestHub/bedrock-e2e`. Pins kept in India: `ANTHROPIC_BEDROCK_REGION_PREFIX=in`, Sonnet `in.anthropic.claude-sonnet-5`, Opus `in.anthropic.claude-opus-5`, Haiku `in.anthropic.claude-haiku-4-5-20251001-v1:0`.
 
 | Check | Result |
 |---|---|
