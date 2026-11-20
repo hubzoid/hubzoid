@@ -161,6 +161,15 @@ class CompanyLinkAction(BaseModel):
     action: Literal["copy", "replace", "off"]
 
 
+class MyRun(BaseModel):
+    """Start a "Run for me" report as yourself (``POST /portal/api/my/runs``)."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    workflow: str = Field(min_length=1, max_length=255)
+    inputs: dict = Field(default_factory=dict)
+    confirm: bool = False
+
+
 class WorkflowRun(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     hub: str = Field(min_length=1, max_length=255)
@@ -873,6 +882,32 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
             raise HTTPException(403, "You no longer have access to this agent.")
         return {"runs": observe.personal_runs(path, email, account, run_id=run_id)}
+
+    @router.post("/my/runs", status_code=202)
+    @_denied
+    def my_run_start(request: Request, payload: MyRun):
+        """Start a "Run for me" report as yourself (``workflows.api_runs``):
+        the run the chat tool starts, recorded with ``trigger: "api"``. Read it
+        with ``GET /my/runs?hub=&run_id=``. ``Idempotency-Key`` makes a retry
+        return the same run."""
+        from .access.store import USE_HUB
+        from .workflows import api_runs
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        gs = store_for(path)
+        if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
+            raise HTTPException(403, "You no longer have access to this agent.")
+        try:
+            out = api_runs.start(path, payload.workflow, email=email, account=account, inputs=payload.inputs,
+                                 confirm=payload.confirm,
+                                 idempotency_key=request.headers.get("idempotency-key"))
+        except api_runs.RunRefused as exc:
+            return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status)
+        body = {**out, "hub": key,
+                "result": f"/portal/api/my/runs?hub={quote(key)}&run_id={quote(out['run_id'])}"}
+        return JSONResponse(body, status_code=202 if out["created"] else 200)
 
     @router.get("/my/schedules/{schedule_id}")
     @_denied
