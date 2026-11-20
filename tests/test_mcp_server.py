@@ -559,3 +559,336 @@ def test_tools_list_keeps_the_surfaces_loaded_after_an_edit(hub, monkeypatch, lo
     (hub / "identity" / "permissions.yaml").write_text(f"clickup:\n  surfaces: {edited}\n")
     names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
     assert ("clickup_echo" in names) is shown and "read_knowledge" in names
+
+
+# ---------------------------------------------------------------------------
+# Connected apps: a person's Settings connectors on the hosted surface
+# ---------------------------------------------------------------------------
+ANA = "ana@example.org"
+_UPSTREAM: list[str] = []   # every call that reached the fake app
+
+
+def _totals(month: str) -> dict:
+    _UPSTREAM.append("totals")
+    return {"month": month, "orders": 7}
+
+
+def _fails() -> str:
+    _UPSTREAM.append("fails")
+    from fastmcp.exceptions import ToolError
+
+    raise ToolError("the app said no")
+
+
+@pytest.fixture(scope="module")
+def mail_url():
+    from tests import connect_helpers as h
+
+    def whoami(who):
+        _UPSTREAM.append("whoami")
+        return who or "nobody"
+
+    with h.mcp_server("mail", {"tok-a": ANA}, {"whoami": whoami, "mail_search": lambda who: "mail"},
+                      raw={"totals": _totals, "fails": _fails}) as url:
+        yield url
+
+
+@pytest.fixture
+def connected(tmp_path, monkeypatch, mail_url):
+    """``make(allow=None, dead=False, hub_tool=False)``: a hub where Ana has
+    connected the mail app, signed in to the hosted surface as ``mcp-a``."""
+    from tests import connect_helpers as h
+    from tests.mcp_credentials import seed
+
+    def make(allow=None, dead=False, hub_tool=False):
+        _UPSTREAM.clear()
+        hub = tmp_path / "apphub"
+        (hub / "tools_local").mkdir(parents=True)
+        (hub / "AGENTS.md").write_text("---\nname: apphub\n---\n\nThe app hub.\n")
+        if hub_tool:
+            (hub / "tools_local" / "mine.py").write_text(
+                "from agents import function_tool\n\n@function_tool\n"
+                "def my_mail__whoami() -> str:\n    \"\"\"The hub's own tool.\"\"\"\n    return 'hub'\n")
+        servers = [{"id": "mail", "name": "Mail", "url": mail_url, **({"allow": allow} if allow else {})}]
+        if dead:
+            servers.append({"id": "dead", "name": "Dead", "url": "http://127.0.0.1:9/mcp"})
+        db = tmp_path / "webui.db"
+        h.seed_owui(db, users=[("ua", ANA)], secret="apps-secret", servers=servers)
+        for s in servers:
+            h.connect(db, user_id="ua", server_id=s["id"], access_token="tok-a")
+        h.owui_env(monkeypatch, db, "apps-secret")
+        h.isolated_store(tmp_path, monkeypatch)
+        monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+        h.grant(hub, ANA, permissions=("use_hub", "connector_mail", "connector_dead"))
+        seed(hub, token="mcp-a", email=ANA, account_id="ua")
+        from hubzoid import mcp_server
+
+        return hub, mcp_server.build_mcp_app(hub)
+
+    return make
+
+
+def _ana(app, *calls):
+    from tests import connect_helpers as h
+
+    return asyncio.run(h.hosted(app, *(("mcp-a", m, p) for m, p in calls)))
+
+
+def _tool_call(name, **arguments):
+    return ("tools/call", {"name": name, "arguments": arguments})
+
+
+def test_connected_app_results_keep_their_structure_and_error_flag(connected, caplog):
+    from tests import connect_helpers as h
+
+    _, app = connected()
+    with caplog.at_level("DEBUG"):
+        ok, bad = _ana(app, _tool_call("my_mail__totals", month="2026-11"), _tool_call("my_mail__fails"))
+    assert ok["result"]["structuredContent"] == {"month": "2026-11", "orders": 7}
+    assert not h.failed(ok)
+    assert h.failed(bad) and "the app said no" in json.dumps(bad)
+    assert "tok-a" not in caplog.text
+
+
+def test_connected_app_allow_list_holds_on_list_and_call(connected):
+    from tests import connect_helpers as h
+
+    _, app = connected(allow=["whoami"])
+    listed, called = _ana(app, ("tools/list", {}), _tool_call("my_mail__totals", month="x"))
+    assert "my_mail__whoami" in h.tool_names(listed)
+    assert "my_mail__totals" not in h.tool_names(listed)
+    assert h.failed(called) and _UPSTREAM == []
+
+
+def test_connected_app_call_rechecks_the_grant(connected):
+    from hubzoid.access import store_for
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    (listed,) = _ana(app, ("tools/list", {}))
+    assert "my_mail__whoami" in h.tool_names(listed)
+    store_for(hub).revoke(ANA, hub.name, "connector_mail", actor="test")
+    (called,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(called) and _UPSTREAM == []
+
+
+def test_a_hub_tool_keeps_its_name_over_a_connected_app(connected):
+    from tests import connect_helpers as h
+
+    _, app = connected(hub_tool=True)
+    listed, called = _ana(app, ("tools/list", {}), _tool_call("my_mail__whoami"))
+    assert [t["name"] for t in listed["result"]["tools"]].count("my_mail__whoami") == 1
+    assert h.text_of(called) == "hub" and _UPSTREAM == []
+
+
+def test_connected_app_calls_are_audited_and_refused_without_a_row(connected, monkeypatch):
+    from hubzoid.access import audit
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    (ok,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.text_of(ok) == ANA
+    rows = audit.read(hub, tool="my_mail__whoami")
+    assert [(r["user"], r["surface"], r["decision"]) for r in rows] == [(ANA, "mcp", "allow")]
+
+    _UPSTREAM.clear()
+    monkeypatch.setattr(audit, "record", lambda *a, **k: False)
+    (refused,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(refused) and _UPSTREAM == []
+
+
+def test_a_broken_app_does_not_break_the_tool_list(connected):
+    from tests import connect_helpers as h
+
+    _, app = connected(dead=True)
+    (listed,) = _ana(app, ("tools/list", {}))
+    names = h.tool_names(listed)
+    assert "my_mail__whoami" in names and "list_knowledge" in names
+    assert not {n for n in names if n.startswith("my_dead__")}
+
+
+@pytest.mark.parametrize("rules", [
+    "version: 1\nconnectors:\n  my_mail: {ask: always}\n",   # the server key chat evaluates
+    "version: 1\ntools:\n  whoami: {ask: always}\n",          # the app's own tool name
+])
+def test_connected_app_calls_follow_the_hubs_approval_rules(connected, rules):
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    (hub / "hitl.yaml").write_text(rules)
+    (out,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert "waiting" in h.text_of(out).lower() and _UPSTREAM == []
+
+
+def test_connected_app_catalog_reads_every_page():
+    """The Agents SDK's list_tools reads only the first page of an app's tools."""
+    from types import SimpleNamespace
+
+    from hubzoid.mcp_connected_apps import _all_tools
+
+    pages = {None: (["a", "b"], "p1")}
+    pages.update({f"p{i}": ([f"t{i}"], f"p{i + 1}" if i < 12 else None) for i in range(1, 13)})
+
+    class Session:
+        async def list_tools(self, cursor=None):
+            names, nxt = pages[cursor]
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in names], nextCursor=nxt)
+
+    tools = asyncio.run(_all_tools(SimpleNamespace(session=Session())))
+    assert [t.name for t in tools] == ["a", "b"] + [f"t{i}" for i in range(1, 13)]   # 13 pages
+
+    looping = {None: (["a"], "same"), "same": (["b"], "same")}            # a cursor that never ends
+    pages.clear(); pages.update(looping)
+    assert [t.name for t in asyncio.run(_all_tools(SimpleNamespace(session=Session())))] == ["a", "b"]
+
+
+def test_slow_connected_app_lookup_never_holds_up_the_list(monkeypatch):
+    """A token refresh that hangs is cut off by the listing budget: no apps,
+    answered in time."""
+    import time
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+
+    monkeypatch.setattr(apps, "BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(apps, "_servers", lambda *a: time.sleep(2) or ([], {}, set()))
+
+    async def timed():   # inside the loop: asyncio.run itself waits for the thread to end
+        started = time.monotonic()
+        out = await apps.list_tools(Path("."), access.Identity.make(user="a@x.io", surface="mcp"), set())
+        return out, time.monotonic() - started
+
+    out, took = asyncio.run(timed())
+    assert out == [] and took < 1.5
+
+
+def test_connected_app_call_rechecks_the_grant_after_connecting(connected, monkeypatch):
+    """A grant revoked between finding the caller's apps and forwarding the call
+    still stops it, with a denial in the access log."""
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.access import audit, store_for
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    found = apps._servers(hub, ana)                 # the lookup made before the grant goes
+    store_for(hub).revoke(ANA, hub.name, "connector_mail", actor="test")
+    monkeypatch.setattr(apps, "_servers", lambda *a: found)
+    (out,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(out) and _UPSTREAM == []
+    assert [r["decision"] for r in audit.read(hub, tool="my_mail__whoami")] == ["deny"]
+
+
+def test_connected_app_call_rereads_the_allow_list_before_forwarding(connected, monkeypatch):
+    """An allow-list narrowed while the app was being reached stops the call."""
+    import yaml
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.connectors import registry
+    from tests import connect_helpers as h
+
+    hub, app = connected()
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    found = apps._servers(hub, ana)                       # the lookup made before the change
+    path = registry.folder(hub) / "mail.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["tools"] = ["mail_search"]
+    path.write_text(yaml.safe_dump(doc))
+    monkeypatch.setattr(apps, "_servers", lambda *a: found)
+    (out,) = _ana(app, _tool_call("my_mail__whoami"))
+    assert h.failed(out) and "Use Mail" in h.text_of(out) and _UPSTREAM == []
+
+
+def test_an_ambiguous_alias_is_not_forwarded_when_one_app_fails():
+    """``my_acme__delete__item`` could be acme's ``delete__item`` or acme__delete's
+    ``item``: with one of them down, it is still not called."""
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+    from hubzoid.personal_mcp import PerUserServer
+    from tests import connect_helpers as h
+
+    hits = []
+    with h.mcp_server("acme", {"tok": "ana"}, {}, raw={"delete__item": lambda: hits.append(1) or "deleted"}) as url:
+        ok = PerUserServer(key="my_acme", url=url, headers={"Authorization": "Bearer tok"},
+                           allowed_tools=None, server_id="acme", app="acme")
+        down = PerUserServer(key="my_acme__delete", url="http://127.0.0.1:9/mcp", headers={},
+                             allowed_tools=None, server_id="acme__delete", app="acme__delete")
+        apps_servers = ([ok, down], {}, set())
+        ident = access.Identity.make(user=ANA, groups=[], surface="mcp")
+        orig = apps._servers
+        apps._servers = lambda *a: apps_servers
+        try:
+            out = asyncio.run(apps.call(Path("."), ident, "my_acme__delete__item", {}))
+        finally:
+            apps._servers = orig
+    assert out is None and hits == []
+
+
+def test_a_cancelled_listing_stops_its_app_listings(monkeypatch):
+    from types import SimpleNamespace
+
+    from hubzoid import access
+    from hubzoid import mcp_connected_apps as apps
+
+    async def slow(_srv):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(apps, "_fetch", slow)
+    srv = SimpleNamespace(key="my_x", server_id="x", url="u", allowed_tools=None, headers={})
+
+    async def go():
+        task = asyncio.create_task(apps._list_all(Path("."), access.ANONYMOUS, [srv], 30))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+        return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+    assert asyncio.run(go()) == []
+
+
+def test_read_only_hint_on_a_later_page_reaches_the_approval_gate(connected, monkeypatch):
+    """Under ``ask: writes`` a read-only tool runs at once, wherever it is in the
+    app's list: the gate gets every page's hints, not just page one's."""
+    from types import SimpleNamespace
+
+    from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
+
+    from hubzoid import access, runtime
+    from hubzoid import mcp_connected_apps as apps
+
+    hub, _ = connected()
+    (hub / "hitl.yaml").write_text("version: 1\nconnectors:\n  my_mail: {ask: writes}\n")
+    schema = {"type": "object", "properties": {}}
+    first = [Tool(name="whoami", inputSchema=schema)]
+    second = [Tool(name="peek", inputSchema=schema, annotations=ToolAnnotations(readOnlyHint=True))]
+    ran = []
+
+    class Paged:
+        name = "my_mail"
+
+        def __init__(self):
+            async def page(cursor=None):
+                return SimpleNamespace(tools=second if cursor else first, nextCursor=None if cursor else "p2")
+            self.session = SimpleNamespace(list_tools=page)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def list_tools(self, *a, **k):      # the SDK's: page one only
+            return first
+
+        async def call_tool(self, tool_name, arguments=None, *a, **k):
+            ran.append(tool_name)
+            return CallToolResult(content=[TextContent(type="text", text="peeked")])
+
+    monkeypatch.setattr(runtime, "personal_mcp_server", lambda srv: Paged())
+    ana = access.Identity.make(user=ANA, groups=[], surface="mcp")
+    with access.identity_scope(ana):
+        out = asyncio.run(apps.call(hub, ana, "my_mail__peek", {}))
+    assert ran == ["peek"] and out.content[0].text == "peeked"

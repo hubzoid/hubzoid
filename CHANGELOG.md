@@ -39,6 +39,12 @@ and the channel list say what used to fail silently.
   when authlib runs on httpx2.
 
 ### Added
+- **Connected apps reach assistants over MCP.** An assistant connected to an
+  agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
+  person connected in Settings, as `my_<id>__<tool>`, called as that person
+  with the same grants, allow-lists, approval rules and access log as chat.
+  After connecting an app, reconnect the assistant to load its tools (in
+  Claude Code: `/mcp`, then Reconnect) (#144).
 - **Surfaces per restricted capability.** An optional `surfaces:` on a
   capability in `identity/permissions.yaml` replaces
   `HUBZOID_RESTRICTED_SURFACES` for that capability alone, so password resets
@@ -61,6 +67,8 @@ and the channel list say what used to fail silently.
   turning it off without a word.
 
 ### Fixed
+- `connect_account` over MCP no longer tells the person a connected app can be
+  used now while their assistant cannot see its tools: it says to reconnect.
 - `hubzoid channels doctor` no longer fails a Slack Socket Mode connection, or
   a GitHub connection without a webhook secret, for a missing public URL. A
   local public URL warns.
