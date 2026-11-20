@@ -9,13 +9,13 @@ result size, trace id), already redacted. Rows older than
 ``HUBZOID_AUDIT_RETENTION_DAYS`` (default 90) are removed.
 
 Revision ID: op_0090
-Revises: op_0081
+Revises: op_0082
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "op_0090"
-down_revision = "op_0081"
+down_revision = "op_0082"
 branch_labels = None
 depends_on = None
 
