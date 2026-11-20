@@ -21,6 +21,60 @@ from . import replies, store
 from .errors import ChannelError
 
 
+KINDS = ("progress", "result", "notice", "question", "approval")
+MAX_FILES = 5
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def _files(hub_dir: Path, files) -> tuple[str, ...]:
+    """The files a post may carry: ones this hub wrote under its output
+    folder, at most five, each at most 10 MB. Anything else is refused, so a
+    workflow can never send a key, a database or the hub's own files out."""
+    from .. import datadir
+
+    if not files:
+        return ()
+    if isinstance(files, (str, Path)):
+        files = [files]
+    files = list(files)
+    if len(files) > MAX_FILES:
+        raise ValueError(f"post at most {MAX_FILES} files")
+    paths = []
+    for f in files:
+        path = Path(f) if Path(f).is_absolute() else datadir.resolve(hub_dir, f)
+        _check_output_file(hub_dir, path, shown=str(f))
+        paths.append(str(path.resolve()))
+    return tuple(paths)
+
+
+def _check_output_file(hub_dir: Path, path: Path, *, shown: str) -> Path:
+    """`path` is a regular file under the hub's real output folder (not a
+    symlink to elsewhere) and nowhere under its state folder."""
+    from .. import datadir
+
+    out = datadir.resolve(hub_dir, "output")
+    if out.is_symlink():
+        raise ValueError("this hub's output folder is a symlink: files are not posted from it")
+    real = Path(path).resolve()
+    if (not real.is_relative_to(out.resolve()) or real.is_relative_to(datadir.state(hub_dir).resolve())
+            or not real.is_file()):
+        raise ValueError(f"{shown} is not a file under this hub's output folder")
+    if real.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError(f"{real.name} is larger than 10 MB")
+    return real
+
+
+def read_posted_file(hub_dir: Path, path: str) -> tuple[str, bytes]:
+    """Check a posted file again when it is sent and read it once: what is
+    uploaded is what passed the check, at most 10 MB."""
+    real = _check_output_file(Path(hub_dir), Path(path), shown=Path(path).name)
+    with open(real, "rb") as fh:
+        data = fh.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError(f"{real.name} is larger than 10 MB")
+    return real.name, data
+
+
 class Thread:
     def __init__(self, hub_dir: Path, thread: dict, item: dict):
         self._hub_dir = Path(hub_dir)
@@ -48,16 +102,39 @@ class Thread:
         """The verified provider account that asked (display data, not authority)."""
         return (self._item.get("origin_json") or {}).get("requested_by")
 
-    def post(self, text: str, *, key: str, kind: str = "result", actions=None) -> list[dict]:
+    @property
+    def approvals_here(self) -> bool:
+        """Whether the requester can settle a plan approval by replying in
+        this thread (the channel file allows it and the provider verifies
+        who wrote the reply). Otherwise approvals are decided in Hubzoid."""
+        try:
+            conn = config_lib.active(self._hub_dir, self.channel)
+        except Exception:  # noqa: BLE001 - no live connection: decide in Hubzoid
+            return False
+        return bool(conn.adapter.approvals_in_thread(conn))
+
+    @property
+    def attachments(self) -> bool:
+        """Whether files posted here are attached (otherwise left out)."""
+        try:
+            return bool(config_lib.active(self._hub_dir, self.channel).adapter.attachments)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def post(self, text: str, *, key: str, kind: str = "result", actions=None, files=None) -> list[dict]:
         """Post to this thread. `key` names this post within the work item
         (stage plus purpose, never an attempt id): posting the same key again
-        sends nothing new. `kind` is progress, result or notice. A
-        customer-visible reply names its action (`customer_reply.send`,
-        `email.send`) so the hub's write mode applies."""
-        if kind not in ("progress", "result", "notice", "question"):
-            raise ValueError("kind is progress, result, notice or question")
+        sends nothing new. `kind` is progress, result, notice, question or
+        approval (the work now waits for an approval). `files` are files this
+        hub wrote under its output folder, attached where the provider can
+        (`attachments`), else left out. A customer-visible reply names its
+        action (`customer_reply.send`, `email.send`) so the hub's write mode
+        applies."""
+        if kind not in KINDS:
+            raise ValueError("kind is " + ", ".join(KINDS))
         if not isinstance(key, str) or not key.strip() or len(key) > 200:
             raise ValueError("key names the post, 1 to 200 characters")
+        paths = _files(self._hub_dir, files)
         conn = config_lib.active(self._hub_dir, self.channel)
         if kind == "progress" and (not conn.config.progress or conn.adapter.customer_facing):
             return []                   # customers get answers, never progress chatter
@@ -77,11 +154,17 @@ class Thread:
                 text = f"{text.rstrip()}\n\n{footer}"
         try:
             return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
-                                draft=draft)
+                                draft=draft, files=paths if conn.adapter.attachments else ())
         except Parked as parked:
             if parked.kind == "approval" and conn.adapter.customer_facing and self._unattended():
                 self._stop_unapprovable(parked.operation_id, text)
             raise
+
+    def posted(self, key: str, *, kind: str = "result") -> bool:
+        """Whether this work item already recorded a post under `key` and
+        `kind` (sent, or waiting). A workflow that changes how it posts can
+        keep an earlier run's post as it was."""
+        return self._recorded_text(kind, key) is not None
 
     def _recorded_text(self, kind: str, key: str) -> str | None:
         """The last part of a reply already recorded under ``key`` (waiting

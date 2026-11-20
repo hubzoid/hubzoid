@@ -42,9 +42,9 @@ The ids above are placeholders.
 > Do not send anything.
 
 ```sh
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/app-secret --stdin --apply
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/verify-token --stdin --apply
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/access-token --stdin --apply
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/app-secret --stdin
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/verify-token --stdin
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/whatsapp-desk/access-token --stdin
 hubzoid channels apply ./company-hub --file channels/whatsapp-desk.yaml --expected-revision absent
 hubzoid channels doctor ./company-hub whatsapp-desk
 ```

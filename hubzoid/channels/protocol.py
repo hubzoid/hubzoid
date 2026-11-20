@@ -84,6 +84,20 @@ class Adapter:
     #: ``feedback: true`` (``hubzoid.channels.feedback``): "agent" (a chat
     #: answer), "workflow" (a workflow's final reply), or "" for none
     feedback_target: ClassVar[str] = ""
+    #: event kinds whose text, from the person who asked, answers the one
+    #: question their work waits on (a ClickUp comment, a Linear session
+    #: prompt). Empty: replies in the thread are follow-ups only. Approvals are
+    #: never decided from thread text, unless `approvals_in_thread` says so.
+    answer_kinds: ClassVar[tuple[str, ...]] = ()
+    #: whether `Outbound.files` are attached to the reply. Otherwise they are
+    #: left out and the reply's text stands alone.
+    attachments: ClassVar[bool] = False
+
+    def approvals_in_thread(self, conn: "Connection") -> bool:
+        """Whether the requester's reply in the thread (an `answer_kinds`
+        event) may settle a plan approval their work waits on. The provider
+        must verify who wrote it; the connection file opts in."""
+        return False
 
     def receives_webhooks(self, conn: "Connection") -> bool:
         """Whether THIS connection takes deliveries by webhook, so it needs

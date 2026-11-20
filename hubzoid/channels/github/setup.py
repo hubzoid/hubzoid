@@ -45,6 +45,11 @@ PERMISSIONS = {"metadata": "read", "contents": "write", "issues": "write", "pull
                "checks": "read", "actions": "read"}
 EVENTS = ["issues", "issue_comment", "pull_request", "pull_request_review_comment", "check_suite", "check_run",
           "workflow_run"]
+#: Asked for by new Apps so `rules.status_failures` works without editing the
+#: App later. Not required by doctor: an existing installation that never
+#: accepted it keeps working, and doctor warns only when a status rule is set.
+STATUS_PERMISSIONS = {"statuses": "read"}
+STATUS_EVENTS = ["status"]
 
 
 def _hash(state: str) -> str:
@@ -76,7 +81,8 @@ def manifest(conn, name: str) -> dict:
     return {"name": name[:34], "url": _public(), "public": False,
             "hook_attributes": {"url": webhook_url(conn), "active": True},
             "redirect_url": f"{base}/github/callback", "setup_url": f"{base}/github/installed",
-            "setup_on_update": True, "default_permissions": dict(PERMISSIONS), "default_events": list(EVENTS)}
+            "setup_on_update": True, "default_permissions": {**PERMISSIONS, **STATUS_PERMISSIONS},
+            "default_events": EVENTS + STATUS_EVENTS}
 
 
 def start(conn, *, owner: str, owner_type: str, name: str, actor: str) -> dict:
@@ -467,6 +473,15 @@ def doctor_checks(conn, inputs: dict) -> list[Check]:
                          "Missing: " + ", ".join(f"{k} {PERMISSIONS[k]}" for k in missing),
                          "" if not missing else "permission_missing",
                          "" if not missing else "Accept the App's updated permissions on GitHub."))
+        if cfg.rules.status_failures:
+            has = granted.get("statuses") in ("read", "write") and "status" in (inst.get("events") or [])
+            out.append(Check("github:status-failures", "ok" if has else "warn",
+                             "Failed commit statuses reach this hub." if has else
+                             "rules.status_failures is set, but the App lacks Commit statuses: read or the Status "
+                             "event, so failed statuses are never received.",
+                             "" if has else "permission_missing",
+                             "" if has else "Add Commit statuses (read) and the Status event to the App, then "
+                             "accept the update on the installation."))
         try:
             reachable = {r["id"] for r in repositories(conn)}
         except ChannelError:

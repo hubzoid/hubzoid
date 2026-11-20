@@ -1,10 +1,10 @@
 # Channels
 
 A channel lets people start work from a Slack thread, a GitHub issue, a Linear
-agent session, an email or a WhatsApp chat, and get the answer back in that
-same place. Each provider has its own page:
+agent session, a ClickUp task, an email or a WhatsApp chat, and get the answer
+back in that same place. Each provider has its own page:
 [Slack](channels/slack.md), [GitHub](channels/github.md),
-[Linear](channels/linear.md), [email](channels/email.md) and
+[Linear](channels/linear.md), [ClickUp](channels/clickup.md), [email](channels/email.md) and
 [WhatsApp](channels/whatsapp.md). This page covers what they share.
 
 Every channel turns on by a file in the hub's `channels/` folder, never a flag,
@@ -89,7 +89,7 @@ provider_config:
 |---|---|
 | `version` | Always `1`. |
 | `id` | Lowercase letters, digits, `-` and `_`. Never changes. |
-| `provider` | `slack`, `github`, `linear`, `email` or `whatsapp_cloud`. Never changes. |
+| `provider` | `slack`, `github`, `linear`, `clickup`, `email` or `whatsapp_cloud`. Never changes. |
 | `enabled` | `false` records deliveries but starts no work. Default `false`. |
 | `agent` | Answer with the hub's agent (`main`). Each person gets their own conversation, so every reply uses their own access. |
 | `workflow` | Instead of `agent`: start this workflow as a work item for each request. The workflow needs `work_items=True`. |
@@ -101,7 +101,7 @@ provider_config:
 | `provider_config` | The provider's settings. Every credential is a reference ending in `_ref`. |
 
 Credentials are references, never values: `secret:channel/<hub>/<id>/<name>`
-(set with `hubzoid secrets set <hub> --ref <reference> --stdin --apply`) or
+(set with `hubzoid secrets set <hub> --ref <reference> --stdin`) or
 `env:NAME`. Validation refuses a value pasted into the file.
 
 In a channel file you can leave the agent's folder name out:
@@ -212,6 +212,14 @@ that reaches a customer names its action (`actions="customer_reply.send"`),
 so the hub's write mode in `work-items.yaml` applies (`off`, `draft` or
 `approve`). When the workflow returns without posting, the channel posts its
 result (a string, or `reply`, `summary` or `text` from a dict) or `Done`.
+
+`kind` is `progress`, `result`, `notice`, `question` or `approval` (the work
+now waits for an approval). `files=[...]` attaches files the hub wrote under
+its `output/` folder (at most five, 10 MB each) where the provider supports
+it (`hub.thread.attachments`, ClickUp today); elsewhere the text stands
+alone, so keep a link in it. `hub.thread.approvals_here` says whether the
+requester may settle a plan approval by replying in the thread (ClickUp with
+`approve_in_task: true`), so the text can say what to reply.
 
 ## Commands
 

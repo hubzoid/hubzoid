@@ -16,6 +16,7 @@ BUILTIN: dict[str, str] = {
     "slack": "hubzoid.channels.slack.adapter:SlackAdapter",
     "github": "hubzoid.channels.github.adapter:GitHubAdapter",
     "linear": "hubzoid.channels.linear.adapter:LinearAdapter",
+    "clickup": "hubzoid.channels.clickup.adapter:ClickUpAdapter",
     "email": "hubzoid.channels.email.adapter:EmailAdapter",
     "whatsapp_cloud": "hubzoid.channels.whatsapp.adapter:WhatsAppAdapter",
 }

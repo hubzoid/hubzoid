@@ -35,6 +35,7 @@ provider_config:
     label: factory         # this label added by someone with triage access or more
     pr_opened: true        # an orientation summary for each new pull request
     ci_failure: true       # failed checks on a pull request go to the workflow
+    status_failures: []    # optional: failed commit statuses treated as failed checks
     routes: {}             # optional: the work-item route each trigger asks for
   hooks: []                # extra events for other workflows: {id, event, workflow}
   body_limit_bytes: 10485760
@@ -102,6 +103,7 @@ declares; without it, intake asks for the default route.
 | The label | The configured label is the one just added, by a person whose current permission is admin, maintain, write or triage (checked live; a failed check waits, it never admits). |
 | A new pull request | Opened by a person, not a bot. The workflow may write only on that pull request. |
 | Failed checks | A failed check suite on a pull request. Which branches the hub owns, and how many repair attempts it makes, is the hub's own rule. |
+| Failed statuses | Off unless `rules.status_failures` lists them. A commit status in state `failure`, with a listed context, posted by that rule's login, on the one open pull request whose head is that commit. It reaches the workflow as a failed check, with `failure_kind: status`. Pending, success and error statuses, other contexts and other posters start nothing. |
 
 Outsiders, bots and the App's own comments are recorded and ignored, with no
 reply. A repository not in the file is ignored.
@@ -118,6 +120,30 @@ straight to implementation:
     label: factory
     routes: {mention: request, review_mention: request, label: implement}
 ```
+
+### Failed statuses from a reviewer
+
+A reviewer that reports through a commit status, such as Engineering Desk's
+merge gate, can hand its failures to the hub like a failed check:
+
+```yaml
+  rules:
+    status_failures:
+      - {context: engineering-desk/review, poster: desk-bot}   # the login that posts the status
+```
+
+Only a status posted by `poster` counts. `getCiFailureContext` then returns
+the latest failing status of each listed context as a job with
+`kind: status`, and the comment its `target_url` links to when that comment
+is on the same pull request and written by the same login. Statuses and
+comments are untrusted data.
+
+GitHub sends status events only when the App has **Commit statuses: read**
+and the **Status** event. New Apps ask for both. For an App made before this,
+add them in the App's settings on GitHub and accept the update on the
+installation. With a token, add **Statuses** to the repository webhook.
+`doctor` warns when a status rule is set but the App lacks them. Every other
+read works without this permission.
 
 ## Tools for agents and workflows
 
