@@ -95,13 +95,11 @@ class TestSkillReason:
         ("claude-local/opus", None, "over MCP"),
         ("openrouter/anthropic/claude-haiku-4.5", "claude-local", "different engine"),
         ("claude-local/sonnet", "claude-local", "same as the agent's"),
+        ("claude-local/opus", "claude-local/sonnet", ""),          # a delegate: no reason
     ])
     def test_reasons(self, sub, hub, words):
-        assert handover.classify(sub, hub) == "skill"
-        assert words in handover.skill_reason(sub, hub)
-
-    def test_a_delegate_has_no_reason(self):
-        assert handover.skill_reason("claude-local/opus", "claude-local/sonnet") == ""
+        reason = handover.skill_reason(sub, hub)
+        assert (words in reason) and bool(reason) == bool(words)
 
 
 def _subagent(tmp_path, model):
@@ -140,8 +138,8 @@ def test_doctor_says_which_subagents_lost_their_tools(tmp_path, monkeypatch):
     hub, _ = _subagent(tmp_path, "openrouter/anthropic/claude-haiku-4.5")
     (check,) = doctor._subagent_checks(hub)
     assert check.id == "agents.mode" and check.status == "warn"
-    assert any("reset: model: openrouter/anthropic/claude-haiku-4.5 and tools: ['read_knowledge']" in d
-               for d in check.detail)
+    (row,) = check.detail
+    assert row.startswith("reset: instructions for the main agent") and "different engine" in row
 
     (hub / "agents" / "reset.md").write_text(
         "---\nname: reset\ndescription: Resets.\nmodel: claude-local/opus\ntools: [read_knowledge]\n---\nReset.\n")

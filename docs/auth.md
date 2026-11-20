@@ -23,36 +23,21 @@ settings as described in [upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-we
 ## Local mode
 
 Nothing to set. A request made **on this machine** is the **local owner**,
-`admin@localhost`, an administrator. Hubzoid checks all of these:
+`admin@localhost`, an administrator: it is addressed to `localhost` or a
+loopback address, comes from this machine, carries no proxy or tunnel header
+(`X-Forwarded-For`, `Cf-Connecting-Ip` and the like), and any `Origin` is this
+machine too. Anything else gets no owner, so **a tunnel (ngrok, Cloudflare
+Tunnel) doesn't make its visitors the owner**; signed webhooks through it still
+work. To open the web app through a tunnel or a LAN name, turn sign-in on.
 
-- the address is `localhost`, a `.localhost` name or a loopback address
-  (`127.0.0.1`, `[::1]`), so a web page reaching the hub through DNS
-  rebinding (its own host name) is refused;
-- the request carries no header a proxy or tunnel adds (`X-Forwarded-For`,
-  `X-Forwarded-Host`, `Forwarded`, `X-Real-IP`, `Cf-Connecting-Ip` and the
-  like);
-- the connection comes from this machine;
-- an `Origin`, when the browser sends one, is this machine too.
-
-Anything else gets no owner: the web app asks for sign-in, and the API
-answers 401. **A tunnel (ngrok, Cloudflare Tunnel, Tailscale Funnel) does not
-make its visitors the owner.** Signed webhooks (Slack, WhatsApp, GitHub) need
-no owner, so testing them through a tunnel with sign-in off still works.
-`hubzoid run` and `hubzoid doctor` say so when `HUBZOID_PUBLIC_URL` or
-`HUBZOID_ALLOWED_ORIGINS` is not this machine. To open the web app through a
-tunnel or a LAN name, turn sign-in on.
-
-A raw TCP forward (`ssh -R`) adds no header and can't be told apart from a
-local visit. Turn sign-in on before you expose the port that way.
+A raw TCP forward (`ssh -R`) adds no header and looks like a local visit: turn
+sign-in on before you expose the port that way.
 
 Local mode keeps the public port on loopback. `hubzoid run --host 0.0.0.0`
 (or `HUBZOID_HOST`) without sign-in stops with exit code 2 and explains how to
 turn sign-in on. On a network you trust you can accept the risk with
 `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`: then anyone who can reach the
-port uses the hub as its owner (any IP address, and the names in
-`HUBZOID_PUBLIC_URL` and `HUBZOID_ALLOWED_ORIGINS`, count as this machine;
-only a DNS-rebinding page's own name is refused). Docker without sign-in
-needs this setting.
+port uses the hub as its owner. Docker without sign-in needs this setting.
 
 The local owner never signs in with a password, a link or an external
 provider, including after you turn sign-in on.

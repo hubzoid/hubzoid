@@ -23,7 +23,7 @@ Two changes in behaviour. Nothing to migrate.
 | What changes | What to do |
 |---|---|
 | **Sign-in off: only this computer is the owner.** A request through a tunnel or proxy (it carries `X-Forwarded-For`, `Cf-Connecting-Ip`, `X-Forwarded-Host` and the like), from another machine, from another site's page, or addressed to a name in `HUBZOID_PUBLIC_URL` is no longer the owner. Earlier, listing a tunnel's address made every visitor the owner. | To use the web app through a tunnel or LAN name, turn sign-in on (`HUBZOID_AUTH=true`). On a network you trust, `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` keeps the earlier rule. Signed webhooks through a tunnel keep working with sign-in off. |
-| **Evals check the tool names they name.** A name in `expect_tools`, `forbid_tools` or `expect_tool_args` that matches no tool in the agent fails the case, with the closest name. A misspelled `forbid_tools` used to pass forever. Names under an MCP server or connector whose tools are only known at run time are not failed. | Fix the names the failures point at. On Claude, a sub-agent call now reads as `handover_<name>`, as on the other backends. |
+| **Evals check the tool names they name.** A name in `expect_tools`, `forbid_tools` or `expect_tool_args` that matches no tool in the agent fails the case. A misspelled `forbid_tools` used to pass forever. Names under an MCP server or connector whose tools are only known at run time are not failed. | Fix the names the failures point at. On Claude, a sub-agent call now reads as `handover_<name>`, as on the other backends. |
 
 ## Templates moved out of the package
 

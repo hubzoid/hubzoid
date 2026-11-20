@@ -115,7 +115,8 @@ writes a disabled `channels/slack-main.yaml` that refers to your existing
 copied), with the workspace and app ids read from Slack. Fill in
 `allowed_channel_ids`, link people, grant who may ask (a capability in
 Settings; `allowed_groups` is no longer read), apply, run doctor, remove
-`channels/slack-assistant.yaml` (the 1.x app), then enable the channel. A
+`channels/slack-assistant.yaml` (the 1.x app), then set `enabled: true` and
+apply the file again (`hubzoid channels apply <hub> --file ...`). A
 Socket Mode connection needs no `HUBZOID_PUBLIC_URL`, and doctor skips that
 check for it. While any Slack connection file exists, the 1.x Slack app stays
 off, so the same Slack app never has two listeners; `hubzoid channels list`

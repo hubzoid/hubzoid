@@ -116,15 +116,10 @@ def _hub_checks(hub: Path) -> list[Check]:
         from .connectors import registry as connectors
 
         bad = connectors.problems(hub)
-        loaded = connectors.definitions(hub)
         if bad:
-            out.append(Check("connectors.files", "warn",
-                             f"{len(bad)} connector file(s) in {connectors.folder(hub)} did not load, so those "
-                             "connectors are missing", bad))
-        elif loaded:
-            out.append(Check("connectors.files", "ok", f"{len(loaded)} connector(s) loaded", sorted(loaded)))
-    except Exception as exc:  # noqa: BLE001
-        out.append(Check("connectors.files", "warn", f"Connector files could not be read: {exc}"))
+            out.append(Check("connectors.files", "warn", f"{len(bad)} connector file(s) did not load", bad))
+    except Exception:  # noqa: BLE001 - no connector folder: nothing to report
+        pass
     try:
         from . import access
 
@@ -145,57 +140,35 @@ def _hub_checks(hub: Path) -> list[Check]:
 
 
 def _subagent_checks(hub: Path) -> list[Check]:
-    """`agents.mode`: how each sub-agent runs. A sub-agent runs on its own
-    (its model, only its `tools:`) only when its model is a different model on
-    the agent's engine; otherwise it becomes instructions the main agent reads,
-    and its `model:` and `tools:` no longer apply. That used to show only in a
-    log line, so a changed MODEL could quietly drop a sub-agent's tool limits."""
+    """`agents.mode`: how each sub-agent runs, and why its model: or tools: is ignored."""
     try:
-        from . import handover
-        from . import settings as settingslib
+        from . import handover, model as modellib, settings as settingslib
         from .loaders import agents as agents_loader
         from .runtime import _resolve_model_id
 
         hub_model = _resolve_model_id(hub, settingslib.load(hub))
-        subs = agents_loader.load_subagents(hub)
-    except Exception as exc:  # noqa: BLE001 - a broken agent file fails runtime.build
-        return [Check("agents.mode", "warn", f"Sub-agents could not be read: {type(exc).__name__}: {exc}")]
-    rows: list[str] = []
-    dropped: list[str] = []
-    for loaded in subs:
-        spec = loaded.spec
-        if spec.isolated:
-            rows.append(f"{spec.name}: station (called from workflows only)")
-            continue
+        subs = [a.spec for a in agents_loader.load_subagents(hub) if not a.spec.isolated]
+    except Exception:  # noqa: BLE001 - a broken agent file fails runtime.build
+        return []
+    rows, ignored = [], False
+    for spec in subs:
         why = handover.skill_reason(spec.model, hub_model)
         if not why and handover.engine(spec.model) == "litellm":
-            # The OpenAI Agents factory builds each delegate's model up front and
-            # loads it as a skill when that fails (a missing provider key).
             try:
-                from . import model as modellib
-
-                modellib.build(spec.model)
-            except Exception as exc:  # noqa: BLE001 - reported, never raised
-                why = f"its model {spec.model!r} could not be built ({type(exc).__name__}: {exc})"[:300]
+                modellib.build(spec.model)   # the OpenAI factory makes a delegate it can't build a skill
+            except Exception as exc:  # noqa: BLE001
+                why = f"its model could not be built ({exc})"[:200]
         if not why:
             rows.append(f"{spec.name}: runs on its own, on {spec.model}")
             continue
-        rows.append(f"{spec.name}: instructions for the main agent, because {why}")
-        lost = [f"tools: {list(spec.tools)}"] if spec.tools else []
-        if spec.model and (handover.engine(spec.model) != handover.engine(hub_model)
-                           or "could not be built" in why):
-            lost.insert(0, f"model: {spec.model}")
-        if lost:
-            dropped.append(f"{spec.name}: {' and '.join(lost)} do not apply, because {why}")
-            rows.pop()   # the line above already says how it runs, and why
-    if dropped:
-        return [Check("agents.mode", "warn",
-                      f"{len(dropped)} sub-agent(s) don't run on their own, so their own model or tools: "
-                      "list is ignored. Give each a different model on the agent's engine "
-                      f"(the agent uses {hub_model}), or drop those fields", dropped + rows)]
-    if rows:
-        return [Check("agents.mode", "ok", f"{len(rows)} sub-agent(s)", rows)]
-    return []
+        ignored = ignored or bool(spec.model or spec.tools)
+        rows.append(f"{spec.name}: instructions for the main agent, because {why}; its model: and tools: don't apply")
+    if not rows:
+        return []
+    if ignored:
+        return [Check("agents.mode", "warn", "Some sub-agents don't run on their own, so their model: and tools: "
+                      f"are ignored (the agent uses {hub_model})", rows)]
+    return [Check("agents.mode", "ok", f"{len(rows)} sub-agent(s)", rows)]
 
 
 _SECRET_CHECK_IDS = {"deployment": "secrets.deployment", "hub": "secrets.hub", "restricted": "secrets.restricted"}
@@ -501,16 +474,10 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
 
 
 def _local_mode_guard(*, auth_on: bool, hub: Path | None = None) -> Check | None:
-    """`hubzoid run` keeps local mode (sign-in off) on loopback. A public URL
-    recorded by `hubzoid gateway --public-url` counts like HUBZOID_PUBLIC_URL."""
-    from . import appmode, deployment, settings as settingslib
+    """`hubzoid run` keeps local mode (sign-in off) on loopback."""
+    from . import appmode, settings as settingslib
 
-    recorded = None
-    if hub is not None:
-        try:
-            recorded = deployment.read(hub).get("public_url")
-        except Exception:  # noqa: BLE001 - no deployment record: nothing recorded
-            recorded = None
+    recorded = appmode._manifest(hub, None).get("public_url")
 
     if auth_on:
         return None

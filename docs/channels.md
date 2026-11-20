@@ -29,36 +29,8 @@ disabled one) takes over the Slack tokens, so the 1.x Slack app stays off, and
 the start and `hubzoid channels list` say so. `hubzoid run --slack` and
 `--whatsapp` are gone: each setup turns on with its file.
 
-Moving a 1.x Slack app to a connection:
-
-```diff
-- # channels/slack-assistant.yaml
-- version: 1
-- id: slack-assistant
-- provider: slack_assistant
-- enabled: true
-+ # hubzoid channels slack import-legacy <hub> --id slack-main   writes:
-+ version: 1
-+ id: slack-main
-+ provider: slack
-+ enabled: false            # true once doctor is green
-+ agent: main
-+ provider_config:
-+   transport: socket_mode   # no public URL needed
-+   installation_team_id: T…  # read from Slack
-+   app_id: A…
-+   bot_token_ref: env:SLACK_BOT_TOKEN
-+   app_token_ref: env:SLACK_APP_TOKEN
-+   allowed_channel_ids: []
-```
-
-Then list the channels in `allowed_channel_ids`, link people
-(`hubzoid channels link`), grant who may ask (Settings), apply, run
-`hubzoid channels doctor <hub> slack-main`, remove
-`channels/slack-assistant.yaml`, set `enabled: true`, and apply again
-(`hubzoid channels apply <hub> --file channels/slack-main.yaml
---expected-revision <rev>`, with the revision `channels list` shows): until
-then the connection stays paused.
+To move a 1.x Slack app to a connection, see
+[moving from `hubzoid slack run`](channels/slack.md#moving-from-hubzoid-slack-run).
 
 | Symptom | Next step |
 |---|---|

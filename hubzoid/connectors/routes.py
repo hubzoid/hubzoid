@@ -103,13 +103,10 @@ def build_router(hub_dir: Path) -> APIRouter:
         public address), so a web page using DNS rebinding cannot act as the
         owner through a visitor's browser."""
         from .. import appmode
-        from ..auth.sessions import local_request_allowed
+        from ..hub_access import _trusted_host
 
-        if appmode.auth_enabled(hub_dir):
-            return
-        if not local_request_allowed(request):
-            raise _error(403, "untrusted_host", "Sign-in is off, so only this computer can use Hubzoid. "
-                                                "Open it at its local address, or turn sign-in on.")
+        if not appmode.auth_enabled(hub_dir):
+            _trusted_host(request)
 
     def person(request: Request):
         from ..auth import require_user

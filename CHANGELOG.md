@@ -5,71 +5,34 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [2.0.9]
 
-Fixes from a team that built an IT helpdesk agent on 2.0.8, plus dependency
-updates with published security advisories. With sign-in off, only this
-computer is the owner: a tunnel no longer makes its visitors admins. A
-connector's tool allow-list hides the other tools on Claude too, and doctor,
-evals and the channel list say what used to fail silently.
+Fixes from a team that built an IT helpdesk agent on 2.0.8, and dependency
+updates with published security advisories.
 
 ### Security
-- **Sign-in off: only this computer is the owner.** A request is the local
-  owner only when it is addressed to a loopback name, comes from this machine,
-  carries no proxy or tunnel header (`X-Forwarded-For`, `Cf-Connecting-Ip`,
-  `X-Forwarded-Host` …) and, when it has an `Origin`, comes from this machine's
-  page. Earlier, the address in the `Host` header decided, and our docs told
-  people to list a tunnel's address in `HUBZOID_PUBLIC_URL`, which made every
-  visitor an admin. The edge now decides "local" from the request as it
-  arrived. Signed webhooks through a tunnel keep working; `hubzoid run` and
-  `doctor` warn when a public URL is set with sign-in off.
-  `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` keeps the earlier rule.
-- **A connector's `tools:` allow-list hides the other tools on Claude.** The
-  OpenAI and Codex backends already hid them; Claude showed them and refused
-  only when called. The Claude pre-call check also refuses a tool outside the
-  list.
-- **API keys stay out of access logs.** `?api_key=` and other credential query
-  values (`client_secret`, `access_token`, `password` …) are redacted, as
-  sign-in tokens already were.
-- Dependencies with published advisories are raised: Pillow 13.0, pypdf
-  6.21.4, authlib 1.9.1, cryptography 50 (pyopenssl 26.4 for the `saml`
-  extra), mcp 1.30, fastmcp 3.4.10 and litellm 1.102.2 (with boto3 1.43). The
-  Docker image's lock also takes fixed aiohttp, certifi, dnspython, filelock,
-  joserfc, opentelemetry-api and pyjwt. `pip-audit` reports no known
-  vulnerabilities in the lock (#142). OIDC, Google and Microsoft sign-in work
-  when authlib runs on httpx2.
+- **Sign-in off: only this computer is the owner.** A request through a tunnel
+  or proxy, from another machine, or from another site's page is no longer the
+  local owner. `hubzoid run` and doctor warn when a public URL is set with
+  sign-in off. See [docs/auth.md](docs/auth.md#local-mode) and the upgrade notes.
+- **A connector's `tools:` allow-list hides the other tools on Claude too**,
+  and a call outside it is refused.
+- **Credential query values (`?api_key=`) are redacted in access logs.**
+- Dependencies with published advisories are raised (Pillow, pypdf, authlib,
+  cryptography, mcp, fastmcp, litellm and the Docker lock; #142). OIDC, Google
+  and Microsoft sign-in work when authlib runs on httpx2.
 
 ### Added
-- **`hubzoid doctor` checks sub-agents and connector files.** `agents.mode`
-  lists each sub-agent, says whether it runs on its own, and warns when its
-  `model:` or `tools:` is ignored and why (no model, another engine, the
-  agent's own model, a model that can't be built). `connectors.files` names
-  each connector file that didn't load (a hyphen in its name, a bad `.yml`)
-  and the file name it would need.
-- **Evals check the tool names they name.** A name in `expect_tools`,
-  `forbid_tools` or `expect_tool_args` that matches no tool fails the case
-  with the closest name. Names under an MCP server or connector known only at
-  run time are not failed. A Claude sub-agent call reads as `handover_<name>`,
-  as on the other backends.
-- **`hubzoid channels list` shows 1.x channels** (the Slack app, WhatsApp,
-  Telegram, webhooks) with where each is set and whether it is on. A Slack
-  connection that takes over the 1.x Slack app's tokens says so instead of
-  turning it off without a word.
+- `hubzoid doctor` checks `agents.mode` (how each sub-agent runs, and why its
+  `model:` or `tools:` is ignored) and `connectors.files` (connector files that
+  didn't load).
+- Evals fail a case that names a tool the agent doesn't have.
+- `hubzoid channels list` shows running 1.x channels.
 
 ### Fixed
-- `hubzoid channels doctor` no longer fails a Slack Socket Mode connection, or
-  a GitHub connection without a webhook secret, for a missing public URL. A
-  local public URL warns.
-- Sub-agents answer within the turn on Claude too (background sub-agents are
-  off), as on OpenAI and Codex. The prompt names Claude's real call and says a
-  sub-agent doesn't see the conversation.
-- Over MCP, sub-agents offered as skills no longer log the "tools whitelist
-  ignored" warning meant for a misconfiguration.
-
-### Docs
-- One section on the two ways to connect Slack and WhatsApp, with a before and
-  after for moving over and a symptom table. Stale `--slack`/`--whatsapp`
-  instructions are fixed, and the docs index links the channel pages.
-- The sub-agent example uses a model that really runs on its own on a default
-  Claude hub. Auth, access management, evals and upgrading are updated.
+- `hubzoid channels doctor` no longer fails Slack Socket Mode, or GitHub without
+  a webhook secret, for a missing public URL.
+- Claude sub-agents answer within the turn; the prompt names Claude's call.
+- No misleading "tools whitelist ignored" warning over MCP.
+- Docs: the two ways to connect Slack and WhatsApp, and stale `--slack` steps.
 
 ## [2.0.8]
 

@@ -131,9 +131,10 @@ def list_all(hub_dir: Path) -> dict:
     from . import legacy
 
     try:
-        older = legacy.status(hub_dir, {**os.environ, **gateway_lib._own_env(hub_dir)})
-    except Exception:  # noqa: BLE001 - the 1.x rows are information only
-        older = []
+        plan = legacy.plan(hub_dir, {**os.environ, **gateway_lib._own_env(hub_dir)})
+        older = {"running": ["slack_assistant"] * plan.slack + plan.inbound, "notes": plan.notes + plan.problems}
+    except Exception:  # noqa: BLE001 - the 1.x lines are information only
+        older = {"running": [], "notes": []}
     return {"items": items, "not_applied": unapplied, "legacy": older}
 
 

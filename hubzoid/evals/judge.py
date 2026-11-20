@@ -155,25 +155,16 @@ def available_tools(rt) -> list[str]:
 
 @dataclass(frozen=True)
 class ToolInventory:
-    """Every tool name a built hub declares, for checking the names an eval
-    names (``assertions.check_tool_names``). ``names`` are short and
-    lowercased; ``servers`` are MCP server keys whose tools are only known
-    when a turn runs (``mcp__<key>__<tool>`` under them can't be proven
-    wrong); ``bare_dynamic`` is set when such tools also surface under their
-    bare names on this backend (the OpenAI Agents SDK lists its MCP servers'
-    tools itself), so an unknown bare name can't be proven wrong either."""
+    """A built hub's tool names (short, lowercased), the MCP servers whose tools
+    are only known at run time, and whether those also appear under bare names."""
     names: frozenset[str]
     servers: frozenset[str] = frozenset()
     bare_dynamic: bool = False
 
 
 def tool_inventory(rt, hub_dir=None) -> ToolInventory | None:
-    """The declared tools of a built Runtime, on any backend, or None when its
-    shape isn't known (then names aren't checked). Duck-typed like
-    `available_tools`: Claude keeps its registry in `_registry` and its servers
-    in `_options`, Codex in `registry` (hub MCP tools join it in aopen()), the
-    OpenAI Agents one on `_agent`. Fake stand-ins and hidden tools are in the
-    registry too, so they count; a delegate counts as ``handover_<name>``."""
+    """The tools a built Runtime declares, on any backend (duck-typed like
+    `available_tools`), or None when its shape isn't known."""
     from .. import handover
     from ..tool_events import short_name
 
