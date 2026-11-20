@@ -5,12 +5,16 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [2.0.9]
 
-Fixes from a team that built an IT helpdesk agent on 2.0.8, plus dependency
-updates with published security advisories. With sign-in off, only this
-computer is the owner: a tunnel no longer makes its visitors admins. A
-connector's tool allow-list hides the other tools on Claude too, one
-restricted capability can be opened to a new surface alone, and doctor, evals
-and the channel list say what used to fail silently.
+An assistant connected over MCP (Claude Code, Claude) can now do what chat
+does: make files and hand the hub files, answer the hub's questions and
+approvals in place, save shared knowledge for review, call sub-agents on their
+own model with a grant, and run workflows. It also gets the apps a person
+connected in Settings. Plus fixes from a team that built an IT helpdesk agent
+on 2.0.8, and dependency updates with published security advisories. With
+sign-in off, only this computer is the owner: a tunnel no longer makes its
+visitors admins. A connector's tool allow-list hides the other tools on Claude
+too, one restricted capability can be opened to a new surface alone, and
+doctor, evals and the channel list say what used to fail silently.
 
 ### Security
 - **Sign-in off: only this computer is the owner.** A request is the local
@@ -39,6 +43,29 @@ and the channel list say what used to fail silently.
   when authlib runs on httpx2.
 
 ### Added
+- **MCP at par with chat** (`proposals/2026-11-20-mcp-parity.md`). Over hosted
+  MCP:
+  - `write_artifact`, `make_excel`, `make_pdf`, `make_word` and
+    `list_artifacts` work in each person's own file space and return the same
+    download link as chat, plus an MCP resource link the assistant can read
+    back. Only the person who made a file can read it.
+  - `upload_file` hands the hub a file the person gave their assistant (up to
+    2.5 MB), for `read_upload`, `read_upload_full` and the hub's own tools.
+  - `ask_question`, approvals and a workflow run's questions are asked in
+    place through MCP elicitation when the client supports it (Claude Code
+    does), and recorded in the inbox as the person's decision. Otherwise the
+    result says to ask the person, or where to approve.
+  - `remember` and the hub change tools work with chat's gate (Save shared
+    knowledge or managing the hub, in-app editing on): a member's change is
+    reviewed in Settings, Hub changes.
+  - Core skills such as `dashboard` are listed.
+  - Sub-agents that run on their own `model:` are offered as `handover_<name>`
+    to people with the new grant **Use sub-agents on this agent's model from
+    an assistant** (`mcp_delegates`), because the agent pays for those model
+    calls. Usage is recorded under the person, on surface `mcp`.
+  - The endpoint keeps a session per connected assistant, which elicitation
+    needs. `MCP_STATELESS=true` keeps the earlier one-request mode, without
+    elicitation.
 - **Connected apps reach assistants over MCP.** An assistant connected to an
   agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
   person connected in Settings, as `my_<id>__<tool>`, called as that person
