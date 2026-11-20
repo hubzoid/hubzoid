@@ -38,6 +38,21 @@ def test_healthz(client):
     assert body["model"] == "testbot-label"
 
 
+def test_readyz_checks_the_database_and_schema(client, monkeypatch):
+    r = client.get("/readyz")
+    assert r.status_code == 200
+    assert r.json()["database"] == "ok" and r.json()["schema"] == "ok"
+    from hubzoid import db
+
+    def down(*a, **k):
+        raise OSError("database down")
+
+    monkeypatch.setattr(db, "operational_engine", down)
+    r = client.get("/readyz")
+    assert r.status_code == 503 and r.json()["database"] == "unreachable"
+    assert client.get("/healthz").status_code == 200  # liveness does not depend on the database
+
+
 def test_models_requires_auth(client):
     assert client.get("/v1/models").status_code == 401
 

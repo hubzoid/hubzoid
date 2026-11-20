@@ -2607,16 +2607,29 @@ def audit(
     denied: bool = typer.Option(False, "--denied", help="Show only denied attempts."),
     as_json: bool = typer.Option(False, "--json", help="Print the entries as JSON: "
                                  "{entries: [{ts, user, decision, tool, surface, reason}]}."),
+    export: bool = typer.Option(False, "--export", help="Write every stored audit record in the window as "
+                                "JSON lines, oldest first: tool calls, sign-in events, access decisions and "
+                                "admin changes. For a SIEM backfill or an investigation."),
+    since: str = typer.Option(None, "--since", help="With --export: from this time (ISO 8601, UTC if no zone)."),
+    until: str = typer.Option(None, "--until", help="With --export: up to this time."),
+    kind: str = typer.Option("tool,access,admin,auth", "--kind", help="With --export: which records."),
+    all_hubs: bool = typer.Option(False, "--all-hubs", help="With --export: every hub in the deployment's "
+                                  "database, not only this one."),
+    out: Path = typer.Option(None, "--out", help="With --export: write to this file instead of the output."),
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
     Reads the decision log the runtime writes to the operational database for
     every restricted tool call. Open WebUI does not record tool-level access, so
-    this is the only place it exists.
+    this is the only place it exists. `--export` writes every stored audit
+    record (see HUBZOID_AUDIT in docs/DEPLOYING.md) as JSON lines.
     """
     from .access import audit as auditlib
 
     hub = hub.resolve()
+    if export:
+        _audit_export(hub, since=since, until=until, kind=kind, all_hubs=all_hubs, out=out)
+        return
     rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
     if as_json:
         keys = ("ts", "user", "decision", "tool", "surface", "reason")
@@ -2636,6 +2649,45 @@ def audit(
             f"[dim]{r.get('surface', '')}·{r.get('reason', '')}[/dim]"
         )
     console.print(f"[dim]{len(rows)} entr{'y' if len(rows) == 1 else 'ies'} shown[/dim]")
+
+
+def _audit_export(hub: Path, *, since, until, kind: str, all_hubs: bool, out: Path | None) -> None:
+    from . import audit_log
+    from .access.identity import normalize
+
+    try:
+        settingslib.load(hub)  # the hub's .env: its database and HUBZOID_AUDIT
+    except Exception:  # noqa: BLE001 - the manifest or environment may still name the database
+        pass
+    kinds = tuple(k.strip() for k in kind.split(",") if k.strip())
+    unknown = [k for k in kinds if k not in audit_log.KINDS]
+    if unknown or not kinds:
+        console.print(f"[red]--kind takes some of: {', '.join(audit_log.KINDS)}[/red]")
+        raise typer.Exit(2)
+    try:
+        records = audit_log.export(hub, kinds=kinds, since=since, until=until,
+                                   hubs=None if all_hubs else [normalize(hub.name)])
+        first = next(records, None)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2)
+    fh = open(out, "w", encoding="utf-8") if out else sys.stdout
+    count = 0
+    try:
+        for record in ([first] if first is not None else []):
+            fh.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
+            count += 1
+        for record in records:
+            fh.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
+            count += 1
+    finally:
+        if out:
+            fh.close()
+    if out:
+        console.print(f"[green]{count} record(s)[/green] written to {escape(str(out))}")
+    if not audit_log.modes() >= {"db"}:
+        Console(stderr=True).print("[dim]Tool calls and sign-in events are stored only with HUBZOID_AUDIT=db or "
+                                   "both.[/dim]")
 
 
 # ---------------------------------------------------------------------------

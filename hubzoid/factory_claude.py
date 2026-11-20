@@ -1174,8 +1174,30 @@ def _identity_checked(options, hub_dir, ident):
         return {"tool": full[len("mcp__") + len(key) + 2:], "server": hub_server, "connector": connector}
 
     limits = _connector_allowlists(options)
+    from . import audit_log
 
-    async def admit(tool_input, _tool_use_id, _context):
+    auditing = audit_log.enabled()
+    started: dict[str, tuple[float, dict, object]] = {}
+
+    def _deny(tool_input, reason: str):
+        if auditing:
+            audit_log.tool_call(**_audit_where(named(tool_input)), hub_dir=hub_dir, decision="deny",
+                                reason=reason, arguments=(tool_input or {}).get("tool_input"))
+
+    async def admit(tool_input, tool_use_id, _context):
+        decision_out = await _admit(tool_input)
+        if decision_out:
+            _deny(tool_input, decision_out["hookSpecificOutput"].get("permissionDecisionReason") or "denied")
+        elif auditing and tool_use_id and not _hub_own(tool_input):
+            started[str(tool_use_id)] = (time.monotonic(), named(tool_input), (tool_input or {}).get("tool_input"))
+        return decision_out
+
+    def _hub_own(tool_input) -> bool:
+        full = str((tool_input or {}).get("tool_name") or "")
+        found = owners(full) if full.startswith("mcp__") else []
+        return bool(found) and found[-1] == _MCP_NAMESPACE and len(found) == 1
+
+    async def _admit(tool_input):
         full = str((tool_input or {}).get("tool_name") or "")
         found = owners(full) if full.startswith("mcp__") else []
         if found and found[0] in limits and full[len("mcp__") + len(found[0]) + 2:] not in limits[found[0]]:
@@ -1204,6 +1226,20 @@ def _identity_checked(options, hub_dir, ident):
 
     hooks = dict(getattr(options, "hooks", None) or {})
     hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    if auditing:
+        async def audited(hook_input, tool_use_id, _context):
+            begun = started.pop(str(tool_use_id or ""), None)
+            if begun is not None:
+                at, where, arguments = begun
+                response = (hook_input or {}).get("tool_response")
+                failed = isinstance(response, dict) and bool(response.get("is_error") or response.get("isError"))
+                audit_log.tool_call(**_audit_where(where), hub_dir=hub_dir, outcome="error" if failed else "ok",
+                                    duration_ms=(time.monotonic() - at) * 1000,
+                                    result_bytes=audit_log.size_of(response), arguments=arguments,
+                                    call_id=str(tool_use_id))
+            return {}
+
+        hooks["PostToolUse"] = [HookMatcher(hooks=[audited]), *hooks.get("PostToolUse", [])]
     token = app_scope.live_token()
     if token:
         async def scrubbed(hook_input, _tool_use_id, _context):
@@ -1217,6 +1253,13 @@ def _identity_checked(options, hub_dir, ident):
 
         hooks["PostToolUse"] = [HookMatcher(hooks=[scrubbed]), *hooks.get("PostToolUse", [])]
     return dataclasses.replace(options, hooks=hooks)
+
+
+def _audit_where(named: dict) -> dict:
+    """``named``'s tool, server and connector as an audit record takes them."""
+    server = named.get("server")
+    return {"tool": named.get("tool") or "", "server": None if server == "?unknown" else server,
+            "connector": named.get("connector")}
 
 
 def _only_tools(options, allowed: list[str]):

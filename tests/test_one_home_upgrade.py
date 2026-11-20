@@ -80,7 +80,7 @@ def test_a_dry_run_changes_nothing(hub):
 def test_a_fresh_database_needs_no_upgrade(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'new.db'}")
     migrations.upgrade(eng, "operational")
-    assert migrations.current(eng, "operational") == "op_0081"
+    assert migrations.current(eng, "operational") == "op_0090"
 
 
 @pytest.mark.parametrize("revision", ["op_0073", "op_0080"])
@@ -94,7 +94,7 @@ def test_feedback_and_one_home_branches_join_without_losing_existing_rows(tmp_pa
         c.execute(text("INSERT INTO hz_grants (subject, hub, permission) "
                        "VALUES ('owner@example.org', 'ops', 'use_hub')"))
     migrations.upgrade(eng, "operational")
-    assert migrations.current(eng, "operational") == "op_0081"
+    assert migrations.current(eng, "operational") == "op_0090"
     tables = set(inspect(eng).get_table_names())
     assert "hz_feedback_tool_replies" in tables and "hz_branding_revisions" not in tables
     columns = {row["name"]: row for row in inspect(eng).get_columns("hz_feedback")}

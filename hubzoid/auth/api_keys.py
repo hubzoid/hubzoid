@@ -197,6 +197,9 @@ def resolve(hub_dir: Path, token: str) -> dict | None:
         # proof of who they were: nobody can sign in as that owner to see or
         # revoke it, so it stops once sign-in is on.
         return None
+    from .. import audit_log
+
+    audit_log.api_key_used(m["id"], m["email"])
     if not m["last_used_at"] or now - m["last_used_at"] > TOUCH_SECONDS:
         with engine.begin() as conn:
             conn.execute(api_keys.update().where(api_keys.c.id == m["id"])

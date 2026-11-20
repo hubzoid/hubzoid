@@ -484,17 +484,19 @@ def build_edge_app(
         table = source.current() if source is not None else static
         norm_routes, default_base, default_bases = table.routes, table.default_base, table.default_bases
         path, query = _path_and_query(request)
-        if request.method in ('GET', 'HEAD') and (
-                path == '/healthz' or (path.startswith('/b/') and path.endswith('/healthz'))):
+        check = path.rsplit('/', 1)[-1]
+        if request.method in ('GET', 'HEAD') and check in ('healthz', 'readyz') and (
+                path == '/' + check or (path.startswith('/b/') and path.endswith('/' + check))):
             # The public health check (also a gateway hub's /b/<slug>/healthz):
             # whether a bridge answers, and nothing about the hub or its model.
-            # Start-up checks ask the bridge itself.
+            # Start-up checks ask the bridge itself. /readyz asks the bridge's
+            # readiness (its database and schema) instead: for a load balancer.
             hit = _match(path, norm_routes)
             candidates = hit.upstreams() if hit is not None else default_bases
             ok = False
             for base in candidates:
                 try:
-                    if (await request.app.state.client.get(base.rstrip('/') + '/healthz', timeout=5)).status_code == 200:
+                    if (await request.app.state.client.get(base.rstrip('/') + '/' + check, timeout=5)).status_code == 200:
                         ok = True
                         break
                 except httpx.HTTPError:
@@ -636,6 +638,9 @@ def _factory() -> Starlette:
                                   ({"default", "default_fallbacks", "routes",
                                   "states"}), read again when it changes.
     """
+    from . import logs
+
+    logs.configure()
     from . import supervisor as _supervisor
 
     _supervisor.watch_parent()

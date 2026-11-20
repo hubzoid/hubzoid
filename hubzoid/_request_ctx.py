@@ -125,6 +125,18 @@ def get_chat_id() -> str | None:
 # of the prompt text.
 _current_images: ContextVar[tuple[str, ...]] = ContextVar("hubzoid_images", default=())
 
+# The address of the person this request came from, as the bridge sees it
+# (behind the edge: the address the edge forwarded). For audit records.
+_current_client: ContextVar[str | None] = ContextVar("hubzoid_client", default=None)
+
+
+def set_client(address: str | None):
+    return _current_client.set(address or None)
+
+
+def get_client() -> str | None:
+    return _current_client.get()
+
 
 @contextmanager
 def image_scope(names) -> Iterator[None]:
