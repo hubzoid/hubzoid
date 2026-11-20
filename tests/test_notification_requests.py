@@ -46,7 +46,11 @@ def test_request_created_reaches_the_people_who_may_act(client, hub, monkeypatch
     assert len(seen) == 1
     p = seen[0]
     assert p["type"] == "request.created" and p["request_id"] == mine["id"] and p["kind"] == "approval"
-    assert "ACME" not in str(p) and "900" not in str(p) and "title" not in p
+    # Never the request's content. Ids are random, so they are left out of the
+    # text check (a request id once held "900" and failed this by chance).
+    assert "title" not in p and "arguments" not in p
+    content = str({k: v for k, v in p.items() if k != "id" and not k.endswith("_id")})
+    assert "ACME" not in content and "900" not in content
 
 
 def test_targets_that_do_not_want_requests_get_nothing_and_retries_wait(client, hub, monkeypatch):
