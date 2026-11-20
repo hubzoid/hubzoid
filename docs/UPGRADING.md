@@ -16,6 +16,15 @@ describe those releases as they were.
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
+## Upgrading to 2.1.1
+
+One additive database change, applied when Hubzoid starts. Back up the operational database first, as for any release: migrations go forward only.
+
+| What changes | What to do |
+|---|---|
+| **A new table, `hz_runner_calls`** (`op_0091`): the work orders of agent turns on AgentCore. It stays empty unless `HUBZOID_RUNNER=agentcore`. | Back up first. Nothing else. |
+| **New, all off unless set:** agent turns on Amazon Bedrock AgentCore (`HUBZOID_RUNNER`), the hub's MCP server on AgentCore (`HUBZOID_MCP_HOST`), `hubzoid deploy init aws`, `hubzoid runner`, and `HUBZOID_FORWARDED_PROTO_HEADER`. | Nothing. To use them: [AWS](deploy/aws.md), [settings](DEPLOYING.md#settings-reference). |
+
 ## Upgrading to 2.0.9
 
 Seven changes in behaviour, and four additive database changes that Hubzoid applies when it starts. Back up the operational database before upgrading, as for any release: migrations go forward only.

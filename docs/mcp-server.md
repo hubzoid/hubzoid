@@ -219,14 +219,25 @@ With `HUBZOID_MCP_SIGNING_KEY` set, `rotate` refuses. Rotate by moving the
 current PEM to `HUBZOID_MCP_SIGNING_KEYS_PREVIOUS`, setting a new one and
 restarting.
 
-### AWS AgentCore (not tested yet)
+### On AWS AgentCore
 
-A Runtime's JWT authorizer can point its `discoveryUrl` at the metadata above
-and check `allowedAudience` (the MCP URL). Claude registers a new client id
-per install, so `allowedClients` does not fit. Still to test on AWS: an
-invocation URL that does not end in `/mcp`, how Claude finds the sign-in server
-through a Runtime, IAM and JWT callers on one Runtime, and forwarding
-`Authorization` so Hubzoid can check the connection.
+With `HUBZOID_MCP_HOST=agentcore` (`hubzoid deploy init aws`, `McpHost=agentcore`)
+the hub's MCP server also runs as an AgentCore MCP runtime, each MCP session
+in its own microVM. People connect Claude to the runtime's address, which ends
+in `/invocations?qualifier=DEFAULT`, and sign in with this hub's own sign-in.
+
+- AgentCore's JWT authorizer reads the metadata above (`discoveryUrl`) and
+  accepts only tokens from this hub's issuer (`iss`). Claude registers a new
+  client id per install, so `allowedClients` does not fit, and the runtime's
+  own address cannot be its audience in a CloudFormation stack.
+- Hubzoid then checks each token as on `/mcp`: the person's live grant, and
+  that it was issued for the runtime's address. A token for `/mcp` is refused
+  there, and a token for the runtime is refused on `/mcp`.
+- AgentCore forwards `Authorization` (`requestHeaderAllowlist`). Its health
+  check is an unsigned `ping`, which is the only call answered without a token.
+
+Verified on AWS on 20 November 2026: sign-in, `tools/list`, a knowledge call,
+and both refusals. See [AWS](deploy/aws.md#mcp-on-agentcore).
 
 ## Sessions
 

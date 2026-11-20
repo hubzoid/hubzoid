@@ -146,6 +146,7 @@ The container options work the same way: one image built from the hub's Git repo
 |---|---|---|
 | Docker or Compose on your own server | The released image and `docker/docker-compose.yml`. [Deploying](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) | Supported |
 | A VM with systemd | A virtual environment behind a reverse proxy. [Deploying](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) | Supported |
+| [AWS](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/aws.md) | `hubzoid deploy init aws`, then one CloudFormation stack: ECS, RDS, EFS and CloudFront, with agent turns on Amazon Bedrock AgentCore. | Verified end to end on AWS |
 | [Railway](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/railway.md) | `hubzoid deploy init railway`, then Railway builds the hub's `Dockerfile` with a volume at `/data`. | Written, not yet verified on Railway |
 | [Maritime](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/maritime.md) | `hubzoid deploy init maritime`, then `maritime create --repo` with its `/data` disk. | Written, not yet verified on Maritime |
 
