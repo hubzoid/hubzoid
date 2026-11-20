@@ -67,7 +67,7 @@ def test_the_docs_pages_are_the_templates(provider):
     page = (ROOT / "docs" / "deploy" / f"{provider}.md").read_text()
     rendered = scaffold.render(provider, image="ghcr.io/hubzoid/hubzoid:<version>")[f"deploy/{provider}/README.md"]
     assert page.split("-->\n\n", 1)[1] == rendered      # edit the template, then regenerate the page
-    assert "Not yet verified" in rendered
+    assert ("Verified end to end on AWS" if provider == "aws" else "Not yet verified") in rendered
 
 
 # ---------------------------------------------------------------------------
