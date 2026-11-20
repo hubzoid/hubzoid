@@ -67,21 +67,25 @@ const { createApp, PASSWORD } = require("./app-fixture-server.cjs");
     assert.equal(await page.getByRole("list", { name: "Totals", exact: true }).count(), 0);
     await sections.getByRole("link", { name: "Usage", exact: true }).click();
     await page.getByRole("list", { name: "Totals", exact: true }).waitFor();
-    // The per-agent rows follow the period like the totals do (the fixture
-    // scales finance's 48 messages by 22 for 30 days, 6 for 7 days, 1 for 24 hours).
-    const financeUse = page.locator(".hz-usage-item").filter({ hasText: "Finance" }).locator(".hz-usage-free");
-    await page.getByRole("heading", { name: "By agent, last 30 days", exact: true }).waitFor();
-    await financeUse.getByText(/^1,056 messages · /).waitFor();
-    for (const [label, messages] of [["7 days", "288"], ["24 hours", "48"], ["30 days", "1,056"]]) {
+    // Every section follows the period: the agent rows like the totals (the
+    // fixture scales finance's 48 messages by 6 for 7 days, 1 for 24 hours, 22 for 30 days).
+    const agentsUse = (label) => page.getByRole("region", { name: `By agent, last ${label}` }).getByRole("row").filter({ hasText: "Finance" });
+    await agentsUse("7 days").getByText("288", { exact: true }).waitFor();
+    for (const [label, messages, chats] of [["24 hours", "48", "42"], ["30 days", "1,056", "924"], ["7 days", "288", "252"]]) {
       await page.locator(".hz-usage-head .ant-segmented-item").filter({ hasText: label }).click();
-      await page.getByRole("heading", { name: `By agent, last ${label}`, exact: true }).waitFor();
-      await financeUse.getByText(new RegExp(`^${messages} messages · `)).waitFor();
+      await agentsUse(label).getByText(messages, { exact: true }).waitFor();
+      await page.getByRole("list", { name: "Totals" }).getByText(`Across ${chats} conversations`).waitFor();
     }
+    // A row opens the agent's monthly limits as fields.
+    await agentsUse("7 days").click();
+    await page.getByRole("button", { name: "Save limits" }).waitFor();
     // Settings' Agents list has no period control and says "30 days", so a
     // period in the address must not change its numbers (finance: 12 chats x 22).
     await page.goto(`${base}/settings#/agents?period=24h`);
     const financeRow = page.getByRole("table", { name: "Agents", exact: true }).getByRole("row").filter({ hasText: "Finance" });
     await financeRow.getByRole("cell", { name: "264", exact: true }).waitFor();
+    await page.getByRole("table", { name: "Agents", exact: true }).getByRole("columnheader", { name: "Errors, 30 days" }).waitFor();
+    await financeRow.getByRole("cell", { name: "44", exact: true }).waitFor();          // 2 errors x 22
     await page.goto(`${base}/settings#/usage`);
     await page.getByRole("list", { name: "Totals", exact: true }).waitFor();
     await page.setViewportSize({ width: 1172, height: 740 });
