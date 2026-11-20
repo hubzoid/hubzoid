@@ -128,7 +128,10 @@ def build_registry(
         registry.setdefault(name, ft)
     registry = hitl.equip(hub_dir, registry)
     if "ask_question" in registry:
-        registry["ask_question"] = mcp_parity.ask_question_tool(registry["ask_question"])
+        from .access.guard import run_checked as _run_checked
+
+        # The adapter replaces the call itself, so the account check and audit go back on top.
+        registry["ask_question"] = _run_checked(mcp_parity.ask_question_tool(registry["ask_question"]), hub_dir)
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).
@@ -484,7 +487,9 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                         out = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
                         return out if out is not None else text
 
-                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again, since=started)
+                    # Retry under the name the assistant sees (my_<app>__<tool>), not the app's own.
+                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again, since=started,
+                                                              tool_name=name)
                     if not isinstance(settled, str):
                         return settled
                     if settled != text:

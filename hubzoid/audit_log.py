@@ -279,6 +279,18 @@ def call_scope():
         _CALL.reset(token)
 
 
+@contextmanager
+def separate_calls():
+    """A nested agent run inside one tool call (an MCP sub-agent handover):
+    the tool calls it makes are calls of their own, recorded on their own,
+    not wrappers around the call that started it."""
+    token = _CALL.set(None)
+    try:
+        yield
+    finally:
+        _CALL.reset(token)
+
+
 def finished(where: dict, result: Any, *, started: float, arguments: Any, state: dict,
              failed: bool = False) -> None:
     """Record a call that returned: refused by a wrapper inside, refused in

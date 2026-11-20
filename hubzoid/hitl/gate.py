@@ -53,8 +53,12 @@ def caller() -> service.Caller | None:
     # Over MCP the bound chat id is the person's file space, not a conversation:
     # "allow for this chat" and the inbox's "Open chat" must not reach it.
     conversation = None if origin == "mcp" else _request_ctx.get_chat_id()
-    return service.Caller(account_id=ident.user, email=ident.user, present=True, origin=origin,
-                          conversation_id=conversation)
+    # The verified account id when there is one, as chat records it, so the
+    # person's own request webhooks find the request.
+    account = getattr(ident, "account_id", None) or ident.user
+    return service.Caller(account_id=account, email=ident.user, present=True, origin=origin,
+                          conversation_id=conversation,
+                          run_id=_request_ctx.delegate_run() if origin == "mcp" else None)
 
 
 def _arguments(input_str) -> object:

@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 
 from .capabilities import Capability, register
@@ -291,7 +292,7 @@ def _shown_arguments(req: dict) -> str | None:
     return args if len(args) <= ELICIT_ARGS_MAX else None
 
 
-async def settle_waiting(hub_dir: Path, ident, text: str, rerun, *, since: float):
+async def settle_waiting(hub_dir: Path, ident, text: str, rerun, *, since: float, tool_name: str | None = None):
     """When a call waits for a person: ask the caller in place if they may
     decide and their client can show a form. A tool's approval is recorded and
     the call runs once (``rerun``); a workflow run's question or approval is
@@ -338,7 +339,7 @@ async def settle_waiting(hub_dir: Path, ident, text: str, rerun, *, since: float
         "status": "waiting", "request_id": req["id"], "kind": req.get("kind"),
         "message": (f"Waiting for approval: \"{req.get('title') or req['tool']}\" has not run. {who} can "
                     f"approve it in Hubzoid ({where}). Tell the person in one sentence. Once it is approved, "
-                    f"call {req['tool']} again with exactly the same arguments; it then runs once.")})
+                    f"call {tool_name or req['tool']} again with exactly the same arguments; it then runs once.")})
 
 
 #: How long to wait for a run's next question after one is answered in place.
@@ -474,7 +475,7 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
     """One run of the hub's own runtime, as the caller (already bound), that
     hands ``task`` to the ``agent`` sub-agent. Usage is recorded under the
     caller with surface ``mcp``."""
-    from . import _request_ctx, run_events, runtime
+    from . import _request_ctx, audit_log, run_events, runtime
     from . import usage as usage_lib
     from .access import current_identity
 
@@ -482,9 +483,9 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
     prompt = (f"Hand the task below to the `{agent}` sub-agent with its tool, and reply with its answer "
               f"as it gave it. Do not do the task yourself.\n\nTask:\n{task}")
     started = time.monotonic()
-    started_at = time.time()
     raw: dict = {}
     status = "error"
+    run_id = f"mcp-delegate-{uuid.uuid4().hex}"
     rt = runtime.build(hub_dir)
     try:
         await rt.aopen()
@@ -493,10 +494,14 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
 
             # The guardrails check what the person sent (the task), not the handover wording.
             token = guardrails.NEW_INPUT.set(task)
+            run_token = _request_ctx._DELEGATE_RUN.set(run_id)
             try:
-                async with asyncio.timeout(DELEGATE_SECONDS):
-                    text = await run_events.answer_only(rt, prompt)
+                # The sub-agent's own tool calls are audited as calls of their own.
+                with audit_log.separate_calls():
+                    async with asyncio.timeout(DELEGATE_SECONDS):
+                        text = await run_events.answer_only(rt, prompt)
             finally:
+                _request_ctx._DELEGATE_RUN.reset(run_token)
                 guardrails.NEW_INPUT.reset(token)
         finally:
             raw.update(_request_ctx.drain_usage())
@@ -504,7 +509,7 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
         if err is not None:
             return f"[{tool}: the sub-agent did not finish ({type(err).__name__}). Try again shortly.]"
         status = "ok"
-        return text + await asyncio.to_thread(_left_waiting, hub_dir, ident, started_at)
+        return text + await asyncio.to_thread(_left_waiting, hub_dir, ident, run_id)
     except TimeoutError:
         return f"[{tool}: the sub-agent took longer than {int(DELEGATE_SECONDS)} seconds and was stopped.]"
     finally:
@@ -521,9 +526,10 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
             log.warning("mcp: delegate usage not recorded", exc_info=True)
 
 
-def _left_waiting(hub_dir: Path, ident, since: float) -> str:
-    """What the finished sub-agent run left waiting for this person. Its run is
-    over, so a question it asked can no longer be answered: it is withdrawn.
+def _left_waiting(hub_dir: Path, ident, run_id: str) -> str:
+    """What the finished sub-agent run (``run_id``) left waiting for this
+    person. Its run is over, so a question it asked can no longer be answered:
+    it is withdrawn. Requests from anything else (a web chat) are left alone.
     An approval stays in the inbox; once approved, the same call runs once
     when the sub-agent is asked again. Returns a note for the result, or ""."""
     from .hitl import gate, service
@@ -532,7 +538,7 @@ def _left_waiting(hub_dir: Path, ident, since: float) -> str:
     account, email = getattr(ident, "account_id", None) or ident.user or "", ident.user or ""
     try:
         pending = [r for r in service.list_for(hub_dir, hub_id, account, email)
-                   if _created_at(r) >= since - 2 and not r.get("workflow_id")]
+                   if r.get("run_id") == run_id and not r.get("workflow_id")]
     except Exception:  # noqa: BLE001 - the answer stands without the note
         log.warning("mcp: requests from a sub-agent run could not be read", exc_info=True)
         return ""

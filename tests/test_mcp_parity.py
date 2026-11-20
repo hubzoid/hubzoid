@@ -312,17 +312,66 @@ async def test_a_question_left_by_a_sub_agent_run_is_withdrawn_and_named(hub, mo
 
         async def aclose(self): ...
 
+    from hubzoid.hitl import gate
+
     async def answer(rt, prompt):
-        who = service.Caller(account_id="ux", email=X, origin="mcp")
-        made.append(service.create(hub, "parity", who, kind="question", title="Which region?",
+        # Asked inside the sub-agent's run: the gate binds it to that run.
+        made.append(service.create(hub, "parity", gate.caller(), kind="question", title="Which region?",
                                    question="Which region?"))
         return "Which region should I use?"
 
     made = []
+    # The same person's question in a web chat, open while the sub-agent runs.
+    other = service.create(hub, "parity", service.Caller(account_id="ux", email=X, conversation_id="c1"),
+                           kind="question", title="Which colour?", question="Which colour?")
     monkeypatch.setattr(runtime, "build", lambda hub_dir, **kw: Fake())
     monkeypatch.setattr(run_events, "answer_only", answer)
     monkeypatch.setattr(usage, "record", lambda *a, **kw: None)
     with identity_scope(Identity.make(user=X, groups=[], surface="mcp", account_id="ux")):
         out = await mcp_parity.run_delegate(hub, "deep", "handover_deep", "Plan the rollout")
-    assert "cannot be answered after its run" in out
+    assert "cannot be answered after its run" in out and "Which colour?" not in out
+    assert made[0]["run_id"].startswith("mcp-delegate-") and made[0]["requester_id"] == "ux"
     assert service.get(hub, "parity", made[0]["id"])["status"] != "pending"
+    assert service.get(hub, "parity", other["id"])["status"] == "pending"
+
+
+def test_a_sub_agents_tool_calls_are_audited_on_their_own():
+    from hubzoid import audit_log
+
+    with audit_log.call_scope() as (_, outer):
+        assert outer
+        with audit_log.call_scope() as (_, inner):
+            assert not inner                      # a wrapper around the same call
+        with audit_log.separate_calls():
+            with audit_log.call_scope() as (_, nested):
+                assert nested                     # a call the sub-agent made
+
+
+def test_ask_question_over_mcp_keeps_the_account_check(hub):
+    from hubzoid import mcp_server
+
+    registry = mcp_server.build_registry(hub)[0]
+    assert getattr(registry["ask_question"].on_invoke_tool, "hubzoid_run_checked", False)
+
+
+@pytest.mark.asyncio
+async def test_a_connected_apps_approval_says_to_call_it_by_its_mcp_name(hub):
+    from hubzoid import mcp_parity
+    from hubzoid.access import Identity, identity_scope
+    from hubzoid.hitl import service
+
+    import time
+
+    started = time.time()
+    ident = Identity.make(user=X, groups=[], surface="mcp", account_id="ux")
+    with identity_scope(ident):
+        req = service.create(hub, "parity", service.Caller(account_id="ux", email=X, origin="mcp"),
+                             kind="approval", title="Send mail", tool="send_mail", arguments={"to": "a"})
+        waiting = json.dumps({"status": "waiting", "request_id": req["id"]})
+
+        async def rerun():
+            return "ran"
+
+        out = await mcp_parity.settle_waiting(hub, ident, waiting, rerun, since=started,
+                                              tool_name="my_crm__send_mail")
+    assert "call my_crm__send_mail again" in out

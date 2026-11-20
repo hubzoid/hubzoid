@@ -125,8 +125,10 @@ updates with published security advisories.
     2.5 MB), for `read_upload`, `read_upload_full` and the hub's own tools.
   - `ask_question`, approvals and a workflow run's questions are asked in
     place through MCP elicitation when the client supports it (Claude Code
-    does), and recorded in the inbox as the person's decision. Otherwise the
-    result says to ask the person, or where to approve.
+    does). An approval or a workflow run's answer is recorded in the inbox as
+    the person's decision, and an `ask_question` answer goes straight back to
+    the assistant. Otherwise the result says to ask the person, or where to
+    approve.
   - `remember` and the hub change tools work with chat's gate (Save shared
     knowledge or managing the hub, in-app editing on): a member's change is
     reviewed in Settings, Hub changes.

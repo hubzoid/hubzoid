@@ -485,3 +485,12 @@ def native_session_scope(slot: SessionSlot | None) -> Iterator[None]:
         yield
     finally:
         _current_session_slot.reset(token)
+
+
+# An MCP sub-agent handover's own run id: the requests its run creates carry it,
+# so only they are withdrawn when the run ends (``mcp_parity._left_waiting``).
+_DELEGATE_RUN: "ContextVar[str | None]" = ContextVar("hubzoid_delegate_run", default=None)
+
+
+def delegate_run() -> "str | None":
+    return _DELEGATE_RUN.get()
