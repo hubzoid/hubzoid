@@ -157,8 +157,11 @@ reaches.
     `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`,
     `AWS_CONTAINER_AUTHORIZATION_TOKEN`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
     `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_BEARER_TOKEN_BEDROCK`.
-    These are kept when `CLAUDE_CODE_USE_BEDROCK` is on, because the CLI then
-    signs in with them.
+    These are kept for a Claude call on Bedrock (`MODEL=bedrock/...`, see
+    [Amazon Bedrock](bedrock.md)), because the CLI then signs in with them.
+    Hubzoid sets `CLAUDE_CODE_USE_BEDROCK` for that call's child itself, so do
+    not set it by hand. A hub that still sets it with `MODEL=claude-local`
+    keeps working as before.
   - Hubzoid service secrets: `BRIDGE_API_KEYS`, `HUBZOID_ARTIFACT_SECRET`,
     `HUBZOID_SECRET_KEY`, `HUBZOID_ADMIN_PASSWORD`, `HUBZOID_SMTP_USERNAME`,
     `HUBZOID_SMTP_PASSWORD`, every `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`,

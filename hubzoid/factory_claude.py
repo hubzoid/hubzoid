@@ -95,9 +95,14 @@ def _key_kept(why: str) -> None:
                 why, " and ".join(keys))
 
 
-def ignored_key_note(login) -> str:
+def ignored_key_note(login, *, bedrock: bool = False) -> str:
     """Diagnostics' and doctor's words when a plan login means an inherited key
-    is ignored (the rule in `_child_env`), else ""."""
+    is ignored (the rule in `_child_env`), else "". On Bedrock every Anthropic
+    credential is ignored."""
+    if bedrock:
+        found = [k for k in ("CLAUDE_CODE_OAUTH_TOKEN", *_API_KEY_VARS) if os.environ.get(k)]
+        return f"On Bedrock, {' and '.join(found)} in the environment {'is' if len(found) == 1 else 'are'} ignored." \
+            if found else ""
     keys = api_key_vars()
     if not keys or os.environ.get("ANTHROPIC_BASE_URL") or not (login and login.signed_in) \
             or login.method != "subscription":
@@ -175,7 +180,7 @@ def claude_options(**kwargs):
         raise RuntimeError(
             "This claude-agent-sdk cannot isolate MCP servers (no strict_mcp_config), so "
             "claude-local would expose the host account's connectors. Install the "
-            "supported version: pip install 'claude-agent-sdk>=0.2.159,<0.3'."
+            "supported version: pip install 'claude-agent-sdk>=0.2.162,<0.3'."
         )
     return ClaudeAgentOptions(**kwargs, strict_mcp_config=True)
 
@@ -269,8 +274,19 @@ def _child_env(model: str | None = None) -> dict[str, str]:
     never bills the API silently. To use a key on purpose, set MODEL=anthropic/<model>.
     With ANTHROPIC_BASE_URL set (a deliberate gateway), the keys are left alone."""
     global _billing_logged
-    out = config_secrets.child_env_overrides(os.environ)
-    model = (model or os.environ.get("MODEL") or "claude-local").strip().lower()
+    from . import bedrock
+
+    raw = (model or os.environ.get("MODEL") or "claude-local").strip()
+    if bedrock.is_bedrock(raw):
+        # AWS only: the AWS credentials are kept, the subscription token, its
+        # backups and any key are blanked, and no login is probed.
+        out = config_secrets.child_env_overrides(os.environ, bedrock=True)
+        out.update(bedrock.child_env(raw))
+    else:
+        out = config_secrets.child_env_overrides(os.environ)
+        if not config_secrets._truthy(os.environ.get("CLAUDE_CODE_USE_BEDROCK")):
+            out.update(bedrock.subscription_scrub())
+    model = raw.lower()
     if model.startswith("claude-local") and not os.environ.get("ANTHROPIC_BASE_URL"):
         reason = "CLAUDE_CODE_OAUTH_TOKEN" if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else None
         if reason is None:
@@ -453,8 +469,9 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     skills = _with_core_skills(skills)     # chat runtime gets core skills
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
-        "hub %s (claude-local): %d skill(s), %d delegate(s), %d knowledge doc(s)",
-        hub_dir.name, len(skills), len(delegate_agents), len(knowledge),
+        "hub %s (%s): %d skill(s), %d delegate(s), %d knowledge doc(s)",
+        hub_dir.name, "bedrock" if hub_model.lower().startswith("bedrock/") else "claude-local",
+        len(skills), len(delegate_agents), len(knowledge),
     )
 
     ctx = HubContext(
@@ -514,7 +531,10 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # Pin from the SAME resolved model used for delegate classification (honors
     # AGENTS.md `model:` frontmatter, not just .env MODEL) so the tier we
     # classify against is the tier the main agent actually runs on.
-    model_pin = _validate_model_pin(_parse_model_pin(hub_model), hub=hub_dir.name)
+    from . import bedrock as bedrocklib
+
+    on_bedrock = bedrocklib.is_bedrock(hub_model)
+    model_pin = _validate_model_pin(_parse_model_pin(hub_model), hub=hub_dir.name, bedrock=on_bedrock)
 
     # Delegates: sub-agents whose model differs from the hub. Each becomes a
     # native Claude subagent on its own tier, dispatched via the Agent tool.
@@ -530,7 +550,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         agent_defs[loaded.spec.name] = AgentDefinition(
             description=loaded.spec.description,
             prompt=loaded.instructions,
-            model=handover.resolve_tier(loaded.spec.model),
+            model=handover.resolve_tier(handover.follow(loaded.spec.model, hub_model)),
             tools=[f"mcp__{_MCP_NAMESPACE}__{n}" for n in scoped],
         )
 
@@ -637,7 +657,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         hub=hub_dir.name, otel_endpoint=otel_endpoint, hub_dir=hub_dir,
         vision=(settings.vision_enabled, settings.vision_max_edge,
                 settings.vision_max_images),
-        registry=registry,
+        registry=registry, model_setting=hub_model,
     )
 
 
@@ -697,38 +717,60 @@ def _answering_model(message, answered_by: str | None = None) -> str | None:
     return max(model_usage.items(), key=weight)[0]
 
 
-def _record_claude_usage(message, answered_by: str | None = None) -> None:
-    """Surface the Claude SDK's final usage/cost for the usage envelope + OTel.
+def claude_usage(message, answered_by: str | None = None, model_setting: str | None = None) -> dict:
+    """One conversion of the CLI's final `ResultMessage` into a usage row, for
+    chat, `hub.call_llm` and stations alike.
 
     `ResultMessage.usage` is an Anthropic usage mapping (input_tokens,
-    output_tokens, cache_* ). `total_cost_usd` is None on the subscription
-    (claude-local) and a real dollar figure in API-key mode. Best-effort:
-    a shape change in the SDK must never break the stream.
-    """
+    output_tokens, cache_*). Cache tokens are reported separately from
+    input_tokens and summed in here. `total_cost_usd` is None on the
+    subscription (claude-local) and the CLI's own dollar figure with an API key
+    or on Bedrock. On Bedrock the row names the provider (`bedrock/<model>`) and
+    keeps a missing cost unknown: it is never repriced at one model's rate,
+    because a turn also holds background and delegate calls."""
+    usage = getattr(message, "usage", None) or {}
+    get = usage.get if isinstance(usage, dict) else (lambda k, d=0: getattr(usage, k, d))
+    inp = (int(get("input_tokens", 0) or 0)
+           + int(get("cache_read_input_tokens", 0) or 0)
+           + int(get("cache_creation_input_tokens", 0) or 0))
+    out = int(get("output_tokens", 0) or 0)
+    model = _answering_model(message, answered_by)
+    if (model_setting or "").strip().lower().startswith("bedrock/"):
+        from . import bedrock
+
+        model = bedrock.PREFIX + bedrock.inner(model or model_setting or "")
+    return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out,
+            "cost_usd": getattr(message, "total_cost_usd", None), "model": model,
+            "num_turns": getattr(message, "num_turns", None)}
+
+
+def _record_claude_usage(message, answered_by: str | None = None, *, model_setting: str | None = None) -> None:
+    """Surface the Claude SDK's final usage/cost for the usage envelope + OTel.
+    Best-effort: a shape change in the SDK must never break the stream."""
     try:
-        usage = getattr(message, "usage", None) or {}
-        get = usage.get if isinstance(usage, dict) else (lambda k, d=0: getattr(usage, k, d))
-        # Anthropic reports cache tokens SEPARATELY from input_tokens. claude-local
-        # leans heavily on prompt caching, so summing them in is essential — else
-        # input totals massively undercount real usage.
-        inp = (int(get("input_tokens", 0) or 0)
-               + int(get("cache_read_input_tokens", 0) or 0)
-               + int(get("cache_creation_input_tokens", 0) or 0))
-        out = int(get("output_tokens", 0) or 0)
-        # The concrete model that answered; used to estimate cost when the
-        # SDK reports none (subscription mode).
-        model = _answering_model(message, answered_by)
-        _request_ctx.record_usage({
-            "input_tokens": inp,
-            "output_tokens": out,
-            "total_tokens": inp + out,
-            "cost_usd": getattr(message, "total_cost_usd", None),
-            "num_turns": getattr(message, "num_turns", None),
-            "model": model,
-            "status": "error" if getattr(message, "is_error", False) else "ok",
-        })
+        row = claude_usage(message, answered_by, model_setting)
+        row["status"] = "error" if getattr(message, "is_error", False) else "ok"
+        _request_ctx.record_usage(row)
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("claude usage capture skipped: %s", exc)
+
+
+def turn_model(chosen: str, model_setting: str) -> str:
+    """A chat catalog model as the CLI's ``--model``. ``claude-local/<x>`` and
+    ``bedrock/<x>`` lose Hubzoid's prefix. A model on another provider than this
+    runtime's is refused: switching provider within a conversation is not supported."""
+    from . import bedrock
+
+    low = chosen.strip().lower()
+    on_bedrock = model_setting.strip().lower().startswith("bedrock/")
+    if low.startswith("claude-local") or bedrock.is_bedrock(low):
+        if bedrock.is_bedrock(low) != on_bedrock or (on_bedrock and not bedrock.is_claude(chosen)):
+            raise RuntimeError(
+                f"The model {chosen!r} runs on {'Bedrock' if bedrock.is_bedrock(low) else 'the Claude subscription'}"
+                f", and this agent runs on {'Bedrock' if on_bedrock else 'the Claude subscription'}. "
+                "Choose another model, or ask an administrator to fix the chat model list.")
+        return bedrock.cli_model(chosen) if on_bedrock else (_parse_model_pin(chosen) or chosen)
+    return chosen
 
 
 _CLAUDE_LOCAL_DEFAULT = "sonnet"
@@ -765,7 +807,7 @@ def _parse_model_pin(model_setting: str | None) -> str | None:
     return suffix or None
 
 
-def _validate_model_pin(pin: str | None, *, hub: str) -> str | None:
+def _validate_model_pin(pin: str | None, *, hub: str, bedrock: bool = False) -> str | None:
     """Guard an unattended run against a typo'd model pin.
 
     A recognized pin is a bare Claude tier (``opus``/``sonnet``/``haiku``) or a
@@ -783,6 +825,11 @@ def _validate_model_pin(pin: str | None, *, hub: str) -> str | None:
     low = pin.strip().lower()
     if low in _CLAUDE_TIERS or low.startswith("claude-"):
         return pin
+    if bedrock:
+        from . import bedrock as bedrocklib
+
+        if bedrocklib.valid_pin(pin):
+            return pin
     log.warning(
         "hub %s: unrecognized model pin %r — expected a Claude tier (%s) or a "
         "claude-* id. Falling back to the default tier %r for this run.",
@@ -1164,7 +1211,10 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
     from claude_agent_sdk import query
     from .claude_credentials import Pool, TOKEN_KEYS, Unavailable, redact
 
-    pool = await asyncio.to_thread(Pool.configured, hub_dir)
+    # A Bedrock call (the child's own CLAUDE_CODE_USE_BEDROCK, set by _child_env
+    # for this call) never takes a subscription token: no failover pool.
+    on_bedrock = str((getattr(options, "env", None) or {}).get("CLAUDE_CODE_USE_BEDROCK", "")) == "1"
+    pool = None if on_bedrock else await asyncio.to_thread(Pool.configured, hub_dir)
     if pool:
         from claude_agent_sdk import AssistantMessage, HookMatcher, ResultMessage, UserMessage
         from claude_agent_sdk.types import StreamEvent, SystemMessage
@@ -1300,8 +1350,11 @@ class ClaudeRuntime:
                  tool_mode: str = "compact", hub: str = "",
                  otel_endpoint: str | None = None, hub_dir: Path | None = None,
                  vision: tuple[bool, int, int] = (True, 1568, 4),
-                 registry: dict | None = None):
+                 registry: dict | None = None, model_setting: str = "claude-local"):
         self.name = name
+        # The hub's model (`claude-local[/x]` or `bedrock/x`): budget admission,
+        # the usage row and which chat model choices this runtime can take.
+        self._model_setting = model_setting or "claude-local"
         # The tool registry behind the in-process hubzoid MCP server, so each
         # turn can leave out the gated tools this caller may not see.
         self._registry = registry or {}
@@ -1407,7 +1460,7 @@ class ClaudeRuntime:
         # the usage row (a bare loop leaves it to garbage collection).
         from contextlib import aclosing
 
-        async with aclosing(budgets.guarded(self._hub_dir, "claude-local", lambda: self._turn_events(prompt),
+        async with aclosing(budgets.guarded(self._hub_dir, self._model_setting, lambda: self._turn_events(prompt),
                                             refuse)) as items:
             async for item in items:
                 yield item
@@ -1496,13 +1549,14 @@ class ClaudeRuntime:
                 import dataclasses as _dc
 
                 changes = {}
-                if slot.web_search:
+                if slot.web_search and not self._model_setting.lower().startswith("bedrock/"):
                     # Claude's own server-side search only. WebFetch is not
                     # enabled: it would fetch from this machine's network.
+                    # Bedrock has no WebSearch tool, so a Bedrock hub never adds it.
                     changes["tools"] = [*(turn_options.tools or []), "WebSearch"]
                     changes["allowed_tools"] = [*(turn_options.allowed_tools or []), "WebSearch"]
                 if slot.model:
-                    changes["model"] = slot.model
+                    changes["model"] = turn_model(slot.model, self._model_setting)
                 turn_options = _dc.replace(turn_options, **changes)
             turn_options = _in_order(turn_options)
             messages = _query_with_failover(prompt=qprompt, options=stderr.attach(_budget_caps(turn_options)),
@@ -1592,7 +1646,7 @@ class ClaudeRuntime:
                 # --- Final aggregate (fallback if partials are missing) ---
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
-                    _record_claude_usage(message, answered_by)
+                    _record_claude_usage(message, answered_by, model_setting=self._model_setting)
                     if slot is not None and not getattr(message, "is_error", False):
                         slot.session_id = getattr(message, "session_id", None)
                         slot.resumed = resuming
@@ -1683,7 +1737,8 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     from claude_agent_sdk import AssistantMessage, ResultMessage
     from claude_agent_sdk.types import TextBlock
 
-    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
+    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm",
+                              bedrock=(model_setting or "").lower().startswith("bedrock/"))
     options = tool_free_options(
         system or "You are a precise assistant. Answer the request directly.", pin, model_setting)
     if output_schema is not None:
@@ -1706,16 +1761,8 @@ async def claude_complete(prompt: str, *, system: str | None = None,
             elif isinstance(message, ResultMessage):
                 final = getattr(message, "result", None)
                 structured_out = getattr(message, "structured_output", None)
-                raw = getattr(message, "usage", None) or {}
-                get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
-                usage = {
-                    "input_tokens": int(get("input_tokens", 0) or 0)
-                    + int(get("cache_read_input_tokens", 0) or 0)
-                    + int(get("cache_creation_input_tokens", 0) or 0),
-                    "output_tokens": int(get("output_tokens", 0) or 0),
-                    "cost_usd": getattr(message, "total_cost_usd", None),
-                    "model": _answering_model(message, answered_by),
-                }
+                full = claude_usage(message, answered_by, model_setting)
+                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model")}
                 if getattr(message, "is_error", False):
                     raise RuntimeError(
                         f"claude run ended with {getattr(message, 'subtype', 'error')}"
@@ -1742,7 +1789,8 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
     from claude_agent_sdk import AssistantMessage, ResultMessage
     from claude_agent_sdk.types import TextBlock
 
-    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="station")
+    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="station",
+                              bedrock=(model_setting or "").lower().startswith("bedrock/"))
     opts: dict[str, Any] = dict(
         system_prompt=instructions, tools=[], setting_sources=[], max_turns=max_turns,
         allowed_tools=[f"mcp__{_MCP_NAMESPACE}__{n}" for n in registry],
@@ -1771,17 +1819,9 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
             elif isinstance(item, ResultMessage):
                 final = getattr(item, "result", None)
                 structured = getattr(item, "structured_output", None)
-                raw = getattr(item, "usage", None) or {}
-                get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
-                usage = {
-                    "input_tokens": int(get("input_tokens", 0) or 0)
-                    + int(get("cache_read_input_tokens", 0) or 0)
-                    + int(get("cache_creation_input_tokens", 0) or 0),
-                    "output_tokens": int(get("output_tokens", 0) or 0),
-                    "cost_usd": getattr(item, "total_cost_usd", None),
-                    "model": _answering_model(item, answered_by),
-                    "turns": getattr(item, "num_turns", None),
-                }
+                full = claude_usage(item, answered_by, model_setting)
+                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model")}
+                usage["turns"] = full["num_turns"]
                 if getattr(item, "is_error", False):
                     raise RuntimeError(f"claude station run ended with {getattr(item, 'subtype', 'error')}")
     return (final or "".join(parts) or ""), structured, usage

@@ -168,7 +168,8 @@ def _subagent_checks(hub: Path) -> list[Check]:
             rows.append(f"{spec.name}: station (called from workflows only)")
             continue
         why = handover.skill_reason(spec.model, hub_model)
-        if not why and handover.engine(spec.model) == "litellm":
+        followed = handover.follow(spec.model, hub_model)
+        if not why and handover.engine(followed) == "litellm":
             # The OpenAI Agents factory builds each delegate's model up front and
             # loads it as a skill when that fails (a missing provider key).
             try:
@@ -178,11 +179,11 @@ def _subagent_checks(hub: Path) -> list[Check]:
             except Exception as exc:  # noqa: BLE001 - reported, never raised
                 why = f"its model {spec.model!r} could not be built ({type(exc).__name__}: {exc})"[:300]
         if not why:
-            rows.append(f"{spec.name}: runs on its own, on {spec.model}")
+            rows.append(f"{spec.name}: runs on its own, on {followed}")
             continue
         rows.append(f"{spec.name}: instructions for the main agent, because {why}")
         lost = [f"tools: {list(spec.tools)}"] if spec.tools else []
-        if spec.model and (handover.engine(spec.model) != handover.engine(hub_model)
+        if spec.model and (handover.engine(followed) != handover.engine(hub_model)
                            or "could not be built" in why):
             lost.insert(0, f"model: {spec.model}")
         if lost:
@@ -574,6 +575,10 @@ def _model(hub: Path) -> Check:
     from . import runtime as runtime_lib, settings as settingslib
 
     model = runtime_lib._resolve_model_id(hub, settingslib.load(hub))
+    from . import bedrock
+
+    if bedrock.is_bedrock(model):
+        return _bedrock_model(hub, model)
     if model == "claude-local" or model.startswith("claude-local/"):
         from . import factory_claude, logins
 
@@ -598,6 +603,63 @@ def _model(hub: Path) -> Check:
     missing = status.get("missing_keys") or []
     return Check("model.credentials", "fail",
                  f"{model}: missing {', '.join(missing) or 'provider credentials'}", missing)
+
+
+def bedrock_used_tiers(hub: Path) -> set[str]:
+    """The Claude tiers a Bedrock hub's tasks, sub-agents, stations and chat
+    models ask for. Doctor checks only these strictly."""
+    from . import bedrock, runtime as runtime_lib
+
+    names: list[str] = []
+    try:
+        from .loaders import agents as agents_loader
+
+        names += [a.spec.model for a in agents_loader.load_subagents(hub) if a.spec.model]
+    except Exception:  # noqa: BLE001 - the agents check reports a broken file
+        pass
+    try:
+        from . import scheduling
+
+        names += [t.model for t in scheduling.load_tasks(hub)[0] if getattr(t, "model", None)]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .chat.config import service_for
+
+        names += [e["model"] for e in service_for(hub).active().document["models"]["catalog"].values()]
+    except Exception:  # noqa: BLE001
+        pass
+    used = set()
+    for name in names:
+        followed = runtime_lib.follow_hub(hub, name)
+        if bedrock.is_bedrock(followed) and bedrock.inner(followed).lower() in bedrock.TIERS:
+            used.add(bedrock.inner(followed).lower())
+    return used
+
+
+def _bedrock_model(hub: Path, model: str) -> Check:
+    """Region, AWS identity and the model's lookup (`bedrock.check`). Inference
+    access is proven by the active reply check, not here."""
+    from . import bedrock, factory_claude
+
+    results = bedrock.check(model, used_tiers=bedrock_used_tiers(hub))
+    note = factory_claude.ignored_key_note(None, bedrock=True)
+    if note:
+        results.append(("ok", note))
+    try:
+        from .chat.config import service_for
+
+        web = service_for(hub).active().document["retrieval"]["web"]
+        if web.get("enabled") and web.get("search") == "native" and bedrock.is_claude(model, resolve=False):
+            results.append(("warn", "retrieval.web.search is native, but Bedrock has no web search tool, "
+                                    "so chat offers none."))
+    except Exception:  # noqa: BLE001
+        pass
+    rank = {"ok": 0, "warn": 1, "fail": 2}
+    worst = max((r[0] for r in results), key=lambda x: rank.get(x, 0), default="ok")
+    lines = [text for _status, text in results]
+    head = next((t for st, t in results if st == worst), lines[0] if lines else model)
+    return Check("model.credentials", worst, f"{model}: {head}", lines)
 
 
 def _backup_age(last: dict | None, failed: dict | None) -> Check:

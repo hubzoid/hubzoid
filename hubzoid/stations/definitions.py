@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ..work_items.errors import WorkItemError
 
-ENGINES = ("claude-local", "codex-local")
+ENGINES = ("claude-local", "codex-local", "bedrock")
 INPUT_MODES = ("forward", "never")
 #: Tools stations get from Hubzoid itself, by name, when they list them.
 STATION_TOOLS = ("save_handoff", "read_handoff")
@@ -43,7 +43,7 @@ class Station:
     extra: dict = field(default_factory=dict)
 
     def model_setting(self) -> str:
-        """The model string the runtime takes: `claude-local/sonnet`, `codex-local`."""
+        """The model string the runtime takes: `claude-local/sonnet`, `bedrock/opus`, `codex-local`."""
         return f"{self.engine}/{self.model}" if self.model else self.engine
 
     def to_json(self) -> dict:
@@ -120,6 +120,11 @@ def _build(hub_dir: Path, loaded) -> Station:
     if engine not in ENGINES:
         _fail(source, f"engine must be one of {', '.join(ENGINES)}, not {engine!r}. "
               "Set engine: in the frontmatter or MODEL for the hub.", "engine")
+    if engine == "bedrock":
+        from .. import bedrock
+
+        if model and not bedrock.is_claude(f"bedrock/{model}"):
+            _fail(source, f"a station on bedrock runs a Claude model, not {model!r}.", "model")
     if spec.input not in INPUT_MODES:
         _fail(source, "input must be forward or never", "input")
     if len(set(spec.tools)) != len(spec.tools):

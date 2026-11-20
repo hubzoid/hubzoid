@@ -254,6 +254,11 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
             from .config import service_for
 
             try:
+                from .. import bedrock
+                from ..runtime import follow_hub
+
+                if bedrock.is_bedrock(follow_hub(hub_dir)):
+                    return False     # Bedrock has no web search tool
                 web = service_for(hub_dir).active().document["retrieval"]["web"]
                 return bool(web["enabled"] and web["search"] == "native")
             except Exception:  # noqa: BLE001

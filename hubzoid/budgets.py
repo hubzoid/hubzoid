@@ -229,7 +229,9 @@ def _used(conn, hub: str, scope: str, key: str, *, run_id=None, item_id=None) ->
     """Recorded usage of a scope: tokens, known cost, and calls with no price."""
     sql = ("SELECT COALESCE(SUM(input_tokens), 0) AS inp, COALESCE(SUM(output_tokens), 0) AS outp, "
            "COALESCE(SUM(cost_usd), 0) AS cost, SUM(CASE WHEN cost_usd IS NULL AND "
-           "(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) > 0 THEN 1 ELSE 0 END) AS unpriced "
+           "(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) > 0 THEN 1 ELSE 0 END) AS unpriced, "
+           "SUM(CASE WHEN cost_usd IS NULL AND LOWER(COALESCE(model, '')) LIKE 'bedrock/%' AND "
+           "(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) > 0 THEN 1 ELSE 0 END) AS unpriced_bedrock "
            "FROM hz_usage WHERE hub=:h")
     args: dict = {"h": hub}
     if scope == "run":
@@ -243,7 +245,8 @@ def _used(conn, hub: str, scope: str, key: str, *, run_id=None, item_id=None) ->
         args["t"] = _month_start()
     row = conn.execute(text(sql), args).mappings().first()
     return {"input_tokens": int(row["inp"] or 0), "output_tokens": int(row["outp"] or 0),
-            "cost_usd": Decimal(str(row["cost"] or 0)), "unpriced_calls": int(row["unpriced"] or 0)}
+            "cost_usd": Decimal(str(row["cost"] or 0)), "unpriced_calls": int(row["unpriced"] or 0),
+            "unpriced_bedrock": int(row["unpriced_bedrock"] or 0)}
 
 
 def _reserved(conn, hub: str, scope: str, *, run_id=None, item_id=None) -> dict:
@@ -270,6 +273,10 @@ def priced(model: str | None) -> bool:
     name = model.lower()
     if name.startswith("claude-local"):
         return True       # the Claude Agent SDK reports each run's cost
+    from . import bedrock
+
+    if bedrock.is_claude(model, resolve=False):
+        return True       # the same CLI reports a cost on Bedrock (see admit for a missing one)
     if no_charge(model):
         return False      # no cost figure from a Codex login
     from .usage import estimate_cost
@@ -316,6 +323,9 @@ def admit(hub_dir, *, model: str | None, run_id: str | None = None) -> Ticket | 
                           "price to count against it. Use token or turn limits for this model instead.",
                           status=422, model=model)
     free = no_charge(model)
+    from . import bedrock
+
+    cli_cost = bedrock.is_claude(model, resolve=False)
     hub = Path(hub_dir).name
     run_caps = cfg.limits.get("run", {})
     from .work_items import store
@@ -325,6 +335,14 @@ def admit(hub_dir, *, model: str | None, run_id: str | None = None) -> Ticket | 
         for scope in scopes:
             used = _used(conn, hub, scope, "", run_id=run_id, item_id=item_id)
             held = _reserved(conn, hub, scope, run_id=run_id, item_id=item_id)
+            if cli_cost and "max_cost_usd" in cfg.limits[scope] and used["unpriced_bedrock"]:
+                # A Bedrock Claude call whose cost the CLI did not report counts
+                # as zero, so a dollar limit holding one cannot be trusted.
+                raise BudgetError(
+                    "unpriced_usage", f"{_SCOPE_WORDS[scope].capitalize()} has a dollar limit and "
+                    f"{used['unpriced_bedrock']} Bedrock call(s) with no reported cost, so the limit cannot be checked. "
+                    "Use token or turn limits on Bedrock, or ask an administrator to review the usage.",
+                    status=422, scope=scope, model=model)
             for key, cap in cfg.limits[scope].items():
                 if key == "max_turns" or (free and key == "max_cost_usd"):
                     continue        # no per-call charge: no cost to count

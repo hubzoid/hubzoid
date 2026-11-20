@@ -66,6 +66,18 @@ doctor, evals and the channel list say what used to fail silently.
   - The endpoint keeps a session per connected assistant, which elicitation
     needs. `MCP_STATELESS=true` keeps the earlier one-request mode, without
     elicitation.
+- **Amazon Bedrock as a model provider** (`proposals/2026-11-20-bedrock-provider.md`,
+  [docs/bedrock.md](docs/bedrock.md)). Opt in per hub with
+  `MODEL=bedrock/sonnet` (or `opus`, `haiku`, a Bedrock id or ARN) and
+  `AWS_REGION`. Claude runs on the same Claude runtime, billed by AWS; other
+  Bedrock models run on LiteLLM. `claude-local` with the subscription stays the
+  default and is unchanged. A bare `model: opus` follows the hub's provider and
+  `claude-local/opus` or `bedrock/opus` picks one on purpose, so a hub can mix
+  them per task, each call with only its own credentials. The tiers are pinned
+  to what they mean on `claude-local`, as profiles for the region. A hub
+  without a region does not start. Doctor and Settings diagnostics check the
+  region, AWS identity and model, the web search switch hides on Bedrock, and a
+  dollar limit stops when the CLI reports no cost for a Bedrock call.
 - **Connected apps reach assistants over MCP.** An assistant connected to an
   agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
   person connected in Settings, as `my_<id>__<tool>`, called as that person
@@ -92,6 +104,18 @@ doctor, evals and the channel list say what used to fail silently.
   Telegram, webhooks) with where each is set and whether it is on. A Slack
   connection that takes over the 1.x Slack app's tokens says so instead of
   turning it off without a word.
+
+### Changed
+- **A Claude id under `bedrock/` runs on the Claude runtime**, not LiteLLM.
+  Write `bedrock/converse/<id>` to keep a Claude model on LiteLLM. No sample,
+  test or known hub used `bedrock/` before.
+- **claude-agent-sdk 0.2.162 or later** (Claude Code 2.1.285), for the Bedrock
+  settings. It moves every Claude hub to the newer CLI.
+- `hub.call_llm(model="opus")` and an eval judge model of `opus` on a
+  `claude-local` hub now run on the subscription, as a scheduled task's
+  `model: opus` already did. They used to go to LiteLLM.
+- Settings diagnostics and the Get started card read the hub's model as the
+  runtime does (`.env`, then `AGENTS.md`), not `MODEL` from the environment only.
 
 ### Fixed
 - `connect_account` over MCP no longer tells the person a connected app can be

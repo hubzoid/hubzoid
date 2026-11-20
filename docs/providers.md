@@ -2,8 +2,9 @@
 
 Hubzoid selects an execution backend from `MODEL` in the hub's `.env`:
 `claude-local` uses the Claude Agent SDK with a locally authenticated Claude CLI;
-`codex-local` uses the Codex app-server; provider-prefixed model names use the
-OpenAI Agents SDK through LiteLLM.
+`codex-local` uses the Codex app-server; `bedrock/<tier-or-id>` runs Claude on
+Amazon Bedrock through the Claude Agent SDK ([Amazon Bedrock](bedrock.md));
+other provider-prefixed model names use the OpenAI Agents SDK through LiteLLM.
 Model precedence is `.env MODEL`, then the main `AGENTS.md` model, then
 `claude-local`. The hub's tools, knowledge and access rules stay the same across
 these backends.
@@ -123,7 +124,9 @@ tools: []
 
 ## Other LiteLLM providers
 
-LiteLLM supports Azure OpenAI, AWS Bedrock, Google Vertex, Groq, Together,
-Fireworks, Cohere, Mistral, Replicate, Ollama, and more. The `MODEL` prefix
+LiteLLM supports Azure OpenAI, Google Vertex, Groq, Together,
+Fireworks, Cohere, Mistral, Replicate, Ollama, and more. Amazon Bedrock has its
+own page, [Amazon Bedrock](bedrock.md): a Claude id under `bedrock/` runs on
+the Claude Agent SDK, other Bedrock models on LiteLLM. The `MODEL` prefix
 plus the corresponding env vars (see LiteLLM docs) select the provider. Availability and tool support vary by model; validate
 your selected model with your hub before deploying.

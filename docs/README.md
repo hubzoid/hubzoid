@@ -9,7 +9,7 @@ testing an unreleased branch.
 
 | Journey | Guides |
 |---|---|
-| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md), [authoring](authoring-a-hub.md), [hub settings and checks](hub-settings.md) |
+| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md) and [Amazon Bedrock](bedrock.md), [authoring](authoring-a-hub.md), [hub settings and checks](hub-settings.md) |
 | Understand the direction | [Product context](PRODUCT_CONTEXT.md) |
 | Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md) |
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |

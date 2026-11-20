@@ -76,7 +76,7 @@ charset-normalizer==3.5.1
     # via
     #   reportlab
     #   requests
-claude-agent-sdk==0.2.159
+claude-agent-sdk==0.2.162
     # via hubzoid (pyproject.toml)
 click==8.5.0
     # via

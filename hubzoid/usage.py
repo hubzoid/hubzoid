@@ -88,6 +88,14 @@ def run_cost(hub_dir, hub: str, prefix: str, since: float) -> float:
     return float(value or 0.0)
 
 
+def _cost_from_cli(model: str | None) -> bool:
+    """A Claude call on Bedrock: the Claude CLI's own figure is the cost, and a
+    missing one stays unknown instead of a price-table estimate."""
+    from . import bedrock
+
+    return bedrock.is_claude(model, resolve=False)
+
+
 def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
            chat_id: str | None = None, model: str | None = None,
            input_tokens: int | None = None, output_tokens: int | None = None,
@@ -98,7 +106,7 @@ def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
     cannot be written, the hold stays as unknown usage."""
     chat_id = chat_id or _RUN_TAG.get()
     try:
-        if cost_usd is None:
+        if cost_usd is None and not _cost_from_cli(model):
             cost_usd = estimate_cost(model, input_tokens, output_tokens)
         from . import db, migrations
 

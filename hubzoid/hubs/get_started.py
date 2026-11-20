@@ -145,7 +145,7 @@ def model_result(hub_dir: Path, *, fresh: bool = False) -> probes.Result:
     from ..admin import diagnostics
 
     try:
-        model = (os.environ.get("MODEL") or "claude-local").strip().lower()
+        model = diagnostics.hub_model(Path(hub_dir)).lower()
         found = logins.detect(fresh=fresh) if model.startswith(("claude-local", "codex-local")) else None
         check = diagnostics.check_model_auth(Path(hub_dir), found=found)
         runtime = (check.details or {}).get("runtime")
@@ -157,7 +157,7 @@ def model_result(hub_dir: Path, *, fresh: bool = False) -> probes.Result:
             line = logins.describe(own) if own else None
             detail = _also(other, agent_signed_in=check.status == "ok") if other else None
         else:
-            line = (os.environ.get("MODEL") or "").strip() or None
+            line = diagnostics.hub_model(Path(hub_dir)) or None
     except Exception as exc:  # noqa: BLE001 - one card never breaks the others
         log.warning("get started: the model sign-in could not be checked (%s)", type(exc).__name__)
         return probes.Result(MODEL, "warn", f"The model sign-in could not be checked ({type(exc).__name__}).")

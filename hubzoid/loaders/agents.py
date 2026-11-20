@@ -25,7 +25,7 @@ Isolated agents (stations), all optional, on sub-agents only:
   isolated:    true makes the agent a station: called from a workflow, with only
                its own instructions and exactly the tools it lists (none when empty).
                It is never loaded as a skill or delegate of the main agent.
-  engine:      claude-local or codex-local (default: the hub's runtime).
+  engine:      claude-local, bedrock or codex-local (default: the hub's runtime).
   response_schema: a JSON Schema file in the agent's folder for its result.
   input:       forward (default) or never.
   sandbox:     a sandbox profile for the agent's workspace.

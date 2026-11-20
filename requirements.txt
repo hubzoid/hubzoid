@@ -9,7 +9,7 @@
 
 openai-agents[litellm]>=0.17.3,<0.18
 litellm>=1.102.2,<1.103
-claude-agent-sdk>=0.2.159,<0.3
+claude-agent-sdk>=0.2.162,<0.3
 fastmcp>=3.4.10,<4
 starlette>=0.47,<2
 websockets>=15,<18

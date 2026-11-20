@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Protocol
 
@@ -72,31 +73,97 @@ def _resolve_model_id(hub_dir: Path, settings) -> str:
 _CLAUDE_TIERS = frozenset({"opus", "sonnet", "haiku"})
 
 
-def _apply_model_override(base_id: str, override: str) -> tuple[str, str]:
-    """Resolve a per-run model override, PRESERVING the hub's backend.
+@dataclass(frozen=True)
+class Effective:
+    """The model a call runs on: the id, its engine (``test``, ``codex``,
+    ``claude``, ``litellm``) and who serves it (``test``, ``subscription``,
+    ``bedrock``, ``api``)."""
+    model: str
+    engine: str
+    provider: str
 
-    Backend selection keys off the returned model id, so a bare Claude tier
-    (``opus``/``sonnet``/``haiku``) or a ``claude-*`` id on a claude-local hub
-    is pinned *within* the claude-local backend (``claude-local/<x>``) — a
-    task's ``model: opus`` must not accidentally route to the OpenAI backend
-    (and ``_parse_model_pin`` needs the ``claude-local/`` prefix to extract the
-    tier). A full id that already names its backend (``claude-local/...``, or an
-    OpenAI/LiteLLM id like ``gpt-4o``) is used verbatim, so a deliberate
-    cross-backend switch still works.
+
+def classify(model_id: str) -> Effective:
+    """Engine and provider of one model id. Every place that runs a model or
+    reports on one decides through this, never its own prefix test."""
+    from . import bedrock, testing_runtime
+
+    m = (model_id or "").strip()
+    low = m.lower()
+    if testing_runtime.is_test_model(m):
+        return Effective(m, "test", "test")
+    if low == "codex-local" or low.startswith("codex-local/"):
+        return Effective(m, "codex", "subscription")
+    if low.startswith("claude-local"):
+        return Effective(m, "claude", "subscription")
+    if bedrock.is_bedrock(m):
+        return Effective(m, "claude" if bedrock.is_claude(m) else "litellm", "bedrock")
+    return Effective(m, "litellm", "api")
+
+
+def _apply_model_override(base_id: str, override: str) -> tuple[str, str]:
+    """Resolve a per-run model override against the hub's model.
+
+    A bare name follows the hub's provider: a Claude tier
+    (``opus``/``sonnet``/``haiku``) or a ``claude-*`` id becomes
+    ``claude-local/<x>`` on a claude-local hub (``_parse_model_pin`` needs that
+    prefix) and ``bedrock/<x>`` on a Bedrock hub, as does a Bedrock Claude id or
+    ARN there. An id that names its backend (``claude-local/...``,
+    ``bedrock/...``, ``codex-local``, an OpenAI/LiteLLM id like ``gpt-4o``) is
+    used as written, so a deliberate switch of engine or provider works.
 
     Returns (model_id_for_backend_selection, override_passed_to_factory) — the
     two are the same string; both are returned for call-site clarity.
     """
+    from . import bedrock
+
     ov = override.strip()
     low = ov.lower()
-    if base_id.lower().startswith("claude-local") and not low.startswith("claude-local"):
+    base = base_id.strip().lower()
+    if base.startswith("claude-local") and not low.startswith("claude-local"):
         if low in _CLAUDE_TIERS or low.startswith("claude-"):
             # Use the lowercased form — the Claude CLI recognizes `opus`/`sonnet`/
             # `haiku` and `claude-*` ids only in lowercase, and _parse_model_pin
             # passes the suffix through verbatim.
             norm = f"claude-local/{low}"
             return norm, norm
+    names_backend = low.startswith(("claude-local", "codex-local")) or ("/" in low and not low.startswith("arn:"))
+    if bedrock.is_bedrock(base) and not names_backend and bedrock.is_claude_name(ov):
+        name = low if (low in _CLAUDE_TIERS or low.startswith("claude-")) else ov
+        norm = f"{bedrock.PREFIX}{name}"
+        return norm, norm
     return ov, ov
+
+
+def follow_hub(hub_dir: Path, override: str | None = None) -> str:
+    """The model id a call runs on: the hub's own, or ``override`` resolved
+    against it (see `_apply_model_override`)."""
+    base = _resolve_model_id(Path(hub_dir), settingslib.load(Path(hub_dir)))
+    ov = (override or "").strip()
+    return _apply_model_override(base, ov)[0] if ov else base
+
+
+def effective_model(hub_dir: Path, override: str | None = None) -> Effective:
+    """The hub's model, or an override resolved against it, with its engine and provider."""
+    return classify(follow_hub(hub_dir, override))
+
+
+def check_bedrock(model_id: str) -> None:
+    """Refuse to start a Bedrock model with no region (both engines would fall
+    back to different ones) or an application profile that cannot be read."""
+    from . import bedrock
+
+    if bedrock.is_bedrock(model_id):
+        bedrock.require_region(model_id)
+        bedrock.is_claude(model_id)
+
+
+def litellm_region(model_id: str) -> dict:
+    """``aws_region_name`` for a LiteLLM call on Bedrock: the one region both
+    engines use, never LiteLLM's own us-west-2 fallback."""
+    from . import bedrock
+
+    return {"aws_region_name": bedrock.require_region(model_id)} if bedrock.is_bedrock(model_id) else {}
 
 
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
@@ -133,16 +200,18 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
             )
 
     from . import testing_runtime
-    if testing_runtime.is_test_model(model_id):
+    eff = classify(model_id)
+    if eff.engine == "test":
         # Deterministic scripted replies for tests; refused unless enabled.
         return testing_runtime.build(hub_dir, model_id=model_id, settings=settings)
 
-    if model_id == "codex-local" or model_id.startswith("codex-local/"):
+    if eff.engine == "codex":
         from .factory_codex import build_codex_runtime
         return build_codex_runtime(hub_dir, extra_tools=extra_tools,
                                    max_turns=max_turns, model_override=model_id)
 
-    if model_id.lower().startswith("claude-local"):
+    check_bedrock(model_id)
+    if eff.engine == "claude":
         from .factory_claude import build_claude_runtime
         return build_claude_runtime(hub_dir, extra_tools=extra_tools,
                                     max_turns=max_turns, model_override=override)
@@ -346,6 +415,9 @@ class OpenAIAgentsRuntime:
             if slot is not None and getattr(slot, "model", None):
                 from . import model as modellib
 
+                if classify(slot.model).engine != "litellm":
+                    raise ValueError(f"The model {slot.model!r} runs on another engine than this agent. "
+                                     "Choose another model, or ask an administrator to fix the chat model list.")
                 agent = agent.clone(model=modellib.build(slot.model))
             from . import budgets
             hooks = budgets.cost_hooks(getattr(agent, "model", None))
@@ -655,11 +727,14 @@ def _record_openai_usage(result, model: str | None = None, *, status: str = "ok"
 def describe(hub_dir: Path) -> str:
     settings = settingslib.load(hub_dir)
     model = _resolve_model_id(hub_dir, settings)
-    from . import testing_runtime
-    backend = ("hubzoid-test" if testing_runtime.is_test_model(model)
-               else "codex-local" if model.startswith("codex-local")
-               else "claude-local" if model.lower().startswith("claude-local") else "openai-agents")
-    return json.dumps({"backend": backend, "model": model})
+    try:
+        eff = classify(model)
+    except Exception:  # noqa: BLE001 - an unreadable Bedrock profile: doctor's model check says why
+        eff = Effective(model, "claude", "bedrock")
+    backend = {"test": "hubzoid-test", "codex": "codex-local", "litellm": "openai-agents"}.get(
+        eff.engine, "claude-local" if eff.provider == "subscription" else "claude-bedrock")
+    return json.dumps({"backend": backend, "model": model,
+                       **({"provider": "bedrock"} if eff.provider == "bedrock" else {})})
 
 
 class AgentRunError(RuntimeError):
@@ -788,10 +863,11 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     from . import _request_ctx, structured, usage as usage_lib
 
     hub_dir = Path(hub_dir)
-    model_id = (spec.get("model") or "").strip() or _resolve_model_id(hub_dir, settingslib.load(hub_dir))
+    eff = effective_model(hub_dir, spec.get("model"))
+    model_id = eff.model
     want_json = spec.get("response_format") == "json"
     schema = spec.get("schema") if want_json and isinstance(spec.get("schema"), dict) else None
-    native = schema is not None and not (model_id == "codex-local" or model_id.startswith("codex-local/"))
+    native = schema is not None and eff.engine != "codex"
     prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json and not native else "")
     path_used = "native" if native else ("prompted" if want_json else None)
     system = spec.get("system")
@@ -808,10 +884,11 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     admission.__enter__()          # refused here: nothing ran, nothing recorded
     try:
         from . import testing_runtime
-        if testing_runtime.is_test_model(model_id):
+        check_bedrock(model_id)
+        if eff.engine == "test":
             text, usage = testing_runtime.complete(spec, model_id=model_id)
             path_used = "test" if want_json else None
-        elif model_id == "codex-local" or model_id.startswith("codex-local/"):
+        elif eff.engine == "codex":
             from .factory_codex import CodexRuntime
             async def codex_complete():
                 rt = CodexRuntime(name="workflow", instructions=system or "Answer the user's request.",
@@ -823,7 +900,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
                     raise AgentRunError(str(rt.last_error)) from rt.last_error
                 return answer, measured
             text, usage = asyncio.run(bounded(codex_complete()))
-        elif model_id.lower().startswith("claude-local"):
+        elif eff.engine == "claude":
             from .factory_claude import claude_complete
 
             text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id,
@@ -835,7 +912,8 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
 
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}]
-            kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget}
+            kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget,
+                            **litellm_region(model_id)}
             bound = budgets.output_bound(model_id, prompt + (system or ""))
             if bound is not None:
                 kwargs["max_tokens"] = bound      # what the dollar limit still allows
@@ -909,7 +987,9 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
 
     hub_dir = Path(hub_dir)
     engine = station["engine"]
-    model_setting = f"{engine}/{station['model']}" if station.get("model") else engine
+    model_setting = f"{engine}/{station['model']}" if station.get("model") else (
+        "bedrock/sonnet" if engine == "bedrock" else engine)
+    check_bedrock(model_setting)
     schema = station.get("schema")
     if registry is None:
         registry = station_tools.for_station(hub_dir, station.get("tools") or ())
@@ -918,7 +998,7 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
     status = "error"
 
     async def go():
-        if engine == "claude-local":
+        if engine in ("claude-local", "bedrock"):
             from .factory_claude import claude_station
 
             text, structured_out, measured = await claude_station(
@@ -941,7 +1021,7 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             if rt.last_error is not None:
                 raise AgentRunError(f"codex station run failed: {rt.last_error}") from rt.last_error
             return text, None, measured
-        raise AgentRunError(f"Stations run on claude-local or codex-local, not {engine!r}.")
+        raise AgentRunError(f"Stations run on claude-local, bedrock or codex-local, not {engine!r}.")
 
     async def bounded():
         from .sandbox.tools import closing

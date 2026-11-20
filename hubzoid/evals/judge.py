@@ -349,11 +349,10 @@ def parse_verdict(text: str) -> tuple[int | None, str]:
 def resolve_model(hub_dir: Path, override: str | None = None) -> str:
     """Judge model: `--judge-model` > HUBZOID_EVAL_JUDGE_MODEL > the hub's own."""
     explicit = (override or os.environ.get(JUDGE_MODEL_ENV) or "").strip()
-    if explicit:
-        return explicit
     from .. import runtime as runtime_lib
-    from .. import settings as settingslib
-    return runtime_lib._resolve_model_id(hub_dir, settingslib.load(hub_dir))
+
+    # A bare name (`opus`) follows the hub's provider, as everywhere else.
+    return runtime_lib.follow_hub(hub_dir, explicit or None)
 
 
 async def _ask_claude_local(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
@@ -379,6 +378,9 @@ async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
     bound = budgets.output_bound(model_id, _SYSTEM + prompt)
     if bound is not None:
         kwargs["max_tokens"] = bound
+    from ..runtime import litellm_region
+
+    kwargs.update(litellm_region(model_id))
     resp = await litellm.acompletion(
         model=model_id,
         messages=[{"role": "system", "content": _SYSTEM},
@@ -404,15 +406,17 @@ async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) 
 
     from .. import budgets, usage as usage_lib
 
+    from ..runtime import classify
+
+    on_claude = classify(model_id).engine == "claude"
     if hub_dir is None:
-        call = _claude_with_usage(model_id, prompt) if model_id.lower().startswith("claude-local") \
-            else _ask_litellm(model_id, prompt)
+        call = _claude_with_usage(model_id, prompt) if on_claude else _ask_litellm(model_id, prompt)
         return (await call)[0]
     ticket = await asyncio.to_thread(budgets.admit, hub_dir, model=model_id, run_id=f"eval-judge-{time.time()}")
     token = budgets._CURRENT.set(ticket)
     started, usage, status = time.monotonic(), {}, "error"
     try:
-        if model_id.lower().startswith("claude-local"):
+        if on_claude:
             text, usage = await _claude_with_usage(model_id, prompt, hub_dir=hub_dir)
         else:
             text, usage = await _ask_litellm(model_id, prompt)

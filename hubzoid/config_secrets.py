@@ -637,7 +637,7 @@ def deployment_view(env: Mapping[str, str]) -> dict[str, str]:
     return _without(env, _HUB_ONLY)
 
 
-def child_env_overrides(env: Mapping[str, str]) -> dict[str, str]:
+def child_env_overrides(env: Mapping[str, str], *, bedrock: bool | None = None) -> dict[str, str]:
     """Values to set in an agent child's environment. {key: ""} blanks a key.
 
     Blanks, when present: the secret names, SERVICE_SECRET_KEYS and every
@@ -646,8 +646,12 @@ def child_env_overrides(env: Mapping[str, str]) -> dict[str, str]:
     Every key the restricted layers set in this process goes back to the hub
     layers' value, or is blanked when those layers do not set it. The claude
     CLI's own ANTHROPIC_* and CLAUDE_* keys are kept, except the two Hubzoid
-    backup OAuth slots. Only the selected credential reaches an agent child."""
-    bedrock = _truthy(env.get("CLAUDE_CODE_USE_BEDROCK"))
+    backup OAuth slots. Only the selected credential reaches an agent child.
+
+    `bedrock` says this child runs on Bedrock (`MODEL=bedrock/...`, where
+    Hubzoid sets CLAUDE_CODE_USE_BEDROCK for the child only). None keeps the
+    older rule: the flag in `env` itself."""
+    bedrock = _truthy(env.get("CLAUDE_CODE_USE_BEDROCK")) if bedrock is None else bedrock
     vertex = _truthy(env.get("CLAUDE_CODE_USE_VERTEX"))
     out: dict[str, str] = {}
     for key in env:

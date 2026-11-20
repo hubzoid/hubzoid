@@ -3662,6 +3662,13 @@ _STARTER_ENV = """\
 # OPENAI_API_KEY=
 # MODEL=openai/gpt-4o-mini
 
+# --- Amazon Bedrock (your own AWS account; optional) --------------------------
+# Claude on Bedrock runs on the same Claude runtime, billed by AWS. Prefer an
+# instance or task role, or AWS_PROFILE, to access keys. See docs/bedrock.md.
+# MODEL=bedrock/sonnet          # or bedrock/opus, bedrock/haiku, a Bedrock id
+# AWS_REGION=ap-south-1         # required: the hub won't start without a region
+# AWS_PROFILE=
+
 # --- Jev decisions (hub.call_jev and the call_jev chat tool, experimental) --
 # A dedicated OpenRouter key used only for Jev. OPENROUTER_API_KEY above is
 # never used for Jev, and the chat model never uses this key. The chat tool
