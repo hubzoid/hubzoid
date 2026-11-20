@@ -251,6 +251,33 @@ Skipped, with reasons:
 
 Also found against a real account: ap-south-1 offers the 5.5 models only as `global.` profiles and has an `in.` prefix, so the id rules accept any geography prefix and the docs say what that region offers.
 
+## Proof record (20 November 2026)
+
+Real AWS run on the Isha test account `isha-bedrock` (960645510865, role Ai-Bedrock-access), region ap-south-1, Hubzoid `feat/bedrock-s1` with claude-agent-sdk 0.2.162 (Claude Code 2.1.285), from a laptop, on the test hub `HubzoidTestHub/bedrock-e2e`. Pins kept in India: `ANTHROPIC_BEDROCK_REGION_PREFIX=in`, Sonnet `in.anthropic.claude-sonnet-5`, Opus `in.anthropic.claude-opus-5`, Haiku `in.anthropic.claude-haiku-4-5-20251001-v1:0`.
+
+| Check | Result |
+|---|---|
+| `tests/e2e/test_bedrock_e2e.py` (Haiku and Sonnet on the Claude runtime, Nova Pro `apac.amazon.nova-pro-v1:0` on LiteLLM, doctor) | 4 passed |
+| Chat, two turns with a tool call (`reverse_string`), through `runtime.build` and `stream_events` | Tool called both turns. Answered by `in.anthropic.claude-sonnet-5`. Turn 2 read 19,393 cached tokens. Writes were `ephemeral_1h_input_tokens` |
+| `HUBZOID_CACHE_TTL=5m` | Writes were `ephemeral_5m_input_tokens` only |
+| `HUBZOID_DISABLE_PROMPT_CACHE=1` | No cache reads or writes |
+| A run with `model: opus` (the scheduled-task path, `runtime.build(model=...)`) | Answered by `in.anthropic.claude-opus-5` |
+| Mixed hub: `model: claude-local/sonnet` on the Bedrock hub | Answered on the subscription by `claude-sonnet-5-5`, row model `claude-sonnet-5-5` |
+| `hub.call_llm` on the hub's model | Row model `bedrock/claude-sonnet-5` with the CLI's cost |
+| Cost | The CLI reported a cost on every Bedrock call (for example 0.054 USD for a first chat turn) |
+| Doctor with the `in.` pins | ok: region, identity and all four ids found |
+| Doctor with the default `apac.` prefix | fail, naming the prefixes the account has (`global.`, and `in.` for Haiku 4.5) |
+| Subscription regression on Claude Code 2.1.285 | `tests/e2e/test_reply_check.py` and `test_delegate_e2e.py` passed |
+
+What ap-south-1 offers this account: the 5.5 models only as `global.` profiles, `in.` profiles for Sonnet 5, Opus 5 and Haiku 4.5, and `apac.` for older Claude models and Nova Pro.
+
+Not proven here:
+
+- CloudTrail evidence: the role is denied `cloudtrail:LookupEvents`. The model ids in each response (`in.anthropic...`) and the subscription answer naming `claude-sonnet-5-5` show which provider served each call.
+- Cost Explorer comparison: needs a day of usage and `ce:GetCostAndUsage`.
+- The web app in a browser, `hubzoid restart` under the supervisor, and the web search switch on a running hub. The chat path ran through the same runtime calls the web app makes, without the HTTP layer.
+- A restricted IAM role (needs IAM admin on the account) and a box in ap-south-1 (this ran from a laptop against ap-south-1).
+
 ## References
 
 - Claude Code on Amazon Bedrock, environment variables and prompt caching docs (links above).
