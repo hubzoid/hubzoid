@@ -42,21 +42,16 @@ _TOKEN_SHAPES = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
     r"|xox[abposr]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}"
     r"|AKIA[0-9A-Z]{16}|hz[pb]_[A-Za-z0-9_-]{16,})\b")
-# Credentials in URLs and access-log lines: one-time sign-in values, and keys a
-# client puts in a query string (``?api_key=``, which the edge logged in full).
-_URL_CREDENTIAL_NAMES = frozenset({
-    "token", "code", "state", "api_key", "api-key", "apikey", "key", "access_token", "refresh_token",
-    "id_token", "client_secret", "password", "secret", "signature", "sig"})
+# Credentials in URLs and access-log lines (sign-in values, ``?api_key=``).
 
 
 def _query_value(match: "re.Match") -> str:
-    """A query parameter, its value redacted when its name (percent-decoded,
-    so ``api%5Fkey`` counts as ``api_key``) is a credential's."""
+    """A query value, redacted when its (percent-decoded) name is a credential's."""
     from urllib.parse import unquote
 
-    sep, name, value = match.group(1), match.group(2), match.group(3)
-    if unquote(name).strip().lower() in _URL_CREDENTIAL_NAMES and value:
-        return f"{sep}{name}={REDACTED}"
+    name = unquote(match.group(2)).strip().lower()
+    if match.group(3) and (is_secret_key(name) or name in {"code", "state", "key", "signature", "sig"}):
+        return f"{match.group(1)}{match.group(2)}={REDACTED}"
     return match.group(0)
 
 

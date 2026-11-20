@@ -1155,10 +1155,7 @@ def _warn_retired(hub: Path) -> None:
 
 
 def _note_public_url_in_local_mode(auth_on: bool, public_url: str | None = None) -> None:
-    """Sign-in off with a public URL (a tunnel for webhooks, say): say that
-    visitors through it are not the owner. Signed webhooks still arrive; only
-    someone on this machine is the owner (``auth.sessions.local_request_allowed``).
-    ``public_url`` is one given on the command line (``gateway --public-url``)."""
+    """Sign-in off with a public URL: say that visitors through it aren't the owner."""
     from . import appmode
 
     if auth_on or appmode.unauthenticated_network_allowed():

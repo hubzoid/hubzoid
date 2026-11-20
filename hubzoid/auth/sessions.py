@@ -17,26 +17,8 @@ A session is created only if the account has not changed since its
 credential was read (``expect_updated_at``): a password reset, role or status
 change racing a sign-in can't leave a session that outlives it.
 
-Local mode (sign-in off): a request made on this machine is the local owner,
-``admin@localhost``. Because that owner is implicit, a request is the owner only
-when all of these hold (``local_request_allowed``):
-
-* it names this server by ``localhost`` (or a ``.localhost`` name), a loopback
-  address, or the address the server listens on, so a web page reaching it
-  through DNS rebinding (its own host name) is refused;
-* it carries no header a proxy or tunnel adds (``appmode.FORWARDING_HEADERS``),
-  so a tunnel such as ngrok or Cloudflare Tunnel, whose local leg connects to
-  loopback, does not make internet visitors the owner;
-* the connection comes from this machine (the client address is loopback);
-* an ``Origin``, when sent, is this machine too (another site's page, or a
-  sandboxed page whose origin is ``null``, is not the owner).
-
-A raw TCP forward (``ssh -R``) adds no header and can't be told apart from a
-local visit: turn sign-in on before exposing the port that way.
-
-``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`` (the operator accepts that
-anyone who can reach the web app is its owner, for a trusted LAN or Docker)
-keeps the earlier, wider rule: any IP address or a configured origin's name.
+Local mode (sign-in off): only a request made on this machine is the local
+owner, ``admin@localhost`` (``local_request_allowed``; docs/auth.md).
 """
 from __future__ import annotations
 

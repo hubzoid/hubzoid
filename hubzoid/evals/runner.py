@@ -76,8 +76,7 @@ def judge_tools(rt) -> list[str]:
 
 
 def tool_inventory(rt, hub_dir=None):
-    """Every tool this hub declares, for checking the names a case names.
-    Never fails the run: an unknown inventory skips that check."""
+    """The hub's tools, for checking the names a case names; None on error."""
     try:
         from .judge import tool_inventory as inventory_of
         return inventory_of(rt, hub_dir)

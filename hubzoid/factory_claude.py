@@ -594,10 +594,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     )
     child_env = _child_env(hub_model)
     if agent_defs:
-        # A delegate answers within the turn, as on the OpenAI and Codex
-        # backends: without this the model may start one in the background and
-        # the turn ends before its answer. It also keeps a long MCP call in the
-        # turn instead of moving it to the background, which Hubzoid wants too.
+        # A delegate answers within the turn, as on the other backends.
         child_env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
     if child_env:
         opts_kwargs["env"] = child_env
@@ -1035,10 +1032,7 @@ def _guarded(options, guard):
 
 
 def _connector_allowlists(options) -> dict[str, set[str]]:
-    """``{server key: allowed tool names}`` for this turn's MCP servers whose
-    tools are limited to an allow-list (a connector's ``tools:``), read from the
-    options: such a server has named ``mcp__<key>__<tool>`` entries in
-    ``allowed_tools`` and no ``mcp__<key>__*``."""
+    """``{server key: allowed tools}`` for MCP servers limited by a connector's ``tools:``."""
     out: dict[str, set[str]] = {}
     keys = sorted((str(k) for k in (getattr(options, "mcp_servers", None) or {}) if k != _MCP_NAMESPACE),
                   key=len, reverse=True)
@@ -1051,33 +1045,14 @@ def _connector_allowlists(options) -> dict[str, set[str]]:
     return out
 
 
-_TOOL_LIST_TTL = 60.0
-_TOOL_LIST_MAX = 256
-_tool_lists: dict[tuple[str, str], tuple[float, list[str]]] = {}
-
-
 async def _list_server_tools(spec: dict) -> list[str]:
-    """The tool names an HTTP MCP server offers this caller, cached for a minute
-    per URL and credential. Raises when the server can't be listed."""
-    import hashlib
-    import json
-    import time
+    """The tool names an HTTP MCP server offers this caller."""
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
 
     from .loaders.mcp import call_timeout
 
-    key = (str(spec.get("url")), hashlib.sha256(json.dumps(spec.get("headers") or {}, sort_keys=True)
-                                                .encode()).hexdigest())
-    now = time.monotonic()
-    for stale in [k for k, (at, _names) in _tool_lists.items() if now - at >= _TOOL_LIST_TTL]:
-        _tool_lists.pop(stale, None)   # a rotated token's entry never comes back
-    hit = _tool_lists.get(key)
-    if hit is not None:
-        return hit[1]
-
     async def fetch() -> list[str]:
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
         names: list[str] = []
         async with streamablehttp_client(str(spec["url"]), headers=dict(spec.get("headers") or {})) as (r, w, _):
             async with ClientSession(r, w) as session:
@@ -1091,21 +1066,12 @@ async def _list_server_tools(spec: dict) -> list[str]:
                         return names
 
     # Its own task: the MCP client's cancel scopes must open and close in one task.
-    names = await asyncio.wait_for(asyncio.ensure_future(fetch()), timeout=min(call_timeout(), 10.0))
-    while len(_tool_lists) >= _TOOL_LIST_MAX:
-        _tool_lists.pop(next(iter(_tool_lists)))       # the oldest entry
-    _tool_lists[key] = (time.monotonic(), names)
-    return names
+    return await asyncio.wait_for(asyncio.ensure_future(fetch()), timeout=min(call_timeout(), 10.0))
 
 
 async def _hide_unlisted_connector_tools(options):
-    """Show the model only a connector's allowed tools, as the OpenAI and Codex
-    backends do (their MCP client filters the list). Claude's CLI lists a
-    server's tools itself, so the others are named in ``disallowed_tools``,
-    which removes them from what the model sees. A connector whose tools can't
-    be listed is left out of this turn (fail closed, like the other backends).
-    The PreToolUse hook (``_identity_checked``) also refuses a call outside the
-    allow-list, so a tool the server adds after this listing can't be used."""
+    """Hide a connector's tools outside its allow-list (``disallowed_tools``), as the
+    other backends do; a connector that can't be listed is left out of the turn."""
     import dataclasses
 
     limits = _connector_allowlists(options)
@@ -1115,11 +1081,8 @@ async def _hide_unlisted_connector_tools(options):
     allowed = list(options.allowed_tools or [])
     hidden = list(getattr(options, "disallowed_tools", None) or [])
     for key, names in limits.items():
-        spec = servers.get(key)
-        if not isinstance(spec, dict) or spec.get("type") != "http" or not spec.get("url"):
-            continue
         try:
-            listed = await _list_server_tools(spec)
+            listed = await _list_server_tools(servers[key])
         except Exception as exc:  # noqa: BLE001 - can't tell what to hide: leave the connector out
             log.warning("connector %s: its tools could not be listed (%s), so it is left out of this turn",
                         key, type(exc).__name__)
@@ -1205,8 +1168,6 @@ def _identity_checked(options, hub_dir, ident):
         full = str((tool_input or {}).get("tool_name") or "")
         found = owners(full) if full.startswith("mcp__") else []
         if found and found[0] in limits and full[len("mcp__") + len(found[0]) + 2:] not in limits[found[0]]:
-            # Outside the connector's allowed tools: hidden from the model, and
-            # refused here too (a tool the server added after the listing).
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                            "permissionDecisionReason": "This connector does not allow this tool."}}
         if for_app and len(found) > 1:

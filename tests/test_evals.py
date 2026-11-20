@@ -529,16 +529,13 @@ def _named(**fields):
                            expect_tool_args=fields.get("args", {}))
 
 
-def test_an_unknown_tool_name_fails_with_the_closest_one():
+def test_an_unknown_tool_name_fails():
     from hubzoid.evals.judge import ToolInventory
 
     inv = ToolInventory(frozenset({"reset_password", "read_knowledge", "load_skill"}))
     (check,) = assertions.check_tool_names(_named(forbid=["reset_pasword"]), inv)
-    assert not check.passed and check.kind == "tool_name"
-    assert "forbid_tools: no tool named reset_pasword" in check.detail and "closest: reset_password" in check.detail
+    assert not check.passed and check.detail == "forbid_tools: no tool named reset_pasword in this agent"
     assert assertions.check_tool_names(_named(expect=["mcp__hubzoid__read_knowledge"]), inv) == []
-    (skill,) = assertions.check_tool_names(_named(args={"triage_ticket": {"x": "y"}}), inv)
-    assert "load_skill" in skill.detail                      # a skill is not a tool
     assert assertions.check_tool_names(_named(forbid=["nope"]), None) == []   # unknown inventory: no check
 
 
@@ -556,16 +553,6 @@ def test_names_under_run_time_servers_are_not_failed():
     assert assertions.check_tool_names(_named(forbid=["delete_user"]), open_ai) == []
 
 
-def test_a_claude_delegate_call_reads_as_its_handover_tool():
-    from hubzoid.evals.results import ToolCallRecord
-
-    case = _named(expect=["handover_password_reset"])
-    case.contains, case.not_contains = [], []
-    calls = [ToolCallRecord(name="Agent", args={"subagent_type": "Password Reset"})]
-    checks = assertions.run_free_checks(case, response="", tool_calls=["Agent"], tools=calls)
-    assert checks and all(c.passed for c in checks)
-
-
 def test_the_runner_fails_a_case_whose_forbid_name_never_exists(tmp_path, patched_build):
     hub = _hub(tmp_path, {"t.md": "---\nforbid_tools: [http_gett]\n---\nwho am i"})
     rt = FakeRuntime(replies={"who am i": "you are shreya"})
@@ -573,7 +560,7 @@ def test_the_runner_fails_a_case_whose_forbid_name_never_exists(tmp_path, patche
     patched_build(rt)
     suite = runner.run_suite(hub, cases.discover(hub))
     assert not suite.ok
-    assert "no tool named http_gett in this agent (closest: http_get)" in suite.cases[0].reason
+    assert "no tool named http_gett in this agent" in suite.cases[0].reason
 
 
 def test_a_known_empty_inventory_still_checks_names():
@@ -583,12 +570,13 @@ def test_a_known_empty_inventory_still_checks_names():
     assert not check.passed
 
 
-def test_a_claude_delegate_call_counts_for_argument_checks_too():
+def test_a_claude_delegate_call_reads_as_its_handover_tool():
     from hubzoid.evals.results import ToolCallRecord
 
-    case = _named(args={"handover_password_reset": {"prompt": "reset alice"}}, forbid=["handover_password_reset"])
+    case = _named(expect=["handover_password_reset"], args={"handover_password_reset": {"prompt": "reset alice"}},
+                  forbid=["handover_password_reset"])
     case.contains, case.not_contains = [], []
     calls = [ToolCallRecord(name="Agent", args={"subagent_type": "Password Reset", "prompt": "Please reset Alice"})]
     by_kind = {c.kind: c for c in assertions.run_free_checks(case, response="", tool_calls=["Agent"], tools=calls)}
-    assert by_kind["expect_tool_args"].passed
+    assert by_kind["expect_tools"].passed and by_kind["expect_tool_args"].passed
     assert not by_kind["forbid_tools"].passed and "reset" in by_kind["forbid_tools"].detail.lower()

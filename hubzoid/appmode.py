@@ -259,16 +259,12 @@ def is_loopback_host(host: str | None) -> bool:
 
 
 def is_loopback_name(host: str | None) -> bool:
-    """A name that can only mean this machine: ``localhost``, a ``.localhost``
-    name (RFC 6761) or a loopback address."""
+    """``localhost``, a ``.localhost`` name or a loopback address."""
     h = (host or "").strip().strip("[]").lower().rstrip(".")
     return h == "localhost" or h.endswith(".localhost") or is_loopback_host(h)
 
 
-#: Headers a proxy or tunnel adds (ngrok, Cloudflare Tunnel, nginx, Caddy,
-#: Tailscale Funnel ...). A browser on this machine sends none of them, and the
-#: edge sends a bridge ``X-Forwarded-For`` only for a request that did not come
-#: straight from this machine (``edge._request_headers``).
+#: Headers a proxy or tunnel adds; a browser on this machine sends none.
 FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host",
                       "cf-connecting-ip", "true-client-ip", "fastly-client-ip")
 
@@ -279,24 +275,16 @@ def is_forwarded(headers) -> bool:
 
 
 def unauthenticated_network_allowed(env: Mapping[str, str] | None = None) -> bool:
-    """``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true``: the operator accepts that,
-    with sign-in off, anyone who can reach the web app is its owner."""
+    """``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true``."""
     from .settings import truthy
 
     return truthy(_env("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", env))
 
 
 def non_local_origins(env: Mapping[str, str] | None = None, *, extra: str | None = None) -> list[str]:
-    """The configured public URL and allowed origins that are not this machine
-    (plus ``extra``, a public URL given on the command line). With sign-in off,
-    visitors through them are not the owner (a tunnel for signed webhooks still
-    works); ``hubzoid run`` and doctor say so."""
-    out = []
-    for origin in [extra or "", public_url(env)] + _env("HUBZOID_ALLOWED_ORIGINS", env).split(","):
-        o = normalize_origin(origin)
-        if o and not is_loopback_name(urlparse(o).hostname) and o not in out:
-            out.append(o)
-    return out
+    """Configured origins (plus ``extra``) that aren't this machine."""
+    out = [*allowed_origins(env), normalize_origin(extra)]
+    return list(dict.fromkeys(o for o in out if o and not is_loopback_name(urlparse(o).hostname)))
 
 
 def mode_summary(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> dict:

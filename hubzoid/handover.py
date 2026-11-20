@@ -66,22 +66,11 @@ def norm(model_id: str | None) -> str:
 
 def classify(sub_model: str | None, hub_model: str | None) -> str:
     """Return 'delegate' or 'skill' for a sub-agent given the hub's model."""
-    if not (sub_model or "").strip():
-        return "skill"
-    if not (hub_model or "").strip():
-        return "skill"
-    sub_model = follow(sub_model, hub_model)
-    if engine(sub_model) != engine(hub_model):
-        return "skill"
-    if norm(sub_model) == norm(hub_model):
-        return "skill"
-    return "delegate"
+    return "skill" if skill_reason(sub_model, hub_model) else "delegate"
 
 
 def skill_reason(sub_model: str | None, hub_model: str | None) -> str:
-    """Why `classify` makes this sub-agent a skill, in a few words ("" for a
-    delegate). Doctor and the load-time log say this, so a sub-agent that
-    quietly lost its own model and `tools:` list says why."""
+    """Why a sub-agent is a skill, in a few words ("" for a delegate)."""
     sub, hub = (sub_model or "").strip(), (hub_model or "").strip()
     if not sub:
         return "it names no model:"

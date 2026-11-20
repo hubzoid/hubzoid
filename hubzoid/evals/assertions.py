@@ -93,8 +93,7 @@ def _norm_tool(name: str) -> str:
 
 
 def _call_name(call) -> str:
-    """A call's tool name as every backend names it: Claude records a delegate
-    as its ``Agent`` tool with ``subagent_type``; the others as ``handover_<name>``."""
+    """Claude's ``Agent`` call with ``subagent_type`` reads as ``handover_<name>``."""
     name = getattr(call, "name", "") or ""
     args = getattr(call, "raw_args", None) or getattr(call, "args", None) or {}
     if name == "Agent" and isinstance(args, dict) and args.get("subagent_type"):
@@ -115,27 +114,17 @@ def _tool_known(name: str, inventory) -> bool:
 
 
 def check_tool_names(case, inventory) -> list[Check]:
-    """Each tool an eval names must exist in this agent, or the check can never
-    fire: a misspelled `forbid_tools` name used to pass forever. Names under an
-    MCP server or connector whose tools are only known at run time are not
-    failed. `inventory` is ``judge.tool_inventory``; None skips the check."""
+    """Fail a tool name that exists nowhere in the agent (``judge.tool_inventory``;
+    None skips), or the check could never fire."""
     if inventory is None:
         return []
-    import difflib
-
     out: list[Check] = []
     fields = (("expect_tools", case.expect_tools), ("forbid_tools", case.forbid_tools),
               ("expect_tool_args", list((getattr(case, "expect_tool_args", None) or {}).keys())))
     for field, names in fields:
         for name in names or []:
-            if _tool_known(name, inventory):
-                continue
-            close = difflib.get_close_matches(_norm_tool(name), sorted(inventory.names), n=1, cutoff=0.6)
-            hint = f" (closest: {close[0]})" if close else ""
-            if not close and not _norm_tool(name).startswith("mcp__"):
-                hint = (" (an MCP server's tool is mcp__<server>__<tool>; a skill is loaded with load_skill, "
-                        "check it with expect_tool_args: {load_skill: {name: ...}})")
-            out.append(Check("tool_name", False, f"{field}: no tool named {name} in this agent{hint}"))
+            if not _tool_known(name, inventory):
+                out.append(Check("tool_name", False, f"{field}: no tool named {name} in this agent"))
     return out
 
 
@@ -233,8 +222,6 @@ def run_free_checks(
 
         tools = [ToolCallRecord(name=n) for n in tool_calls]
     else:
-        # A Claude delegate call (Agent + subagent_type) reads as handover_<name>,
-        # for every check: names, forbidden-call details and argument checks.
         import dataclasses
 
         tools = [dataclasses.replace(c, name=_call_name(c)) if dataclasses.is_dataclass(c) else c
