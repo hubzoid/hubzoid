@@ -2,8 +2,12 @@
 
 # Deploy this hub on AWS, with agent turns on AgentCore
 
-> **Not yet verified on AWS.** These steps are being checked end to end in a
-> test account. Report what you find.
+> **Verified end to end on AWS** on 20 November 2026, in a test account in
+> ap-southeast-2 (Sydney): web chat, the `/v1` API, tools, knowledge,
+> approvals, Stop, files on EFS, a scheduled task, a code workflow and MCP with
+> this hub's own sign-in, with agent turns on the runner. A new chat's first
+> reply took about 16 seconds (32 for the first chat after a deploy), and later
+> replies about 5 seconds.
 
 `hubzoid deploy init aws` wrote three files: a `Dockerfile` (the Hubzoid image,
 ghcr.io/hubzoid/hubzoid:<version>, plus this hub's files and AWS's OpenTelemetry
