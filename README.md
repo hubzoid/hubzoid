@@ -31,7 +31,7 @@
 
 - **Your rules live in files you own.** Knowledge, skills and agent instructions are Markdown in a folder. Read them, edit them, version them in Git. [Authoring a hub](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
 - **One hub, three ways to use it.** Ask in **chat**, run repeatable **workflows** on demand or on a schedule, or bring the same knowledge and tools into Claude Code, ChatGPT or Codex over **MCP**. [Connect your assistant](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md)
-- **Runs on the login you already have.** Claude Code or Codex signed in on your machine is enough. A model API key works too, and so does Claude on Amazon Bedrock. [Choose a runtime](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
+- **Runs on the login you already have.** Claude Code or Codex signed in on your machine is enough. A model API key works too. [Choose a runtime](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
 - **Built for a team.** Sign-in, access per person and per agent, approvals before consequential actions, and a record of every run. [Team setup](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md)
 - **Open source and yours to host.** Apache-2.0, including team controls. Run it on your laptop, then on a server you control. [Deploying](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/README.md)
 
