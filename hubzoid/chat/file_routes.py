@@ -145,7 +145,11 @@ def mount(app: FastAPI, ctx) -> FileService:
         token = raw[7:].strip() if raw[:7].lower() == "bearer " else ""
         if token and not token.startswith("hzp_") and token in set(ctx.settings.bridge_api_keys):
             raise error(401, "unauthenticated", "Bridge keys upload to the bridge's own /v1/files.")
-        if token.count(".") == 2 and not token.startswith("hzp_"):
+        from ..auth.sessions import app_bearer
+
+        if token.count(".") == 2 and not token.startswith("hzp_") and not app_bearer(request, ctx.hub_dir):
+            # An embedding app's person. An API app's machine token is an
+            # account credential instead, handled below like a key.
             from ..embed import agui
 
             caller = await agui._caller(request, ctx.hub_dir)

@@ -325,9 +325,10 @@ def build_app() -> FastAPI:
         a person's key reaches them through the chat API's own checks."""
         auth = request.headers.get("authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
-        if token.startswith("hzp_") and not personal:
+        machine = token.count(".") == 2 and token not in api_keys
+        if (token.startswith("hzp_") or machine) and not personal:
             raise HTTPException(status_code=401, detail="invalid api key")
-        if token.startswith("hzp_") and hub_dir is not None:
+        if (token.startswith("hzp_") or machine) and hub_dir is not None:
             # A person's own API key: the call runs as them, within the key's
             # limits (``hubzoid.auth.api_keys``), not as the trusted front.
             from .auth import sessions as sessionlib
@@ -859,7 +860,7 @@ def _key_identity(hub_dir: Path, user, chat_id: str):
         record = run_identity.admit_or_refuse(
         hub_dir, run_kind="api", run_id=f"v1:{uuid.uuid4().hex}", acts_as_id=user.id,
         acts_as_email=user.email, started_from="api", origin_id=chat_id, person_present=False,
-        credential_kind="api_key", credential_id=user.credential_id,
+        credential_kind=user.credential, credential_id=user.credential_id,
         scope={"hubs": list(user.hubs)} if user.hubs is not None else None)
     except run_identity.NotAdmitted as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

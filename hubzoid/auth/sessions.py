@@ -312,9 +312,64 @@ def _key_user(request: Request, hub_dir: Path, token: str) -> AuthUser | None:
                     operations=info["operations"], hubs=hubs)
 
 
+def app_bearer(request: Request, hub_dir: Path) -> str:
+    """A machine JWT (``Authorization: Bearer <jwt>``) from a registered API
+    app (``apps:`` with an ``api:`` block), else "". Only routes the
+    credential: ``_app_user`` verifies it."""
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return ""
+    token = raw[7:].strip()
+    if token.startswith("hzp_") or token.count(".") != 2:
+        return ""
+    from ..embed import tokens
+
+    return token if tokens.api_app(Path(hub_dir), token) is not None else ""
+
+
+def _app_user(request: Request, hub_dir: Path, token: str) -> AuthUser:
+    """The account an API app's JWT acts as, within the app's operations. Like
+    a key, it never falls back to the cookie or the local owner, and a
+    refusal is final."""
+    from ..embed import tokens
+    from ..embed.config import AppsError
+    from . import api_keys
+
+    if request.cookies.get(SESSION_COOKIE):
+        raise HTTPException(status_code=400, detail={
+            "code": "ambiguous_credentials",
+            "message": "Send either a session cookie or a token, not both."})
+    try:
+        app, _claims = tokens.api_caller(Path(hub_dir), token)
+    except AppsError as exc:
+        status = exc.status if exc.status in (401, 403) else 503
+        raise HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
+    try:
+        from ..access import store_for
+        from . import users as userlib
+
+        account = userlib.find_by_email(Path(hub_dir), app.api.account)
+        suspended = account is not None and store_for(Path(hub_dir)).is_suspended(account["email"])
+    except (SQLAlchemyError, OSError, RuntimeError):
+        log.warning("auth: app token check failed (store unavailable)", exc_info=True)
+        raise HTTPException(status_code=503, detail=dict(_UNAVAILABLE))
+    if account is None or account.get("status") != "active" or suspended:
+        raise HTTPException(status_code=403, detail={
+            "code": "account_unavailable",
+            "message": f"The account this app acts as ({app.api.account}) can't be used. Ask an administrator."})
+    if not api_keys.allows(app.api.operations, request.method, request.url.path):
+        raise HTTPException(status_code=403, detail={
+            "code": "key_not_allowed",
+            "message": "This app's tokens can't do this. An administrator can add operations to its api block."})
+    return AuthUser(id=account["id"], email=account["email"], name=account["name"], role=account["role"],
+                    method="app_jwt", credential="app_jwt", credential_id=f"app:{app.id}",
+                    operations=app.api.operations, hubs=None)
+
+
 def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
     """Who is making this request, or None. A personal API key (bearer) is
-    checked first and never falls back to the cookie or the local owner.
+    checked first, then a machine JWT from an API app; neither ever falls back
+    to the cookie or the local owner.
     Local mode: the local owner."""
     hub_dir = Path(hub_dir)
     hit = _cached(request, hub_dir)
@@ -323,6 +378,11 @@ def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
     token = bearer_token(request)
     if token:
         user = _key_user(request, hub_dir, token)
+        _remember(request, hub_dir, user)
+        return user
+    machine = app_bearer(request, hub_dir)
+    if machine:
+        user = _app_user(request, hub_dir, machine)
         _remember(request, hub_dir, user)
         return user
     if not appmode.auth_enabled(hub_dir):

@@ -207,6 +207,18 @@ def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
         q = sa.select(api_keys.c.id).where(
             api_keys.c.id == credential_id, api_keys.c.revoked_at.is_(None),
             sa.or_(api_keys.c.expires_at.is_(None), api_keys.c.expires_at > now))
+    elif kind == "app_jwt":
+        # A machine token from an API app (``app:<id>``): the app is still
+        # registered, enabled and an API app. Removing or turning it off stops
+        # queued and running work, as revoking a key does. The token's own
+        # expiry was checked when the work was admitted, like a session's.
+        from ..embed.config import AppsError, service_for
+
+        try:
+            app = service_for(Path(hub_dir)).all().get(credential_id.removeprefix("app:"))
+        except AppsError:
+            return False
+        return bool(app is not None and app.enabled and app.api_only)
     else:
         return True
     with engine_for(Path(hub_dir)).connect() as conn:

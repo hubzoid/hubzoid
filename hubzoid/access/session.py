@@ -42,9 +42,18 @@ def credential(request: Request, hub_dir: Path | None) -> tuple[str, str]:
 
 
 def _key_only(request: Request) -> bool:
+    """An explicit credential and no cookie: a personal API key or a JWT-shaped
+    bearer (a machine token). A browser never sends either on its own, so a
+    cross-site page can't use them; the credential itself is checked by
+    ``hubzoid.auth.sessions``."""
     from ..auth.sessions import SESSION_COOKIE, bearer_token
 
-    return bool(bearer_token(request)) and not request.cookies.get(SESSION_COOKIE)
+    if request.cookies.get(SESSION_COOKIE):
+        return False
+    if bearer_token(request):
+        return True
+    raw = request.headers.get("authorization") or ""
+    return raw[:7].lower() == "bearer " and raw[7:].strip().count(".") == 2
 
 
 def require_same_origin(request: Request) -> None:

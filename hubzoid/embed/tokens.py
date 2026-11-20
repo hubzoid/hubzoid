@@ -220,9 +220,12 @@ def _scoped(app: App, claims: dict) -> Access | None:
     return Access(agents=frozenset(agents), tools=frozenset(tools))
 
 
-def verify(hub_dir: Path, token: str, *, now: float | None = None) -> AppCaller:
-    """The caller ``token`` names, or AppsError (401 invalid, 403 no access,
-    503 when the app's keys are unavailable)."""
+def verified_claims(hub_dir: Path, token: str, *, now: float | None = None) -> tuple[App, dict]:
+    """``(app, signed claims)`` of a token from a registered app: the app picked
+    by issuer and audience, enabled, signature with that app's keys, issuer,
+    audience, issued-at, not-before, expiry and the app's maximum lifetime.
+    Shared by the embedding policy (``verify``) and the API policy
+    (``api_caller``). AppsError otherwise."""
     from joserfc import jwt
     from joserfc.errors import JoseError
 
@@ -258,6 +261,41 @@ def verify(hub_dir: Path, token: str, *, now: float | None = None) -> AppCaller:
         raise refused("token_expired", "The token has expired. Get a new one from the app.")
     if exp - iat > app.max_lifetime or exp <= iat:
         raise refused("invalid_token", f"The token may last at most {app.max_lifetime} seconds.")
+    return app, claims
+
+
+def api_app(hub_dir: Path, token: str) -> App | None:
+    """The API app a JWT-shaped bearer claims to come from (by its unverified
+    issuer and audience), or None. Only routes the credential: ``api_caller``
+    verifies it."""
+    if token.count(".") != 2 or len(token) > MAX_TOKEN_BYTES:
+        return None
+    try:
+        _header, unverified = peek(token)
+        app = service_for(hub_dir).by_issuer(str(unverified.get("iss") or ""), unverified.get("aud"))
+    except Exception:  # noqa: BLE001 - not a token for any app: someone else's credential
+        return None
+    return app if app is not None and app.api_only else None
+
+
+def api_caller(hub_dir: Path, token: str, *, now: float | None = None) -> tuple[App, dict]:
+    """``(app, claims)`` for a machine JWT from an API app whose required
+    claims match. AppsError otherwise. The account is resolved by the caller."""
+    app, claims = verified_claims(hub_dir, token, now=now)
+    if not app.api_only:
+        raise refused("unknown_app", "This app embeds the chat; it can't call the Hubzoid API.", 403)
+    if not app.api.matches(claims):
+        raise refused("claims_not_allowed", "This token's claims aren't allowed for this app.", 403)
+    return app, claims
+
+
+def verify(hub_dir: Path, token: str, *, now: float | None = None) -> AppCaller:
+    """The caller ``token`` names, or AppsError (401 invalid, 403 no access,
+    503 when the app's keys are unavailable)."""
+    app, claims = verified_claims(hub_dir, token, now=now)
+    if app.api_only:
+        raise refused("unknown_app", "This app calls the Hubzoid API; it can't embed the chat.", 403)
+    iat, exp = _number(claims, "iat"), _number(claims, "exp")
     user_id = claims.get(app.user_claim)
     # The id exactly as signed: "alice" and " alice " are different people.
     if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 256:

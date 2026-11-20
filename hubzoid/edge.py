@@ -202,8 +202,13 @@ _PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
 
 
 def _personal_key(request) -> bool:
+    """A person's API key, or a JWT-shaped bearer (a machine token from an API
+    app). The bridge verifies either; bridge keys are never JWT-shaped."""
     auth = (request.headers.get("authorization") or "").strip()
-    return auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_")
+    if auth[:7].lower() != "bearer ":
+        return False
+    token = auth[7:].strip()
+    return token.startswith("hzp_") or (token.count(".") == 2 and len(token) <= 8192)
 
 
 def _personal_key_call(request, path: str | None = None) -> bool:
