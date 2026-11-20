@@ -1124,3 +1124,12 @@ def test_doctor_warns_when_a_status_rule_lacks_the_permission(hub_dir, status_ap
     checks = {c.id: c for c in setup.doctor_checks(conn, {})}
     assert checks["github:status-failures"].status == "warn"
     assert checks["github:permissions"].status == "ok"
+
+
+def test_a_long_linked_comment_keeps_its_start_and_its_end(hub_dir, status_api):
+    status_api.issue_comments[900]["body"] = "<!-- head:top -->\n" + "x" * 30000 + "\n<!-- head:end -->"
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    comment = out["data"]["jobs"][0]["comment"]
+    assert comment.startswith("<!-- head:top -->") and comment.endswith("<!-- head:end -->")
+    assert "characters left out" in comment and len(comment) < operations.STATUS_COMMENT_CHARS + 200

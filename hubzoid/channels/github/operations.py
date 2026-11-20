@@ -389,7 +389,12 @@ def _status_comment(conn, full: str, target_url, poster: str, number, rid: int) 
     author = ((c.get("user") or {}).get("login") or "").lower()
     if author != poster.lower() or not str(c.get("issue_url") or "").endswith(f"/issues/{int(number)}"):
         return None
-    return (c.get("body") or "")[:STATUS_COMMENT_CHARS]
+    body = c.get("body") or ""
+    if len(body) <= STATUS_COMMENT_CHARS:
+        return body
+    # The start and the end: a poster's metadata may sit at either.
+    keep = STATUS_COMMENT_CHARS // 2
+    return f"{body[:keep]}\n\n[... {len(body) - 2 * keep} characters left out ...]\n\n{body[-keep:]}"
 
 
 # -- writes ---------------------------------------------------------------------------
