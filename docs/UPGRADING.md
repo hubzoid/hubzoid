@@ -18,7 +18,7 @@ describe those releases as they were.
 
 ## Upgrading to 2.0.9
 
-Eight changes in behaviour. Nothing to migrate.
+Eight changes in behaviour, and four additive database changes that Hubzoid applies when it starts. Back up the operational database before upgrading, as for any release: migrations go forward only.
 
 | What changes | What to do |
 |---|---|
@@ -35,6 +35,11 @@ Also in 2.0.9:
 | **MCP access tokens are JWTs** (RS256, `typ: at+jwt`) that outside verifiers can check. Tokens issued before the upgrade keep working until they expire (ten minutes). Connected assistants need nothing. | Back up the operational database with the deployment key as before: the first signing key is kept there, encrypted. Or set `HUBZOID_MCP_SIGNING_KEY` ([MCP server](mcp-server.md#access-tokens-and-outside-verifiers)). |
 | **Only a key with the new `approve` operation decides.** A key with `manage` could approve, deny or resolve work-item operations through Settings; now only `approve` reaches those routes and `/api/requests/.../decisions`. `approve` is in no preset. | If a script decided work-item operations with a `manage` key, make a key with `--operations manage,approve` (or tick "Also decide approvals and questions" in Settings). |
 | **The API reference lists exactly the published routes**, with `stable` or `beta`, the key operations that may call each one, and the main shapes. It adds the chat engine, runs, hub changes, memory, notification webhooks, workflow runs and work-item decisions, and no longer lists the bridge-only `/v1/files`. | Nothing. See [the API](api.md#stability). |
+| **Four additive database changes**, applied at start: `op_0082` (a chat's Claude session cost), `op_0090` (the audit log table), `op_0083` (what started each usage row, cache and reasoning tokens) and `op_0084` (MCP signing keys). With a shared database, `hubzoid run` brings it up to date once before any hub starts. | Back up first. Nothing else. |
+| **A resumed Claude chat records each turn's own cost.** Claude Code reports a resumed session's running total, and each turn used to save that total, so chat costs read several times too high. | Nothing. Usage rows written before the upgrade keep the cost they recorded: they are not repaired. Compare costs from the upgrade on. |
+| **The Usage page shows where usage comes from**, with one period and agent filter for every section. Rows written before 2.0.9 count in every total and show as "Earlier, not tracked" where they lack the new fields. | Nothing ([administration](ADMINISTRATION.md)). |
+| **New, all off unless set:** a hub as its own service behind one web app, the audit log (`HUBZOID_AUDIT`), JSON logs, `/readyz`, hosting settings for the deployment key and database pool, guardrails in `AGENTS.md`, `hubzoid eval run --required` for CI, and GitHub `rules.status_failures`. | Nothing. To use them: [deployment](DEPLOYING.md), [audit log](AUDIT.md), [guardrails](guardrails.md), [CI for a hub](ci.md). A GitHub App that uses `status_failures` needs Commit statuses: read and the Status event ([GitHub](channels/github.md)). |
+| **New dependency:** `regex`, already installed with LiteLLM. | Nothing with pip or the Docker image. |
 
 ## Templates moved out of the package
 
