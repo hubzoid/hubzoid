@@ -369,7 +369,7 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
     from .. import _request_ctx
     from ..workflows import chat_link
 
-    env = {"trigger": "tool", "scope": "personal", "acts_as": actor,
+    env = {"trigger": "tool", "via": surface, "scope": "personal", "acts_as": actor,
            "acts_as_account": account, "started_by": actor, "inputs": data,
            "inputs_display": shown, "started_at": time.time()}
     chat = chat_link.origin(_request_ctx.native_session())

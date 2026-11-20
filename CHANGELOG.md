@@ -159,6 +159,19 @@ doctor, evals and the channel list say what used to fail silently.
   connection that takes over the 1.x Slack app's tokens says so instead of
   turning it off without a word.
 
+- **Usage shows where usage comes from, what it costs and how it runs.** One
+  period (24 hours, 7 days, 30 days) and an agent filter drive every section:
+  six totals with the change against the previous period, tokens and cost over
+  time (input, input read from cache, output), by channel, by what started the
+  calls (chat, schedules, by hand, events, MCP, evals), a sortable, searchable
+  table of agents with their monthly limits, response times (first words in web
+  chat, p50 and p95), by model and by person (admins only, searched and paged).
+  Settings › Agents gains pages and an errors column. New read-only endpoints
+  `GET /portal/api/usage` and `/portal/api/usage/people`. Usage rows now record
+  what started each call and, where the provider reports them, cache and
+  reasoning tokens (one additive migration, `op_0083`). Rows written before it
+  count in every total and show as "Earlier, not tracked".
+
 ### Changed
 - **A Claude id under `bedrock/` runs on the Claude runtime**, not LiteLLM.
   Write `bedrock/converse/<id>` to keep a Claude model on LiteLLM. No sample,

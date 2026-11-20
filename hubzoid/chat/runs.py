@@ -284,8 +284,11 @@ class RunManager:
                     app_scope.token_scope(ctx.hub_dir, caller), \
                     _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)
+                first_text = None  # when the answer itself started, not a tool or thinking event
                 try:
                     async for item in stream:
+                        if first_text is None and isinstance(item, str) and item.strip():
+                            first_text = time.monotonic()
                         chunks = run.builder.feed(item)
                         if chunks:
                             self._publish(run, chunks)
@@ -295,6 +298,8 @@ class RunManager:
                 finally:
                     await run_events.aclose(stream)
                     usage = _request_ctx.drain_usage()
+                    if first_text is not None:
+                        usage["first_token_ms"] = int((first_text - run.started) * 1000)
         except asyncio.CancelledError:
             status = "cancelled"
             task = asyncio.current_task()

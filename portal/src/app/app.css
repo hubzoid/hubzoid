@@ -50,6 +50,11 @@
   --hz-accent-soft: #f8e8df;
   --hz-accent-text: #b5471f;
   --hz-brand: #e5572a;
+  /* Charts: neutrals carry the data, --hz-brand marks the one series that matters. */
+  --hz-viz-ink: #3a3a3f;
+  --hz-viz-soft: #c9c8c3;
+  --hz-viz-track: #ecebe7;
+  --hz-viz-spark: #8a8a90;
   --hz-danger: #b3312c;
   --hz-danger-ink: #ffffff;
   --hz-danger-solid: #b3312c;
@@ -89,6 +94,10 @@
   --hz-accent-soft: #2b1f1a;
   --hz-accent-text: #f28b66;
   --hz-brand: #e5572a;
+  --hz-viz-ink: #d6d6d2;
+  --hz-viz-soft: #55555b;
+  --hz-viz-track: #2a2a2e;
+  --hz-viz-spark: #8a8a92;
   --hz-danger: #f0a09a;
   --hz-danger-ink: #0b0b0c;
   --hz-danger-solid: #e0716a;
@@ -2903,6 +2912,7 @@
   .hz-agents-filters button { height: 30px; padding: 0 10px; border-radius: 8px; font-size: .9286rem; font-weight: 500; color: var(--hz-mute); }
   .hz-agents-filters button:hover { color: var(--hz-ink); background: var(--hz-hover); }
   .hz-agents-filters button[aria-pressed="true"] { color: var(--hz-ink); background: var(--hz-active); font-weight: 600; }
+  .hz-agents-pager { display: flex; justify-content: flex-end; padding: 12px 4px 0; }
   .hz-agents-filters button span { margin-left: 4px; color: var(--hz-mute); font-variant-numeric: tabular-nums; }
   /* Its columns follow the list's own width, not the window's: beside the
      Settings nav a 1360px window leaves the list about 1050px (2.0.7 sweep). */
@@ -2911,7 +2921,7 @@
   .hz-set-main:has(.hz-agent-list), .hz-set-main:has(.hz-usage), .hz-set-main:has(.ant-table) { max-width: none; }
   .hz-agent-row {
     position: relative; display: grid; align-items: center; gap: 20px;
-    grid-template-columns: minmax(220px, 1.3fr) minmax(300px, 2fr) 80px 110px 110px 100px 160px 72px;
+    grid-template-columns: minmax(220px, 1.3fr) minmax(300px, 2fr) 80px 110px 110px 90px 100px 160px 72px;
     min-height: 80px; padding: 14px 16px; border-bottom: 1px solid var(--hz-line-soft); border-radius: 12px;
     transition: background-color 120ms var(--hz-ease);
   }
@@ -2933,20 +2943,20 @@
   @media (hover: none) { .hz-agent-acts { opacity: 1; } }
   /* Narrower: every column stays, tighter. */
   @container (max-width: 1330px) {
-    .hz-agent-row { gap: 16px; grid-template-columns: minmax(170px, 1.3fr) minmax(160px, 2fr) 60px 84px 84px 90px 120px 64px; }
+    .hz-agent-row { gap: 16px; grid-template-columns: minmax(170px, 1.3fr) minmax(160px, 2fr) 60px 84px 84px 64px 90px 120px 64px; }
   }
-  /* Then Spend and Last used go (Usage has them). */
+  /* Then Spend, Errors and Last used go (Usage has them). */
   @container (max-width: 980px) {
     .hz-agent-row { grid-template-columns: minmax(170px, 1.3fr) minmax(160px, 2fr) 60px 84px 120px 64px; }
-    .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7) { display: none; }
+    .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7), .hz-agent-row > :nth-child(8) { display: none; }
   }
   /* Then one card per agent. */
   @container (max-width: 780px) {
     .hz-agent-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 14px 12px; }
     .hz-agent-row.is-head { display: none; }
     .hz-agent-row > :nth-child(3) { grid-column: 1 / -1; padding-left: 54px; }
-    .hz-agent-row > :nth-child(4), .hz-agent-row > :nth-child(5), .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7) { display: none; }
-    .hz-agent-row > :nth-child(8) { grid-column: 1 / -1; padding-left: 54px; }
+    .hz-agent-row > :nth-child(4), .hz-agent-row > :nth-child(5), .hz-agent-row > :nth-child(6), .hz-agent-row > :nth-child(7), .hz-agent-row > :nth-child(8) { display: none; }
+    .hz-agent-row > :nth-child(9) { grid-column: 1 / -1; padding-left: 54px; }
     .hz-agent-acts { opacity: 1; justify-content: flex-start; grid-column: 2; grid-row: 1; }
   }
   a.hz-status { text-decoration: none; }
@@ -3002,6 +3012,78 @@
   .hz-held h4 { margin: 0 0 8px; font-size: .9286rem; font-weight: 600; color: var(--hz-ink); }
   .hz-held ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .hz-held li { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: .9286rem; }
+  /* Usage insights: one period and agent filter drive every card below. */
+  .hz-usage-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hz-usage-updated { font-size: .8571rem; color: var(--hz-mute); }
+  .hz-usage-notice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; margin: 0 0 16px; border-radius: 10px; background: var(--hz-sunken); font-size: .9286rem; color: var(--hz-body); }
+  .hz-usage-stats.is-six { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 16px; }
+  .hz-usage-stat-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+  .hz-usage-stat-sub.is-warn { color: var(--hz-warning); }
+  .hz-usage-stat-sub.is-bad { color: var(--hz-danger); }
+  .hz-usage-change { margin-top: 6px; font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-change b { font-weight: 600; color: var(--hz-body); }
+  .hz-usage-spark { width: 56px; height: 22px; flex: none; }
+  .hz-usage-card { border: 1px solid var(--hz-line); border-radius: 12px; background: var(--hz-bg); padding: 16px 18px; margin: 0 0 16px; min-width: 0; }
+  .hz-usage-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin: 0 0 16px; }
+  .hz-usage-grid2 > .hz-usage-card { margin: 0; }
+  .hz-usage-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .hz-usage-card-head h3 { margin: 0; font-size: 1.0714rem; font-weight: 600; color: var(--hz-ink); }
+  .hz-usage-card-head p { margin: 2px 0 0; font-size: .8929rem; color: var(--hz-mute); }
+  .hz-usage-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hz-usage-total { text-align: right; min-width: 90px; }
+  .hz-usage-total b { display: block; font-size: 1.2857rem; font-weight: 650; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
+  .hz-usage-total span { font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: .8571rem; color: var(--hz-body); }
+  .hz-usage-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 3px; vertical-align: -1px; }
+  .hz-usage-legend i.is-hatch { background: repeating-linear-gradient(45deg, var(--hz-line) 0 3px, transparent 3px 6px); border: 1px solid var(--hz-line); }
+  .hz-usage-bars2 { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) 72px 64px; gap: 10px 12px; align-items: center; font-size: .9286rem; }
+  .hz-usage-bars2 .is-th { font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-bars2 .is-r { text-align: right; font-variant-numeric: tabular-nums; }
+  .hz-usage-bars2 .is-sub { color: var(--hz-mute); font-size: .8571rem; }
+  .hz-usage-hbar { display: block; height: 10px; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--hz-viz-ink); }
+  .hz-usage-bars2 > span:hover .hz-usage-hbar { background: var(--hz-brand); }
+  .hz-usage-rt { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .hz-usage-rt > div { padding: 10px 12px; border-radius: 10px; background: var(--hz-canvas); }
+  .hz-usage-rt b { display: block; font-size: 1.2143rem; font-weight: 650; color: var(--hz-ink); font-variant-numeric: tabular-nums; }
+  .hz-usage-rt span { font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .hz-usage-who b { display: block; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--hz-ink); }
+  .hz-usage-who small { display: block; font-size: .8214rem; color: var(--hz-mute); }
+  .hz-usage-model { font-family: var(--font-mono, ui-monospace, monospace); font-size: .8929rem; color: var(--hz-ink); white-space: nowrap; }
+  .hz-usage-limit { min-width: 150px; }
+  .hz-usage-limit .hz-bar-text { font-size: .8214rem; margin-bottom: 4px; }
+  .hz-usage-table .ant-table-tbody > tr.clickable { cursor: pointer; }
+  .hz-chart { position: relative; }
+  .hz-chart svg { display: block; overflow: visible; }
+  .hz-chart-grid { stroke: var(--hz-line-soft); }
+  .hz-chart-base { stroke: var(--hz-line); }
+  .hz-chart-cross { stroke: var(--hz-mute); stroke-dasharray: 3 3; }
+  .hz-chart-axis { fill: var(--hz-mute); font-size: 11px; font-family: inherit; }
+  .hz-chart-end { fill: var(--hz-body); }
+  .hz-chart-hatch { fill: var(--hz-line); }
+  .hz-chart-dot { stroke: var(--hz-bg); stroke-width: 2; }
+  .hz-chart-tip { position: absolute; z-index: 3; min-width: 150px; padding: 8px 10px; border: 1px solid var(--hz-line); border-radius: 8px; background: var(--hz-raised); box-shadow: var(--hz-shadow-pop); font-size: .8571rem; white-space: nowrap; pointer-events: none; color: var(--hz-body); }
+  .hz-chart-tip b { display: block; margin-bottom: 4px; font-weight: 600; color: var(--hz-ink); }
+  .hz-chart-tip div { display: flex; justify-content: space-between; gap: 16px; }
+  .hz-chart-tip i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+  .hz-chart-table { max-height: 260px; overflow: auto; }
+  @media (max-width: 1100px) {
+    .hz-usage-stats.is-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .hz-usage-stats.is-six > li:nth-child(4) { border-left: 0; }
+    .hz-usage-stats.is-six > li:nth-child(n+4) { border-top: 1px solid var(--hz-line); }
+    .hz-usage-grid2 { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 767px) {
+    .hz-usage-stats.is-six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hz-usage-stats.is-six > li { border-left: 0; }
+    .hz-usage-stats.is-six > li:nth-child(even) { border-left: 1px solid var(--hz-line); }
+    .hz-usage-stats.is-six > li:nth-child(-n+2) { border-top: 0; }
+    .hz-usage-spark { display: none; }
+    .hz-usage-rt { grid-template-columns: minmax(0, 1fr); }
+    .hz-usage-bars2 { grid-template-columns: minmax(80px, 110px) minmax(0, 1fr) 64px; }
+    .hz-usage-bars2 .is-c4 { display: none; }
+    .hz-usage-who b { max-width: 180px; }
+  }
   @media (max-width: 767px) {
     .hz-usage-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .hz-usage-stats > li { border-left: 0; border-top: 1px solid var(--hz-line); }

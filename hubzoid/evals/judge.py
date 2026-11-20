@@ -372,7 +372,7 @@ async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
     """Single-turn call for any OpenAI/LiteLLM-routed model."""
     import litellm
 
-    from .. import budgets
+    from .. import budgets, usage as usage_lib
 
     kwargs = {}
     bound = budgets.output_bound(model_id, _SYSTEM + prompt)
@@ -395,7 +395,7 @@ async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
         cost = None
     return (resp.choices[0].message.content or "").strip(), {
         "input_tokens": getattr(u, "prompt_tokens", None), "output_tokens": getattr(u, "completion_tokens", None),
-        "cost_usd": cost, "model": model_id}
+        "cost_usd": cost, "model": model_id, **usage_lib.litellm_details(u)}
 
 
 async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
@@ -429,7 +429,7 @@ async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) 
             model=(usage or {}).get("model") or model_id, input_tokens=(usage or {}).get("input_tokens"),
             output_tokens=(usage or {}).get("output_tokens"), cost_usd=(usage or {}).get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
-            reservation=ticket.id if ticket else None)
+            reservation=ticket.id if ticket else None, trigger="eval", **usage_lib.usage_details(usage))
 
 
 def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):

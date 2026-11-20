@@ -1450,6 +1450,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 active_users=u.get("active_users", 0),
                 input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
                 cost_usd=u.get("cost_usd"), unpriced=u.get("unpriced", 0),
+                errors=u.get("errors", 0),
                 last_activity=u.get("last_activity"),
                 users_with_access=len(subjects - {"*"}),
                 everyone="*" in subjects,
@@ -1490,6 +1491,57 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     recording_since=usage["recording_since"], has_workflows=bool(with_work),
                     runs_available=runs_ok, totals=totals, hubs=rows,
                     user_accounts=user_accounts)
+
+    _BUCKETS = {"24h": 3600, "7d": 86400, "30d": 86400}
+
+    def _usage_scope(admin, hub: str | None) -> dict[str, str]:
+        """Hub name -> key for the hubs this admin sees, or just `hub` (404
+        when it is not one of them, so a delegate learns nothing of others)."""
+        scope = {Path(h["path"]).name: h["key"] for h in allowed_hubs(admin)}
+        if not hub:
+            return scope
+        picked = {name: key for name, key in scope.items() if key == hub}
+        if not picked:
+            raise HTTPException(404, "no such agent")
+        return picked
+
+    @router.get("/usage")
+    def usage_insights(period: str = "7d", hub: str | None = None, admin=Depends(require_admin)):
+        """The Usage page: totals with the previous period, tokens and cost
+        over time, by channel, by origin, by model, by agent and response
+        times, from hz_usage. Workflow runs, missed slots and accounts stay
+        on /summary."""
+        import time as _time
+
+        from . import db
+        from . import usage as usage_lib
+
+        if period not in _PERIODS:
+            raise HTTPException(422, "period must be one of 24h, 7d, 30d")
+        now = _time.time()
+        scope = _usage_scope(admin, hub)
+        data = usage_lib.insights(db.operational_engine(hub_dir), scope, now - _PERIODS[period], now,
+                                  _BUCKETS[period])
+        return dict(period=period, hub=hub, generated=now, **data)
+
+    @router.get("/usage/people")
+    def usage_people(period: str = "7d", hub: str | None = None, q: str = "", sort: str = "cost",
+                     order: str = "desc", page: int = 0, size: int = 8, admin=Depends(require_admin)):
+        """Who used the agents in the period, searched, sorted and paged."""
+        import time as _time
+
+        from . import db
+        from . import usage as usage_lib
+
+        if period not in _PERIODS:
+            raise HTTPException(422, "period must be one of 24h, 7d, 30d")
+        size = max(1, min(int(size), 100))
+        now = _time.time()
+        scope = _usage_scope(admin, hub)
+        data = usage_lib.people(db.operational_engine(hub_dir), scope, now - _PERIODS[period], now,
+                                q=q[:200], sort=sort, descending=order != "asc",
+                                offset=max(0, int(page)) * size, limit=size)
+        return dict(period=period, page=max(0, int(page)), size=size, **data)
 
     @router.get("/overview")
     def overview(admin=Depends(require_admin)):

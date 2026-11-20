@@ -515,7 +515,8 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
                              input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
                              cost_usd=raw.get("cost_usd"), status=status,
                              duration_ms=int((time.monotonic() - started) * 1000),
-                             reservation=raw.get("budget_reservation"))
+                             reservation=raw.get("budget_reservation"), trigger="mcp",
+                             **usage_lib.usage_details(raw))
         except Exception:  # noqa: BLE001 - the answer is not lost for a usage row
             log.warning("mcp: delegate usage not recorded", exc_info=True)
 

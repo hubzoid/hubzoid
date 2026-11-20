@@ -753,7 +753,11 @@ def claude_usage(message, answered_by: str | None = None, model_setting: str | N
         model = bedrock.PREFIX + bedrock.inner(model or model_setting or "")
     return {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out,
             "cost_usd": getattr(message, "total_cost_usd", None), "model": model,
-            "num_turns": getattr(message, "num_turns", None)}
+            "num_turns": getattr(message, "num_turns", None),
+            # Parts of input_tokens above. Claude reports no reasoning split:
+            # thinking is inside output_tokens.
+            "cache_read_tokens": int(get("cache_read_input_tokens", 0) or 0),
+            "cache_write_tokens": int(get("cache_creation_input_tokens", 0) or 0)}
 
 
 # (ResultMessage.usage key, model_usage key, weight relative to an input token)
@@ -1907,7 +1911,8 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                 final = getattr(message, "result", None)
                 structured_out = getattr(message, "structured_output", None)
                 full = claude_usage(message, answered_by, model_setting)
-                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model")}
+                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model",
+                                               "cache_read_tokens", "cache_write_tokens")}
                 if getattr(message, "is_error", False):
                     raise RuntimeError(
                         f"claude run ended with {getattr(message, 'subtype', 'error')}"
@@ -1965,7 +1970,8 @@ async def claude_station(message: str, *, instructions: str, registry: dict, sch
                 final = getattr(item, "result", None)
                 structured = getattr(item, "structured_output", None)
                 full = claude_usage(item, answered_by, model_setting)
-                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model")}
+                usage = {k: full[k] for k in ("input_tokens", "output_tokens", "cost_usd", "model",
+                                               "cache_read_tokens", "cache_write_tokens")}
                 usage["turns"] = full["num_turns"]
                 if getattr(item, "is_error", False):
                     raise RuntimeError(f"claude station run ended with {getattr(item, 'subtype', 'error')}")

@@ -401,6 +401,7 @@ class CodexRuntime:
             raise
         except Exception as exc:
             self._error.set(exc)
+            usage["status"] = "error"
             log.warning("Codex request failed (%s)", type(exc).__name__)
             kind = getattr(exc, "error_kind", None)
             if kind in agent_errors.PLAIN:
@@ -582,7 +583,14 @@ class CodexRuntime:
                         yield item.get("text", "")
                 elif method == "thread/tokenUsage/updated":
                     total = p.get("tokenUsage", {}).get("total", {})
+                    # cached, cache-write and reasoning tokens are parts of the
+                    # input and output totals, as the app-server reports them.
                     usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
+                    for ours, theirs in (("cache_read_tokens", "cachedInputTokens"),
+                                         ("cache_write_tokens", "cacheWriteInputTokens"),
+                                         ("reasoning_tokens", "reasoningOutputTokens")):
+                        if total.get(theirs) is not None:
+                            usage[ours] = total[theirs]
                 elif method == "turn/completed":
                     turn = p.get("turn") or {}
                     if think is not None:
@@ -617,12 +625,18 @@ def _combine_usage(records):
     from .usage import estimate_cost
     models = {row.get("model") for row in records}
     costs = [estimate_cost(row.get("model"), row.get("input_tokens"), row.get("output_tokens")) for row in records]
-    return {
+    out = {
         "model": next(iter(models)) if len(models) == 1 else None,
         "input_tokens": sum(row.get("input_tokens", 0) for row in records),
         "output_tokens": sum(row.get("output_tokens", 0) for row in records),
         "cost_usd": sum(costs) if all(cost is not None for cost in costs) else None,
     }
+    for key in ("cache_read_tokens", "cache_write_tokens", "reasoning_tokens"):
+        if any(key in row for row in records):
+            out[key] = sum(int(row.get(key) or 0) for row in records)
+    if any(row.get("status") == "error" for row in records):
+        out["status"] = "error"
+    return out
 
 
 def _persist_refreshed_auth(original: Path, temporary: Path, initial: bytes) -> None:

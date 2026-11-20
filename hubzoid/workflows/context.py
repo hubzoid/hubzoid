@@ -853,10 +853,10 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         work=work if work is not None else {},
     )
     token = _run.set(ctx)
-    from ..usage import run_tag
+    from ..usage import run_tag, run_trigger
 
     try:
-        with run_tag(ctx.run_id):
+        with run_tag(ctx.run_id, trigger=run_trigger(ctx.run.get("trigger") or "schedule", ctx.run.get("via"))):
             if identity:
                 from ..access import Identity, identity_scope
 

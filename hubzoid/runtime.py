@@ -727,6 +727,8 @@ def _record_openai_usage(result, model: str | None = None, *, status: str = "ok"
             return
         inp = int(getattr(usage, "input_tokens", 0) or 0)
         out = int(getattr(usage, "output_tokens", 0) or 0)
+        from . import usage as usage_lib
+
         _request_ctx.record_usage({
             "input_tokens": inp,
             "output_tokens": out,
@@ -735,6 +737,7 @@ def _record_openai_usage(result, model: str | None = None, *, status: str = "ok"
             "num_turns": getattr(usage, "requests", None),
             "model": model,
             "status": status,
+            **usage_lib.litellm_details(usage),
         })
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("openai usage capture skipped: %s", exc)
@@ -834,7 +837,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
             cost_usd=raw.get("cost_usd"), status=status,
             duration_ms=int((time.monotonic() - started) * 1000),
-            reservation=raw.get("budget_reservation"),
+            reservation=raw.get("budget_reservation"), **usage_lib.usage_details(raw),
         )
 
 
@@ -949,7 +952,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
                 cost = None
             usage = {"input_tokens": getattr(u, "prompt_tokens", None),
                      "output_tokens": getattr(u, "completion_tokens", None),
-                     "cost_usd": cost, "model": model_id}
+                     "cost_usd": cost, "model": model_id, **usage_lib.litellm_details(u)}
         parsed = structured.extract_json(text) if want_json else None
         result = {"text": text, "json": parsed, "model": usage.get("model") or model_id}
         if path_used:
@@ -964,6 +967,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             chat_id=chat_id,
             model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
+            **usage_lib.usage_details(usage),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
             reservation=budgets.current_id(),
         )
@@ -1079,5 +1083,6 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             model=(usage or {}).get("model") or model_setting,
             input_tokens=(usage or {}).get("input_tokens"), output_tokens=(usage or {}).get("output_tokens"),
             cost_usd=(usage or {}).get("cost_usd"), status=status,
-            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id())
+            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id(),
+            **usage_lib.usage_details(usage))
         admission.__exit__(None, None, None)

@@ -136,7 +136,8 @@ async def _record_usage(hub_dir, case, started: float) -> None:
         usage_lib.record, hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="eval",
         subject=None, chat_id=_chat_id(case), model=raw.get("model"), input_tokens=raw.get("input_tokens"),
         output_tokens=raw.get("output_tokens"), cost_usd=raw.get("cost_usd"), status=raw.get("status") or "ok",
-        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"))
+        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"),
+        trigger="eval", **usage_lib.usage_details(raw))
 
 
 async def _consume(rt, prompt: str, turn_no: int, out: _Turn) -> None:

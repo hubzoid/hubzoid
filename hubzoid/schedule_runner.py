@@ -547,6 +547,7 @@ def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: flo
         input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
         cost_usd=raw.get("cost_usd"), status=raw.get("status") or status,
         duration_ms=int((time.monotonic() - t0) * 1000), reservation=raw.get("budget_reservation"),
+        **usage_lib.usage_details(raw),
     )
 
 
@@ -704,7 +705,9 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             failure = None
             try:
                 # All rounds of this run are one run for budgets.yaml.
-                with _request_ctx.chat_scope(None), usage_lib.run_tag(run_key):
+                with _request_ctx.chat_scope(None), \
+                        usage_lib.run_tag(run_key, trigger=usage_lib.markdown_origin(getattr(task, "run_id", None),
+                                                                                     events)):
                     try:
                         reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
                         # A usage limit (or refused login, or overload) reads as a
