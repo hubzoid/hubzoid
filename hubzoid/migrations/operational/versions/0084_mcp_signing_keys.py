@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "op_0084"
-down_revision = "op_0090"  # after the audit events (2.0.9); the release places op_0083
+down_revision = "op_0083"  # 2.0.9 chain: 0081 > 0082 > 0090 > 0083 > 0084
 branch_labels = None
 depends_on = None
 

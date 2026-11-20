@@ -151,3 +151,10 @@ def test_the_route_runs_as_the_signed_in_person(tmp_path, monkeypatch):
     gone = c.post("/portal/api/my/runs", json={"hub": hub, "workflow": "program_report"},
                   headers={"origin": "http://testserver"})
     assert gone.status_code == 403
+
+
+def test_api_runs_count_as_manual_starts_in_usage():
+    from hubzoid import usage
+
+    assert usage.run_trigger("api", "api") == "manual"
+    assert usage.run_trigger("tool", "mcp") == "mcp"
