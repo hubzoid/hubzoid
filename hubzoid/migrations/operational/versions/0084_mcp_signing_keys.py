@@ -7,8 +7,8 @@ key (``secretbox``); the public JWK is published at the issuer's ``/jwks``.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "op_0082"
-down_revision = "op_0081"
+revision = "op_0084"
+down_revision = "op_0090"  # after the audit events (2.0.9); the release places op_0083
 branch_labels = None
 depends_on = None
 
