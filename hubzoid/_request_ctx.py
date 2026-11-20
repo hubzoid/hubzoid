@@ -366,12 +366,18 @@ class SessionSlot:
     Codex thread, OpenAI Session). ``resume_id`` and ``delta_prompt`` come in:
     a runtime that can resume sends only the new turn into that session; any
     other runtime ignores the slot and uses the full prompt. ``session_id``
-    goes out: the session the run ended in, for the next turn of the branch."""
+    goes out: the session the run ended in, for the next turn of the branch.
+    ``resume_cost`` comes in and ``session_cost`` goes out the same way: the
+    session's running cost as the runtime reported it, so a runtime that
+    reports a resumed session's total (Claude Code) records only the turn."""
 
     def __init__(self, resume_id: str | None = None, delta_prompt: str | None = None,
-                 images: list[str] | None = None, delta_images: list[str] | None = None):
+                 images: list[str] | None = None, delta_images: list[str] | None = None,
+                 resume_cost: float | None = None):
         self.resume_id = resume_id
         self.delta_prompt = delta_prompt
+        self.resume_cost = resume_cost if resume_id else None
+        self.session_cost: float | None = None
         #: the branch's images (``delta_images``: the new turn's only), see ``turn_images``.
         self.images = images
         self.delta_images = delta_images or []
