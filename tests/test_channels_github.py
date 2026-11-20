@@ -965,3 +965,162 @@ def test_manual_intake_route_defaults_to_plan(intake):
     conn, admitted = intake
     setup.manual_intake(conn, url=URL, task="go")
     assert admitted[0].data["route"] == "plan"
+
+
+# -- failed commit statuses (rules.status_failures) ---------------------------------------
+
+SHA = "a" * 40
+DESK = {"context": "engineering-desk/review", "poster": "desk-bot"}
+
+
+class StatusGitHub(FakeGitHub):
+    """FakeGitHub plus the reads a failed status needs."""
+
+    def __init__(self):
+        super().__init__()
+        self.pulls = [{"number": 7, "state": "open", "title": "Factory change", "html_url": "https://github.com/p/7",
+                       "head": {"sha": SHA, "ref": "factory/7-change"}, "base": {"repo": {"id": 2001}}}]
+        self.statuses = [{"context": "engineering-desk/review", "state": "failure", "description": "1 blocking",
+                          "creator": {"login": "desk-bot"},
+                          "target_url": "https://github.com/example-co/widget/pull/7#issuecomment-900"}]
+        self.issue_comments = {900: {"id": 900, "user": {"login": "desk-bot"}, "body": "Blocking: fix x",
+                                     "issue_url": "https://api.github.com/repos/example-co/widget/issues/7"}}
+        self.status_denied = False
+
+    def __call__(self, request):
+        path = request.url.path
+        if path.endswith(f"/commits/{SHA}/pulls"):
+            self.calls.append(("GET", path, {}))
+            return httpx.Response(200, json=self.pulls)
+        if path.endswith(f"/commits/{SHA}/status"):
+            self.calls.append(("GET", path, {}))
+            if self.status_denied:
+                return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+            return httpx.Response(200, json={"state": "failure", "statuses": self.statuses})
+        if path.endswith(f"/commits/{SHA}/check-runs"):
+            return httpx.Response(200, json={"check_runs": []})
+        m = re.fullmatch(r"/repos/[^/]+/[^/]+/issues/comments/(\d+)", path)
+        if m:
+            c = self.issue_comments.get(int(m.group(1)))
+            return httpx.Response(200, json=c) if c else httpx.Response(404, json={})
+        return super().__call__(request)
+
+
+@pytest.fixture
+def status_api(monkeypatch):
+    fake = StatusGitHub()
+    monkeypatch.setattr(gh, "transport", httpx.MockTransport(fake))
+    return fake
+
+
+def status_body(*, state="failure", context="engineering-desk/review", login="desk-bot", sha=SHA, sid=1):
+    return {"id": sid, "sha": sha, "state": state, "context": context, "description": "1 open finding, 1 blocking",
+            "target_url": "https://github.com/example-co/widget/pull/7#issuecomment-900",
+            "repository": REPO, "installation": INSTALL, "sender": {"id": 9, "login": login, "type": "User"}}
+
+
+def status_conn(hub_dir):
+    return app_conn(hub_dir, rules={"status_failures": [DESK]})
+
+
+def test_failed_status_from_its_poster_is_a_ci_failure_on_its_pull_request(hub_dir, status_api):
+    conn = status_conn(hub_dir)
+    out = deliver(conn, "status", status_body())
+    ev = admission.event_of(hub_dir, store.get_delivery(hub_dir, out.events[0]["id"]))
+    assert ev.kind == "ci_failure" and ev.origin.coordinates["number"] == 7
+    assert ev.data["failure_kind"] == "status" and ev.data["status_context"] == "engineering-desk/review"
+    assert ev.data["head_sha"] == SHA and ev.data["head_branch"] == "factory/7-change"
+    assert ev.data["status_poster"] == "desk-bot" and ev.data["bot_allowed"]
+    again = deliver(conn, "status", status_body(sid=2), "d9")
+    assert again.events[0]["status"] == "duplicate"        # one event per head and context
+
+
+@pytest.mark.parametrize("change", [{"state": "pending"}, {"state": "success"}, {"state": "error"},
+                                    {"context": "ci/other"}, {"login": "someone-else"}, {"sha": "not-a-sha"}])
+def test_other_statuses_start_nothing_and_never_call_github(hub_dir, status_api, change):
+    conn = status_conn(hub_dir)
+    out = deliver(conn, "status", status_body(**change))
+    assert out.events[0]["status"] == "ignored"
+    assert not any("/pulls" in c[1] for c in status_api.calls)
+
+
+def test_status_without_a_rule_is_ignored(hub_dir, status_api):
+    conn = app_conn(hub_dir)
+    assert deliver(conn, "status", status_body()).events[0]["status"] == "ignored"
+    assert not any("/pulls" in c[1] for c in status_api.calls)
+
+
+def test_status_without_a_sender_is_ignored(hub_dir, status_api):
+    conn = status_conn(hub_dir)
+    body = status_body()
+    body.pop("sender")
+    assert deliver(conn, "status", body).events[0]["status"] == "ignored"
+
+
+@pytest.mark.parametrize("pulls", ["none", "two", "closed", "other_head", "fork_base"])
+def test_status_needs_exactly_one_open_pull_request_with_that_head(hub_dir, status_api, pulls):
+    one = status_api.pulls[0]
+    status_api.pulls = {"two": [one, {**one, "number": 8}], "closed": [{**one, "state": "closed"}],
+                        "other_head": [{**one, "head": {"sha": "b" * 40, "ref": "x"}}],
+                        "fork_base": [{**one, "base": {"repo": {"id": 999}}}], "none": []}[pulls]
+    conn = status_conn(hub_dir)
+    assert deliver(conn, "status", status_body()).events[0]["status"] == "ignored"
+
+
+def test_ci_failure_context_returns_only_the_ruled_statuses(hub_dir, status_api):
+    status_api.statuses += [
+        {"context": "engineering-desk/review", "state": "failure", "creator": {"login": "mallory"},
+         "description": "spoof", "target_url": "https://github.com/example-co/widget/pull/7#issuecomment-900"},
+        {"context": "ci/other", "state": "failure", "creator": {"login": "desk-bot"}, "description": "x"},
+        {"context": "engineering-desk/review", "state": "error", "creator": {"login": "desk-bot"}}]
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    jobs = out["data"]["jobs"]
+    assert [j["name"] for j in jobs] == ["engineering-desk/review"]
+    assert jobs[0]["kind"] == "status" and jobs[0]["poster"] == "desk-bot"
+    assert jobs[0]["comment"] == "Blocking: fix x"
+    token = [c for c in status_api.calls if c[0] == "POST" and c[1].endswith("/access_tokens")
+             and "statuses" in c[2].get("permissions", {})]
+    assert token and token[-1][2]["permissions"] == {"metadata": "read", "statuses": "read"}
+
+
+@pytest.mark.parametrize("bad", ["author", "other_pr", "other_repo"])
+def test_the_linked_comment_is_followed_only_on_the_same_pull_request_and_poster(hub_dir, status_api, bad):
+    if bad == "author":
+        status_api.issue_comments[900]["user"] = {"login": "mallory"}
+    elif bad == "other_pr":
+        status_api.issue_comments[900]["issue_url"] = "https://api.github.com/repos/example-co/widget/issues/3"
+    else:
+        status_api.statuses[0]["target_url"] = "https://github.com/other/repo/pull/7#issuecomment-900"
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    assert "comment" not in out["data"]["jobs"][0]
+
+
+def test_without_the_status_permission_other_reads_still_work(hub_dir, status_api):
+    status_api.status_denied = True
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    assert out["data"]["jobs"] == [] and "Commit statuses" in out["data"]["statuses_note"]
+    assert operations.call(conn, "getIssueContext", {"repository_id": 2001, "number": 12})["data"]["issue"]
+    assert "statuses" not in gh.READ        # every other read keeps the permissions it always asked for
+
+
+def test_no_status_rule_means_no_status_read(hub_dir, status_api):
+    conn = app_conn(hub_dir)
+    operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    assert not any(c[1].endswith("/status") for c in status_api.calls)
+
+
+def test_new_apps_ask_for_statuses_but_doctor_does_not_require_it(hub_dir):
+    conn = app_conn(hub_dir)
+    m = setup.manifest(conn, "Acme factory")
+    assert m["default_permissions"]["statuses"] == "read" and "status" in m["default_events"]
+    assert "statuses" not in setup.PERMISSIONS
+
+
+def test_doctor_warns_when_a_status_rule_lacks_the_permission(hub_dir, status_api):
+    conn = status_conn(hub_dir)
+    checks = {c.id: c for c in setup.doctor_checks(conn, {})}
+    assert checks["github:status-failures"].status == "warn"
+    assert checks["github:permissions"].status == "ok"
