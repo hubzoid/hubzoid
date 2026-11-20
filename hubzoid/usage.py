@@ -436,8 +436,11 @@ def insights(engine, hubs: dict[str, str], since: float, until: float, bucket: i
 
 
 def subject_kind(subject: str | None) -> str:
-    """person, schedule (a legacy markdown task) or workflow, for a row's subject."""
-    s = subject or ""
+    """person, schedule (a legacy markdown task), workflow, or system for a row
+    with no subject (evals, and calls made outside a person's request)."""
+    if not subject:
+        return "system"
+    s = subject
     if s.startswith("workflow:md:"):
         return "schedule"
     if s.startswith("workflow:"):
@@ -481,7 +484,7 @@ def people(engine, hubs: dict[str, str], since: float, until: float, *, q: str =
             row["last"] = max(row["last"], float(last or 0))
     needle = (q or "").strip().lower()
     found = [r for r in rows.values()
-             if not needle or needle in (r["subject"] or "anonymous").lower()
+             if not needle or needle in (r["subject"] or "evals and system calls").lower()
              or any(needle in a.lower() for a in r["agents"])]
     field = _PEOPLE_SORTS.get(sort, "cost_usd")
     found.sort(key=lambda r: (r[field] if field != "subject" else (r["subject"] or "").lower()),

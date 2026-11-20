@@ -127,7 +127,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
 function Change({ now, before, label, unit = "%", absolute = false }: { now: number; before: number | null | undefined; label: string; unit?: string; absolute?: boolean }) {
   if (before == null) return null;
   const diff = absolute ? now - before : before > 0 ? Math.round(((now - before) / before) * 100) : null;
-  if (diff == null) return <span className="hz-usage-change">New since the previous {label}</span>;
+  if (diff == null) return <span className="hz-usage-change">None in the previous {label}</span>;
   if (Math.abs(diff) < (absolute ? 0.05 : 1)) return <span className="hz-usage-change">Same as the previous {label}</span>;
   const shown = absolute ? Math.abs(diff).toFixed(unit === " pts" ? 1 : 0) : Math.abs(diff);
   return <span className="hz-usage-change"><b>{diff > 0 ? "▲" : "▼"} {shown}{unit}</b> vs previous {label}</span>;
@@ -150,7 +150,7 @@ const rate = (t: UsageTotals) => (t.calls ? (t.errors / t.calls) * 100 : 0);
 function Totals({ d, s, agent, label }: { d: UsageInsights; s?: Summary; agent: string | null; label: string }) {
   const t = d.totals, p = d.previous;
   const runsFrom = s ? (agent ? s.hubs.find((h) => h.key === agent) : s.totals) : undefined;
-  const per = label.replace(/s$/, "");
+  const per = label;
   return (
     <ul className="hz-usage-stats is-six" aria-label="Totals">
       <Stat label="Messages" value={t.messages.toLocaleString()} sub={`Across ${t.chats.toLocaleString()} ${t.chats === 1 ? "conversation" : "conversations"}`}
@@ -466,7 +466,7 @@ function People({ period, hubParam, nameOf }: { period: string; hubParam: string
   const columns = useMemo<ColumnsType<UsagePerson>>(() => [
     { title: "Person or schedule", key: "name", sorter: true, sortOrder: order("name"), render: (_, r) => (
       <span className="hz-usage-who">
-        <span style={{ minWidth: 0 }}><b>{r.subject ?? "Anonymous"}</b><small>{r.kind === "person" ? "Person" : r.kind === "schedule" ? "Schedule" : "Workflow"}</small></span>
+        <span style={{ minWidth: 0 }}><b>{r.subject ?? "Evals and system calls"}</b><small>{r.kind === "person" ? "Person" : r.kind === "schedule" ? "Schedule" : r.kind === "workflow" ? "Workflow" : "No person"}</small></span>
       </span>) },
     { title: "Agents used", key: "agents", responsive: ["lg"], render: (_, r) => r.agents.map(nameOf).join(", ") },
     { title: "Messages", key: "messages", align: "right", sorter: true, sortOrder: order("messages"), responsive: ["md"],

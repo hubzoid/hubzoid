@@ -377,7 +377,7 @@ export type UsageInsights = {
   latency: { first_token_p50_ms: number | null; p50_ms: number | null; p95_ms: number | null };
 };
 export type UsagePerson = {
-  subject: string | null; kind: "person" | "schedule" | "workflow"; agents: string[];
+  subject: string | null; kind: "person" | "schedule" | "workflow" | "system"; agents: string[];
   messages: number; tokens: number; cost_usd: number; last: number;
 };
 export type UsagePeople = { period: string; page: number; size: number; total: number; rows: UsagePerson[] };

@@ -151,6 +151,9 @@ export function Lines({ labels, lines, format, tooltip, height = 180, label }: {
           <Axis width={width} height={height} max={max} right={R} format={format} />
           {hover && <line className="hz-chart-cross" x1={x(hover.i)} x2={x(hover.i)} y1={T} y2={height - B} />}
           {lines.map((l) => <path key={l.key} d={path(l.values)} fill="none" stroke={l.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />)}
+          {/* A point with no neighbour draws no line, so every point also gets a dot. */}
+          {lines.map((l) => l.values.map((v, i) => (v == null ? null
+            : <circle key={`${l.key}-${i}`} cx={x(i)} cy={y(v)} r={2.5} fill={l.color} />)))}
           {lines.map((l) => {
             const last = l.values.map((v, i) => [v, i] as const).filter(([v]) => v != null).pop();
             if (!last) return null;
