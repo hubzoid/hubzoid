@@ -284,6 +284,19 @@ export type AuditRow = {
   tool?: string;
   reason?: string;
   surface?: string;
+  /** Tool calls and sign-in events (HUBZOID_AUDIT with db). */
+  kind?: "access" | "tool" | "auth";
+  event?: string;
+  outcome?: "ok" | "error";
+  error?: string;
+  duration_ms?: number;
+  result_bytes?: number;
+  server?: string;
+  client?: string;
+  chat_id?: string;
+  run_id?: string;
+  args?: unknown;
+  locked_seconds?: number;
 };
 export type Overview = {
   hubs: number;
