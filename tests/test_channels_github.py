@@ -992,11 +992,15 @@ class StatusGitHub(FakeGitHub):
         if path.endswith(f"/commits/{SHA}/pulls"):
             self.calls.append(("GET", path, {}))
             return httpx.Response(200, json=self.pulls)
-        if path.endswith(f"/commits/{SHA}/status"):
+        if path.endswith(f"/commits/{SHA}/statuses"):
             self.calls.append(("GET", path, {}))
             if self.status_denied:
                 return httpx.Response(403, json={"message": "Resource not accessible by integration"})
-            return httpx.Response(200, json={"state": "failure", "statuses": self.statuses})
+            return httpx.Response(200, json=self.statuses)          # newest first, each with its creator
+        if path.endswith(f"/commits/{SHA}/status"):
+            # GitHub's combined status names no creator, so it cannot say who posted a status.
+            return httpx.Response(200, json={"state": "failure", "statuses": [
+                {k: v for k, v in x.items() if k != "creator"} for x in self.statuses]})
         if path.endswith(f"/commits/{SHA}/check-runs"):
             return httpx.Response(200, json={"check_runs": []})
         m = re.fullmatch(r"/repos/[^/]+/[^/]+/issues/comments/(\d+)", path)
@@ -1109,7 +1113,7 @@ def test_without_the_status_permission_other_reads_still_work(hub_dir, status_ap
 def test_no_status_rule_means_no_status_read(hub_dir, status_api):
     conn = app_conn(hub_dir)
     operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
-    assert not any(c[1].endswith("/status") for c in status_api.calls)
+    assert not any(c[1].endswith(("/status", "/statuses")) for c in status_api.calls)
 
 
 def test_new_apps_ask_for_statuses_but_doctor_does_not_require_it(hub_dir):
@@ -1133,3 +1137,12 @@ def test_a_long_linked_comment_keeps_its_start_and_its_end(hub_dir, status_api):
     comment = out["data"]["jobs"][0]["comment"]
     assert comment.startswith("<!-- head:top -->") and comment.endswith("<!-- head:end -->")
     assert "characters left out" in comment and len(comment) < operations.STATUS_COMMENT_CHARS + 200
+
+
+def test_only_the_newest_status_of_a_context_counts(hub_dir, status_api):
+    status_api.statuses.insert(0, {"context": "engineering-desk/review", "state": "success", "description": "fixed",
+                                   "creator": {"login": "desk-bot"}})       # newer than the failure
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    assert out["data"]["jobs"] == []
+

@@ -353,13 +353,18 @@ def _failed_statuses(conn, full: str, head: str, a: dict) -> tuple[list[dict], s
     rid = _int(a.get("repository_id"), "repository_id")
     try:
         sweb = gh.for_repo(conn, rid, gh.STATUS_READ)
-        combined = sweb.request("GET", f"/repos/{full}/commits/{head}/status", params={"per_page": 100}).json() or {}
+        # The list, newest first: unlike the combined status, it names who
+        # posted each status.
+        listed = sweb.request("GET", f"/repos/{full}/commits/{head}/statuses", params={"per_page": 100}).json() or []
     except Exception:  # noqa: BLE001 - say what is missing, never invent it
         return [], ("Commit statuses could not be read. The GitHub App needs the Commit statuses: read "
                     "permission (or the token needs access to statuses).")
+    latest: dict[str, dict] = {}
+    for s in listed:
+        latest.setdefault(s.get("context") or "", s)       # the newest of each context
     number = a.get("number")
     out = []
-    for s in combined.get("statuses") or []:     # the combined status keeps the latest per context
+    for s in latest.values():
         poster = (s.get("creator") or {}).get("login") or ""
         if s.get("state") != "failure" or rules.status_rule(s.get("context"), poster) is None:
             continue
