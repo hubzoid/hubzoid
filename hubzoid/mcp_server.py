@@ -273,7 +273,11 @@ def _registry_tool_class():
                 return ToolResult(content=refused, is_error=True)
             from . import _request_ctx
 
+            import time as _time
+
             from . import mcp_parity
+
+            started = _time.time()
 
             async def invoke():
                 out = await fn.on_invoke_tool(tool_ctx, args_json)
@@ -284,7 +288,8 @@ def _registry_tool_class():
                     _request_ctx.chat_scope(mcp_parity.space_id(ident)), \
                     _request_ctx.artifact_capture() as made:
                 try:
-                    text = await mcp_parity.settle_waiting(self._hub_dir, ident, await invoke(), invoke)
+                    text = await mcp_parity.settle_waiting(self._hub_dir, ident, await invoke(), invoke,
+                                                           since=started)
                 except Exception as exc:  # noqa: BLE001 — surface, don't crash the server
                     log.exception("mcp tool %s failed", fn.name)
                     return ToolResult(
@@ -464,17 +469,23 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                 from fastmcp.tools.tool import ToolResult
 
                 return ToolResult(content=refused, is_error=True)
+            import time as _time
+
             from . import mcp_parity
 
+            started = _time.time()
             with access.identity_scope(ident):
                 result = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
                 text = _first_text(result)
                 if result is not None and not result.is_error and mcp_parity._waiting(text):
                     async def again():
+                        # The app's whole answer (content, structured content, error flag).
                         out = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
-                        return _first_text(out) if out is not None else text
+                        return out if out is not None else text
 
-                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again)
+                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again, since=started)
+                    if not isinstance(settled, str):
+                        return settled
                     if settled != text:
                         from fastmcp.tools.tool import ToolResult
 

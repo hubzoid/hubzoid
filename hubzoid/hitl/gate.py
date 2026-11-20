@@ -50,8 +50,11 @@ def caller() -> service.Caller | None:
     if surface in ("workflow", "system"):
         return service.Caller(account_id=ident.user, email=ident.user, present=False, origin="workflow")
     origin = {"mcp": "mcp", "slack": "slack", "whatsapp": "whatsapp"}.get(surface.split("-")[0], "api")
+    # Over MCP the bound chat id is the person's file space, not a conversation:
+    # "allow for this chat" and the inbox's "Open chat" must not reach it.
+    conversation = None if origin == "mcp" else _request_ctx.get_chat_id()
     return service.Caller(account_id=ident.user, email=ident.user, present=True, origin=origin,
-                          conversation_id=_request_ctx.get_chat_id())
+                          conversation_id=conversation)
 
 
 def _arguments(input_str) -> object:

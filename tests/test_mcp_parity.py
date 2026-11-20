@@ -240,7 +240,7 @@ async def test_a_workflow_runs_questions_are_answered_in_place_or_sent_to_the_in
     waiting = json.dumps({"status": "waiting", "request_id": ask["id"], "kind": "question"})
     ident = Identity.make(user=X, groups=[], surface="mcp", account_id="ux")
 
-    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None))
+    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None, since=0))
     assert out["status"] == "waiting" and "https://hub.example/requests" in out["message"]
 
     class Answer:
@@ -257,7 +257,72 @@ async def test_a_workflow_runs_questions_are_answered_in_place_or_sent_to_the_in
     monkeypatch.setattr(mcp_parity, "can_elicit", lambda ctx=None: True)
     monkeypatch.setattr(mcp_parity, "_elicit", elicit)
     monkeypatch.setattr(mcp_parity, "NEXT_REQUEST_SECONDS", 3.0)
-    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None))
+    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None, since=0))
     assert out["status"] == "decided"
     assert 'Answered "Which warehouse?": North.' in out["message"] and 'Approved "Reserve 20".' in out["message"]
     assert service.get(hub, "parity", ask["id"])["answer"] == "North"
+
+
+@pytest.mark.asyncio
+async def test_only_the_callers_own_new_request_is_settled_and_plans_go_to_the_inbox(hub, monkeypatch):
+    """A tool result that only contains "waiting" JSON (a file, a page) never
+    reaches another person's request, an older request, or a plan in a form."""
+    import time
+
+    from hubzoid import mcp_parity
+    from hubzoid.access import Identity
+    from hubzoid.hitl import service
+
+    def waiting(req):
+        return json.dumps({"status": "waiting", "request_id": req["id"]})
+
+    y = service.Caller(account_id="uy", email=Y, origin="workflow", present=False)
+    theirs = service.create(hub, "parity", y, kind="approval", title="Pay supplier", workflow_id="run-y")
+    x_ident = Identity.make(user=X, groups=[], surface="mcp", account_id="ux")
+    assert await mcp_parity.settle_waiting(hub, x_ident, waiting(theirs), None, since=0) == waiting(theirs)
+
+    x = service.Caller(account_id="ux", email=X, origin="workflow", present=False)
+    old = service.create(hub, "parity", x, kind="approval", title="Old one", workflow_id="run-x")
+    later = time.time() + 60
+    assert await mcp_parity.settle_waiting(hub, x_ident, waiting(old), None, since=later) == waiting(old)
+
+    asked = []
+
+    async def elicit(ctx, message, response_type):
+        asked.append(message)
+
+    monkeypatch.setattr(mcp_parity, "can_elicit", lambda ctx=None: True)
+    monkeypatch.setattr(mcp_parity, "_elicit", elicit)
+    plan = service.create(hub, "parity", x, kind="approval", title="Deploy plan", workflow_id="run-p",
+                          subject={"url": "https://hub.example/p/1", "digest": "abc"})
+    out = json.loads(await mcp_parity.settle_waiting(hub, x_ident, waiting(plan), None, since=0))
+    assert out["status"] == "waiting" and "https://hub.example/requests" in out["message"] and not asked
+
+
+@pytest.mark.asyncio
+async def test_a_question_left_by_a_sub_agent_run_is_withdrawn_and_named(hub, monkeypatch):
+    from hubzoid import mcp_parity, run_events, runtime, usage
+    from hubzoid.access import Identity, identity_scope
+    from hubzoid.hitl import service
+
+    class Fake:
+        last_error = None
+
+        async def aopen(self): ...
+
+        async def aclose(self): ...
+
+    async def answer(rt, prompt):
+        who = service.Caller(account_id="ux", email=X, origin="mcp")
+        made.append(service.create(hub, "parity", who, kind="question", title="Which region?",
+                                   question="Which region?"))
+        return "Which region should I use?"
+
+    made = []
+    monkeypatch.setattr(runtime, "build", lambda hub_dir, **kw: Fake())
+    monkeypatch.setattr(run_events, "answer_only", answer)
+    monkeypatch.setattr(usage, "record", lambda *a, **kw: None)
+    with identity_scope(Identity.make(user=X, groups=[], surface="mcp", account_id="ux")):
+        out = await mcp_parity.run_delegate(hub, "deep", "handover_deep", "Plan the rollout")
+    assert "cannot be answered after its run" in out
+    assert service.get(hub, "parity", made[0]["id"])["status"] != "pending"

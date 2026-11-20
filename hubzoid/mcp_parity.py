@@ -266,12 +266,42 @@ def _waiting(text) -> dict | None:
     return None
 
 
-async def settle_waiting(hub_dir: Path, ident, text: str, rerun) -> str:
+#: The longest arguments shown in a form. Longer ones are approved in the inbox,
+#: where the person sees every character.
+ELICIT_ARGS_MAX = 4000
+
+
+def _created_at(req: dict) -> float:
+    import calendar
+
+    try:
+        return float(calendar.timegm(time.strptime(str(req.get("created_at")), "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _shown_arguments(req: dict) -> str | None:
+    """The request's arguments as the person will see them, whole, or None when
+    a form cannot show all of it (too long, or a plan document to open)."""
+    if req.get("subject"):
+        return None
+    if req.get("arguments") is None:
+        return ""
+    args = json.dumps(req.get("arguments"), default=str)
+    return args if len(args) <= ELICIT_ARGS_MAX else None
+
+
+async def settle_waiting(hub_dir: Path, ident, text: str, rerun, *, since: float):
     """When a call waits for a person: ask the caller in place if they may
     decide and their client can show a form. A tool's approval is recorded and
     the call runs once (``rerun``); a workflow run's question or approval is
     answered and the run carries on (``_settle_run_request``). Otherwise say
-    where to decide. Any other result comes back unchanged."""
+    where to decide. Any other result comes back unchanged.
+
+    Only a request this very call created (``since``) that the caller may see
+    is settled: a tool result that merely contains such JSON (a file, a web
+    page) never reaches another request. ``rerun`` may return text or a
+    ToolResult, which is passed back as it is."""
     waiting = _waiting(text)
     if waiting is None:
         return text
@@ -279,15 +309,16 @@ async def settle_waiting(hub_dir: Path, ident, text: str, rerun) -> str:
 
     hub_id = gate.hub_id_of(hub_dir)
     req = await asyncio.to_thread(service.get, hub_dir, hub_id, waiting["request_id"])
-    if not req:
-        return text
     account, email = getattr(ident, "account_id", None) or ident.user or "", ident.user or ""
+    if (not req or req.get("status") != "pending" or _created_at(req) < since - 2
+            or not service.visible_to(req, account, email)):
+        return text
     mine = service.eligible(req, account, email)
     ctx = _context()
     if not req.get("tool"):
         return await _settle_run_request(hub_dir, hub_id, req, account, email, mine, ctx)
-    if mine and can_elicit(ctx):
-        args = json.dumps(req.get("arguments"), default=str)[:1500] if req.get("arguments") is not None else ""
+    args = _shown_arguments(req)
+    if mine and args is not None and can_elicit(ctx):
         message = f"Approve \"{req.get('title') or req['tool']}\"?" + (f"\n\nWith: {args}" if args else "")
         result = await _elicit(ctx, message, ["Approve", "Reject"])
         if result is not None and result.action == "accept" and result.data in ("Approve", "Reject"):
@@ -360,7 +391,9 @@ async def _ask_run_request(ctx, req: dict, title: str) -> tuple[str | None, str 
         if result is None or result.action != "accept" or not str(result.data or "").strip():
             return None, None
         return "answer", str(result.data)
-    args = json.dumps(req.get("arguments"), default=str)[:1500] if req.get("arguments") is not None else ""
+    args = _shown_arguments(req)
+    if args is None:   # a plan to open, or more than a form shows: the inbox
+        return None, None
     result = await _elicit(ctx, f"Approve \"{title}\"?" + (f"\n\nWith: {args}" if args else ""),
                            ["Approve", "Reject"])
     if result is None or result.action != "accept" or result.data not in ("Approve", "Reject"):
@@ -449,6 +482,7 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
     prompt = (f"Hand the task below to the `{agent}` sub-agent with its tool, and reply with its answer "
               f"as it gave it. Do not do the task yourself.\n\nTask:\n{task}")
     started = time.monotonic()
+    started_at = time.time()
     raw: dict = {}
     status = "error"
     rt = runtime.build(hub_dir)
@@ -463,7 +497,7 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
         if err is not None:
             return f"[{tool}: the sub-agent did not finish ({type(err).__name__}). Try again shortly.]"
         status = "ok"
-        return text
+        return text + await asyncio.to_thread(_left_waiting, hub_dir, ident, started_at)
     except TimeoutError:
         return f"[{tool}: the sub-agent took longer than {int(DELEGATE_SECONDS)} seconds and was stopped.]"
     finally:
@@ -477,3 +511,35 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
                              reservation=raw.get("budget_reservation"))
         except Exception:  # noqa: BLE001 - the answer is not lost for a usage row
             log.warning("mcp: delegate usage not recorded", exc_info=True)
+
+
+def _left_waiting(hub_dir: Path, ident, since: float) -> str:
+    """What the finished sub-agent run left waiting for this person. Its run is
+    over, so a question it asked can no longer be answered: it is withdrawn.
+    An approval stays in the inbox; once approved, the same call runs once
+    when the sub-agent is asked again. Returns a note for the result, or ""."""
+    from .hitl import gate, service
+
+    hub_id = gate.hub_id_of(hub_dir)
+    account, email = getattr(ident, "account_id", None) or ident.user or "", ident.user or ""
+    try:
+        pending = [r for r in service.list_for(hub_dir, hub_id, account, email)
+                   if _created_at(r) >= since - 2 and not r.get("workflow_id")]
+    except Exception:  # noqa: BLE001 - the answer stands without the note
+        log.warning("mcp: requests from a sub-agent run could not be read", exc_info=True)
+        return ""
+    notes = []
+    for req in pending:
+        if req.get("kind") == "question":
+            try:
+                service.cancel(hub_dir, hub_id, req["id"], account_id=account, email=email,
+                               reason="the sub-agent run ended")
+            except service.RequestError:
+                pass
+            notes.append(f"It asked \"{req.get('title')}\", which cannot be answered after its run: "
+                         "ask the person and call the sub-agent again with the answer in the task.")
+        else:
+            notes.append(f"\"{req.get('title')}\" is waiting for approval in Hubzoid "
+                         f"({service.requests_url()}). Once approved, ask the sub-agent again.")
+    return ("\n\n[" + " ".join(notes) + "]") if notes else ""
+
