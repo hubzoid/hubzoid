@@ -30,14 +30,14 @@
 ## Why Hubzoid
 
 - **Your rules live in files you own.** Knowledge, skills and agent instructions are Markdown in a folder. Read them, edit them, version them in Git. [Authoring a hub](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
-- **One hub, three ways to use it.** Ask in **chat**, run repeatable **workflows** on demand or on a schedule, or bring the same knowledge and tools into Claude Code, ChatGPT or Codex over **MCP**. [Connect your assistant](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md)
+- **One hub, three ways to use it.** Ask in **chat**, run repeatable **workflows** on demand or on a schedule, or bring the same knowledge and tools into Claude Code or another assistant over **MCP**. [Connect your assistant](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md)
 - **Runs on the login you already have.** Claude Code or Codex signed in on your machine is enough. A model API key works too. [Choose a runtime](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
 - **Built for a team.** Sign-in, access per person and per agent, approvals before consequential actions, and a record of every run. [Team setup](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md)
-- **Open source and yours to host.** Apache-2.0, including team controls. Run it on your laptop, then on a server you control. [Deploying](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/README.md)
+- **Open source and yours to host.** Apache-2.0, including team controls. Run it on your laptop, then on a server you control. [Deployment overview](https://github.com/hubzoid/hubzoid/blob/main/docs/deploy/README.md)
 
 ## Quick start
 
-You need Python 3.11 or 3.12, and Claude Code or Codex signed in on this machine. No API key.
+You need Python 3.11 or 3.12, and Claude Code or Codex signed in on this machine. No API key. On Python 3.12, workflows also need SQLite 3.42 or later, or PostgreSQL. `hubzoid doctor my-hub` checks it.
 
 Paste this into Claude Code or Codex:
 
@@ -120,7 +120,7 @@ Complete agents built on Hubzoid, each in its own repository. Each one starts wi
   <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="https://raw.githubusercontent.com/hubzoid/hubzoid/72ac7bf1610c8a335b9b3ac3b536de8fdb6770f1/assets/shared-hub-light.svg" width="680">
 </p>
 
-For Claude Code, paste the connection command `hubzoid run` prints, open `/mcp` in Claude Code and approve the connection.
+For Claude Code, run the `claude mcp add --transport http ...` line that `hubzoid run` prints, open `/mcp` in Claude Code and approve the connection.
 
 ## Host it for your team
 
@@ -140,7 +140,7 @@ hubzoid run my-hub
 
 Open the one-time sign-in link it prints, set a password, and add teammates in **Settings → People & access**. Each person gets the agents and capabilities they need. Shared knowledge does not mean shared credentials or access to another person's private results.
 
-Every way of hosting works the same way: one image built from the hub's Git repository, one durable folder at `/data`, sign-in on, one public address, and weekly verified backups.
+The container options work the same way: one image built from the hub's Git repository, one durable folder at `/data`, sign-in on, one public address, and weekly verified backups.
 
 | Where | How | Status |
 |---|---|---|
@@ -165,7 +165,7 @@ Every way of hosting works the same way: one image built from the hub's Git repo
 
 [All guides](https://github.com/hubzoid/hubzoid/blob/main/docs/README.md) · [Website documentation](https://hubzoid.com/docs) · [Release notes](https://github.com/hubzoid/hubzoid/blob/main/CHANGELOG.md)
 
-The chat and its Settings come with `pip install hubzoid`: no separate UI or Node install. Hubzoid 2 no longer includes Open WebUI. Deployments that need it stay on 1.x (`pip install "hubzoid<2"`). Python 3.12 workflows need SQLite 3.42 or later, or PostgreSQL. `hubzoid doctor my-hub` checks this.
+The chat and its Settings come with `pip install hubzoid`: no separate UI or Node install. Hubzoid 2 no longer includes Open WebUI. Deployments that need it stay on 1.x (`pip install "hubzoid<2"`).
 
 ## Help, contributing and license
 

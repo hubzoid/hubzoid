@@ -343,7 +343,7 @@ Environment variables explicitly supported:
                          Seconds a proposed access change waits for
                          confirmation in the Console. Default 900.
   HUBZOID_CONNECT_JOURNEY
-                         Hub. true | false (default). Enables the
+                         Hub. true (default) | false. Enables the
                          connect_account tool and its bound link journey for
                          connecting a personal app account from chat.
   HUBZOID_CONNECT_TTL    Seconds a connection link stays valid. Default 600.

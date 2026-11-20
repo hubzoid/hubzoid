@@ -109,8 +109,7 @@ updates with published security advisories.
   and personal data can also be redacted. A blocked message never reaches the
   agent and is left out of later history. Decisions go to the access log and
   the Activity page, never with the message text. Off unless set; workflows,
-  images and tool results are not checked. These are the guards both Mastra
-  and Agno ship.
+  images and tool results are not checked.
 - **`hubzoid eval run --required`**: the CI release gate. It runs exactly the
   cases `quality/manifest.yaml` requires, chosen as doctor chooses them, and
   exits 2 when the gate cannot be trusted (no manifest, nothing required, a
@@ -202,6 +201,12 @@ updates with published security advisories.
   what started each call and, where the provider reports them, cache and
   reasoning tokens (one additive migration, `op_0083`). Rows written before it
   count in every total and show as "Earlier, not tracked".
+- **ClickUp channel** ([docs](docs/channels/clickup.md), #145). Move a task to a
+  status you choose, or add a tag, and the work happens on that task: questions
+  and results come back as comments, a reply from the person who asked answers
+  the question the work waits on, and the task's status can follow the work.
+  `hubzoid channels clickup setup` and `teardown` make and delete its webhooks,
+  and `members` lists the workspace's people to link with `hubzoid channels link`.
 - **Failed commit statuses as failed checks.** A GitHub connection's new
   `rules.status_failures` lists status contexts and the one login allowed to
   post each, for example Engineering Desk's `engineering-desk/review` gate. A

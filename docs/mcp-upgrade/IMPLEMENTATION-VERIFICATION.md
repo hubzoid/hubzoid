@@ -1,5 +1,9 @@
 # MCP OAuth implementation verification
 
+> Historical record of the first MCP OAuth branch. Since 2.0.9, access tokens
+> are signed JWTs and refresh tokens stay opaque. The current behaviour is in
+> [MCP server](../mcp-server.md).
+
 Branch: `feat/mcp-oauth-minimal`, based on `43babc3`.
 
 ## Delivered
