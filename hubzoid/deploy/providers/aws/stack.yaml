@@ -1,0 +1,741 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Hubzoid hub {{hub}} on AWS (written by `hubzoid deploy init aws`, Hubzoid {{version}}):
+  the hub service on ECS Fargate behind a load balancer and CloudFront, PostgreSQL on RDS,
+  the hub's data on EFS, and, when turned on, its agent turns on an Amazon Bedrock
+  AgentCore runner and its MCP server on an AgentCore MCP runtime.
+  Deploy twice: first with ImageTag empty (network, database, storage, image build),
+  then with the image tag CodeBuild pushed. See deploy/aws/README.md.
+
+Parameters:
+  HubName:
+    Type: String
+    Default: "{{hub_slug}}"
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{0,31}$"
+    Description: Names the stack's resources (letters, digits, '-').
+  RuntimeName:
+    Type: String
+    Default: "{{hub_ident}}"
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,39}$"
+    Description: Prefix of the AgentCore runtime names (<RuntimeName>_runner, <RuntimeName>_mcp).
+  HubFolder:
+    Type: String
+    Default: "{{hub}}"
+    Description: The hub's folder name inside the image (/hubs/<HubFolder>).
+  ImageTag:
+    Type: String
+    Default: ""
+    Description: The image tag CodeBuild pushed. Empty on the first deploy, which creates no services.
+  Runner:
+    Type: String
+    Default: agentcore
+    AllowedValues: [agentcore, local]
+    Description: agentcore runs agent turns on an AgentCore runner. local runs them in the hub service.
+  McpHost:
+    Type: String
+    Default: local
+    AllowedValues: [local, agentcore]
+    Description: agentcore also serves the hub's MCP server as an AgentCore MCP runtime (needs PublicHttps).
+  CodeWorkflows:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Run the hub's code workflows (workflows/) in the hub service (HUBZOID_SCHEDULES). Markdown schedules run either way.
+  Model:
+    Type: String
+    Default: claude-local
+    Description: The hub's model (MODEL). claude-local uses the Claude licence token.
+  ClaudeTokenSecret:
+    Type: String
+    Default: ""
+    Description: Name or ARN of a plain-text Secrets Manager secret holding the Claude licence token (`claude setup-token`). Optional.
+  DeploymentKeySecret:
+    Type: String
+    Default: ""
+    Description: Name or ARN of a plain-text secret holding HUBZOID_SECRET_KEY (Fernet keys). Empty keeps the key in a file on EFS.
+  AdminEmail:
+    Type: String
+    Default: ""
+    Description: The first administrator, created at the first start (HUBZOID_ADMIN_EMAIL).
+  AdminPasswordSecret:
+    Type: String
+    Default: ""
+    Description: Name or ARN of a plain-text secret holding the first administrator's password. Remove after the first sign-in.
+  PublicHttps:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Put CloudFront in front of the load balancer for an HTTPS address (needed for sign-in and MCP).
+  SecretsVersion:
+    Type: String
+    Default: "1"
+    Description: Change it (any value) after changing a secret you keep, so the stack reads it again and restarts the hub.
+  ServiceCpu:
+    Type: Number
+    Default: 512
+  ServiceMemory:
+    Type: Number
+    Default: 1024
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+  DbBackupDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+    Description: Days RDS keeps daily backups (an AWS free plan account allows 1).
+
+Conditions:
+  HasImage: !Not [!Equals [!Ref ImageTag, ""]]
+  UseRunner: !And [!Condition HasImage, !Equals [!Ref Runner, agentcore]]
+  Https: !Equals [!Ref PublicHttps, "true"]
+  UseMcp: !And [!Condition HasImage, !Condition Https, !Equals [!Ref McpHost, agentcore]]
+  HasClaude: !Not [!Equals [!Ref ClaudeTokenSecret, ""]]
+  WithCodeWorkflows: !Equals [!Ref CodeWorkflows, "true"]
+  HasKey: !Not [!Equals [!Ref DeploymentKeySecret, ""]]
+  HasAdmin: !Not [!Equals [!Ref AdminEmail, ""]]
+  HasAdminPassword: !Not [!Equals [!Ref AdminPasswordSecret, ""]]
+
+Resources:
+  # ---------------------------------------------------------------- network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: !Ref HubName}]
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${HubName}-public-a"}]
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${HubName}-public-b"}]
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${HubName}-private-a"}]
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{Key: Name, Value: !Sub "${HubName}-private-b"}]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway}
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: {RouteTableId: !Ref PublicRoutes, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway}
+  PublicRoutesA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRoutes}
+  PublicRoutesB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRoutes}
+  NatAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties: {Domain: vpc}
+  Nat:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatAddress.AllocationId, SubnetId: !Ref PublicSubnetA}
+  PrivateRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties: {RouteTableId: !Ref PrivateRoutes, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref Nat}
+  PrivateRoutesA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRoutes}
+  PrivateRoutesB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRoutes}
+  # Image layers from ECR (stored in S3) without NAT charges. Free.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRoutes]
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${HubName} load balancer"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${HubName} hub service"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 3080, ToPort: 3080, SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup}
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${HubName} AgentCore runtimes (outbound only)"
+      VpcId: !Ref Vpc
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${HubName} database"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref ServiceSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref RunnerSecurityGroup}
+  FilesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${HubName} EFS"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref ServiceSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref RunnerSecurityGroup}
+
+  # ---------------------------------------------------------------- database
+  DatabasePassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${HubName}/database-password"
+      GenerateSecretString: {PasswordLength: 32, ExcludePunctuation: true}
+  DatabaseSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${HubName} database"
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: "17.11"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: hubzoid
+      MasterUsername: hubzoid
+      MasterUserPassword: !Join ["", ["{{resolve:secretsmanager:", !Ref DatabasePassword, ":SecretString}}"]]
+      DBSubnetGroupName: !Ref DatabaseSubnets
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref DbBackupDays
+      CopyTagsToSnapshot: true
+
+  # ---------------------------------------------------------------- files
+  Files:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      BackupPolicy: {Status: ENABLED}
+      FileSystemTags: [{Key: Name, Value: !Ref HubName}]
+  FilesTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Ref PrivateSubnetA, SecurityGroups: [!Ref FilesSecurityGroup]}
+  FilesTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Ref PrivateSubnetB, SecurityGroups: [!Ref FilesSecurityGroup]}
+  # The hub's data folder, as the image's user (hubzoid, 999) on both hosts.
+  FilesAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "999", Gid: "999"}
+      RootDirectory:
+        Path: /data
+        CreationInfo: {OwnerUid: "999", OwnerGid: "999", Permissions: "750"}
+
+  # ---------------------------------------------------------------- secrets
+  # Everything the hub reads at start (AWS_SECRET_NAME), assembled from the
+  # database password and the secrets named in the parameters. Change one of
+  # those, then deploy the stack again to refresh it.
+  DeploymentSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${HubName}/deployment"
+      Description: Assembled by the stack. Do not edit it; edit the secrets it names, then change SecretsVersion.
+      SecretString: !Join
+        - ""
+        - - '{"HUBZOID_SECRETS_VERSION":"'
+          - !Ref SecretsVersion
+          - '","DATABASE_URL":"postgresql://hubzoid:'
+          - !Join ["", ["{{resolve:secretsmanager:", !Ref DatabasePassword, ":SecretString}}"]]
+          - "@"
+          - !GetAtt Database.Endpoint.Address
+          - ':5432/hubzoid"'
+          - !If [HasClaude, !Join ["", [',"CLAUDE_CODE_OAUTH_TOKEN":"{{resolve:secretsmanager:', !Ref ClaudeTokenSecret, ':SecretString}}"']], ""]
+          - !If [HasKey, !Join ["", [',"HUBZOID_SECRET_KEY":"{{resolve:secretsmanager:', !Ref DeploymentKeySecret, ':SecretString}}"']], ""]
+          - !If [HasAdminPassword, !Join ["", [',"HUBZOID_ADMIN_PASSWORD":"{{resolve:secretsmanager:', !Ref AdminPasswordSecret, ':SecretString}}"']], ""]
+          - "}"
+
+  # ---------------------------------------------------------------- image
+  ImageRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref HubName
+      ImageScanningConfiguration: {ScanOnPush: true}
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep the last 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}'
+  BuildBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}}]
+      LifecycleConfiguration:
+        Rules: [{Id: expire-sources, Status: Enabled, ExpirationInDays: 30}]
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}}
+      Policies:
+        - PolicyName: build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${HubName}-image*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub "${BuildBucket.Arn}/*"
+              - Effect: Allow
+                Action: [s3:GetBucketLocation, s3:ListBucket]
+                Resource: !GetAtt BuildBucket.Arn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecr:BatchCheckLayerAvailability, ecr:CompleteLayerUpload, ecr:InitiateLayerUpload,
+                         ecr:PutImage, ecr:UploadLayerPart, ecr:BatchGetImage, ecr:GetDownloadUrlForLayer]
+                Resource: !GetAtt ImageRepository.Arn
+  # Builds the hub's arm64 image from source.zip (the hub folder) in the build bucket:
+  #   aws codebuild start-build --project-name <HubName>-image --environment-variables-override name=IMAGE_TAG,value=<tag>
+  ImageBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${HubName}-image"
+      ServiceRole: !GetAtt BuildRole.Arn
+      Source:
+        Type: S3
+        Location: !Sub "${BuildBucket}/source.zip"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - aws ecr get-login-password | docker login --username AWS --password-stdin "${IMAGE_REPO%%/*}"
+            build:
+              commands:
+                - docker build --platform linux/arm64 -t "$IMAGE_REPO:$IMAGE_TAG" .
+                - docker push "$IMAGE_REPO:$IMAGE_TAG"
+      Artifacts: {Type: NO_ARTIFACTS}
+      Environment:
+        Type: ARM_CONTAINER
+        Image: aws/codebuild/amazonlinux-aarch64-standard:3.0
+        ComputeType: BUILD_GENERAL1_LARGE
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - {Name: IMAGE_REPO, Value: !GetAtt ImageRepository.RepositoryUri}
+          - {Name: IMAGE_TAG, Value: latest}
+      TimeoutInMinutes: 30
+
+  # ---------------------------------------------------------------- hub service (ECS)
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/hubzoid/${HubName}", RetentionInDays: 30}
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties: {ClusterName: !Ref HubName}
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy]
+  # The hub service's own role: reads its secret, mounts EFS, and is the only
+  # principal the runner's resource policy lets invoke it.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}}
+      Policies:
+        - PolicyName: hub-service
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DeploymentSecret
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt Files.Arn
+                Condition: {StringEquals: {"elasticfilesystem:AccessPointArn": !GetAtt FilesAccessPoint.Arn}}
+              - Effect: Allow  # finds the MCP runtime's address by name (McpHost=agentcore)
+                Action: bedrock-agentcore:ListAgentRuntimes
+                Resource: "*"
+              - Effect: Allow  # ECS Exec, for `hubzoid doctor` in the running task
+                Action: [ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel,
+                         ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel]
+                Resource: "*"
+  RunnerInvokePolicy:
+    Type: AWS::IAM::Policy
+    Condition: UseRunner
+    Properties:
+      PolicyName: invoke-runner
+      Roles: [!Ref TaskRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [bedrock-agentcore:InvokeAgentRuntime, bedrock-agentcore:StopRuntimeSession]
+            Resource: [!GetAtt RunnerRuntime.AgentRuntimeArn, !Sub "${RunnerRuntime.AgentRuntimeArn}/*"]
+          - Effect: Allow
+            Action: bedrock-agentcore:GetAgentRuntime
+            Resource: !GetAtt RunnerRuntime.AgentRuntimeArn
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImage
+    Properties:
+      Family: !Ref HubName
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref ServiceCpu
+      Memory: !Ref ServiceMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref Files
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !Ref FilesAccessPoint, IAM: ENABLED}
+      ContainerDefinitions:
+        - Name: hub
+          Image: !Sub "${ImageRepository.RepositoryUri}:${ImageTag}"
+          Essential: true
+          PortMappings: [{ContainerPort: 3080}]
+          MountPoints: [{SourceVolume: data, ContainerPath: /mnt/data}]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: !Ref Logs, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: hub}
+          Environment:
+            - {Name: AWS_SECRET_NAME, Value: !Ref DeploymentSecret}
+            - {Name: HUBZOID_AUTH, Value: "true"}
+            - {Name: HUBZOID_PUBLIC_URL, Value: !If [Https, !Sub "https://${Cdn.DomainName}", !Sub "http://${LoadBalancer.DNSName}"]}
+            # Only CloudFront reaches the load balancer (its origin header), so its
+            # record of the person's scheme is trusted over the load balancer's.
+            - {Name: HUBZOID_FORWARDED_PROTO_HEADER, Value: !If [Https, CloudFront-Forwarded-Proto, ""]}
+            - {Name: HUBZOID_IMAGE, Value: !Ref ImageTag}
+            - {Name: HUBZOID_SECRETS_VERSION, Value: !Ref SecretsVersion}
+            - {Name: MCP_PUBLIC_URL, Value: !If [Https, !Sub "https://${Cdn.DomainName}/mcp", !Sub "http://${LoadBalancer.DNSName}/mcp"]}
+            - {Name: MODEL, Value: !Ref Model}
+            - {Name: HUBZOID_SCHEDULES, Value: !If [WithCodeWorkflows, "1", ""]}
+            - {Name: HUBZOID_RUNNER, Value: !If [UseRunner, agentcore, local]}
+            - {Name: HUBZOID_AGENTCORE_RUNTIME_ARN, Value: !If [UseRunner, !GetAtt RunnerRuntime.AgentRuntimeArn, ""]}
+            - {Name: HUBZOID_AGENTCORE_REGION, Value: !Ref AWS::Region}
+            - {Name: HUBZOID_MCP_HOST, Value: !If [UseMcp, agentcore, local]}
+            # The MCP runtime, found by its name once it exists (it is created
+            # after this service: AgentCore reads this service's sign-in
+            # configuration when it creates it).
+            - {Name: HUBZOID_MCP_RUNTIME_NAME, Value: !If [UseMcp, !Sub "${RuntimeName}_mcp", ""]}
+            - {Name: HUBZOID_ADMIN_EMAIL, Value: !If [HasAdmin, !Ref AdminEmail, ""]}
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+      LoadBalancerAttributes: [{Key: idle_timeout.timeout_seconds, Value: "300"}]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      TargetType: ip
+      Protocol: HTTP
+      Port: 3080
+      HealthCheckPath: /healthz
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
+  # Behind CloudFront, only requests carrying the stack's origin header reach the hub.
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions: !If
+        - Https
+        - [{Type: fixed-response, FixedResponseConfig: {StatusCode: "403", ContentType: text/plain, MessageBody: Use the HTTPS address.}}]
+        - [{Type: forward, TargetGroupArn: !Ref TargetGroup}]
+  FromCdnRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: Https
+    Properties:
+      ListenerArn: !Ref Listener
+      Priority: 1
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig: {HttpHeaderName: X-Hubzoid-Origin, Values: [!Select [2, !Split ["/", !Ref AWS::StackId]]]}
+      Actions: [{Type: forward, TargetGroupArn: !Ref TargetGroup}]
+  Cdn:
+    Type: AWS::CloudFront::Distribution
+    Condition: Https
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "Hubzoid ${HubName}"
+        HttpVersion: http2
+        Origins:
+          - Id: hub
+            DomainName: !GetAtt LoadBalancer.DNSName
+            CustomOriginConfig: {OriginProtocolPolicy: http-only, OriginReadTimeout: 60, OriginKeepaliveTimeout: 60}
+            OriginCustomHeaders: [{HeaderName: X-Hubzoid-Origin, HeaderValue: !Select [2, !Split ["/", !Ref AWS::StackId]]}]
+        DefaultCacheBehavior:
+          TargetOriginId: hub
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: false
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # CachingDisabled
+          OriginRequestPolicyId: 33f36d7e-f396-46d9-90e0-52428a34d9dc  # AllViewerAndCloudFrontHeaders-2022-06
+  Service:
+    Type: AWS::ECS::Service
+    Condition: HasImage
+    DependsOn: [Listener, FilesTargetA, FilesTargetB]
+    Properties:
+      ServiceName: !Ref HubName
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      EnableExecuteCommand: true
+      HealthCheckGracePeriodSeconds: 300
+      # One hub service at a time (it owns migrations, schedules and sweeps).
+      DeploymentConfiguration: {MinimumHealthyPercent: 0, MaximumPercent: 100}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+          SecurityGroups: [!Ref ServiceSecurityGroup]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: hub, ContainerPort: 3080, TargetGroupArn: !Ref TargetGroup}]
+
+  # ---------------------------------------------------------------- AgentCore
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: bedrock-agentcore.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}
+              ArnLike: {"aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*"}
+      Policies:
+        - PolicyName: runner
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer]
+                Resource: !GetAtt ImageRepository.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+              - Effect: Allow
+                Action: [logs:DescribeLogGroups]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*"
+              - Effect: Allow  # observability: spans to the account's own log group
+                Action: [xray:PutTraceSegments, xray:PutTelemetryRecords, xray:GetSamplingRules,
+                         xray:GetSamplingTargets, logs:PutResourcePolicy, logs:DescribeResourcePolicies]
+                Resource: "*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition: {StringEquals: {"cloudwatch:namespace": bedrock-agentcore}}
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DeploymentSecret
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt Files.Arn
+                Condition: {StringEquals: {"elasticfilesystem:AccessPointArn": !GetAtt FilesAccessPoint.Arn}}
+              - Effect: Allow  # AgentCore checks the access point and mount targets before it mounts them
+                Action: [elasticfilesystem:DescribeAccessPoints, elasticfilesystem:DescribeMountTargets]
+                Resource: "*"
+              - Effect: Allow  # the MCP runtime finds its own address by name
+                Action: bedrock-agentcore:ListAgentRuntimes
+                Resource: "*"
+  RunnerRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Condition: UseRunner
+    DependsOn: [FilesTargetA, FilesTargetB, PrivateDefaultRoute, PrivateRoutesA, PrivateRoutesB]
+    Properties:
+      AgentRuntimeName: !Sub "${RuntimeName}_runner"
+      Description: !Sub "Hubzoid ${HubName}: agent turns"
+      AgentRuntimeArtifact:
+        ContainerConfiguration: {ContainerUri: !Sub "${ImageRepository.RepositoryUri}:${ImageTag}"}
+      RoleArn: !GetAtt RunnerRole.Arn
+      ProtocolConfiguration: HTTP
+      PlatformVersion: V2
+      NetworkConfiguration:
+        NetworkMode: VPC
+        NetworkModeConfig:
+          Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+          SecurityGroups: [!Ref RunnerSecurityGroup]
+      LifecycleConfiguration: {IdleRuntimeSessionTimeout: 900, MaxLifetime: 28800}
+      FilesystemConfigurations:
+        - EfsAccessPoint: {AccessPointArn: !GetAtt FilesAccessPoint.Arn, MountPath: /mnt/data}
+      HooksConfiguration:
+        Build:
+          Warmup: {Action: {HttpPost: {Path: /warmup, Port: 8080}}}
+      EnvironmentVariables:
+        HUBZOID_ROLE: runner
+        HUBZOID_IMAGE: !Ref ImageTag
+        HUBZOID_SECRETS_VERSION: !Ref SecretsVersion
+        AWS_SECRET_NAME: !Ref DeploymentSecret
+        MODEL: !Ref Model
+        HUBZOID_PUBLIC_URL: !If [Https, !Sub "https://${Cdn.DomainName}", !Sub "http://${LoadBalancer.DNSName}"]
+        HUBZOID_HUB_DIR: !Sub "/hubs/${HubFolder}"
+        HUBZOID_DATA_DIR: /mnt/data
+  # Only the hub service's role may start turns on the runner.
+  RunnerPolicy:
+    Type: AWS::BedrockAgentCore::ResourcePolicy
+    Condition: UseRunner
+    Properties:
+      ResourceArn: !GetAtt RunnerRuntime.AgentRuntimeArn
+      Policy: !Sub
+        - '{"Version":"2012-10-17","Statement":[{"Sid":"AllowOnlyTheHubService","Effect":"Allow","Principal":{"AWS":"${Role}"},"Action":"bedrock-agentcore:InvokeAgentRuntime","Resource":"${Arn}"},{"Sid":"DenyEveryoneElse","Effect":"Deny","Principal":{"AWS":"*"},"Action":"bedrock-agentcore:InvokeAgentRuntime","Resource":"${Arn}","Condition":{"ArnNotEquals":{"aws:PrincipalArn":"${Role}"}}}]}'
+        - {Role: !GetAtt TaskRole.Arn, Arn: !GetAtt RunnerRuntime.AgentRuntimeArn}
+  # The hub's MCP server on AgentCore. AgentCore checks the token was issued by
+  # this hub (its issuer); Hubzoid then checks the person's grant and that the
+  # token was issued for this runtime's address.
+  McpRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Condition: UseMcp
+    DependsOn: [Service, FilesTargetA, FilesTargetB, PrivateDefaultRoute, PrivateRoutesA, PrivateRoutesB]
+    Properties:
+      AgentRuntimeName: !Sub "${RuntimeName}_mcp"
+      Description: !Sub "Hubzoid ${HubName}: MCP server"
+      AgentRuntimeArtifact:
+        ContainerConfiguration: {ContainerUri: !Sub "${ImageRepository.RepositoryUri}:${ImageTag}"}
+      RoleArn: !GetAtt RunnerRole.Arn
+      ProtocolConfiguration: MCP
+      PlatformVersion: V2
+      NetworkConfiguration:
+        NetworkMode: VPC
+        NetworkModeConfig:
+          Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+          SecurityGroups: [!Ref RunnerSecurityGroup]
+      LifecycleConfiguration: {IdleRuntimeSessionTimeout: 900, MaxLifetime: 28800}
+      FilesystemConfigurations:
+        - EfsAccessPoint: {AccessPointArn: !GetAtt FilesAccessPoint.Arn, MountPath: /mnt/data}
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Sub "https://${Cdn.DomainName}/mcp/oauth/.well-known/openid-configuration"
+          CustomClaims:
+            - InboundTokenClaimName: iss
+              InboundTokenClaimValueType: STRING
+              AuthorizingClaimMatchValue:
+                ClaimMatchOperator: EQUALS
+                ClaimMatchValue: {MatchValueString: !Sub "https://${Cdn.DomainName}/mcp/oauth"}
+      RequestHeaderConfiguration: {RequestHeaderAllowlist: [Authorization]}
+      EnvironmentVariables:
+        HUBZOID_ROLE: mcp
+        HUBZOID_IMAGE: !Ref ImageTag
+        HUBZOID_SECRETS_VERSION: !Ref SecretsVersion
+        HUBZOID_MCP_RUNTIME_NAME: !Sub "${RuntimeName}_mcp"
+        AWS_SECRET_NAME: !Ref DeploymentSecret
+        MODEL: !Ref Model
+        HUBZOID_AUTH: "true"
+        HUBZOID_PUBLIC_URL: !Sub "https://${Cdn.DomainName}"
+        MCP_PUBLIC_URL: !Sub "https://${Cdn.DomainName}/mcp"
+        HUBZOID_HUB_DIR: !Sub "/hubs/${HubFolder}"
+        HUBZOID_DATA_DIR: /mnt/data
+
+Outputs:
+  Url:
+    Description: The hub's address.
+    Value: !If [Https, !Sub "https://${Cdn.DomainName}", !Sub "http://${LoadBalancer.DNSName}"]
+  BuildBucket:
+    Description: Upload the hub folder here as source.zip, then start the image build.
+    Value: !Ref BuildBucket
+  BuildProject:
+    Value: !Ref ImageBuild
+  ImageRepository:
+    Value: !GetAtt ImageRepository.RepositoryUri
+  DeploymentSecret:
+    Value: !Ref DeploymentSecret
+  Cluster:
+    Value: !Ref Cluster
+  ServiceName:
+    Condition: HasImage
+    Value: !GetAtt Service.Name
+  TaskDefinition:
+    Condition: HasImage
+    Value: !Ref TaskDefinition
+  PrivateSubnets:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  ServiceSecurityGroup:
+    Value: !Ref ServiceSecurityGroup
+  LogGroup:
+    Value: !Ref Logs
+  RunnerArn:
+    Condition: UseRunner
+    Value: !GetAtt RunnerRuntime.AgentRuntimeArn
+  McpUrl:
+    Condition: UseMcp
+    Description: The MCP server's AgentCore address, for Claude and other MCP clients.
+    Value: !Join
+      - ""
+      - - !Sub "https://bedrock-agentcore.${AWS::Region}.amazonaws.com/runtimes/"
+        - !Join ["%2F", !Split ["/", !Join ["%3A", !Split [":", !GetAtt McpRuntime.AgentRuntimeArn]]]]
+        - "/invocations?qualifier=DEFAULT"

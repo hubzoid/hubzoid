@@ -39,20 +39,29 @@ def render(provider: str, image: str | None = None, hub: str = "hub") -> dict[st
 
     if provider not in PROVIDERS:
         raise ScaffoldError(f"Unknown provider {provider!r}: use {' or '.join(PROVIDERS)}.")
+    # AWS resource names: letters, digits and '-' (``hub_slug``); AgentCore
+    # runtime names: a letter, then letters, digits and '_' (``hub_ident``).
+    slug = re.sub(r"[^a-z0-9-]", "-", hub.lower()).strip("-")[:32] or "hub"
+    ident = re.sub(r"[^A-Za-z0-9_]", "_", hub)[:40]
+    ident = ident if ident[:1].isalpha() else "h" + ident
     values = {"{{provider}}": provider, "{{image}}": image or default_image(), "{{version}}": __version__,
-              "{{hub}}": hub}
+              "{{hub}}": hub, "{{hub_slug}}": slug, "{{hub_ident}}": ident}
 
     def fill(text: str) -> str:
         for key, value in values.items():
             text = text.replace(key, value)
         return text
 
-    return {
-        "Dockerfile": fill(_template("common", "Dockerfile")),
-        ".dockerignore": fill(_template("common", "dockerignore")),
-        f"deploy/{provider}/README.md": fill(_template(provider, "README.md")),
-        f"deploy/{provider}/env.example": fill(_template(provider, "env.example")),
-    }
+    # A provider's own folder holds its steps and files; a Dockerfile there
+    # replaces the common one (AWS: one image for the hub service and runner).
+    own = sorted(p.name for p in resources.files("hubzoid.deploy").joinpath("providers", provider).iterdir()
+                 if p.is_file())
+    out = {"Dockerfile": fill(_template(provider if "Dockerfile" in own else "common", "Dockerfile")),
+           ".dockerignore": fill(_template("common", "dockerignore"))}
+    for name in own:
+        if name != "Dockerfile":
+            out[f"deploy/{provider}/{name}"] = fill(_template(provider, name))
+    return out
 
 
 def write(hub_dir: Path, provider: str, *, image: str | None = None, force: bool = False) -> list[Written]:

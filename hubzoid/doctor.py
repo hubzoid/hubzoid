@@ -102,6 +102,8 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("schedule.tasks", "fail", f"Schedules could not be read: {exc}"))
 
+    out.extend(_runner_checks(hub))
+
     from .workflows.observe import definitions
 
     defs = definitions(hub)
@@ -136,6 +138,43 @@ def _hub_checks(hub: Path) -> list[Check]:
             out.append(Check("identity.resolver", "info", "Roster resolver present (identity/access)"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))
+    return out
+
+
+def _runner_checks(hub: Path) -> list[Check]:
+    """With HUBZOID_RUNNER=agentcore: the runner's settings, and that no
+    scheduled task may outlast AgentCore's 60-minute stream (Hubzoid caps a
+    turn at 55). Nothing when turns run here. The live check (`hubzoid runner
+    hello`, Diagnostics) asks the runner itself."""
+    from . import settings as settingslib
+
+    try:
+        settings = settingslib.load(hub, secrets=False)
+    except Exception:  # noqa: BLE001 - other checks report configuration problems
+        return []
+    if settings.runner == "local":
+        return []
+    if settings.runner != "agentcore":
+        return [Check("runner.config", "fail", f"HUBZOID_RUNNER={settings.runner!r}: use local or agentcore")]
+    out: list[Check] = []
+    if not settings.agentcore_runtime_arn and not settings.agentcore_endpoint:
+        out.append(Check("runner.config", "fail", "HUBZOID_RUNNER=agentcore needs HUBZOID_AGENTCORE_RUNTIME_ARN"))
+    else:
+        out.append(Check("runner.config", "ok", "Agent turns run on AWS AgentCore",
+                         {"runtime": settings.agentcore_runtime_arn or settings.agentcore_endpoint,
+                          "qualifier": settings.agentcore_qualifier}))
+    try:
+        from . import scheduling as sch
+        from .runner.protocol import MAX_STREAM_SECONDS
+
+        tasks, _ = sch.load_tasks(hub)
+        long = [t.name for t in tasks if (t.timeout or 0) > MAX_STREAM_SECONDS]
+        if long:
+            out.append(Check("runner.timeouts", "fail",
+                             f"{len(long)} scheduled task(s) allow more than {MAX_STREAM_SECONDS // 60} minutes a "
+                             "round, longer than an AgentCore stream", long))
+    except Exception:  # noqa: BLE001 - schedule.tasks reports unreadable schedules
+        pass
     return out
 
 

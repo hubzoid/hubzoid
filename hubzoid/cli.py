@@ -2376,6 +2376,10 @@ from .deploy.cli import deploy_app  # noqa: E402
 
 app.add_typer(deploy_app, name="deploy", rich_help_panel="Commands")
 
+from .runner_cli import runner_app  # noqa: E402
+
+app.add_typer(runner_app, name="runner", rich_help_panel="Commands")
+
 
 @backup_app.command("create")
 def backup_cmd(

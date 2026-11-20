@@ -307,7 +307,7 @@ Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. Th
                         "redirect_uri_provided_explicitly": params[
                             "redirect_uri_provided_explicitly"
                         ],
-                        "resource": provider.resource,
+                        "resource": params.get("resource") or provider.resource,
                         "subject": who["account_id"],
                     },
                     time.time() + 60,

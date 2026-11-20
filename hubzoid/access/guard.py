@@ -247,16 +247,22 @@ async def _stopped() -> bool:
     """The chat run this call belongs to was stopped or lost its branch lease
     (``SessionSlot.guard``). Checked here, in the wrapper every runtime's hub
     and MCP tools pass through, so Stop holds on Claude, Codex and the Agents
-    SDK alike. Fails closed: no step without a known owner."""
+    SDK alike. Fails closed: no step without a known owner.
+
+    Inside an AgentCore runner a call's own work order is checked too
+    (``_request_ctx.call_guard``), for turns with no chat slot. Elsewhere it is
+    never set."""
     from .. import _request_ctx
 
-    guard = getattr(_request_ctx.native_session(), "guard", None)
-    if guard is None:
-        return False
-    try:
-        return not await asyncio.to_thread(guard)
-    except Exception:  # noqa: BLE001
-        return True
+    for guard in (getattr(_request_ctx.native_session(), "guard", None), _request_ctx.call_guard()):
+        if guard is None:
+            continue
+        try:
+            if not await asyncio.to_thread(guard):
+                return True
+        except Exception:  # noqa: BLE001
+            return True
+    return False
 
 
 # A Settings connector's server key (``connectors.per_user.server_key``).

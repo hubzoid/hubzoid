@@ -3,6 +3,32 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Added
+- **Agent turns on Amazon Bedrock AgentCore (off unless set).** With
+  `HUBZOID_RUNNER=agentcore` and `HUBZOID_AGENTCORE_RUNTIME_ARN`, the hub
+  service keeps everything it owns (chats and history, sign-in, channels,
+  workflows, schedules, approvals, migrations) and sends each agent turn and
+  its tools to an AgentCore runtime, one microVM per chat. The same image
+  serves it (`hubzoid runner serve`, chosen by `HUBZOID_ROLE=runner`). The hub
+  service records every call first (`hz_runner_calls`, one new table); the
+  runner runs only a call it can claim once with an identical request, checks
+  it before every tool step and stops within seconds when it is cancelled.
+  Runners never migrate the database or start schedules. Evals, titles and
+  `hub.call_llm` stay in the hub service. A tool on the runner that would start
+  a workflow says to start it from the hub service.
+- **The hub's MCP server on AgentCore (off unless set).** `hubzoid runner mcp`
+  (`HUBZOID_ROLE=mcp`) serves it as an AgentCore MCP runtime with the hub's own
+  sign-in: AgentCore checks the token's issuer, Hubzoid the person's grant and
+  that the token was issued for that address (`HUBZOID_MCP_AGENTCORE_URL`).
+- **`hubzoid deploy init aws`.** A CloudFormation template for the hub service
+  on ECS Fargate behind a load balancer and CloudFront, PostgreSQL on RDS, the
+  hub's data on EFS, an arm64 image build in CodeBuild, and the AgentCore
+  runner and MCP runtime with a resource policy that lets only the hub service
+  invoke the runner. [docs/deploy/aws.md](docs/deploy/aws.md).
+- `hubzoid doctor` and Settings > Diagnostics check the runner when it is on.
+
 ## [2.0.9]
 
 An assistant connected over MCP (Claude Code, Claude) can now do what chat

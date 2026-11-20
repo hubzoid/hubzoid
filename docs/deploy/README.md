@@ -21,6 +21,7 @@ way of hosting it works the same way:
 |---|---|---|
 | [Railway](railway.md) | `hubzoid deploy init railway`, then Railway builds the repository's `Dockerfile` with a volume at `/data`. | Not yet verified on Railway |
 | [Maritime](maritime.md) | `hubzoid deploy init maritime`, then `maritime create --repo` with its `/data` disk. | Not yet verified on Maritime |
+| [AWS](aws.md) | `hubzoid deploy init aws`, then one CloudFormation stack: ECS, RDS, EFS, CloudFront, and agent turns on Amazon Bedrock AgentCore. | Being verified on AWS |
 | Docker or Compose on your own server | The image and `docker/docker-compose.yml` ([DEPLOYING.md](../DEPLOYING.md), path B). | Supported |
 | A VM with systemd | A virtual environment and a reverse proxy ([DEPLOYING.md](../DEPLOYING.md), path A). | Supported |
 

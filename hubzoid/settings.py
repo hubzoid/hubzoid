@@ -417,6 +417,20 @@ class Settings:
     # Direct-mode safety net only (no browserless): restart the spawned browser
     # if its process-tree RSS exceeds this. 0 = watchdog off.
     browser_max_rss_mb: int = 0
+    # Where agent turns with tools run (hubzoid.runner). "local" (default): in
+    # this process, as always. "agentcore": an Amazon Bedrock AgentCore runtime,
+    # one microVM per chat, named by agentcore_runtime_arn. No fallback.
+    runner: str = "local"
+    agentcore_runtime_arn: str | None = None
+    agentcore_qualifier: str = "DEFAULT"
+    agentcore_region: str | None = None
+    # A runner reached over plain HTTP instead of AWS (a local stand-in for tests).
+    agentcore_endpoint: str | None = None
+    # Where the hub's MCP server runs for people's assistants: "local" (default,
+    # this service's /mcp) or "agentcore" (an AgentCore MCP runtime at
+    # mcp_agentcore_url, which sign-in then also accepts as the resource).
+    mcp_host: str = "local"
+    mcp_agentcore_url: str = ""
 
     @property
     def first_api_key(self) -> str:
@@ -483,6 +497,13 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         browser_timeout=_int_env("HUBZOID_BROWSER_TIMEOUT", 60),
         browser_memory=(os.environ.get("HUBZOID_BROWSER_MEMORY") or "2g").strip() or "2g",
         browser_max_rss_mb=_int_env_zero_ok("HUBZOID_BROWSER_MAX_RSS_MB", 0),
+        runner=(os.environ.get("HUBZOID_RUNNER") or "local").strip().lower() or "local",
+        agentcore_runtime_arn=(os.environ.get("HUBZOID_AGENTCORE_RUNTIME_ARN") or "").strip() or None,
+        agentcore_qualifier=(os.environ.get("HUBZOID_AGENTCORE_QUALIFIER") or "DEFAULT").strip() or "DEFAULT",
+        agentcore_region=(os.environ.get("HUBZOID_AGENTCORE_REGION") or "").strip() or None,
+        agentcore_endpoint=(os.environ.get("HUBZOID_AGENTCORE_ENDPOINT") or "").strip() or None,
+        mcp_host=(os.environ.get("HUBZOID_MCP_HOST") or "local").strip().lower() or "local",
+        mcp_agentcore_url=(os.environ.get("HUBZOID_MCP_AGENTCORE_URL") or "").strip(),
     )
 
 

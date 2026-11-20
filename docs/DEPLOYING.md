@@ -873,6 +873,10 @@ managed Postgres). SQLite on a network filesystem is not safe: on ECS Fargate,
 never put SQLite databases (`.hubzoid/*.db` and the deployment's state folder)
 on EFS. `hubzoid doctor` fails such a setup.
 
+On AWS, `hubzoid deploy init aws` writes a CloudFormation template for a
+single hub on ECS with RDS and EFS, and can run its agent turns on Amazon
+Bedrock AgentCore: [deploy/aws.md](deploy/aws.md).
+
 ### One service, or one service per hub
 
 **One service** runs `hubzoid run` with the deployment file, like Path A: the

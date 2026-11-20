@@ -523,8 +523,19 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
     from .tools import schedule_tools
 
     extra = {t.name: t for t in schedule_tools.make(hub_dir, task, emit)}
+    kw = {}
+    if runtime_lib.remote_enabled(hub_dir):
+        # On an AgentCore runner the task's tools are rebuilt there from its
+        # name; their run-log events come back through `emit`.
+        kw["bundle"] = {"kind": "schedule", "task": task.name, "emit": emit,
+                        "overrides": {"timeout": task.timeout, "max_rounds": task.max_rounds,
+                                      "model": task.model, "max_turns": task.max_turns},
+                        # Fixed by run_task for this run: the account it acts as,
+                        # its own scratch folder and the run id.
+                        "run": {"state_rel": task.state_rel, "run_identity": task.run_identity,
+                                "run_id": task.run_id}}
     return runtime_lib.build(hub_dir, extra_tools=extra, max_turns=task.max_turns,
-                             model=task.model, guardrails=False)   # the hub's own task prompt
+                             model=task.model, guardrails=False, **kw)   # the hub's own task prompt
 
 
 def service_subject(task_name: str) -> str:

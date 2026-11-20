@@ -140,6 +140,17 @@ def history(hub_dir, *, viewer: str | None, workflow: str | None = None,
                         limit=limit, viewer=viewer, legacy_visible=False)
 
 
+RUNNER_NOT_HERE = ("This agent's chat runs on AWS AgentCore, where workflows can't be started from a chat. "
+                   "Start it from the web app's workflows page or Settings.")
+
+
+def _on_runner() -> bool:
+    """Inside an AgentCore runner (``HUBZOID_ROLE``), where no workflow engine runs."""
+    import os
+
+    return (os.environ.get("HUBZOID_ROLE") or "").strip().lower() in ("runner", "mcp")
+
+
 def _engine_here(hub_dir: Path) -> bool:
     """Whether this process runs the DBOS engine for `hub_dir`."""
     from . import runtime
@@ -229,6 +240,8 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
 
     hub_dir = Path(hub_dir)
     target = resolve(hub_dir, name, prefer=prefer)
+    if not _engine_here(hub_dir) and _on_runner():
+        raise ControlError(RUNNER_NOT_HERE, "not_running")
     if not _engine_here(hub_dir):
         raise ControlError(
             "The workflow engine isn't running in this agent, so runs can't be started here. "

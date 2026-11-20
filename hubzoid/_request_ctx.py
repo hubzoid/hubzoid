@@ -478,6 +478,25 @@ def native_session() -> SessionSlot | None:
     return _current_session_slot.get()
 
 
+# A call's own stop check, set only inside an AgentCore runner
+# (``hubzoid.runner``), for turns with no chat session slot (Slack, the API,
+# workflow agent steps): () -> bool, may the call start another tool step.
+_current_call_guard: ContextVar = ContextVar("hubzoid_call_guard", default=None)
+
+
+def call_guard():
+    return _current_call_guard.get()
+
+
+@contextmanager
+def call_guard_scope(guard) -> Iterator[None]:
+    token = _current_call_guard.set(guard)
+    try:
+        yield
+    finally:
+        _current_call_guard.reset(token)
+
+
 @contextmanager
 def native_session_scope(slot: SessionSlot | None) -> Iterator[None]:
     token = _current_session_slot.set(slot)
