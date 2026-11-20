@@ -10,6 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from agents import function_tool
 from agents.tool_context import ToolContext
 
@@ -145,10 +146,58 @@ def test_restricted_surfaces_env_override(tmp_path, monkeypatch):
         assert guarded.is_enabled(None, None) is True
 
 
+def test_one_capability_can_open_a_surface_alone(tmp_path, monkeypatch):
+    """`surfaces:` on one restricted capability in identity/permissions.yaml
+    replaces HUBZOID_RESTRICTED_SURFACES for it alone: WhatsApp can reach the
+    password-reset tools without reaching every other restricted tool."""
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    rdir = tmp_path / "restricted"
+    rdir.mkdir()
+    (rdir / "reset.py").write_text(_RESTRICTED_TOOL_SRC.replace("erp_sales", "reset_password")
+                                   .replace("erp_stock", "unlock_account"))
+    (rdir / "erp.py").write_text(_RESTRICTED_TOOL_SRC)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(
+        "reset:\n  label: Password resets\n  surfaces: [web, whatsapp]\n")
+    for subject in ("p",):
+        _grant(tmp_path, subject, "reset")
+        _grant(tmp_path, subject, "erp")
+    registry = access.apply(tmp_path, {})
+    on = lambda name, surface: _visible_as(registry[name], surface)  # noqa: E731
+    assert on("reset_password", "whatsapp") and on("reset_password", "web")
+    assert not on("reset_password", "api")                     # its own list replaces the default
+    assert not on("erp_sales", "whatsapp") and on("erp_sales", "api")   # the others keep the default
+    assert guard.captured_surfaces(registry["reset_password"]) == frozenset({"web", "whatsapp"})
+    assert guard.captured_surfaces(registry["erp_sales"]) == guard.allowed_surfaces()
+
+
+def _visible_as(tool, surface: str) -> bool:
+    with identity_scope(Identity.make("p", [], surface=surface)):
+        return tool.is_enabled(None, None)
+
+
+@pytest.mark.parametrize("surfaces, words", [
+    ("[slack-channel]", "never allowed"),
+    ("[kiosk]", "unknown surface 'kiosk'"),
+    ("whatsapp", "is a list of names"),
+])
+def test_capability_surfaces_are_checked(tmp_path, monkeypatch, surfaces, words):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(f"reset:\n  surfaces: {surfaces}\n")
+    with pytest.raises(ValueError, match=words):
+        loader.restricted_surfaces(tmp_path)
+    # A deployment's own surface name (listed in the env) is accepted.
+    if surfaces == "[kiosk]":
+        monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "web,kiosk")
+        assert loader.restricted_surfaces(tmp_path) == {"reset": frozenset({"kiosk"})}
+
+
 # ---------------------------------------------------------------------------
 # loader + apply
 # ---------------------------------------------------------------------------
 _RESTRICTED_TOOL_SRC = '''
+import pytest
 from agents import function_tool
 
 @function_tool
@@ -266,3 +315,51 @@ def test_a_stopped_reply_runs_no_more_tools_on_any_runtime(tmp_path):
         slot.guard = lambda running=running: running
         with _request_ctx.native_session_scope(slot):
             assert _invoke(tool) == expected
+
+
+@pytest.mark.parametrize("text, words", [
+    ("reset:\n  surfaces: []\nreset:\n  label: Password resets\n", "appears twice"),   # the second would drop surfaces
+    ("- reset:\n    surfaces: []\n", "mapping"),
+    ("reset: [web]\nother:\n  surfaces: [web]\n", "each capability is a mapping"),
+])
+def test_a_surfaces_file_that_could_hide_a_restriction_stops_the_load(tmp_path, monkeypatch, text, words):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(text)
+    with pytest.raises(ValueError, match=words):
+        loader.restricted_surfaces(tmp_path)
+
+
+def test_listing_uses_the_policy_the_guarded_tool_was_built_with(tmp_path, monkeypatch):
+    """The MCP listing and cards read the surfaces captured with the guarded
+    tool, so an edit before a restart can't make listing and calling differ,
+    and a broken edit can't fail tools/list."""
+    from hubzoid import mcp_server
+
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "restricted").mkdir()
+    (tmp_path / "restricted" / "erp.py").write_text(_RESTRICTED_TOOL_SRC)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text("erp:\n  surfaces: [mcp]\n")
+    _grant(tmp_path, "p", "erp")
+    registry = access.apply(tmp_path, {})
+    assert guard.captured_surfaces(registry["erp_sales"]) == frozenset({"mcp"})
+    (tmp_path / "identity" / "permissions.yaml").write_text("erp:\n  surfaces: [mcpx]\n")   # edited, not restarted
+    ident = Identity.make("p", [], surface="mcp")
+    assert mcp_server._visible(tmp_path, ident, "erp_sales", registry, {"erp_sales": "erp"})
+
+
+@pytest.mark.parametrize("text, expect", [
+    ('reset:\n  "surf\\u0061ces": []\n', {"reset": frozenset()}),                      # an escaped key is still surfaces
+    ('reset:\n  "surf\\u0061ces": []\nreset:\n  label: Resets\n', ValueError),          # escaped + a duplicate hiding it
+    ("a: &lbl {label: A}\nb: *lbl\n", {}),                                               # labels only, anchors: as before
+])
+def test_surfaces_are_found_by_parsed_key_not_by_text(tmp_path, monkeypatch, text, expect):
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    (tmp_path / "identity").mkdir()
+    (tmp_path / "identity" / "permissions.yaml").write_text(text)
+    if expect is ValueError:
+        with pytest.raises(ValueError, match="appears twice"):
+            loader.restricted_surfaces(tmp_path)
+    else:
+        assert loader.restricted_surfaces(tmp_path) == expect

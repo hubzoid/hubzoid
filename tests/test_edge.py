@@ -564,3 +564,19 @@ def test_the_supervisor_table_is_read_again_and_drains_webhooks(tmp_path, monkey
         assert client.get("/b/two/api/x").content == b"b3"   # a running turn's API still works
         write({"two": "failed"})
         assert client.get("/b/two/api/x").status_code == 503
+
+
+@pytest.mark.parametrize("headers, local", [
+    ([], True),                                               # a browser on this machine
+    ([(b"x-forwarded-for", b"203.0.113.9")], False),          # a tunnel
+    ([(b"x-forwarded-proto", b"https")], False),              # a loopback TLS proxy that sends only this
+    ([(b"via", b"1.1 caddy")], False),
+])
+def test_only_a_direct_local_request_reaches_a_bridge_without_an_address(monkeypatch, headers, local):
+    """With sign-in off a bridge treats any X-Forwarded-For as "not this
+    machine", so the edge sends one for every request that wasn't made
+    straight on this machine, including one whose only hint is a proxy header
+    the bridge can't read as evidence (the edge asserts X-Forwarded-Proto itself)."""
+    monkeypatch.setenv("HUBZOID_TRUSTED_PROXIES", "")
+    out = edge._request_headers(_peer_request("127.0.0.1", headers), "https")
+    assert any(k == b"x-forwarded-for" for k, _ in out) is (not local)

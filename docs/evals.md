@@ -73,7 +73,7 @@ exception process.
 
 | Key | Extra model call? | Notes |
 |---|---|---|
-| `expect_tools` / `forbid_tools` | no | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. |
+| `expect_tools` / `forbid_tools` | no | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. A name that matches no tool in the agent fails the case with the closest name (`no tool named reset_pasword in this agent (closest: reset_password)`), so a misspelled guard can't pass forever. An MCP server's or connector's tool is `mcp__<server>__<tool>` (a connector's server is `my_<id>`); those are only known when a turn runs, so they aren't failed. A sub-agent call is `handover_<name>` on every backend. A skill is not a tool: check it with `expect_tool_args: {load_skill: {name: ...}}`. |
 | `contains` / `not_contains` | no | **Case-insensitive.** A bare string is accepted where a list is expected. |
 | `timeout` | no | Defaults to 120s. A timed-out case fails; it never hangs the suite. |
 | `## Criteria` | **yes** | Graded 1–10 against `AGENTS.md` + these criteria. |

@@ -69,3 +69,87 @@ def _load_module(path: Path):
     sys.modules[mod_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+#: The surfaces a restricted capability's own ``surfaces:`` may name: where a
+#: request comes from (``access.policy``), not the Settings display groups.
+KNOWN_SURFACES = frozenset({"owui", "web", "api", "mcp", "workflow", "app", "slack-dm", "whatsapp",
+                            "telegram", "webhook", "email", "channel", "cli"})
+#: Never allowed: a shared Slack thread answered under one person's identity.
+NEVER_SURFACES = frozenset({"slack-channel"})
+
+
+def restricted_surfaces(hub_dir: Path) -> dict[str, frozenset[str]]:
+    """``{capability: surfaces}`` for the restricted capabilities whose entry in
+    the optional ``identity/permissions.yaml`` sets ``surfaces:``. Each list
+    replaces ``HUBZOID_RESTRICTED_SURFACES`` for that one capability, so one
+    capability can be opened to WhatsApp without opening every other one. An
+    empty list means no surface. Raises ValueError naming the file for a
+    surface that is unknown or never allowed (``slack-channel``)."""
+    from ..control import yamlfile
+
+    idir = resolve_bucket(hub_dir, "identity")
+    path = idir / "permissions.yaml" if idir else None
+    if path is None or not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    try:
+        # Strict: a duplicate key (a second `reset:` without surfaces) or a
+        # document that isn't a mapping must not fall back to the hub-wide list.
+        data = yamlfile.loads(text, path=str(path)).data
+    except yamlfile.YamlError as exc:
+        if not _mentions_surfaces(text):
+            return {}  # labels only: the Settings reader (capabilities._metadata) handles those
+        where = f" (line {exc.line})" if exc.line else ""
+        raise ValueError(f"{path}{where}: {exc.message} It sets surfaces:, so it must be valid.") from None
+    if not any(isinstance(meta, dict) and "surfaces" in meta for meta in data.values()):
+        return {}  # labels only
+    out: dict[str, frozenset[str]] = {}
+    for name, meta in data.items():
+        if not isinstance(meta, dict):
+            if meta is not None:
+                raise ValueError(f"{path}: {name}: each capability is a mapping, for example "
+                                 f"{name}: {{surfaces: [web]}}")
+            continue
+        if "surfaces" not in meta:
+            continue
+        raw = meta["surfaces"]
+        if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
+            raise ValueError(f"{path}: {name}: surfaces is a list of names, for example [web, whatsapp]")
+        surfaces = frozenset(v.strip().lower() for v in raw if v.strip())
+        never = surfaces & NEVER_SURFACES
+        if never:
+            raise ValueError(f"{path}: {name}: {sorted(never)[0]} is never allowed for restricted tools (a "
+                             "shared thread answers under one person's identity). Use slack-dm.")
+        from .guard import allowed_surfaces
+
+        unknown = surfaces - KNOWN_SURFACES - allowed_surfaces()   # a deployment's own surface names count
+        if unknown:
+            raise ValueError(f"{path}: {name}: unknown surface {sorted(unknown)[0]!r}. "
+                             f"Use any of: {', '.join(sorted(KNOWN_SURFACES))}")
+        out[normalize(str(name))] = surfaces
+    return out
+
+
+def _mentions_surfaces(text: str) -> bool:
+    """Whether any key in the YAML decodes to ``surfaces`` (an escaped
+    ``"surf\\u0061ces"`` counts), read from the node tree, which keeps every
+    duplicate pair. Unparseable text counts when it contains the word."""
+    import yaml
+    from yaml.nodes import MappingNode, ScalarNode, SequenceNode
+
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return "surfaces" in text
+    stack = [root] if root is not None else []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, MappingNode):
+            for key, value in node.value:
+                if isinstance(key, ScalarNode) and key.value == "surfaces":
+                    return True
+                stack.extend((key, value))
+        elif isinstance(node, SequenceNode):
+            stack.extend(node.value)
+    return False

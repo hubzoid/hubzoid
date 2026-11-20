@@ -193,8 +193,13 @@ def test_delegates_section_present_when_delegates_exist(tmp_path):
     )
     out = system_addendum.build(ctx, backend="claude-local")
     assert "## Delegate agents available" in out
-    assert "handover_opus_helper" in out
+    # On Claude a delegate is called with the Agent tool (there is no handover_* tool there).
+    assert 'Agent(subagent_type: "opus-helper")' in out and "handover_opus_helper" not in out
     assert "Deep specialist" in out
+    # Every backend waits for the answer, and the delegate starts with no conversation.
+    assert "within this turn" in out and "does not see this conversation" in out
+    other = system_addendum.build(ctx, backend="openai-agents")
+    assert "handover_opus_helper" in other and "within this turn" in other
 
 
 def test_delegates_section_absent_when_none(tmp_path):

@@ -1,4 +1,10 @@
-# Slack chat surface
+# Slack chat surface (the 1.x app)
+
+> This is the **1.x Slack app**: Socket Mode, settings in `.env`, turned on by
+> `channels/slack-assistant.yaml`. It is current and supported. For new setups,
+> a **Slack connection** ([channels/slack.md](channels/slack.md)) adds threads,
+> routing to workflows and delivery checks. The two can't share one Slack app;
+> see [two ways to connect Slack and WhatsApp](channels.md#two-ways-to-connect-slack-and-whatsapp).
 
 Run your hub as a Slack bot. Users `@mention` the bot in any channel, DM it,
 or chat with it from Slack's AI-assistant sidebar — same agent, same skills,
@@ -51,9 +57,12 @@ auto-detects JSON vs YAML; the JSON tab is selected by default. Click **Next**
 5. Start the adapter. Two equivalent options:
 
    ```bash
-   # Option 1 — inline with the bridge + UI (simplest for local dev).
-   hubzoid run my-hub --slack
-   # If the tokens above are missing, you'll get a yellow warning and the
+   # Option 1 — with the bridge + UI (simplest): add the channel file once,
+   # then run the hub. (`hubzoid run --slack` is gone: it stops with exit 2.)
+   printf 'version: 1\nid: slack-assistant\nprovider: slack_assistant\nenabled: true\n' \
+     > my-hub/channels/slack-assistant.yaml
+   hubzoid run my-hub
+   # If the tokens above are missing, the start says which and the
    # bridge + UI keep running. No crash, no retry.
 
    # Option 2 — separate process (best for production / systemd units).
@@ -118,11 +127,12 @@ systemctl enable --now hubzoid-slack@my-hub.service
 The unit `Requires=hubzoid@my-hub.service`, so it only starts once the
 bridge is up. See `docs/DEPLOYING.md` for the bridge-side service.
 
-**B. One systemd unit, inline `--slack`.** Simpler — one process tree, one
-journal. Edit the `ExecStart` in `hubzoid@.service` to append `--slack`:
+**B. One systemd unit, with the channel file.** Simpler — one process tree,
+one journal. Keep `channels/slack-assistant.yaml` in the hub (option 1 above);
+`hubzoid run` starts the Slack app with the hub and restarts it on its own:
 
 ```ini
-ExecStart=/opt/hubzoid/.venv/bin/hubzoid run %i --slack
+ExecStart=/opt/hubzoid/.venv/bin/hubzoid run %i
 ```
 
 A misconfigured `SLACK_*` token only logs a warning; the bridge + UI stay

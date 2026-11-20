@@ -427,3 +427,79 @@ def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
     a = connector_tool_name("my_mail", "x" * 80 + "a")
     b = connector_tool_name("my_mail", "x" * 80 + "b")
     assert len(a) == len(b) == 64 and a != b and a.startswith("mcp__my_mail__")
+
+
+# ---------------------------------------------------------------------------
+# A connector's tool allow-list hides the other tools on Claude too
+# ---------------------------------------------------------------------------
+def _claude_options(servers, allowed_mail):
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    return ClaudeAgentOptions(
+        mcp_servers={"hubzoid": {"type": "sdk"},
+                     "jira": {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}},
+                     "cal": {"type": "http", "url": servers["cal"], "headers": {"Authorization": "Bearer tok-x"}}},
+        allowed_tools=["mcp__hubzoid__hub_note", *(f"mcp__jira__{t}" for t in allowed_mail), "mcp__cal__*"])
+
+
+@pytest.mark.asyncio
+async def test_claude_hides_tools_outside_a_connectors_allow_list(servers):
+    """The OpenAI and Codex backends never list a tool outside the admin's
+    allow-list; Claude used to show it and refuse it only when called."""
+    from hubzoid import factory_claude
+
+    factory_claude._tool_lists.clear()
+    opts = await factory_claude._hide_unlisted_connector_tools(_claude_options(servers, ["whoami"]))
+    assert opts.disallowed_tools == ["mcp__jira__mail_search"]          # hidden from the model
+    assert set(opts.mcp_servers) == {"hubzoid", "jira", "cal"}          # an unlimited server is untouched
+    # No allow-list anywhere: nothing is listed or hidden.
+    plain = _claude_options(servers, ["*"])
+    assert await factory_claude._hide_unlisted_connector_tools(plain) is plain
+
+
+@pytest.mark.asyncio
+async def test_claude_leaves_out_a_limited_connector_it_cannot_list(servers):
+    from hubzoid import factory_claude
+
+    opts = _claude_options(servers, ["whoami"])
+    opts.mcp_servers["jira"] = {"type": "http", "url": "http://127.0.0.1:9/mcp", "headers": {}}
+    out = await factory_claude._hide_unlisted_connector_tools(opts)
+    assert "jira" not in out.mcp_servers and not any(t.startswith("mcp__jira__") for t in out.allowed_tools)
+
+
+@pytest.mark.asyncio
+async def test_claude_refuses_a_call_outside_the_allow_list(servers, tmp_path):
+    """Hiding works from a listing; a tool the server adds after it is still
+    refused when called (the PreToolUse hook)."""
+    from hubzoid import factory_claude
+
+    hub = tmp_path / "h"
+    hub.mkdir()
+    opts = factory_claude._identity_checked(_claude_options(servers, ["whoami"]), hub, _who(X))
+    admit = opts.hooks["PreToolUse"][0].hooks[0]
+    refused = await admit({"tool_name": "mcp__jira__delete_everything", "tool_input": {}}, "t1", None)
+    assert refused["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "does not allow this tool" in refused["hookSpecificOutput"]["permissionDecisionReason"]
+    other = await admit({"tool_name": "mcp__jira__whoami", "tool_input": {}}, "t2", None)
+    assert "does not allow this tool" not in str(other)
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_lists_are_dropped_when_stale_and_bounded(servers, monkeypatch):
+    """A rotated token makes a new cache key; the old entry must not stay forever."""
+    from hubzoid import factory_claude
+
+    import time
+
+    factory_claude._tool_lists.clear()
+    factory_claude._tool_lists[("http://old", "rotated")] = (0.0, ["x"])          # long expired
+    monkeypatch.setattr(factory_claude, "_TOOL_LIST_MAX", 2)
+    now = time.monotonic()
+    factory_claude._tool_lists[("http://a", "1")] = (now, ["a"])                   # oldest live entry
+    factory_claude._tool_lists[("http://b", "2")] = (now, ["b"])                   # the cache is now full
+    await factory_claude._list_server_tools(
+        {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}})
+    keys = list(factory_claude._tool_lists)
+    assert ("http://old", "rotated") not in keys and ("http://a", "1") not in keys     # expired, then oldest
+    assert ("http://b", "2") in keys and len(keys) == 2
+    factory_claude._tool_lists.clear()

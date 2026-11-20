@@ -10,6 +10,64 @@ back in that same place. Each provider has its own page:
 Every channel turns on by a file in the hub's `channels/` folder, never a flag,
 and runs with its hub: restarting the hub restarts its channels.
 
+## Two ways to connect Slack and WhatsApp
+
+Slack and WhatsApp each have two setups. Both are current and supported;
+neither is being retired. The newer one is a **connection** (the rest of this
+page); the earlier one is the **1.x app** (the next section).
+
+| | Connection (`channels/<id>.yaml`, `provider: slack` or `whatsapp_cloud`) | 1.x app (`provider: slack_assistant` or `whatsapp_inbound`) |
+|---|---|---|
+| Use it for | New setups. Threads, routing to an agent or workflow, groups, pausing, delivery checks, a Settings page | An existing 1.x deployment that works; a quick Socket Mode Slack bot |
+| Settings | References in the file (`bot_token_ref: env:SLACK_BOT_TOKEN`) | Variables in `.env` |
+| Slack transport | `socket_mode` (no public URL) or `http` (needs `HUBZOID_PUBLIC_URL`) | Socket Mode only |
+| Who is who | Linked accounts and groups (`hubzoid channels link`) | Slack profile email (`SLACK_IDENTITY_MAPPING`) |
+| Shows in | `hubzoid channels list` and doctor | `hubzoid channels list` (as a `1.x channel` line) and the start |
+
+**They can't run side by side on one Slack app.** A Slack connection (even a
+disabled one) takes over the Slack tokens, so the 1.x Slack app stays off, and
+the start and `hubzoid channels list` say so. `hubzoid run --slack` and
+`--whatsapp` are gone: each setup turns on with its file.
+
+Moving a 1.x Slack app to a connection:
+
+```diff
+- # channels/slack-assistant.yaml
+- version: 1
+- id: slack-assistant
+- provider: slack_assistant
+- enabled: true
++ # hubzoid channels slack import-legacy <hub> --id slack-main   writes:
++ version: 1
++ id: slack-main
++ provider: slack
++ enabled: false            # true once doctor is green
++ agent: main
++ provider_config:
++   transport: socket_mode   # no public URL needed
++   installation_team_id: T…  # read from Slack
++   app_id: A…
++   bot_token_ref: env:SLACK_BOT_TOKEN
++   app_token_ref: env:SLACK_APP_TOKEN
++   allowed_channel_ids: []
+```
+
+Then list the channels in `allowed_channel_ids`, link people
+(`hubzoid channels link`), grant who may ask (Settings), apply, run
+`hubzoid channels doctor <hub> slack-main`, remove
+`channels/slack-assistant.yaml`, set `enabled: true`, and apply again
+(`hubzoid channels apply <hub> --file channels/slack-main.yaml
+--expected-revision <rev>`, with the revision `channels list` shows): until
+then the connection stays paused.
+
+| Symptom | Next step |
+|---|---|
+| `channels doctor` fails `public_url_required` for Slack | Fixed in 2.0.9 for `socket_mode`. On `http`, set `HUBZOID_PUBLIC_URL` to an HTTPS address. |
+| The 1.x Slack app stopped after adding a Slack connection | Expected: one Slack app, one setup. Remove the connection file to go back. |
+| `hubzoid channels list` says "No channels." while a bot answers | Upgrade to 2.0.9: 1.x channels are listed too. |
+| `hubzoid run --slack` stops with exit code 2 | Add `channels/slack-assistant.yaml` (shown above) instead of the flag. |
+| A WhatsApp message gets no answer | `hubzoid channels doctor <hub> <id>` for a connection; for the 1.x app, check `WHATSAPP_*` in `.env` and the `/webhooks/<hub>/whatsapp` URL in Meta. |
+
 ## The 1.x Slack app, WhatsApp, Telegram and webhooks
 
 The earlier Slack assistant app (Socket Mode, people found by their Slack

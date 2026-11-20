@@ -113,10 +113,13 @@ hubzoid channels slack import-legacy . --id slack-main
 writes a disabled `channels/slack-main.yaml` that refers to your existing
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` (`env:` references, no value is
 copied), with the workspace and app ids read from Slack. Fill in
-`allowed_groups` and `allowed_channel_ids`, link people, apply, run doctor,
-stop the old `hubzoid slack run` process, then enable the channel. Once a
-Slack channel is enabled, `hubzoid slack run` refuses to start, so the same
-Slack app never has two listeners.
+`allowed_channel_ids`, link people, grant who may ask (a capability in
+Settings; `allowed_groups` is no longer read), apply, run doctor, remove
+`channels/slack-assistant.yaml` (the 1.x app), then enable the channel. A
+Socket Mode connection needs no `HUBZOID_PUBLIC_URL`, and doctor skips that
+check for it. While any Slack connection file exists, the 1.x Slack app stays
+off, so the same Slack app never has two listeners; `hubzoid channels list`
+says so. See [two ways to connect Slack and WhatsApp](../channels.md#two-ways-to-connect-slack-and-whatsapp).
 
 ## Troubleshooting
 

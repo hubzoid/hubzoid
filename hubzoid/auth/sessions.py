@@ -17,12 +17,26 @@ A session is created only if the account has not changed since its
 credential was read (``expect_updated_at``): a password reset, role or status
 change racing a sign-in can't leave a session that outlives it.
 
-Local mode (sign-in off): every request is the local owner, ``admin@localhost``.
-Because that owner is implicit, a request is only treated as the local owner
-when it names this server by ``localhost`` (or a ``.localhost`` name), an IP
-address, the address the server listens on, or one of the deployment's
-configured origins. A web page reaching the server through DNS rebinding names
-it by the attacker's host name and is refused.
+Local mode (sign-in off): a request made on this machine is the local owner,
+``admin@localhost``. Because that owner is implicit, a request is the owner only
+when all of these hold (``local_request_allowed``):
+
+* it names this server by ``localhost`` (or a ``.localhost`` name), a loopback
+  address, or the address the server listens on, so a web page reaching it
+  through DNS rebinding (its own host name) is refused;
+* it carries no header a proxy or tunnel adds (``appmode.FORWARDING_HEADERS``),
+  so a tunnel such as ngrok or Cloudflare Tunnel, whose local leg connects to
+  loopback, does not make internet visitors the owner;
+* the connection comes from this machine (the client address is loopback);
+* an ``Origin``, when sent, is this machine too (another site's page, or a
+  sandboxed page whose origin is ``null``, is not the owner).
+
+A raw TCP forward (``ssh -R``) adds no header and can't be told apart from a
+local visit: turn sign-in on before exposing the port that way.
+
+``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`` (the operator accepts that
+anyone who can reach the web app is its owner, for a trusted LAN or Docker)
+keeps the earlier, wider rule: any IP address or a configured origin's name.
 """
 from __future__ import annotations
 
@@ -122,6 +136,41 @@ def local_request_allowed(request: Request) -> bool:
     """Whether a request may act as the implicit local owner (see module doc).
     The listening address comes from the server socket (``scope["server"]``),
     which no request header can change."""
+    if appmode.unauthenticated_network_allowed():
+        return _network_request_allowed(request)
+    host = _host_name(request)
+    server = request.scope.get("server") or ()
+    listening = server[0].strip("[]").lower() if server and isinstance(server[0], str) else ""
+    peer = request.client.host if request.client is not None else None
+    origin = (request.headers.get("origin") or "").strip()
+    try:
+        origin_host = (urlparse(origin).hostname or "") if origin else ""
+    except ValueError:      # e.g. "http://[" : not a page of this machine
+        origin_host = ""
+    if host and not (appmode.is_loopback_name(host) or host == listening):
+        key, why = "local:host", f"addressed to {host[:100]!r}"
+    elif appmode.is_forwarded(request.headers):
+        key, why = "local:proxy", "that came through a proxy or tunnel"
+    elif peer is not None and not appmode.is_loopback_host(peer):
+        key, why = "local:peer", f"from {peer[:64]!r}"
+    elif origin and not (origin_host and (appmode.is_loopback_name(origin_host) or origin_host == host)):
+        # `Origin: null` (a sandboxed page, an agent-written artifact) proves nothing local.
+        key, why = "local:origin", f"from the page {origin[:100]!r}"
+    else:
+        return True
+    # Once per kind: a stream of internet visitors must not grow this set.
+    if key not in _warned_hosts:
+        _warned_hosts.add(key)
+        log.warning("auth: sign-in is off, so only this computer is the owner; a request %s was not "
+                    "treated as the owner. To use Hubzoid from another address, turn sign-in on "
+                    "(HUBZOID_AUTH=true).", why)
+    return False
+
+
+def _network_request_allowed(request: Request) -> bool:
+    """The wider rule under HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK: the Host is
+    ``localhost``, an IP address, the listening address or a configured
+    origin's name. Only a page using DNS rebinding (its own name) is refused."""
     host = _host_name(request)
     if not host or host == "localhost" or host.endswith(".localhost"):
         return True

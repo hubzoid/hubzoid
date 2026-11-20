@@ -52,7 +52,7 @@ Drop folders under `agents/`. Each folder needs an `AGENTS.md`:
 name: researcher
 description: When the user wants a researched brief.   # used as handoff trigger
 tools: [web_search, http_get, read_knowledge, write_artifact]
-model: openrouter/anthropic/claude-haiku-4.5           # optional
+model: claude-local/haiku   # optional: a different model on the hub's engine
 ---
 
 You are the researcher sub-agent. ...
@@ -61,6 +61,10 @@ You are the researcher sub-agent. ...
 `tools:` is a whitelist over the combined registry of pre-shipped +
 `tools_local/` tools. It scopes a **delegate** (see below); for a plain
 inline sub-agent it is ignored (the main agent owns all tools).
+`hubzoid doctor` (check `agents.mode`) lists each sub-agent, says whether it
+runs on its own, and warns when a `model:` or `tools:` line is ignored and
+why. A `tools:` list limits only that sub-agent; for limits that hold whoever
+asks, use `restricted/` and [access management](access-management.md).
 
 When `description` reads like a "when" sentence, the main agent uses it to
 decide when to reach for this sub-agent. Make it specific to avoid wrong
@@ -90,13 +94,19 @@ None of these is offered over MCP, because an MCP call has no chat to save into.
 A sub-agent is loaded inline by the main agent (as a skill) by default. If
 its frontmatter declares a `model:` that **differs** from the hub's model
 *on the same engine*, it instead becomes a **delegate**: the main agent
-calls it as a subagent running on that model, gets its answer, and continues
-— the main agent stays in control the whole time.
+calls it as a subagent running on that model, waits for its answer within
+the same turn, and continues — the main agent stays in control the whole
+time. This is the same on every backend (on Claude, background sub-agents
+are switched off for this). A delegate does not see the conversation, so the
+main agent briefs it with everything it needs.
 
 - claude-local hub + `model: claude-local/opus` sub-agent → delegate on Opus.
 - OpenAI/LiteLLM hub + a different LiteLLM `model:` → delegate on that model.
-- Same model as the hub, a different *engine* (e.g. `gpt-4o` inside a
-  claude-local hub), or no `model:` → stays an inline skill.
+- Same model as the hub, a different *engine* (e.g. an `openrouter/...`
+  model inside a claude-local hub), or no `model:` → stays an inline skill,
+  and its `tools:` list does not apply. `hubzoid doctor` says which.
+- Over MCP every sub-agent is offered as a skill: the MCP client brings its
+  own model.
 
 A delegate's `tools:` whitelist scopes which hub tools it may use. If the
 delegate's model needs a provider key that is missing, it falls back to an

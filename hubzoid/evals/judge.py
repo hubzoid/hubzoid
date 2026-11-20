@@ -45,6 +45,8 @@ still.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import json
 import logging
 import os
@@ -149,6 +151,70 @@ def available_tools(rt) -> list[str]:
         names.append(short_name(str(allowed)))
 
     return list(dict.fromkeys(n for n in names if n))
+
+
+@dataclass(frozen=True)
+class ToolInventory:
+    """Every tool name a built hub declares, for checking the names an eval
+    names (``assertions.check_tool_names``). ``names`` are short and
+    lowercased; ``servers`` are MCP server keys whose tools are only known
+    when a turn runs (``mcp__<key>__<tool>`` under them can't be proven
+    wrong); ``bare_dynamic`` is set when such tools also surface under their
+    bare names on this backend (the OpenAI Agents SDK lists its MCP servers'
+    tools itself), so an unknown bare name can't be proven wrong either."""
+    names: frozenset[str]
+    servers: frozenset[str] = frozenset()
+    bare_dynamic: bool = False
+
+
+def tool_inventory(rt, hub_dir=None) -> ToolInventory | None:
+    """The declared tools of a built Runtime, on any backend, or None when its
+    shape isn't known (then names aren't checked). Duck-typed like
+    `available_tools`: Claude keeps its registry in `_registry` and its servers
+    in `_options`, Codex in `registry` (hub MCP tools join it in aopen()), the
+    OpenAI Agents one on `_agent`. Fake stand-ins and hidden tools are in the
+    registry too, so they count; a delegate counts as ``handover_<name>``."""
+    from .. import handover
+    from ..tool_events import short_name
+
+    names: set[str] = set()
+    servers: set[str] = set()
+    bare_dynamic = False
+    known = False
+    registry = getattr(rt, "_registry", None)
+    if not isinstance(registry, dict):
+        registry = getattr(rt, "registry", None)
+    if isinstance(registry, dict):
+        known = True
+        names |= {short_name(str(n)).lower() for n in registry}
+    agent = getattr(rt, "_agent", None)
+    if agent is not None and hasattr(agent, "tools"):
+        known = True
+        names |= {short_name(str(t.name)).lower() for t in agent.tools or [] if getattr(t, "name", None)}
+        for server in getattr(agent, "mcp_servers", None) or []:
+            servers.add(str(getattr(server, "name", "") or "").lower())
+            bare_dynamic = True
+    options = getattr(rt, "_options", None)
+    if options is not None:
+        for allowed in getattr(options, "allowed_tools", None) or []:
+            text = str(allowed)
+            if text.startswith("mcp__") and text.endswith("__*"):
+                servers.add(text[len("mcp__"):-len("__*")].lower())
+            else:
+                names.add(short_name(text).lower())
+        for name in (getattr(options, "agents", None) or {}):
+            names.add(handover.tool_name(name))
+    if not known:
+        return None
+    if hub_dir is not None:
+        try:
+            from ..connectors import registry as connectors
+            from ..connectors.per_user import server_key
+
+            servers |= {server_key(cid).lower() for cid in connectors.definitions(hub_dir)}
+        except Exception:  # noqa: BLE001 - no connector files: nothing to add
+            pass
+    return ToolInventory(frozenset(n for n in names if n), frozenset(s for s in servers if s), bare_dynamic)
 
 
 def hidden_tools(rt) -> set[str]:

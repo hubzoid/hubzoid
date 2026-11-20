@@ -62,6 +62,7 @@ def _hub_checks(hub: Path) -> list[Check]:
                 out.append(Check("runtime.codex_login", "fail", f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
+    out.extend(_subagent_checks(hub))
     try:
         from .loaders import tools_local
 
@@ -112,6 +113,19 @@ def _hub_checks(hub: Path) -> list[Check]:
                          [f"{w['name']} ({w['schedule'] or 'manual'}, {w['timezone']})" for w in defs]))
 
     try:
+        from .connectors import registry as connectors
+
+        bad = connectors.problems(hub)
+        loaded = connectors.definitions(hub)
+        if bad:
+            out.append(Check("connectors.files", "warn",
+                             f"{len(bad)} connector file(s) in {connectors.folder(hub)} did not load, so those "
+                             "connectors are missing", bad))
+        elif loaded:
+            out.append(Check("connectors.files", "ok", f"{len(loaded)} connector(s) loaded", sorted(loaded)))
+    except Exception as exc:  # noqa: BLE001
+        out.append(Check("connectors.files", "warn", f"Connector files could not be read: {exc}"))
+    try:
         from . import access
 
         restricted = access.load_restricted(hub)
@@ -128,6 +142,60 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))
     return out
+
+
+def _subagent_checks(hub: Path) -> list[Check]:
+    """`agents.mode`: how each sub-agent runs. A sub-agent runs on its own
+    (its model, only its `tools:`) only when its model is a different model on
+    the agent's engine; otherwise it becomes instructions the main agent reads,
+    and its `model:` and `tools:` no longer apply. That used to show only in a
+    log line, so a changed MODEL could quietly drop a sub-agent's tool limits."""
+    try:
+        from . import handover
+        from . import settings as settingslib
+        from .loaders import agents as agents_loader
+        from .runtime import _resolve_model_id
+
+        hub_model = _resolve_model_id(hub, settingslib.load(hub))
+        subs = agents_loader.load_subagents(hub)
+    except Exception as exc:  # noqa: BLE001 - a broken agent file fails runtime.build
+        return [Check("agents.mode", "warn", f"Sub-agents could not be read: {type(exc).__name__}: {exc}")]
+    rows: list[str] = []
+    dropped: list[str] = []
+    for loaded in subs:
+        spec = loaded.spec
+        if spec.isolated:
+            rows.append(f"{spec.name}: station (called from workflows only)")
+            continue
+        why = handover.skill_reason(spec.model, hub_model)
+        if not why and handover.engine(spec.model) == "litellm":
+            # The OpenAI Agents factory builds each delegate's model up front and
+            # loads it as a skill when that fails (a missing provider key).
+            try:
+                from . import model as modellib
+
+                modellib.build(spec.model)
+            except Exception as exc:  # noqa: BLE001 - reported, never raised
+                why = f"its model {spec.model!r} could not be built ({type(exc).__name__}: {exc})"[:300]
+        if not why:
+            rows.append(f"{spec.name}: runs on its own, on {spec.model}")
+            continue
+        rows.append(f"{spec.name}: instructions for the main agent, because {why}")
+        lost = [f"tools: {list(spec.tools)}"] if spec.tools else []
+        if spec.model and (handover.engine(spec.model) != handover.engine(hub_model)
+                           or "could not be built" in why):
+            lost.insert(0, f"model: {spec.model}")
+        if lost:
+            dropped.append(f"{spec.name}: {' and '.join(lost)} do not apply, because {why}")
+            rows.pop()   # the line above already says how it runs, and why
+    if dropped:
+        return [Check("agents.mode", "warn",
+                      f"{len(dropped)} sub-agent(s) don't run on their own, so their own model or tools: "
+                      "list is ignored. Give each a different model on the agent's engine "
+                      f"(the agent uses {hub_model}), or drop those fields", dropped + rows)]
+    if rows:
+        return [Check("agents.mode", "ok", f"{len(rows)} sub-agent(s)", rows)]
+    return []
 
 
 _SECRET_CHECK_IDS = {"deployment": "secrets.deployment", "hub": "secrets.hub", "restricted": "secrets.restricted"}
@@ -397,7 +465,7 @@ def _app_checks(hub: Path) -> list[Check]:
     found = _openwebui_data(hub, auth_on=summary["auth"])
     if found:
         out.append(found)
-    out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out.append(_local_mode_guard(auth_on=summary["auth"], hub=hub))
     out.append(_deployment_key(hub))
     return [c for c in out if c is not None]
 
@@ -432,15 +500,34 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
                  f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
 
 
-def _local_mode_guard(*, auth_on: bool) -> Check | None:
-    """`hubzoid run` keeps local mode (sign-in off) on loopback."""
-    from . import appmode, settings as settingslib
+def _local_mode_guard(*, auth_on: bool, hub: Path | None = None) -> Check | None:
+    """`hubzoid run` keeps local mode (sign-in off) on loopback. A public URL
+    recorded by `hubzoid gateway --public-url` counts like HUBZOID_PUBLIC_URL."""
+    from . import appmode, deployment, settings as settingslib
+
+    recorded = None
+    if hub is not None:
+        try:
+            recorded = deployment.read(hub).get("public_url")
+        except Exception:  # noqa: BLE001 - no deployment record: nothing recorded
+            recorded = None
 
     if auth_on:
         return None
     host = os.environ.get("HUBZOID_HOST", "127.0.0.1").strip()
     detail = {"host": host}
     if appmode.is_loopback_host(host):
+        remote = appmode.non_local_origins(extra=recorded)
+        if remote and appmode.unauthenticated_network_allowed():
+            return Check("exposure.local_mode", "warn",
+                         f"Sign-in is off and HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true: visitors through "
+                         f"{', '.join(remote)} act as the hub's owner. Turn sign-in on (HUBZOID_AUTH=true) "
+                         "unless only people you trust can reach that address", {**detail, "public": remote})
+        if remote:
+            return Check("exposure.local_mode", "warn",
+                         f"Sign-in is off: only this computer is the owner. Visitors through {', '.join(remote)} "
+                         "get no access (signed webhooks still arrive). Turn sign-in on (HUBZOID_AUTH=true) "
+                         "to open the web app there", {**detail, "public": remote})
         return Check("exposure.local_mode", "ok", f"Local mode: the web app stays on {host}", detail)
     if settingslib.truthy(os.environ.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
         return Check("exposure.local_mode", "warn",

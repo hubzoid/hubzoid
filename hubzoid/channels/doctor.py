@@ -55,20 +55,23 @@ def webhook_url(conn: Connection) -> str | None:
 
 
 def _public_url_check(conn: Connection) -> Check:
+    from ..appmode import is_loopback_host
+
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").strip()
-    if not conn.adapter.webhook:
-        return Check("public_url", "skip", "This transport connects out, so it needs no public URL.")
+    if not conn.adapter.receives_webhooks(conn):
+        return Check("public_url", "skip", "This connection connects out, so it needs no public URL.")
     if not base:
         return Check("public_url", "fail", "HUBZOID_PUBLIC_URL is not set, so the provider has nowhere to send "
                      "deliveries.", "public_url_required",
                      "Set HUBZOID_PUBLIC_URL to the deployment's HTTPS address, then run doctor again.")
     url = urlparse(base)
-    if url.scheme == "https" and url.hostname:
-        return Check("public_url", "ok", f"Deliveries go to {webhook_url(conn)}")
-    if url.scheme == "http" and url.hostname in ("localhost", "127.0.0.1", "::1"):
+    host = url.hostname or ""
+    if url.scheme in ("http", "https") and (is_loopback_host(host) or host.endswith(".localhost")):
         return Check("public_url", "warn", f"{base} is local. Only a sender on this machine (or a tunnel you set "
                      "up) can reach it.", "public_url_required",
                      "For a real provider, set HUBZOID_PUBLIC_URL to an HTTPS address.")
+    if url.scheme == "https" and url.hostname:
+        return Check("public_url", "ok", f"Deliveries go to {webhook_url(conn)}")
     return Check("public_url", "fail", f"{base} is not HTTPS.", "public_url_unsafe",
                  "Providers sign deliveries, but the hub still needs HTTPS. Use an https:// address.")
 
@@ -155,7 +158,7 @@ def run(conn: Connection, inputs: dict | None = None) -> dict:
                             "provider_unavailable", "Check the network and credentials, then run doctor again."))
     return {"id": conn.id, "revision": conn.revision, "checks": [c.to_json() for c in checks],
             "ready": all(c.status != "fail" for c in checks) and conn.enabled,
-            "webhook_url": webhook_url(conn) if conn.adapter.webhook else None, "network_writes": False}
+            "webhook_url": webhook_url(conn) if conn.adapter.receives_webhooks(conn) else None, "network_writes": False}
 
 
 def _actor_checks(conn: Connection, external_id: str, workspace_id: str | None) -> list[Check]:

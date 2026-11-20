@@ -2,7 +2,7 @@ aiofile==3.12.3
     # via py-key-value-aio
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.13.5
+aiohttp==3.14.5
     # via litellm
 aiosignal==1.4.0
     # via aiohttp
@@ -40,7 +40,7 @@ attrs==26.1.0
     #   cyclopts
     #   jsonschema
     #   referencing
-authlib==1.7.2
+authlib==1.9.5
     # via
     #   hubzoid (pyproject.toml)
     #   fastmcp-slim
@@ -48,9 +48,11 @@ bcrypt==5.0.0
     # via pwdlib
 beartype==0.22.9
     # via py-key-value-aio
-boto3==1.42.62
-    # via hubzoid (pyproject.toml)
-botocore==1.42.97
+boto3==1.43.125
+    # via
+    #   hubzoid (pyproject.toml)
+    #   litellm
+botocore==1.43.125
     # via
     #   boto3
     #   s3transfer
@@ -60,8 +62,9 @@ caio==0.12.4
     # via aiofile
 casbin==1.43.0
     # via hubzoid (pyproject.toml)
-certifi==2026.7.22
+certifi==2026.10.23
     # via
+    #   fastmcp-slim
     #   httpcore
     #   httpx
     #   requests
@@ -92,7 +95,7 @@ composio-client==1.39.0
     # via composio
 croniter==6.2.4
     # via hubzoid (pyproject.toml)
-cryptography==48.0.0
+cryptography==50.0.2
     # via
     #   hubzoid (pyproject.toml)
     #   authlib
@@ -111,7 +114,7 @@ distro==1.9.0
     #   openai
 dkimpy==1.1.8
     # via hubzoid (pyproject.toml)
-dnspython==2.8.0
+dnspython==2.9.2
     # via
     #   dkimpy
     #   email-validator
@@ -125,13 +128,13 @@ exceptiongroup==1.3.1
     # via fastmcp-slim
 fastapi==0.136.3
     # via hubzoid (pyproject.toml)
-fastmcp==3.4.7
+fastmcp==3.4.11
     # via hubzoid (pyproject.toml)
-fastmcp-slim==3.4.7
+fastmcp-slim==3.4.11
     # via fastmcp
 fastuuid==0.14.0
     # via litellm
-filelock==4.0.3
+filelock==4.2.9
     # via huggingface-hub
 frozenlist==1.8.0
     # via
@@ -162,7 +165,9 @@ h11==0.16.0
 hf-xet==1.6.0 ; platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
     # via huggingface-hub
 hishel==1.4.0
-    # via githubkit
+    # via
+    #   hubzoid (pyproject.toml)
+    #   githubkit
 httpcore==1.0.9
     # via httpx
 httptools==0.8.0
@@ -215,7 +220,7 @@ jmespath==1.1.0
     # via
     #   boto3
     #   botocore
-joserfc==1.7.4
+joserfc==1.8.0
     # via
     #   authlib
     #   fastmcp-slim
@@ -242,7 +247,7 @@ keyring==25.7.0
     # via py-key-value-aio
 lazy-object-proxy==1.13.0
     # via openapi-spec-validator
-litellm==1.95.0
+litellm==1.102.4
     # via
     #   hubzoid (pyproject.toml)
     #   openai-agents
@@ -258,7 +263,7 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   mako
-mcp==1.27.2
+mcp==1.30.0
     # via
     #   hubzoid (pyproject.toml)
     #   claude-agent-sdk
@@ -292,7 +297,7 @@ openapi-spec-validator==0.7.2
     # via hubzoid (pyproject.toml)
 openpyxl==3.1.5
     # via hubzoid (pyproject.toml)
-opentelemetry-api==1.44.0
+opentelemetry-api==1.45.2
     # via fastmcp-slim
 opentelemetry-proto==1.44.0
     # via hubzoid (pyproject.toml)
@@ -302,7 +307,7 @@ packaging==26.3
     #   huggingface-hub
 pathable==0.4.4
     # via jsonschema-path
-pillow==12.2.0
+pillow==13.0.0
     # via
     #   hubzoid (pyproject.toml)
     #   reportlab
@@ -346,16 +351,17 @@ pydantic-core==2.46.4
 pydantic-settings==2.15.0
     # via
     #   fastmcp-slim
+    #   litellm
     #   mcp
 pygments==2.21.0
     # via
     #   rich
     #   rich-rst
-pyjwt==2.13.0
+pyjwt==2.15.1
     # via
     #   githubkit
     #   mcp
-pypdf==6.7.5
+pypdf==6.21.4
     # via hubzoid (pyproject.toml)
 pyperclip==1.11.0
     # via fastmcp-slim
@@ -424,7 +430,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-s3transfer==0.16.1
+s3transfer==0.19.3
     # via boto3
 secretstorage==3.5.0 ; sys_platform == 'linux'
     # via keyring
@@ -475,6 +481,7 @@ types-requests==2.33.0.20260906
     # via openai-agents
 typing-extensions==4.16.0
     # via
+    #   aiohttp
     #   aiosignal
     #   alembic
     #   anyio

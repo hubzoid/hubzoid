@@ -62,6 +62,25 @@ _FORWARDED_PREFIX = "x-forwarded-prefix"
 _CLIENT_ADDRESS = frozenset({"x-forwarded-for", "x-real-ip", "forwarded"})
 
 
+def _direct_from_this_machine(request: Request) -> bool:
+    """A request made on this machine: the connecting peer is loopback and it
+    carries no header a proxy or tunnel adds. Decided here, at the edge, from
+    the request as it arrived (a tunnel's local leg also connects from
+    loopback, but adds its forwarding headers)."""
+    from . import appmode
+
+    peer = request.client.host if request.client else None
+    if not peer or not appmode.is_loopback_host(peer) or appmode.is_forwarded(request.headers):
+        return False
+    # Headers only a proxy sends. A bridge can't read these as evidence (the edge
+    # itself asserts X-Forwarded-Proto from the public URL), so they count here.
+    return not any(request.headers.get(h) is not None for h in _PROXY_HINTS)
+
+
+_PROXY_HINTS = ("x-forwarded-proto", "x-forwarded-port", "x-forwarded-server", "x-forwarded-ssl",
+                "front-end-https", "via")
+
+
 def _trusted_proxies() -> list:
     """Proxies whose ``X-Forwarded-For`` the edge believes:
     ``HUBZOID_TRUSTED_PROXIES`` (addresses or networks, comma-separated, or
@@ -363,7 +382,11 @@ def _request_headers(
                if k.decode("latin-1").lower() != _FORWARDED_PREFIX
                and k.decode("latin-1").lower() not in _CLIENT_ADDRESS]
     client = client_address(request)
-    if client:
+    if client and not _direct_from_this_machine(request):
+        # Only a request that did not come straight from this machine carries
+        # an address to the bridge. With sign-in off, a bridge treats any
+        # forwarding header as "not local" (auth.sessions.local_request_allowed),
+        # so a LAN proxy relaying "X-Forwarded-For: 127.0.0.1" can't pass as local.
         headers.append((b"x-forwarded-for", client.encode("latin-1")))
     if forwarded_prefix:
         headers.append((_FORWARDED_PREFIX.encode("latin-1"),

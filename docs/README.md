@@ -18,7 +18,7 @@ testing an unreleased branch.
 | Start from a ready-to-use hub | [Software Factory](https://github.com/hubzoid/software-factory-hub), [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub), [Customer Desk](https://github.com/hubzoid/customer-desk-hub), [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Put the chat inside your own app (ERPNext, Odoo, a dashboard) | [Embedding the chat](embedding.md) |
-| Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |
+| Use other chat channels | [Channels](channels.md) ([Slack](channels/slack.md), [GitHub](channels/github.md), [Linear](channels/linear.md), [email](channels/email.md), [WhatsApp](channels/whatsapp.md)), [two ways to connect Slack and WhatsApp](channels.md#two-ways-to-connect-slack-and-whatsapp), the 1.x [Slack app](slack.md) and [inbound surfaces](inbound-surfaces.md) |
 | Operate and recover | [Deployment](DEPLOYING.md), [secrets](secrets.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
 | Evaluate and observe | [Evals](evals.md), [observability](OBSERVABILITY.md) |
 | Brand a deployment | [Branding and attribution](branding.md) |

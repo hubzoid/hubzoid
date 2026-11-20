@@ -707,6 +707,7 @@ def run(
     auth_on = appmode.auth_enabled(hub)
     if not no_ui:
         _refuse_unauthenticated_network(hub, host, auth_on)
+        _note_public_url_in_local_mode(auth_on)
     _check_openwebui_upgrade(hub, auth_on)
 
     # A health response from an already running hub is not readiness for this
@@ -1020,6 +1021,22 @@ def _warn_retired(hub: Path) -> None:
         if not r.fatal:
             console.print(f"[yellow]{escape(Path(hub).name)}: {escape(r.name)} is an Open WebUI setting "
                           f"Hubzoid 2.0 no longer uses. {escape(r.advice)}[/yellow]")
+
+
+def _note_public_url_in_local_mode(auth_on: bool, public_url: str | None = None) -> None:
+    """Sign-in off with a public URL (a tunnel for webhooks, say): say that
+    visitors through it are not the owner. Signed webhooks still arrive; only
+    someone on this machine is the owner (``auth.sessions.local_request_allowed``).
+    ``public_url`` is one given on the command line (``gateway --public-url``)."""
+    from . import appmode
+
+    if auth_on or appmode.unauthenticated_network_allowed():
+        return
+    remote = appmode.non_local_origins(extra=public_url)
+    if remote:
+        console.print(f"[yellow]Sign-in is off: only this computer is the owner. Visitors through "
+                      f"{escape(', '.join(remote))} get no access (signed webhooks still arrive). "
+                      "To open the web app there, turn sign-in on (HUBZOID_AUTH=true).[/yellow]")
 
 
 def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None:
@@ -1585,6 +1602,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
             "agent as the local owner.[/red] Turn sign-in on (HUBZOID_AUTH=true), bind to "
             "127.0.0.1, or set HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true to accept that.")
         raise typer.Exit(2)
+    _note_public_url_in_local_mode(auth_on, pub)
     if len(hub_dirs) > 1 and deployment_env.get('HUBZOID_DBOS_DB', '').startswith('sqlite'):
         console.print('[red]A multi-hub gateway requires separate SQLite DBOS files. Unset HUBZOID_DBOS_DB or use PostgreSQL.[/red]')
         raise typer.Exit(2)
@@ -2438,7 +2456,7 @@ def doctor(
                 # Names and sources only. The report never holds a value.
                 for row in c.detail:
                     console.print(f"    [dim]{row['key']}: {row['layer']} ({row['source']})[/dim]")
-            elif c.status in ("warn", "fail") and isinstance(c.detail, list):
+            elif (c.status in ("warn", "fail") or c.id == "agents.mode") and isinstance(c.detail, list):
                 for line in c.detail:
                     console.print(f"    [dim]{line}[/dim]")
     if not result["ok"]:

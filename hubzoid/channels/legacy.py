@@ -118,7 +118,12 @@ def plan(hub_dir: Path, env: Mapping[str, str], *, two_point_oh_slack: bool | No
         if provider in seen or _missing(provider, env):
             continue
         if provider == "slack_assistant" and two_point_oh_slack:
-            continue  # those tokens belong to a 2.0 Slack connection
+            # Those tokens belong to a 2.0 Slack connection (even a disabled
+            # one): say so, or the 1.x app just stops without a word.
+            out.notes.append(f"{Path(hub_dir).name}/.env has the Slack app settings, but a 2.0 Slack "
+                             "connection in channels/ uses those tokens, so the 1.x Slack app is off. "
+                             "Use one or the other (see docs/channels.md, 'Two ways to connect').")
+            continue
         _turn_on(out, provider)
         out.notes.append(f"{Path(hub_dir).name}/.env has the {provider} settings but no channel file. It "
                          f"starts for this release; add channels/{SUGGESTED[provider]}.yaml "
@@ -137,3 +142,34 @@ def _turn_on(out: Plan, provider: str) -> None:
 def file_text(provider: str) -> str:
     """The file that turns a 1.x channel on."""
     return (f"version: 1\nid: {SUGGESTED[provider]}\nprovider: {provider}\nenabled: true\n")
+
+
+def status(hub_dir: Path, env: Mapping[str, str]) -> list[dict]:
+    """The 1.x channels of a hub as read-only rows for ``hubzoid channels
+    list``: provider, where it is set (its file, or ``.env`` alone), on or
+    off, and why. 2.0 connections are listed separately; these used to be
+    missing from the list, which could say "No channels." while one ran."""
+    from .. import _fs
+
+    p = plan(hub_dir, env)
+    folder = _fs.resolve_bucket(Path(hub_dir), "channels") or Path(hub_dir) / "channels"
+    files = {}
+    if folder.is_dir():
+        for path in sorted(x for x in folder.iterdir() if x.suffix in (".yaml", ".yml")):
+            provider = provider_of(path)
+            if provider in PROVIDERS and provider not in files:
+                files[provider] = str(path.relative_to(hub_dir))
+    rows = []
+    for provider, (process, surface) in PROVIDERS.items():
+        source = files.get(provider) or (".env" if not _missing(provider, env) else None)
+        if source is None:
+            continue
+        on = p.slack if process == "slack" else surface in p.inbound
+        # A file's problems name the file; an env-only note names its provider
+        # (every env-only note mentions .env, so .env alone matches nothing).
+        why = [m for m in (*p.problems, *p.notes)
+               if (source != ".env" and source in m) or f"the {provider} settings" in m
+               or (provider == "slack_assistant" and "the Slack app settings" in m)]
+        rows.append({"provider": provider, "source": source, "status": "on" if on else "off",
+                     "note": why[0] if why else ""})
+    return rows

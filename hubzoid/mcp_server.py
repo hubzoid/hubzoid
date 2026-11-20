@@ -352,7 +352,7 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
     """
     from fastmcp.server.middleware import Middleware
 
-    from .access.guard import _allowed_surfaces, decide, visible_map
+    from .access.guard import _allowed_surfaces, captured_surfaces, decide, visible_map
 
     gated = {
         name: ft for name, ft in (registry or {}).items()
@@ -390,7 +390,9 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                     elif t.name in gated:
                         ok = vis.get(t.name, False)
                     else:
-                        ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
+                        own = captured_surfaces((registry or {}).get(t.name))
+                        ok = decide(hub_dir, ident, permissions.get(t.name, ""),
+                                    own if own is not None else surfaces)[0]
                     if ok:
                         shown.append(t)
             return shown
@@ -404,7 +406,7 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
 def _visible(hub_dir: Path, ident, name: str, registry: dict, permissions: dict[str, str]) -> bool:
     """Whether ``ident`` may use the tool ``name``: the same decision as
     tools/list and invoke (restricted permission, or the tool's own gate)."""
-    from .access.guard import _allowed_surfaces, decide, visible_map
+    from .access.guard import _allowed_surfaces, captured_surfaces, decide, visible_map
 
     ft = registry.get(name)
     if ft is None or ident.is_anonymous:
@@ -413,7 +415,8 @@ def _visible(hub_dir: Path, ident, name: str, registry: dict, permissions: dict[
             and name not in permissions:
         with access.identity_scope(ident):
             return bool(visible_map({name: ft}).get(name, False))
-    return decide(hub_dir, ident, permissions.get(name, ""), _allowed_surfaces())[0]
+    own = captured_surfaces(ft)
+    return decide(hub_dir, ident, permissions.get(name, ""), own if own is not None else _allowed_surfaces())[0]
 
 
 def _add_cards(mcp, hub_dir: Path, registry: dict, permissions: dict[str, str]) -> None:
