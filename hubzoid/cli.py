@@ -575,6 +575,11 @@ def run(
                                                            ".hubzoid next to hubzoid.yaml."),
     host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public port binds to (or HUBZOID_HOST env). 0.0.0.0 exposes it on the network, which needs sign-in (HUBZOID_AUTH=true). The bridge always stays on 127.0.0.1."),
     no_ui: bool = typer.Option(False, "--no-ui", hidden=True, help="One hub's own process under a supervisor."),
+    behind: str = typer.Option(None, "--behind", help="One hub only: run its bridge as its own service behind "
+                                                     "a Hubzoid deployment whose public address this is "
+                                                     "(for example https://hub.example.com). The deployment's "
+                                                     "hubzoid.yaml names this service in the hub's "
+                                                     "HUBZOID_BRIDGE_UPSTREAM. See docs/DEPLOYING.md."),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open the web app in a browser. It opens only from a terminal, on a loopback host."),
     slack: bool = typer.Option(
         False,
@@ -639,8 +644,8 @@ def run(
             console.print("[red]--bridge-port is for one hub. In a deployment, set BRIDGE_PORT in a hub's .env, "
                           "or leave it out and each hub gets a free port.[/red]")
             raise typer.Exit(2)
-        if no_ui:
-            console.print("[red]--no-ui runs one hub.[/red]")
+        if no_ui or behind:
+            console.print(f"[red]{'--behind' if behind else '--no-ui'} runs one hub.[/red]")
             raise typer.Exit(2)
         _refuse_channel_flags(slack, whatsapp, telegram, webhook)
         _run_deployment(targets, port=port, host=host, public_url=None, name="Hubzoid",
@@ -654,8 +659,10 @@ def run(
             raise typer.Exit(2)
         os.environ.update(values)
     hub = targets[0].resolve()
-    if not no_ui:
+    if not no_ui or behind:
         _refuse_channel_flags(slack, whatsapp, telegram, webhook)
+    if behind:
+        no_ui = True  # the deployment's edge is the public door
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
         # If the user is currently inside a hub folder, point that out.
@@ -710,9 +717,19 @@ def run(
         _note_public_url_in_local_mode(auth_on)
     _check_openwebui_upgrade(hub, auth_on)
 
+    bridge_host = "127.0.0.1"
+    behind_env: dict[str, str] = {}
+    if behind:
+        behind_env, problems = _behind_plan(hub, behind, os.environ)
+        for problem in problems:
+            console.print(f"[red]{escape(problem)}[/red]")
+        if problems:
+            raise typer.Exit(2)
+        bridge_host = behind_env["HUBZOID_HOST"]
+
     # A health response from an already running hub is not readiness for this
     # child. Refuse occupied ports before starting anything or routing to it.
-    _ensure_port_available("127.0.0.1", br_port, "Bridge", "--bridge-port")
+    _ensure_port_available(bridge_host, br_port, "Bridge", "--bridge-port")
     if not no_ui:
         if br_port == ui_port:
             console.print("[red]Bridge and public ports must be different.[/red]")
@@ -741,12 +758,16 @@ def run(
         bridge_env.update(mcp_env)
         if settingslib.truthy(bridge_env.get("MCP_SERVER")):
             mcp_url = (bridge_env.get("MCP_PUBLIC_URL") or "").strip() or None
+    bridge_env.update(behind_env)
     bridge_cmd = [
         sys.executable, "-m", "uvicorn",
         "hubzoid.server:build_app", "--factory",
-        "--host", "127.0.0.1", "--port", str(br_port),
+        "--host", bridge_host, "--port", str(br_port),
         "--log-level", settings.log_level,
-    ]
+    ] + _forwarded_args(bridge_host, os.environ)
+    if behind:
+        _run_hub_service(hub, bridge_cmd, bridge_env, br_port=br_port, bridge_host=bridge_host)
+        return
     if no_ui:
         _run_hub_process(hub, bridge_cmd, bridge_env, br_port=br_port)
         return
@@ -863,6 +884,107 @@ def _refuse_channel_flags(slack: bool, whatsapp: bool, telegram: bool, webhook: 
                       + "".join(f"    {line}\n" for line in legacy.file_text(provider).splitlines()), highlight=False)
     console.print("Its secrets stay in the hub's .env. See docs/channels.md.")
     raise typer.Exit(2)
+
+
+def _bridge_host(env) -> str:
+    """Where a hub run as its own service (`run --behind`) listens:
+    HUBZOID_BRIDGE_HOST, else this machine only."""
+    return (env.get("HUBZOID_BRIDGE_HOST") or "").strip() or "127.0.0.1"
+
+
+def _forwarded_args(host: str, env) -> list[str]:
+    """uvicorn's --forwarded-allow-ips for a bridge on the network: the
+    deployment's edge (HUBZOID_TRUSTED_PROXIES), so sign-in limits and audit
+    records see each person's address, not the edge's. A bridge on loopback
+    keeps uvicorn's default (its edge is on this machine)."""
+    from . import appmode
+
+    raw = [x.strip() for x in (env.get("HUBZOID_TRUSTED_PROXIES") or "").split(",") if x.strip()]
+    if appmode.is_loopback_host(host) or not raw:
+        return []
+    return ["--forwarded-allow-ips", ",".join(raw)]
+
+
+def _behind_plan(hub: Path, behind: str, env) -> tuple[dict[str, str], list[str]]:
+    """What a hub run as its own service behind a deployment's edge
+    (`run <hub> --behind <public url>`) is told, as the edge would tell a
+    bridge it starts, and what stops it. Returns ``(env, problems)``."""
+    from urllib.parse import urlsplit
+
+    from . import appmode, deployment
+    from . import gateway as gateway_lib
+    from .inbound.routing import hub_slug
+
+    problems: list[str] = []
+    base = (behind or "").strip().rstrip("/")
+    try:
+        parts = urlsplit(base)
+        bad = (parts.scheme not in ("http", "https") or not parts.hostname or parts.username
+               or parts.password or parts.query or parts.fragment)
+    except ValueError:
+        bad = True
+    if bad:
+        problems.append("--behind needs the deployment's public address, for example https://hub.example.com.")
+    host = _bridge_host(env)
+    auth_on = appmode.auth_enabled(hub)
+    if not appmode.is_loopback_host(host):
+        if not auth_on and not settingslib.truthy(env.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
+            problems.append(f"Sign-in is off, so a bridge listening on {host} (HUBZOID_BRIDGE_HOST) would let "
+                            "anyone who reaches it use the hub as its owner. Turn sign-in on (HUBZOID_AUTH=true), "
+                            "or set HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true to accept that.")
+        if not (env.get("HUBZOID_TRUSTED_PROXIES") or "").strip():
+            problems.append(f"The bridge listens on {host}, so set HUBZOID_TRUSTED_PROXIES to the address or "
+                            "network of the deployment's edge (for example 10.0.0.0/16). Without it every "
+                            "person looks like the edge's address, and sign-in limits would lock everyone out.")
+    op_url = (env.get("HUBZOID_OPERATIONAL_DB") or env.get("DATABASE_URL") or "").strip()
+    if not op_url:
+        problems.append("Set DATABASE_URL (or HUBZOID_OPERATIONAL_DB) to the deployment's database: hubs behind "
+                        "one edge share accounts, sessions and conversations there.")
+    if not (env.get("HUBZOID_SECRET_KEY") or "").strip() and deployment.manifest_path(hub, env) is None:
+        problems.append("Set HUBZOID_SECRET_KEY to the deployment's key (the edge's), so this hub can check who "
+                        "is asking and read the deployment's stored secrets.")
+    slug = hub_slug(hub, env)
+    out = {"HUBZOID_GATEWAY": "1", "HUBZOID_UI": appmode.UI_HUBZOID,
+           "HUBZOID_AUTH": "true" if auth_on else "false", "HUBZOID_HOST": host,
+           "HUBZOID_INBOUND_HOST": host, "HUBZOID_PUBLIC_URL": f"{base}/b/{slug}"}
+    mcp = gateway_lib._mcp_enabled(hub)
+    out["MCP_SERVER"] = "true" if mcp else "false"
+    if mcp:
+        out["MCP_PUBLIC_URL"] = gateway_lib._own_env_value(hub, "MCP_PUBLIC_URL") or f"{base}/b/{slug}/mcp"
+    if op_url:
+        out["HUBZOID_OPERATIONAL_DB"] = op_url
+    return out, problems
+
+
+def _run_hub_service(hub: Path, bridge_cmd, bridge_env, *, br_port: int, bridge_host: str) -> None:
+    """`run <hub> --behind <url>`: one hub's bridge and its 1.x channels as
+    their own service (an ECS task, a container). The deployment's edge routes
+    to it and checks its health. Ends when any of its processes ends, so the
+    platform restarts the service."""
+    from . import db as dblib
+
+    _migrate_first(dblib.operational_url(hub))
+    children: list = []
+    previous = _install_shutdown_handlers()
+    probe = "127.0.0.1" if bridge_host in ("0.0.0.0", "::") else bridge_host
+    probe = f"[{probe}]" if ":" in probe else probe
+    try:
+        console.print(f"[cyan]→ bridge[/cyan]  {escape(bridge_host)}:{br_port}  (hub: {hub.name}, "
+                      f"behind {escape(bridge_env.get('HUBZOID_PUBLIC_URL', ''))})")
+        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env, start_new_session=False)
+        children.append(bridge_proc)
+        if not _wait_for_bridge(bridge_proc, f"http://{probe}:{br_port}/healthz"):
+            console.print("[red]bridge failed to come up[/red]")
+            raise typer.Exit(1)
+        console.print("[green]→ bridge[/green]  ready")
+        for spec in _channel_specs(hub, bridge_env):
+            children.append(subprocess.Popen(spec.cmd, env=spec.env, start_new_session=False))
+        _wait_any(children)
+    finally:
+        try:
+            _stop_processes(children[::-1])
+        finally:
+            _restore_shutdown_handlers(previous)
 
 
 def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int) -> None:
@@ -1328,7 +1450,7 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
     # Only inspect ports the gateway owns. Independently managed bridges are
     # verified by their health identity below, never stopped or taken over.
     owned_ports = [(host, ui_port, "Public", "--port")]
-    owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends]
+    owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends if not b.external]
     if len({p for _, p, _, _ in owned_ports}) != len(owned_ports):
         console.print("[red]Gateway and bridge ports must be distinct.[/red]")
         raise typer.Exit(2)
@@ -1662,7 +1784,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
 
     procs: list[subprocess.Popen] = []
     previous = _install_shutdown_handlers()
-    bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
+    bridges = [b.bridge_url for b in gp.backends]
     try:
         _gateway_web_app_serve(gp=gp, procs=procs, bridges=bridges, process_env=process_env,
                                dep_secret=dep_secret, dep_values=dep_values, auth_on=auth_on,
@@ -1689,6 +1811,17 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     key = _deployment_bridge_key(gw_data)
     units = []
     for b in gp.backends:
+        if b.external:
+            # Its own service runs it (`hubzoid run <hub> --behind <url>`): the
+            # supervisor only checks its health, so the edge still answers
+            # "restarting" for it while it is down.
+            units.append(sup_lib.Unit(
+                name=b.hub_dir.name.lower(), slug=b.slug, hub_dir=b.hub_dir, specs=[], kind="external",
+                health_url=f"{b.upstream}/healthz",
+                identity=dict(expected_hub=b.hub_dir.name, expected_model=b.model_label),
+                bridge_url=b.upstream))
+            console.print(f"[cyan]→ {b.slug}[/cyan]  runs as its own service at {escape(b.upstream)}")
+            continue
         bridge_env = os.environ.copy()
         if dep_secret:
             # A bridge takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret and never
