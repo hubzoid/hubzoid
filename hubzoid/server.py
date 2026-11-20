@@ -55,12 +55,68 @@ def _hub_dir() -> Path:
     return Path(p).resolve()
 
 
+def _readiness(hub_dir: Path) -> dict[str, str]:
+    """The database, its schema and this process's workflow role. Never raises."""
+    from sqlalchemy import text as _text
+
+    from . import db as _db
+    from . import migrations as _migrations
+
+    out: dict[str, str] = {}
+    try:
+        engine = _db.operational_engine(hub_dir)
+        with engine.connect() as conn:
+            conn.execute(_text("SELECT 1"))
+        out["database"] = "ok"
+    except Exception:  # noqa: BLE001 - not ready, said plainly
+        log.warning("readyz: the database does not answer", exc_info=True)
+        return {"database": "unreachable", "schema": "unknown"}
+    try:
+        current = _migrations.current(engine, "operational")
+        out["schema"] = "ok" if current == _migrations.head("operational") else "behind"
+    except Exception:  # noqa: BLE001
+        out["schema"] = "unknown"
+    try:
+        from .workflows import boot as _boot
+        from .workflows import runtime as _wf
+
+        # Standby: another process owns this hub's workflows; this one serves chat.
+        out["workflows"] = ("owner" if _wf._OWNER is not None
+                            else "standby" if _boot.schedules_enabled() else "off")
+    except Exception:  # noqa: BLE001
+        out["workflows"] = "unknown"
+    return out
+
+
+class _ClientAddress:
+    """Remember each request's client address for audit records
+    (``_request_ctx.get_client``). Pure ASGI, so streamed answers keep it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+        from . import _request_ctx
+
+        client = scope.get("client")
+        token = _request_ctx.set_client(str(client[0])[:64] if client else None)
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            _request_ctx._current_client.reset(token)
+
+
 def build_app() -> FastAPI:
     from . import supervisor as _supervisor
 
     _supervisor.watch_parent()  # no orphan holding the port if `hubzoid run` is killed
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
+    from . import logs
+
+    logs.configure()  # HUBZOID_LOG_FORMAT, and audit lines on the output (HUBZOID_AUDIT)
     logging.getLogger("alembic").setLevel(
         logging.DEBUG if settings.log_level.lower() == "debug" else logging.WARNING)
     # A hub in a gateway's deployment serves only in the mode and sign-in the
@@ -222,6 +278,7 @@ def build_app() -> FastAPI:
 
     app = FastAPI(title="Hubzoid API", version=__version__, lifespan=_lifespan)
     app.state.runtime = rt
+    app.add_middleware(_ClientAddress)
     from . import openapi_doc
 
     openapi_doc.install(app)   # only the public API, on every schema address
@@ -286,6 +343,17 @@ def build_app() -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "hub": hub_dir.name, "agent": rt.name, "model": model_label}
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Readiness, for a load balancer's target group: the database answers
+        and its schema is current. /healthz stays the liveness check (a
+        container health check), so a database outage takes the service out
+        of rotation without the platform replacing healthy tasks."""
+        checks = await asyncio.to_thread(_readiness, hub_dir)
+        ok = checks.get("database") == "ok" and checks.get("schema") == "ok"
+        return JSONResponse({"status": "ok" if ok else "not_ready", "hub": hub_dir.name, **checks},
+                            status_code=200 if ok else 503)
 
     def _loopback_key(request: Request) -> None:
         """The supervisor's own calls: from this machine, with a bridge key."""

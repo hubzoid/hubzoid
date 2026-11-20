@@ -1146,29 +1146,86 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         surface: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        kind: Literal["access", "tool", "auth", "all"] = "access",
+        result: Literal["ok", "error"] | None = None,
         admin=Depends(require_admin),
     ):
+        """Activity: restricted-tool decisions (``kind=access``, as before),
+        every tool call and sign-in event (``tool``, ``auth``, stored when
+        ``HUBZOID_AUDIT`` includes ``db``), or all of them together."""
+        from . import audit_log
         from .access import audit as auditlib
 
         decision = outcome if outcome in ("allow", "deny") else ("deny" if denied else None)
         # Filters are applied inside read() before the tail cut, so paging is over
         # the filtered set. `selected()` keeps every hub within the admin's scope.
-        rows = [
-            dict(r, hub=h["key"])
-            for h in selected(admin, hub)
-            for r in auditlib.read(
-                Path(h["path"]),
-                limit=limit + offset,
-                user=user,
-                decision=decision,
-                tool=tool,
-                surface=surface,
-                since=since,
-                until=until,
-            )
-        ]
+        rows = []
+        for h in selected(admin, hub):
+            if kind in ("access", "all") and not result:
+                rows += [dict(r, hub=h["key"], kind="access")
+                         for r in auditlib.read(Path(h["path"]), limit=limit + offset, user=user,
+                                                decision=decision, tool=tool, surface=surface,
+                                                since=since, until=until)]
+            if kind != "access":
+                kinds = ("tool", "auth") if kind == "all" else (kind,)
+                try:
+                    events = audit_log.read_events(Path(h["path"]), kinds=kinds, limit=limit + offset,
+                                                   user=user, decision=decision, outcome=result, tool=tool,
+                                                   surface=surface, since=since, until=until)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc))
+                for e in events:
+                    e = dict(e, hub=h["key"])
+                    e["user"] = e.pop("subject", None) or e.get("actor")
+                    e["ts"] = e["ts"][:19] + "+00:00"
+                    rows.append(e)
         rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return {"rows": rows[offset : offset + limit]}
+        return {"rows": rows[offset : offset + limit], "stored": audit_log.modes() >= {"db"}}
+
+    @router.get("/audit/export")
+    def audit_export(
+        hub: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        kind: str = "tool,access,admin,auth",
+        limit: int = Query(100000, ge=1, le=1000000),
+        admin=Depends(require_admin),
+    ):
+        """Every stored audit record in the window, oldest first, one JSON
+        object per line (the same records the audit log lines carry). For a
+        backfill into a SIEM or an investigation. Admin and sign-in events for
+        the whole organization need an organization administrator."""
+        from fastapi.responses import StreamingResponse
+
+        from . import audit_log
+        import json as _json
+
+        kinds = tuple(k.strip() for k in kind.split(",") if k.strip())
+        unknown = [k for k in kinds if k not in audit_log.KINDS]
+        if unknown or not kinds:
+            raise HTTPException(422, f"kind must be some of {', '.join(audit_log.KINDS)}")
+        scope = [h["key"] for h in selected(admin, hub)]
+        if not scope:
+            raise HTTPException(404, "No agent here that you manage.")
+        if not admin.is_org_admin and {"admin", "auth"} & set(kinds):
+            kinds = tuple(k for k in kinds if k not in ("admin", "auth"))
+            if not kinds:
+                raise HTTPException(403, "Admin and sign-in events need an organization administrator.")
+        try:
+            records = audit_log.export(hub_dir, kinds=kinds, since=since, until=until,
+                                       hubs=None if (admin.is_org_admin and not hub) else scope, limit=limit)
+            first = next(records, None)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+
+        def lines():
+            if first is not None:
+                yield _json.dumps(first, default=str, ensure_ascii=False) + "\n"
+            for record in records:
+                yield _json.dumps(record, default=str, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson", headers={
+            "Content-Disposition": 'attachment; filename="hubzoid-audit.jsonl"', "Cache-Control": "no-store"})
 
     @router.get("/access-changes")
     def changes(
