@@ -411,7 +411,9 @@ def sign_in_failed(*, email: str | None, client: str | None, locked_seconds: int
     if not modes():
         return
     # The account tried is the event's subject, so the Activity filter by person finds it.
-    emit("auth", "auth.sign_in_failed", actor=email, subject=email, client=client)
+    # Every counted failure (unknown accounts, codes, re-checks too).
+    # auth.sign_in_failed comes from the sign-in route for a known account.
+    emit("auth", "auth.attempt_failed", actor=email, subject=email, client=client)
     if locked_seconds:
         emit("auth", "auth.locked_out", actor=email, subject=email, client=client,
              locked_seconds=int(locked_seconds))
