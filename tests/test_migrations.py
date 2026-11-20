@@ -374,6 +374,9 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_users", "auth_epoch"), ("hz_users", "deleted_at"),
                               ("hz_users", "managed_by"), ("hz_sessions", "mfa_at")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+        # And op_0083's usage details.
+        for column in ("origin", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "first_token_ms"):
+            conn.execute(text(f"ALTER TABLE hz_usage DROP COLUMN {column}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

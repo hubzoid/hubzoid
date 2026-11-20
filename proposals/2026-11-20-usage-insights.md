@@ -81,7 +81,7 @@ rebuild (AGENTS.md commit rules).
 ## Data: one migration, five nullable columns
 
 `hubzoid/migrations/operational/versions/0083_usage_details.py`, revision
-`op_0083`, down `op_0081`. `hz_usage` gains:
+`op_0083`, down `op_0090` (the 2.0.9 chain: 0081, 0082, 0090, 0083). `hz_usage` gains:
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -92,8 +92,7 @@ rebuild (AGENTS.md commit rules).
 | `first_token_ms` | Integer | Chat only: time from the start of the turn to the first answer text |
 
 `input_tokens` and `output_tokens` keep their meaning as totals, so budgets,
-cost estimates and `/summary` are unchanged. Other branches that also descend
-from `op_0081` need a merge revision when combined.
+cost estimates and `/summary` are unchanged.
 
 ## Writers
 

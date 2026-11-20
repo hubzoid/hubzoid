@@ -242,3 +242,27 @@ def test_an_existing_store_gains_the_columns_and_keeps_its_rows(tmp_path):
     out = usage_lib.insights(eng, {"ops": "ops"}, 0, 10, 10)
     assert out["totals"]["input_tokens"] == 5 and out["by_trigger"] == [{"trigger": None, "calls": 1,
                                                                          "cost_usd": 0.0}]
+
+
+@pytest.mark.slow
+def test_the_page_queries_run_on_postgres(postgres_url):
+    eng = create_engine(postgres_url)
+    with eng.begin() as c:
+        c.execute(text("DROP SCHEMA public CASCADE"))
+        c.execute(text("CREATE SCHEMA public"))
+    migrations._done.clear()
+    migrations.upgrade(eng, "operational")
+    now = time.time()
+    _row(eng, ts=now - 10, hub="ops", first_token_ms=500)
+    _row(eng, ts=now - 2 * HOUR - 1, hub="ops", subject="bo@x.org", chat_id="c2", status="error")
+    _row(eng, ts=now - 2 * DAY, hub="ops", kind="agent", surface="workflow", origin="schedule",
+         subject="workflow:md:daily", reasoning_tokens=5)
+    day = usage_lib.insights(eng, {"ops": "ops"}, now - DAY, now, HOUR)
+    assert day["totals"]["calls"] == 2 and day["totals"]["errors"] == 1
+    # Postgres rounds a CAST, so the bucket index must floor: the row 2h ago is in bucket 21, not 22.
+    assert [i for i, p in enumerate(day["series"]) if p["input_tokens"]] == [21, 23]
+    week = usage_lib.insights(eng, {"ops": "ops"}, now - 7 * DAY, now, DAY)
+    assert week["totals"]["reasoning_tokens"] == 5 and {r["trigger"] for r in week["by_trigger"]} == {"chat", "schedule"}
+    found = usage_lib.people(eng, {"ops": "ops"}, now - 7 * DAY, now, q="daily")
+    assert found["total"] == 1 and found["rows"][0]["kind"] == "schedule"
+    eng.dispose()
