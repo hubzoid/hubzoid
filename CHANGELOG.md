@@ -223,6 +223,14 @@ updates with published security advisories.
 - The usage cost of a resumed Claude chat counted the session's earlier turns
   again on every turn, so costs read several times too high. Each turn now
   records its own cost (migration op_0082).
+- **Traces keep reaching Langfuse v4.** Langfuse Cloud asks OTLP senders for
+  `x-langfuse-ingestion-version: 4` and may delay or stop uploads without it.
+  Hubzoid now adds it by itself when `HUBZOID_OTEL_ENDPOINT` is Langfuse (path
+  ends in `/api/public/otel`): on the claude-local subprocess, the
+  `HUBZOID_OTEL_NORMALIZE` relay and the LiteLLM path. No `.env` change is
+  needed. A value set in `OTEL_EXPORTER_OTLP_HEADERS` wins and is not
+  duplicated. Other OTLP endpoints are untouched. The reference collector
+  config sets the header on its Langfuse exporter.
 
 ### Docs
 - [CI for a hub](docs/ci.md) with a ready GitHub Actions file
