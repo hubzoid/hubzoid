@@ -6,6 +6,7 @@ persistence, the account/grant policy, resource binding and browser approval.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import re
 import time
@@ -205,25 +206,41 @@ class HubOAuth(OAuthProvider):
                 return None
         return AuthorizationCode(code=authorization_code, **d)
 
+    def signing(self):
+        from . import mcp_signing
+
+        return mcp_signing.ring(self.hub_dir, ACCESS_SECONDS)
+
     def issue(self, c, grant, scopes):
         g = self.valid_grant(c, grant)
         if not g:
             raise TokenError("invalid_grant", "Authorization is no longer active")
-        access_token = "hz_at_" + secrets.token_urlsafe(32)
+        from . import mcp_signing
+
+        now = int(time.time())
+        access_expiry = min(now + ACCESS_SECONDS, g["_expires"])
+        # RFC 9068: a signed access token any verifier with our public keys can
+        # check (AgentCore, a load balancer). Ids only, never an email address.
+        access_token = self.signing().sign({
+            "iss": self.issuer, "sub": g["account_id"], "aud": self.resource,
+            "client_id": g["client_id"], "scope": " ".join(scopes),
+            "iat": now, "exp": access_expiry, "jti": mcp_signing.new_jti(), "hz_grant": grant,
+        })
         refresh_token = "hz_rt_" + secrets.token_urlsafe(32)
         payload = {"grant": grant, "client_id": g["client_id"], "scopes": scopes}
-        access_expiry = min(int(time.time()) + ACCESS_SECONDS, g["_expires"])
-        self.store.put(c, access_token, "access", payload, access_expiry)
         self.store.put(c, refresh_token, "refresh", payload, g["_expires"])
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
-            expires_in=access_expiry - int(time.time()),
+            expires_in=access_expiry - now,
             refresh_token=refresh_token,
             scope=" ".join(scopes),
         )
 
     async def exchange_authorization_code(self, client, authorization_code):
+        # Load (or create) the signing key before the transaction: on SQLite a
+        # second writer inside it would wait on itself.
+        self.signing().ready()
         with self.store.engine.begin() as c:
             d = self.store.get(c, authorization_code.code, "code")
             if (
@@ -254,6 +271,7 @@ class HubOAuth(OAuthProvider):
         )
 
     async def exchange_refresh_token(self, client, refresh_token, scopes):
+        self.signing().ready()
         result = None
         with self.store.engine.begin() as c:
             d = self.store.get(c, refresh_token.token, "refresh")
@@ -267,28 +285,52 @@ class HubOAuth(OAuthProvider):
             raise TokenError("invalid_grant", "Refresh token is no longer valid")
         return result
 
-    async def load_access_token(self, token):
+    def _access(self, token):
+        """(grant id, client id, scopes, expiry) of an access token, else None.
+        A JWT is checked with our keys; an opaque ``hz_at_`` token from before
+        2.0.9 is looked up until it expires (at most ten minutes)."""
+        if token.count(".") == 2:
+            claims = self.signing().verify(token, issuer=self.issuer, audience=self.resource)
+            if not claims or not isinstance(claims.get("hz_grant"), str):
+                return None
+            return (claims["hz_grant"], str(claims.get("client_id") or ""),
+                    str(claims.get("scope") or "").split(), int(claims["exp"]), str(claims["sub"]))
+        if not token.startswith("hz_at_"):
+            return None
         with self.store.engine.connect() as c:
             d = self.store.get(c, token, "access")
-            g = self.valid_grant(c, d["grant"]) if d else None
-        if not g:
+        return (d["grant"], d["client_id"], d["scopes"], d["_expires"], None) if d else None
+
+    async def load_access_token(self, token):
+        found = self._access(token)
+        if not found:
+            return None
+        grant, client_id, scopes, expires, subject = found
+        with self.store.engine.connect() as c:
+            g = self.valid_grant(c, grant)
+        # The signed identity must agree with the live grant: one identity, never two.
+        if not g or g["client_id"] != client_id or (subject is not None and subject != g["account_id"]):
             return None
         return AccessToken(
             token=token,
-            client_id=d["client_id"],
-            scopes=d["scopes"],
-            expires_at=d["_expires"],
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires,
             resource=self.resource,
             subject=g["account_id"],
-            claims={"email": g["email"], "grant_id": d["grant"]},
+            claims={"email": g["email"], "grant_id": grant},
         )
 
     async def revoke_token(self, token):
         with self.store.engine.begin() as c:
-            for kind in ("access", "refresh"):
-                d = self.store.get(c, token.token, kind)
-                if d:
-                    self.store.revoke(c, d["grant"])
+            d = self.store.get(c, token.token, "refresh")
+            if d:
+                self.store.revoke(c, d["grant"])
+                return
+        found = self._access(token.token)
+        if found:
+            with self.store.engine.begin() as c:
+                self.store.revoke(c, found[0])
 
     def get_routes(self, mcp_path=None):
         from .mcp_oauth_web import browser_routes
@@ -322,7 +364,31 @@ class HubOAuth(OAuthProvider):
             )
             metadata.token_endpoint_auth_methods_supported = ["none"]
             metadata.revocation_endpoint_auth_methods_supported = ["none"]
-            return JSONResponse(metadata.model_dump(mode="json", exclude_none=True))
+            doc = metadata.model_dump(mode="json", exclude_none=True)
+            doc["jwks_uri"] = self.issuer + "/jwks"
+            return JSONResponse(doc)
+
+        async def jwks_endpoint(request):
+            try:
+                keys = await asyncio.to_thread(self.signing().jwks)
+            except Exception:  # noqa: BLE001 - never a stack trace on a public route
+                return JSONResponse({"error": "temporarily_unavailable"}, status_code=503)
+            return JSONResponse(keys, headers={"Cache-Control": "public, max-age=300"})
+
+        async def openid_configuration(request):
+            # AgentCore's JWT authorizer reads an OpenID-style discovery URL.
+            # Hubzoid is an OAuth server for MCP access tokens, not an OpenID
+            # provider: no ID tokens, no userinfo.
+            metadata = build_metadata(
+                self.base_url, None, self.client_registration_options, self.revocation_options)
+            doc = metadata.model_dump(mode="json", exclude_none=True)
+            doc.update(
+                jwks_uri=self.issuer + "/jwks",
+                token_endpoint_auth_methods_supported=["none"],
+                subject_types_supported=["public"],
+                id_token_signing_alg_values_supported=["RS256"],
+            )
+            return JSONResponse(doc)
 
         for route in routes:
             if route.path == "/token":
@@ -347,4 +413,9 @@ class HubOAuth(OAuthProvider):
                         "/mcp/oauth" + route.path, route.endpoint, methods=route.methods
                     )
                 )
+        result.append(Route("/mcp/oauth/jwks", cors_middleware(jwks_endpoint, ["GET", "OPTIONS"]),
+                            methods=["GET", "OPTIONS"]))
+        result.append(Route("/mcp/oauth/.well-known/openid-configuration",
+                            cors_middleware(openid_configuration, ["GET", "OPTIONS"]),
+                            methods=["GET", "OPTIONS"]))
         return result + browser_routes(self)

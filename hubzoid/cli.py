@@ -4490,6 +4490,10 @@ app.add_typer(handoffs_app, name="handoffs",
               rich_help_panel="Commands")
 
 from .budgets_cli import budgets_app  # noqa: E402
+from .mcp_signing_cli import mcp_app as _mcp_signing_app  # noqa: E402
+
+app.add_typer(_mcp_signing_app, name="mcp", help="The hosted MCP server's sign-in: signing keys.",
+              rich_help_panel="Commands")
 from .sandbox.cli import sandbox_app  # noqa: E402
 
 app.add_typer(budgets_app, name="budgets",
