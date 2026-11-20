@@ -339,6 +339,7 @@ def get_ci_failure_context(conn, web, full, a):
 
 
 STATUS_COMMENT_CHARS = 12000
+STATUS_PAGES = 5
 
 
 def _failed_statuses(conn, full: str, head: str, a: dict) -> tuple[list[dict], str | None]:
@@ -354,14 +355,24 @@ def _failed_statuses(conn, full: str, head: str, a: dict) -> tuple[list[dict], s
     try:
         sweb = gh.for_repo(conn, rid, gh.STATUS_READ)
         # The list, newest first: unlike the combined status, it names who
-        # posted each status.
-        listed = sweb.request("GET", f"/repos/{full}/commits/{head}/statuses", params={"per_page": 100}).json() or []
+        # posted each status. Read until each ruled context has its newest
+        # status, or the history ends.
+        wanted = {r.context for r in rules.status_failures}
+        latest: dict[str, dict] = {}
+        complete = False
+        for page in range(1, STATUS_PAGES + 1):
+            listed = sweb.request("GET", f"/repos/{full}/commits/{head}/statuses",
+                                  params={"per_page": 100, "page": page}).json() or []
+            for s in listed:
+                latest.setdefault(s.get("context") or "", s)       # the newest of each context
+            if len(listed) < 100 or wanted <= set(latest):
+                complete = True
+                break
     except Exception:  # noqa: BLE001 - say what is missing, never invent it
         return [], ("Commit statuses could not be read. The GitHub App needs the Commit statuses: read "
                     "permission (or the token needs access to statuses).")
-    latest: dict[str, dict] = {}
-    for s in listed:
-        latest.setdefault(s.get("context") or "", s)       # the newest of each context
+    note = None if complete else (f"Only the newest {STATUS_PAGES * 100} statuses were read; an older status of a "
+                                  "ruled context may be missing.")
     number = a.get("number")
     out = []
     for s in latest.values():
@@ -374,7 +385,7 @@ def _failed_statuses(conn, full: str, head: str, a: dict) -> tuple[list[dict], s
         if comment is not None:
             job["comment"] = comment
         out.append(job)
-    return out, None
+    return out, note
 
 
 def _status_comment(conn, full: str, target_url, poster: str, number, rid: int) -> str | None:

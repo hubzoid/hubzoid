@@ -517,6 +517,9 @@ class GitHubAdapter(Adapter):
         mount(router, hub_dir)
 
 
+PULL_PAGES = 5
+
+
 def open_pull_for_head(conn, repository_id: int, sha: str) -> dict | None:
     """The one open pull request in this repository whose head is `sha`, or
     None. A commit that is the head of no open pull request, or of several, is
@@ -525,18 +528,24 @@ def open_pull_for_head(conn, repository_id: int, sha: str) -> dict | None:
         web = gh.for_repo(conn, repository_id, gh.PULLS_READ)
         full = gh.current_name(conn, web, repository_id)
         found: list[dict] = []
-        for page in range(1, 4):
+        complete = False
+        for page in range(1, PULL_PAGES + 1):
             items = web.request("GET", f"/repos/{full}/commits/{sha}/pulls",
                                 params={"per_page": 100, "page": page}).json() or []
             found += [p for p in items if p.get("state") == "open" and (p.get("head") or {}).get("sha") == sha
                       and ((p.get("base") or {}).get("repo") or {}).get("id") == repository_id]
-            if len(items) < 100:
+            if len(items) < 100 or len(found) > 1:
+                complete = True          # the list ended, or two matches already make it ambiguous
                 break
     except ChannelError:
         raise
     except Exception as exc:  # noqa: BLE001 - say it, never guess a pull request
         raise ChannelError("provider_unavailable", "Could not find the pull request for a failed status.",
                            status=503) from exc
+    if not complete:
+        log.info("status on %s in repository %s: more than %d pages of pull requests, ignored", sha[:12],
+                 repository_id, PULL_PAGES)
+        return None
     if len(found) != 1:
         log.info("status on %s in repository %s: %d open pull requests have it as their head, ignored",
                  sha[:12], repository_id, len(found))

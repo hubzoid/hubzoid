@@ -991,12 +991,14 @@ class StatusGitHub(FakeGitHub):
         path = request.url.path
         if path.endswith(f"/commits/{SHA}/pulls"):
             self.calls.append(("GET", path, {}))
-            return httpx.Response(200, json=self.pulls)
+            page = int(request.url.params.get("page", 1))
+            return httpx.Response(200, json=self.pulls[(page - 1) * 100:page * 100])
         if path.endswith(f"/commits/{SHA}/statuses"):
             self.calls.append(("GET", path, {}))
             if self.status_denied:
                 return httpx.Response(403, json={"message": "Resource not accessible by integration"})
-            return httpx.Response(200, json=self.statuses)          # newest first, each with its creator
+            page = int(request.url.params.get("page", 1))
+            return httpx.Response(200, json=self.statuses[(page - 1) * 100:page * 100])   # newest first
         if path.endswith(f"/commits/{SHA}/status"):
             # GitHub's combined status names no creator, so it cannot say who posted a status.
             return httpx.Response(200, json={"state": "failure", "statuses": [
@@ -1145,4 +1147,22 @@ def test_only_the_newest_status_of_a_context_counts(hub_dir, status_api):
     conn = status_conn(hub_dir)
     out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
     assert out["data"]["jobs"] == []
+
+
+def test_a_failure_behind_a_page_of_newer_statuses_is_still_found(hub_dir, status_api):
+    noise = [{"context": f"ci/job-{n}", "state": "success", "creator": {"login": "ci"}} for n in range(150)]
+    status_api.statuses = noise + status_api.statuses
+    conn = status_conn(hub_dir)
+    out = operations.call(conn, "getCiFailureContext", {"repository_id": 2001, "head_sha": SHA, "number": 7})
+    assert [j["name"] for j in out["data"]["jobs"]] == ["engineering-desk/review"]
+
+
+def test_a_pull_request_search_cut_short_is_not_called_unique(hub_dir, status_api, monkeypatch):
+    from hubzoid.channels.github import adapter
+
+    monkeypatch.setattr(adapter, "PULL_PAGES", 1)
+    other = {"number": 99, "state": "closed", "head": {"sha": "c" * 40}, "base": {"repo": {"id": 2001}}}
+    status_api.pulls = status_api.pulls + [other] * 99       # a full first page, more may follow
+    conn = status_conn(hub_dir)
+    assert deliver(conn, "status", status_body()).events[0]["status"] == "ignored"
 
