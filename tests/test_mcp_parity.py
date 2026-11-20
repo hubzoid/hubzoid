@@ -223,3 +223,41 @@ async def test_with_elicitation_the_person_answers_and_approves_in_place(hub, mo
     assert "UTC" in out[1] or ":" in out[1]                     # approved, so it ran once
     assert json.loads(out[2])["status"] == "rejected"           # rejected, so it did not run
     assert asked[0].startswith("Which region?") and asked[1].startswith("Approve")
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_runs_questions_are_answered_in_place_or_sent_to_the_inbox(hub, monkeypatch):
+    """A run started over MCP that stops to ask: answered through elicitation,
+    then its next request too; without elicitation, the inbox link."""
+    from hubzoid import mcp_parity
+    from hubzoid.access import Identity
+    from hubzoid.hitl import service
+
+    who = service.Caller(account_id="ux", email=X, origin="workflow", present=False)
+    ask = service.create(hub, "parity", who, kind="question", title="Which warehouse?",
+                         question="Which warehouse?", options=[{"label": "North"}, {"label": "South"}],
+                         workflow_id="run-1")
+    waiting = json.dumps({"status": "waiting", "request_id": ask["id"], "kind": "question"})
+    ident = Identity.make(user=X, groups=[], surface="mcp", account_id="ux")
+
+    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None))
+    assert out["status"] == "waiting" and "https://hub.example/requests" in out["message"]
+
+    class Answer:
+        def __init__(self, data):
+            self.action, self.data = "accept", data
+
+    answers = iter(["North", "Approve"])
+
+    async def elicit(ctx, message, response_type):
+        if "North" in str(response_type):
+            service.create(hub, "parity", who, kind="approval", title="Reserve 20", workflow_id="run-1")
+        return Answer(next(answers))
+
+    monkeypatch.setattr(mcp_parity, "can_elicit", lambda ctx=None: True)
+    monkeypatch.setattr(mcp_parity, "_elicit", elicit)
+    monkeypatch.setattr(mcp_parity, "NEXT_REQUEST_SECONDS", 3.0)
+    out = json.loads(await mcp_parity.settle_waiting(hub, ident, waiting, None))
+    assert out["status"] == "decided"
+    assert 'Answered "Which warehouse?": North.' in out["message"] and 'Approved "Reserve 20".' in out["message"]
+    assert service.get(hub, "parity", ask["id"])["answer"] == "North"

@@ -267,10 +267,11 @@ def _waiting(text) -> dict | None:
 
 
 async def settle_waiting(hub_dir: Path, ident, text: str, rerun) -> str:
-    """When a call waits for an approval: ask the caller in place if they may
-    give it and their client can show a form, record their decision and run
-    the call once (``rerun``). Otherwise say where to approve. Any other
-    result comes back unchanged."""
+    """When a call waits for a person: ask the caller in place if they may
+    decide and their client can show a form. A tool's approval is recorded and
+    the call runs once (``rerun``); a workflow run's question or approval is
+    answered and the run carries on (``_settle_run_request``). Otherwise say
+    where to decide. Any other result comes back unchanged."""
     waiting = _waiting(text)
     if waiting is None:
         return text
@@ -278,11 +279,13 @@ async def settle_waiting(hub_dir: Path, ident, text: str, rerun) -> str:
 
     hub_id = gate.hub_id_of(hub_dir)
     req = await asyncio.to_thread(service.get, hub_dir, hub_id, waiting["request_id"])
-    if not req or not req.get("tool"):
+    if not req:
         return text
     account, email = getattr(ident, "account_id", None) or ident.user or "", ident.user or ""
     mine = service.eligible(req, account, email)
     ctx = _context()
+    if not req.get("tool"):
+        return await _settle_run_request(hub_dir, hub_id, req, account, email, mine, ctx)
     if mine and can_elicit(ctx):
         args = json.dumps(req.get("arguments"), default=str)[:1500] if req.get("arguments") is not None else ""
         message = f"Approve \"{req.get('title') or req['tool']}\"?" + (f"\n\nWith: {args}" if args else "")
@@ -305,6 +308,81 @@ async def settle_waiting(hub_dir: Path, ident, text: str, rerun) -> str:
         "message": (f"Waiting for approval: \"{req.get('title') or req['tool']}\" has not run. {who} can "
                     f"approve it in Hubzoid ({where}). Tell the person in one sentence. Once it is approved, "
                     f"call {req['tool']} again with exactly the same arguments; it then runs once.")})
+
+
+#: How long to wait for a run's next question after one is answered in place.
+NEXT_REQUEST_SECONDS = 20.0
+
+
+async def _settle_run_request(hub_dir: Path, hub_id: str, req: dict, account: str, email: str, mine: bool,
+                              ctx) -> str:
+    """A workflow run started over MCP stopped to ask (``hub.ask``) or for an
+    approval (``hub.approve``). When the caller may decide and their client can
+    show a form, ask in place, record the decision, and follow the run to its
+    next request the same way (a few seconds each). Otherwise say where to
+    decide. The run's result is read with ``my_reports`` or ``workflow_runs``."""
+    from .hitl import service
+
+    follow = "The run carries on by itself. Check its result with my_reports or workflow_runs."
+    done: list[str] = []
+    while req is not None:
+        title = req.get("title") or "this run"
+        if not (service.eligible(req, account, email) and can_elicit(ctx)):
+            break
+        decision, answer = await _ask_run_request(ctx, req, title)
+        if decision is None:
+            break
+        try:
+            await asyncio.to_thread(service.decide, hub_dir, hub_id, req["id"], account_id=account,
+                                    email=email, decision=decision, answer=answer, via="mcp")
+        except service.RequestError as exc:
+            done.append(f"Not recorded for \"{title}\": {exc}.")
+            break
+        done.append({"answer": f"Answered \"{title}\": {answer}.", "approve": f"Approved \"{title}\".",
+                     "reject": f"Rejected \"{title}\"."}[decision])
+        req = await _next_run_request(hub_dir, hub_id, req, account, email)
+    if req is None:
+        return json.dumps({"status": "decided", "message": " ".join(done + [follow])})
+    who = "The person" if service.eligible(req, account, email) else "Someone who may decide it"
+    verb = "answer" if req.get("kind") == "question" else "approve"
+    return json.dumps({
+        "status": "waiting", "request_id": req["id"], "kind": req.get("kind"),
+        "message": " ".join(done + [
+            f"The run is waiting: \"{req.get('title') or 'this run'}\". {who} can {verb} it in Hubzoid "
+            f"({service.requests_url()}). Tell the person in one sentence. {follow}"])})
+
+
+async def _ask_run_request(ctx, req: dict, title: str) -> tuple[str | None, str | None]:
+    """(decision, answer) from the person through elicitation, or (None, None)."""
+    if req.get("kind") == "question":
+        labels = [o.get("label") for o in req.get("options") or () if o.get("label")]
+        result = await _elicit(ctx, req.get("question") or title, labels or str)
+        if result is None or result.action != "accept" or not str(result.data or "").strip():
+            return None, None
+        return "answer", str(result.data)
+    args = json.dumps(req.get("arguments"), default=str)[:1500] if req.get("arguments") is not None else ""
+    result = await _elicit(ctx, f"Approve \"{title}\"?" + (f"\n\nWith: {args}" if args else ""),
+                           ["Approve", "Reject"])
+    if result is None or result.action != "accept" or result.data not in ("Approve", "Reject"):
+        return None, None
+    return ("approve" if result.data == "Approve" else "reject"), None
+
+
+async def _next_run_request(hub_dir: Path, hub_id: str, req: dict, account: str, email: str) -> dict | None:
+    """The same run's next pending request, if it raises one soon."""
+    from .hitl import service
+
+    run = req.get("workflow_id")
+    if not run:
+        return None
+    deadline = time.monotonic() + NEXT_REQUEST_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1.0)
+        pending = await asyncio.to_thread(service.list_for, hub_dir, hub_id, account, email)
+        for nxt in pending:
+            if nxt.get("workflow_id") == run and nxt["id"] != req["id"]:
+                return nxt
+    return None
 
 
 # ---------------------------------------------------------------------------
