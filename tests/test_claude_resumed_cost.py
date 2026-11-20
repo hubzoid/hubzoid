@@ -9,12 +9,10 @@ three real turns of one session (claude-haiku-5-5); no model calls here."""
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-
 import claude_agent_sdk as sdk
 import pytest
 
-from hubzoid import _request_ctx, budgets, claude_credentials as creds, factory_claude
+from hubzoid import _request_ctx, claude_credentials as creds, factory_claude
 from hubzoid.factory_claude import ClaudeRuntime, _turn_cost
 
 MODEL = "claude-haiku-5-5"
@@ -40,30 +38,38 @@ def _mu(i, o, cr, cw, cost):
 TURN1 = _result(0.00191043, _u(2, 3, 12373, 8925), _mu(2, 3, 12373, 8925, 0.00191043))
 TURN2 = _result(0.00382806, _u(2, 3, 12373, 8961), _mu(4, 6, 24746, 17886, 0.00382806))
 TURN3 = _result(0.00405505, _u(2, 3, 21309, 61), _mu(6, 9, 46055, 17947, 0.00405505))
-# Observed, SDK 0.2.152: a resumed turn reported only itself.
-OLD_TURN2 = _result(0.0063756, _u(10, 47, 18546, 2138), _mu(10, 47, 18546, 2138, 0.0063756))
 
 
 def test_a_resumed_turn_records_only_its_own_cost():
-    assert _turn_cost(TURN2, 0.00191043, MODEL) == pytest.approx(0.00191763)
-    assert _turn_cost(TURN3, 0.00382806, MODEL) == pytest.approx(0.00022699)
+    assert _turn_cost(TURN2, 0.00191043, True, MODEL) == pytest.approx(0.00191763)
+    assert _turn_cost(TURN3, 0.00382806, True, MODEL) == pytest.approx(0.00022699)
     # the answering model is found from the costs when the reply named none
-    assert _turn_cost(TURN3, 0.00382806) == pytest.approx(0.00022699)
+    assert _turn_cost(TURN3, 0.00382806, True) == pytest.approx(0.00022699)
 
 
-def test_figures_for_the_turn_alone_are_kept():
-    assert _turn_cost(TURN1, None, MODEL) == 0.00191043  # a new session
-    assert _turn_cost(OLD_TURN2, 0.015, MODEL) == 0.0063756  # an older CLI, prior ignored
-    assert _turn_cost(_result(None, _u(1, 1, 0, 0), _mu(9, 9, 0, 0, 0)), 0.5, MODEL) is None
+def test_a_query_that_did_not_resume_keeps_its_total():
+    assert _turn_cost(TURN1, None, False, MODEL) == 0.00191043  # a new session
+    # A fresh turn whose model_usage also counts a background call of the same
+    # model (more tokens than usage) is still the turn's own cost.
+    background = _result(0.004, _u(2, 3, 0, 900), _mu(902, 12, 0, 900, 0.004))
+    assert _turn_cost(background, None, False, MODEL) == 0.004
+    assert _turn_cost(_result(None, _u(1, 1, 0, 0), _mu(9, 9, 0, 0, 0)), 0.5, True, MODEL) is None
+
+
+def test_a_resumed_turn_on_another_model_still_subtracts_the_start():
+    # The session's earlier turns ran on another model: this model's own
+    # counts match the turn, but the total still holds the earlier turns.
+    switched = _result(3.0, _u(100, 10, 0, 0), _mu(100, 10, 0, 0, 2.0))
+    assert _turn_cost(switched, 1.0, True, MODEL) == pytest.approx(2.0)
 
 
 def test_a_session_total_with_an_unknown_start_is_shared_by_tokens():
     # A binding saved before op_0082 has no cost: the turn's share of the total
     # is estimated, never the whole running total again.
-    estimate = _turn_cost(TURN3, None, MODEL)
+    estimate = _turn_cost(TURN3, None, True, MODEL)
     assert 0 < estimate < 0.2 * TURN3.total_cost_usd
     # a start above the total (a session that began again) is not subtracted
-    assert 0 < _turn_cost(TURN3, 0.9, MODEL) < 0.2 * TURN3.total_cost_usd
+    assert 0 < _turn_cost(TURN3, 0.9, True, MODEL) < 0.2 * TURN3.total_cost_usd
 
 
 @pytest.fixture
@@ -138,15 +144,34 @@ def test_failover_attempts_on_a_resumed_session_count_its_start_once(hub, monkey
     assert calls == ["s1", "s1"]
     # the backup's own 0.00191763 plus the refused attempt's own 0.00001000
     assert recorded[-1]["cost_usd"] == pytest.approx(0.00192763)
+    # the next turn starts from the backup's session total, not the combined cost
+    assert slot.session_cost == pytest.approx(0.00382806)
+    assert _turn_cost(TURN3, slot.session_cost, True, MODEL) == pytest.approx(0.00022699)
 
 
-def test_a_run_cap_starts_from_the_resumed_sessions_total(monkeypatch):
-    ticket = SimpleNamespace(max_turns=None, max_budget_usd=2.0)
-    monkeypatch.setattr(budgets, "current", lambda: ticket)
-    opts = sdk.ClaudeAgentOptions(model="haiku", resume="s1")
-    slot = _request_ctx.SessionSlot(resume_id="s1", delta_prompt="next", resume_cost=40.0)
-    with _request_ctx.native_session_scope(slot):
-        assert factory_claude._budget_caps(opts).max_budget_usd == pytest.approx(42.0)
-        fresh = sdk.ClaudeAgentOptions(model="haiku")
-        assert factory_claude._budget_caps(fresh).max_budget_usd == pytest.approx(2.0)
-    assert factory_claude._budget_caps(opts).max_budget_usd == pytest.approx(2.0)  # no slot
+def test_three_failover_attempts_count_each_attempts_own_cost(hub, monkeypatch):
+    for key, value in zip(creds.TOKEN_KEYS, ("fake-primary", "fake-secondary", "fake-tertiary")):
+        monkeypatch.setenv(key, value)
+    # Prior 1.00. Two refused attempts each add 0.10 of their own; the third adds 0.50.
+    def refused(total):
+        return _result(total, _u(100, 0, 0, 0), _mu(200, 0, 0, 0, total), error=True)
+    results = [refused(1.10), refused(1.10), _result(1.50, _u(150, 5, 0, 0), _mu(350, 5, 0, 0, 1.50))]
+    rate_limited = sdk.AssistantMessage(content=[sdk.TextBlock(text="Limit reached")], model=MODEL,
+                                        error="rate_limit")
+    calls = []
+
+    async def query(*, prompt, options):
+        calls.append(options.resume)
+        if len(calls) < 3:
+            yield rate_limited
+        yield results[len(calls) - 1]
+
+    recorded = []
+    monkeypatch.setattr(sdk, "query", query)
+    monkeypatch.setattr(factory_claude._request_ctx, "record_usage", recorded.append)
+    slot = _request_ctx.SessionSlot(resume_id="s1", delta_prompt="next", resume_cost=1.0)
+    with _request_ctx.chat_scope("chat"), _request_ctx.native_session_scope(slot):
+        assert asyncio.run(_runtime(hub).run("full history")) == "done"
+    assert calls == ["s1", "s1", "s1"]
+    assert recorded[-1]["cost_usd"] == pytest.approx(0.70)
+    assert slot.session_cost == pytest.approx(1.50)

@@ -415,11 +415,7 @@ def _budget_caps(options):
         changes["max_turns"] = min(options.max_turns or ticket.max_turns, ticket.max_turns)
     if ticket.max_budget_usd is not None:
         current = getattr(options, "max_budget_usd", None)
-        cap = min(current, ticket.max_budget_usd) if current else ticket.max_budget_usd
-        # Claude Code checks the cap against the resumed session's running
-        # total, earlier turns included: start the cap from that total.
-        prior = _resume_prior(options)
-        changes["max_budget_usd"] = cap + prior if prior and prior > 0 else cap
+        changes["max_budget_usd"] = min(current, ticket.max_budget_usd) if current else ticket.max_budget_usd
     return dataclasses.replace(options, **changes)
 
 
@@ -694,6 +690,8 @@ def _answering_model(message, answered_by: str | None = None) -> str | None:
 
 # (ResultMessage.usage key, model_usage key, weight relative to an input token)
 # for estimating a turn's share of a session total when its start is unknown.
+_UNSET = object()
+
 _TOKEN_KINDS = (
     ("input_tokens", "inputTokens", 1.0),
     ("output_tokens", "outputTokens", 5.0),
@@ -712,17 +710,24 @@ def _resume_prior(options) -> float | None:
     return getattr(slot, "resume_cost", None)
 
 
-def _turn_cost(message, prior: float | None, answered_by: str | None = None) -> float | None:
-    """This turn's own cost. When a query resumes a session, Claude Code
-    (seen with SDK 0.2.178, CLI 2.1.318) reports ``total_cost_usd`` and
-    ``model_usage`` for the whole session, while ``usage`` holds only this
-    turn. The answering model's ``model_usage`` counting more tokens than
-    ``usage`` shows the total covers earlier turns. Then the turn costs the
-    total less ``prior`` (the session's total after the last turn). Without a
-    usable ``prior`` the total is shared out by token counts, an estimate."""
+def _turn_cost(message, prior: float | None, resumed: bool, answered_by: str | None = None) -> float | None:
+    """This turn's own cost. A query that resumes a session gets the whole
+    session's ``total_cost_usd`` (and ``model_usage``) back from Claude Code,
+    while ``usage`` holds only this turn (seen with SDK 0.2.159 and 0.2.178:
+    the CLI restores the session's cost on resume). The turn then costs the
+    total less ``prior``, the session's total after the last turn. Without a
+    usable ``prior`` (a binding from before op_0082, or a start above the
+    total) the total is shared out by the answering model's token counts, an
+    estimate. A result the failover wrapper already combined carries its own
+    cost (``_hubzoid_turn_cost``)."""
+    own = getattr(message, "_hubzoid_turn_cost", _UNSET)
+    if own is not _UNSET:
+        return own
     total = getattr(message, "total_cost_usd", None)
-    if total is None:
-        return None
+    if total is None or not resumed:
+        return total
+    if prior is not None and total >= prior:
+        return total - prior
     model_usage = getattr(message, "model_usage", None) or {}
     usage = getattr(message, "usage", None) or {}
     if not isinstance(model_usage, dict) or not isinstance(usage, dict):
@@ -731,25 +736,28 @@ def _turn_cost(message, prior: float | None, answered_by: str | None = None) -> 
     entry = model_usage.get(model) if model else None
     if not isinstance(entry, dict):
         return total
-    turn = sum(int(usage.get(k) or 0) for k, _, _ in _TOKEN_KINDS)
-    seen = sum(int(entry.get(k) or 0) for _, k, _ in _TOKEN_KINDS)
-    if seen <= turn:
-        return total  # the figures cover this turn only
-    if prior is not None and total >= prior:
-        return total - prior
     turn_w = sum(int(usage.get(k) or 0) * w for k, _, w in _TOKEN_KINDS)
     seen_w = sum(int(entry.get(k) or 0) * w for _, k, w in _TOKEN_KINDS)
     return total * min(1.0, turn_w / seen_w) if seen_w > 0 else total
 
 
-def _record_claude_usage(message, answered_by: str | None = None, prior: float | None = None) -> None:
+def _native_total(message) -> float | None:
+    """The session total Claude Code reported for the run's last query: the
+    start of the next resumed turn. A failover-combined result keeps it apart
+    from the turn's combined cost."""
+    return getattr(message, "_hubzoid_native_total", getattr(message, "total_cost_usd", None))
+
+
+def _record_claude_usage(message, answered_by: str | None = None, prior: float | None = None,
+                         resumed: bool = False) -> None:
     """Surface the Claude SDK's final usage/cost for the usage envelope + OTel.
 
     `ResultMessage.usage` is an Anthropic usage mapping (input_tokens,
     output_tokens, cache_* ). `total_cost_usd` is None on the subscription
     (claude-local) and a real dollar figure in API-key mode. Best-effort:
-    a shape change in the SDK must never break the stream. ``prior``: the
-    resumed session's running cost before this turn (see ``_turn_cost``).
+    a shape change in the SDK must never break the stream. ``resumed`` and
+    ``prior``: the query resumed a session whose running cost was ``prior``
+    (see ``_turn_cost``).
     """
     try:
         usage = getattr(message, "usage", None) or {}
@@ -768,7 +776,7 @@ def _record_claude_usage(message, answered_by: str | None = None, prior: float |
             "input_tokens": inp,
             "output_tokens": out,
             "total_tokens": inp + out,
-            "cost_usd": _turn_cost(message, prior, answered_by),
+            "cost_usd": _turn_cost(message, prior, resumed, answered_by),
             "num_turns": getattr(message, "num_turns", None),
             "model": model,
             "status": "error" if getattr(message, "is_error", False) else "ok",
@@ -1113,7 +1121,8 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
         from claude_agent_sdk import types as sdk_types
     attempted = set()
     previous_results = []
-    prior = _resume_prior(options)  # each attempt resumes the same session
+    resumed = bool(getattr(options, "resume", None))  # each attempt resumes the same session
+    prior = _resume_prior(options)
     while True:
         credential = claim = None
         turn_options = options
@@ -1122,7 +1131,7 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
             selected = await asyncio.to_thread(pool.select, attempted)
             if selected is None:
                 if previous_results:
-                    _record_claude_usage(previous_results[-1], prior=prior)
+                    _record_claude_usage(previous_results[-1], prior=prior, resumed=resumed)
                 raise await asyncio.to_thread(pool.unavailable)
             credential, claim = selected
             attempted.add(credential.key)
@@ -1184,11 +1193,14 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                             for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
                                 usage[key] = sum(int((m.usage or {}).get(key, 0) or 0) for m in attempts)
                             # Each attempt that resumed reports the session's total so
-                            # far: keep the last one's, add only the earlier ones' own.
-                            costs = [m.total_cost_usd for m in attempts]
-                            total = (message.total_cost_usd + sum(_turn_cost(m, prior) for m in previous_results)
-                                     if all(c is not None for c in costs) else None)
-                            message = dataclasses.replace(message, usage=usage, total_cost_usd=total)
+                            # far: add up each attempt's own cost, and keep the last
+                            # one's session total apart for the next turn's start.
+                            costs = [_turn_cost(m, prior, resumed) for m in attempts]
+                            own = sum(costs) if all(c is not None for c in costs) else None
+                            native = _native_total(message)
+                            message = dataclasses.replace(message, usage=usage, total_cost_usd=own)
+                            message._hubzoid_turn_cost = own
+                            message._hubzoid_native_total = native
                         if message.is_error and failure:
                             confirmed = True
                             previous_results = [message]
@@ -1209,7 +1221,7 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                 yield message
         except BaseException as exc:
             if pool and previous_results:
-                _record_claude_usage(previous_results[-1], prior=prior)
+                _record_claude_usage(previous_results[-1], prior=prior, resumed=resumed)
             if not pool or not isinstance(exc, Exception):
                 raise
             # A prior error event does not make a later process crash safe to
@@ -1230,11 +1242,11 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
             return
         if not confirmed:
             if previous_results:
-                _record_claude_usage(previous_results[-1], prior=prior)
+                _record_claude_usage(previous_results[-1], prior=prior, resumed=resumed)
             raise failure  # no terminal result: the retry boundary is unknown
         await asyncio.to_thread(pool.failed, credential, failure)
         if progress:
-            _record_claude_usage(previous_results[-1], prior=prior)
+            _record_claude_usage(previous_results[-1], prior=prior, resumed=resumed)
             raise failure  # next independent turn may use a backup; this one cannot be replayed
         log.info("Claude credential slot %s failed before work; selecting backup", credential.slot)
 
@@ -1538,10 +1550,11 @@ class ClaudeRuntime:
                 # --- Final aggregate (fallback if partials are missing) ---
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
-                    _record_claude_usage(message, answered_by, prior=_resume_prior(turn_options))
+                    _record_claude_usage(message, answered_by, prior=_resume_prior(turn_options),
+                                         resumed=bool(getattr(turn_options, "resume", None)))
                     if slot is not None and not getattr(message, "is_error", False):
                         slot.session_id = getattr(message, "session_id", None)
-                        slot.session_cost = getattr(message, "total_cost_usd", None)
+                        slot.session_cost = _native_total(message)
                         slot.resumed = resuming
                     if getattr(message, "is_error", False):
                         detail = (getattr(message, "errors", None) or [final_result or ""])[0]
