@@ -33,7 +33,13 @@ the team's, in GitHub's settings.
 |---|---|
 | 0 | Every required case passed. `hubzoid doctor` now shows them `ok` |
 | 1 | A required case failed. `hubzoid eval explain` shows why |
-| 2 | The gate cannot be trusted, so nothing ran: no manifest, a manifest that requires nothing, a name that matches no case, a case file that cannot be read, a required case with `enabled: false` or with no checks at all, or `--tag`, `--case` or `--no-judge` given with `--required` |
+| 2 | The gate cannot be trusted, so nothing ran: no manifest, a manifest that requires nothing, a name that matches no case, a case file that cannot be read, a required case with `enabled: false` or with no checks at all, or `--tag`, `--case`, `--no-judge` or `--model` given with `--required` |
+
+A case passes when every check in it passes: `contains`, `not_contains`, tool
+checks, and with `## Criteria` a judge score at or above the case's
+`threshold` (default 7 out of 10, [evals](evals.md#adding-checks)). The gate
+has no overall pass rate: every required case must pass. For a starting set
+of required cases, see [starter safety cases](guardrails.md#starter-safety-cases).
 
 Each results file records the Hubzoid version, the hub's Git commit and whether
 the hub folder had uncommitted changes, so a pass is tied to what was tested.

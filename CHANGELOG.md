@@ -156,6 +156,8 @@ doctor, evals and the channel list say what used to fail silently.
   (`examples/ci/hubzoid-checks.yml`: the hub's tests, then the required evals),
   and [Rolling back](docs/rollback.md): a change, the hub's files, or the
   Hubzoid version, and how to rehearse it.
+- [Guardrails](docs/guardrails.md): the frontmatter, what each mode does, and
+  three starter safety cases to require with `required_tags: [safety]`.
 - One section on the two ways to connect Slack and WhatsApp, with a before and
   after for moving over and a symptom table. Stale `--slack`/`--whatsapp`
   instructions are fixed, and the docs index links the channel pages.
