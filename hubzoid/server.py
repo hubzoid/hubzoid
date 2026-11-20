@@ -326,6 +326,11 @@ def build_app() -> FastAPI:
         auth = request.headers.get("authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.lower().startswith("bearer ") else ""
         machine = token.count(".") == 2 and token not in api_keys
+        if machine and hub_dir is not None:
+            from .auth.sessions import app_bearer
+
+            if not app_bearer(request, hub_dir):
+                raise HTTPException(status_code=401, detail="invalid api key")
         if (token.startswith("hzp_") or machine) and not personal:
             raise HTTPException(status_code=401, detail="invalid api key")
         if (token.startswith("hzp_") or machine) and hub_dir is not None:

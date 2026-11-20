@@ -312,6 +312,14 @@ def _key_user(request: Request, hub_dir: Path, token: str) -> AuthUser | None:
                     operations=info["operations"], hubs=hubs)
 
 
+def _unknown_jwt_bearer(request: Request) -> bool:
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return False
+    token = raw[7:].strip()
+    return not token.startswith("hzp_") and token.count(".") == 2
+
+
 def app_bearer(request: Request, hub_dir: Path) -> str:
     """A machine JWT (``Authorization: Bearer <jwt>``) from a registered API
     app (``apps:`` with an ``api:`` block), else "". Only routes the
@@ -385,6 +393,12 @@ def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
         user = _app_user(request, hub_dir, machine)
         _remember(request, hub_dir, user)
         return user
+    if _unknown_jwt_bearer(request):
+        # A JWT-shaped bearer that is no API app's (an embedding pass, an MCP
+        # token, a stranger's token) is never the cookie's person or the
+        # local owner: those routes check it themselves, or refuse it.
+        _remember(request, hub_dir, None)
+        return None
     if not appmode.auth_enabled(hub_dir):
         user = local_owner(hub_dir) if local_request_allowed(request) else None
     else:

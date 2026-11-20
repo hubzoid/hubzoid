@@ -146,3 +146,15 @@ def test_removing_or_disabling_the_app_stops_running_work(hub):
     (hub.parent / "hubzoid.yaml").write_text("version: 1\nhubs: [sales]\napps: {}\n")
     config.reset()
     assert not credential_live(hub, "app_jwt", "app:ci")
+
+
+def test_an_unknown_jwt_is_never_the_local_owner_or_the_cookie(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_AUTH", "false")
+    key = RSAKey.generate_key(2048)
+    _apps(hub, key)
+    c = _client(hub)
+    stranger = jwt.encode({"alg": "RS256"}, {"iss": "https://other.example", "aud": AUD, "sub": "x",
+                                             "iat": int(time.time()), "exp": int(time.time()) + 60},
+                          RSAKey.generate_key(2048))
+    assert c.get("/api/chat/ping").status_code == 200  # sign-in off: this machine is the owner
+    assert c.get("/api/chat/ping", headers={"authorization": "Bearer " + stranger}).status_code == 401
