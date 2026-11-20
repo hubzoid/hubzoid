@@ -78,10 +78,44 @@ def allowed(hub_dir, email):
     return authorize(hub_dir, email, USE_HUB, hub=hub_dir.name).allowed
 
 
+def validate_agentcore_url(value):
+    """The hub's MCP server as an AgentCore MCP runtime: its invocation URL,
+    exactly as AgentCore's protected resource metadata names it (it ends in
+    ``/invocations?qualifier=...``, so the ``/mcp`` rule does not apply)."""
+    p = urlsplit(value)
+    if p.scheme != "https" or not p.netloc or p.username or p.password or p.fragment:
+        raise ValueError("HUBZOID_MCP_AGENTCORE_URL must be the runtime's HTTPS invocation URL")
+    return value.strip()
+
+
 class HubOAuth(OAuthProvider):
-    def __init__(self, hub_dir, resource):
+    @property
+    def resources(self):
+        if self._find_extra is not None and time.time() >= self._next_find:
+            self._next_find = time.time() + 60
+            try:
+                found = self._find_extra()
+            except Exception:  # noqa: BLE001 - not there yet: asked again in a minute
+                found = ""
+            if found:
+                self._resources += (validate_agentcore_url(found),)
+                self._find_extra = None
+        return self._resources
+
+    def __init__(self, hub_dir, resource, *, extra_resources=(), find_extra=None):
         self.hub_dir = hub_dir
         self.resource = validate_public_url(resource)
+        # Other addresses of this hub's MCP server a client may ask a token for
+        # (an AgentCore MCP runtime). One issuer and one store for all of them;
+        # each token's audience is the resource its grant was asked for.
+        self._resources = (self.resource,) + tuple(validate_agentcore_url(r) for r in extra_resources if r)
+        # () -> address or "": an AgentCore MCP runtime found by name, which may
+        # be created after this process starts. Looked up until it is found.
+        self._find_extra = find_extra
+        self._next_find = 0.0
+        # The audiences this server accepts on its own MCP endpoint: its own
+        # address here; the AgentCore address inside the AgentCore MCP runtime.
+        self.accept = (self.resource,)
         self.issuer = self.resource + "/oauth"
         self.public_path = urlsplit(self.issuer).path
         self.origin = self.resource.removesuffix(urlsplit(self.resource).path)
@@ -157,7 +191,7 @@ class HubOAuth(OAuthProvider):
         return OAuthClientInformationFull.model_validate(value) if value else None
 
     async def authorize(self, client, params):
-        if params.resource != self.resource:
+        if params.resource not in self.resources:
             raise AuthorizeError(
                 "invalid_request", "resource must equal the advertised MCP URL"
             )
@@ -211,10 +245,13 @@ class HubOAuth(OAuthProvider):
 
         return mcp_signing.ring(self.hub_dir, ACCESS_SECONDS)
 
-    def issue(self, c, grant, scopes):
+    def issue(self, c, grant, scopes, resource=None):
         g = self.valid_grant(c, grant)
         if not g:
             raise TokenError("invalid_grant", "Authorization is no longer active")
+        audience = resource or self.resource
+        if audience not in self.resources:
+            raise TokenError("invalid_grant", "This grant is for an address this hub no longer serves")
         from . import mcp_signing
 
         now = int(time.time())
@@ -222,12 +259,14 @@ class HubOAuth(OAuthProvider):
         # RFC 9068: a signed access token any verifier with our public keys can
         # check (AgentCore, a load balancer). Ids only, never an email address.
         access_token = self.signing().sign({
-            "iss": self.issuer, "sub": g["account_id"], "aud": self.resource,
+            "iss": self.issuer, "sub": g["account_id"], "aud": audience,
             "client_id": g["client_id"], "scope": " ".join(scopes),
             "iat": now, "exp": access_expiry, "jti": mcp_signing.new_jti(), "hz_grant": grant,
         })
         refresh_token = "hz_rt_" + secrets.token_urlsafe(32)
         payload = {"grant": grant, "client_id": g["client_id"], "scopes": scopes}
+        if audience != self.resource:
+            payload["resource"] = audience
         self.store.put(c, refresh_token, "refresh", payload, g["_expires"])
         return OAuthToken(
             access_token=access_token,
@@ -251,7 +290,7 @@ class HubOAuth(OAuthProvider):
                 raise TokenError(
                     "invalid_grant", "Authorization code already used or expired"
                 )
-            return self.issue(c, d["grant"], d["scopes"])
+            return self.issue(c, d["grant"], d["scopes"], d.get("resource"))
 
     async def load_refresh_token(self, client, refresh_token):
         with self.store.engine.begin() as c:
@@ -277,7 +316,7 @@ class HubOAuth(OAuthProvider):
             d = self.store.get(c, refresh_token.token, "refresh")
             if d and d["client_id"] == client.client_id and set(scopes) == {SCOPE}:
                 if self.store.consume(c, refresh_token.token, "refresh"):
-                    result = self.issue(c, d["grant"], scopes)
+                    result = self.issue(c, d["grant"], scopes, d.get("resource"))
                 else:
                     # Commit revocation even when the exchange fails (concurrent replay).
                     self.store.revoke(c, d["grant"])
@@ -290,11 +329,12 @@ class HubOAuth(OAuthProvider):
         A JWT is checked with our keys; an opaque ``hz_at_`` token from before
         2.0.9 is looked up until it expires (at most ten minutes)."""
         if token.count(".") == 2:
-            claims = self.signing().verify(token, issuer=self.issuer, audience=self.resource)
-            if not claims or not isinstance(claims.get("hz_grant"), str):
-                return None
-            return (claims["hz_grant"], str(claims.get("client_id") or ""),
-                    str(claims.get("scope") or "").split(), int(claims["exp"]), str(claims["sub"]))
+            for audience in self.accept:
+                claims = self.signing().verify(token, issuer=self.issuer, audience=audience)
+                if claims and isinstance(claims.get("hz_grant"), str):
+                    return (claims["hz_grant"], str(claims.get("client_id") or ""),
+                            str(claims.get("scope") or "").split(), int(claims["exp"]), str(claims["sub"]))
+            return None
         with self.store.engine.connect() as c:
             d = self.store.get(c, token, "access")
         return (d["grant"], d["client_id"], d["scopes"], d["_expires"], None) if d else None
@@ -314,7 +354,7 @@ class HubOAuth(OAuthProvider):
             client_id=client_id,
             scopes=scopes,
             expires_at=expires,
-            resource=self.resource,
+            resource=self.accept[0],
             subject=g["account_id"],
             claims={"email": g["email"], "grant_id": grant},
         )
@@ -342,7 +382,14 @@ class HubOAuth(OAuthProvider):
         async def token_endpoint(request):
             # SDK 1.27 validates PKCE but doesn't enforce RFC8707 on exchange.
             form = await request.form()
-            if form.get("resource") != self.resource:
+            target = form.get("resource")
+            if len(self.resources) > 1 and target in self.resources and form.get("grant_type") == "authorization_code":
+                # A code is good only for the address it was asked for.
+                with self.store.engine.connect() as c:
+                    code = self.store.get(c, str(form.get("code") or ""), "code")
+                if code and (code.get("resource") or self.resource) != target:
+                    target = None
+            if target not in self.resources:
                 return JSONResponse(
                     {
                         "error": "invalid_target",

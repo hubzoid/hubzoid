@@ -407,11 +407,28 @@ def _request_headers(
     if forwarded_prefix:
         headers.append((_FORWARDED_PREFIX.encode("latin-1"),
                         forwarded_prefix.encode("latin-1")))
-    if public_scheme and not any(
+    viewer = _viewer_scheme(request)
+    if viewer:
+        # The operator named the header their front door sets with the scheme
+        # the person used (CloudFront in front of a plain-HTTP load balancer):
+        # it wins over the load balancer's own X-Forwarded-Proto.
+        headers = [(k, v) for k, v in headers if k.decode("latin-1").lower() != "x-forwarded-proto"]
+        headers.append((b"x-forwarded-proto", viewer.encode("latin-1")))
+    elif public_scheme and not any(
         k.decode("latin-1").lower() == "x-forwarded-proto" for k, _ in headers
     ):
         headers.append((b"x-forwarded-proto", public_scheme.encode("latin-1")))
     return headers
+
+
+def _viewer_scheme(request: Request) -> str:
+    """``HUBZOID_FORWARDED_PROTO_HEADER`` names a header a trusted front door
+    sets to the person's scheme (``CloudFront-Forwarded-Proto``). Unset: ''."""
+    name = (os.environ.get("HUBZOID_FORWARDED_PROTO_HEADER") or "").strip()
+    if not name:
+        return ""
+    value = (request.headers.get(name) or "").split(",")[0].strip().lower()
+    return value if value in ("http", "https") else ""
 
 
 def _response_headers(resp: httpx.Response) -> dict[str, str]:

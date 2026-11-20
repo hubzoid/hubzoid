@@ -13,7 +13,7 @@ from . import PROVIDERS
 console = Console()
 
 deploy_app = typer.Typer(
-    help="Host a hub on a provider: write its files (`init railway|maritime`), "
+    help="Host a hub on a provider: write its files (`init railway|maritime|aws`), "
          "then check the deployment from outside (`verify URL`).",
     no_args_is_help=True)
 

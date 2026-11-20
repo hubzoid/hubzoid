@@ -340,7 +340,9 @@ def _run_tool(hub_dir: Path, wf):
             return (f"Not started yet. I'll run {wf.title}{' for ' + shown if shown else ''} as you. "
                     f'Start it? (Ask them. When they say yes in their next message, call {wf.name} again with only confirm: "{proposal}".)')
         if not _engine_ready(wf.name):
-            return _NOT_RUNNING
+            from ..workflows import control as wf_control
+
+            return wf_control.RUNNER_NOT_HERE if wf_control._on_runner() else _NOT_RUNNING
         return await _start_and_wait(hub_dir, wf, actor, surface, data, shown)
 
     tool = FunctionTool(name=wf.name, description=description, params_json_schema=params,

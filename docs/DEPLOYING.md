@@ -75,6 +75,19 @@ environment, or a hub's `.env` for that hub only.
 | `HUBZOID_DISABLE_PROMPT_CACHE` | off | `true` stops marking the agent's instructions for the provider's prompt cache. |
 | `HUBZOID_CACHE_TTL` | `1h` | How long the provider keeps the prompt cache. `5m` is cheaper per write. |
 | `HUBZOID_PASSWORD_HASH_CONCURRENCY` | `4` | How many password checks run at once. Lower it on a small machine. |
+| `HUBZOID_FORWARDED_PROTO_HEADER` | unset | A header your front door sets to the scheme people used, trusted over `X-Forwarded-Proto` (`CloudFront-Forwarded-Proto` behind CloudFront and a plain-HTTP load balancer). Set it only when nothing else can reach the port. |
+
+Agent turns on Amazon Bedrock AgentCore ([AWS](deploy/aws.md)). `hubzoid deploy init aws` sets all of these:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `HUBZOID_RUNNER` | `local` | `agentcore` runs each agent turn and its tools on an AgentCore runtime, one microVM per chat. The hub service keeps chats, sign-in, channels, workflows, schedules and approvals. |
+| `HUBZOID_AGENTCORE_RUNTIME_ARN` | unset | The runner's runtime. |
+| `HUBZOID_AGENTCORE_QUALIFIER`, `HUBZOID_AGENTCORE_REGION` | `DEFAULT`, the ARN's region | The runtime's endpoint and region. |
+| `HUBZOID_MCP_HOST` | `local` | `agentcore`: the hub's MCP server also runs as an AgentCore MCP runtime, with this hub's sign-in. |
+| `HUBZOID_MCP_AGENTCORE_URL`, `HUBZOID_MCP_RUNTIME_NAME` | unset | That runtime's address, or its name to look the address up. Sign-in issues tokens for it. |
+| `HUBZOID_ROLE` | unset | Set inside the runtimes only: `runner` or `mcp` (`hubzoid runner start`). Such a process never migrates the database, schedules or answers channels. |
+| `HUBZOID_IMAGE` | unset | The image tag. A runner runs a call only for the same Hubzoid version and image as the hub service. |
 
 Telemetry settings are in [OBSERVABILITY.md](OBSERVABILITY.md).
 
@@ -885,6 +898,10 @@ The image from Path B is the entry point. Use PostgreSQL (RDS or another
 managed PostgreSQL). SQLite on a network filesystem is not safe. On ECS
 Fargate, never put SQLite databases (`.hubzoid/*.db` and the deployment's
 state folder) on EFS. `hubzoid doctor` fails such a setup.
+
+On AWS, `hubzoid deploy init aws` writes a CloudFormation template for a
+single hub on ECS with RDS and EFS, and can run its agent turns on Amazon
+Bedrock AgentCore: [deploy/aws.md](deploy/aws.md).
 
 Choose one of two shapes:
 

@@ -558,11 +558,14 @@ def _build_runtime(runtime_lib, hub_dir: Path, cases: list, model: str | None, *
     from .. import tool_fakes
 
     fakes = [f for case in cases if case.is_faked for f in case.fake_tools]
+    # Evals always run here, also for a hub on an AgentCore runner: their fake
+    # tools and recorders exist only in this process.
+    kw = {"local": True} if runtime_lib.remote_enabled(hub_dir) else {}
     if not faked or not fakes:
-        return runtime_lib.build(hub_dir, model=model)
+        return runtime_lib.build(hub_dir, model=model, **kw)
     # allow_mcp: building must not drop the person's connectors, as before.
     with tool_fakes.scope(tool_fakes.Session(fakes=fakes, allow_mcp=True)):
-        return runtime_lib.build(hub_dir, model=model)
+        return runtime_lib.build(hub_dir, model=model, **kw)
 
 
 def run_suite(hub_dir: Path, cases: Iterable[EvalCase], **kwargs) -> SuiteResult:

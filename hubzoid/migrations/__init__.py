@@ -109,7 +109,12 @@ def upgrade(engine: Engine, store: str) -> None:
         # Already current, as on most starts: no lock, no write. A process that
         # may only read the store (a sandboxed service) can still use it. A
         # revision never moves back, so a head read here cannot go stale.
-        if current(engine, store) == script.get_current_head():
+        at = current(engine, store)
+        if at == script.get_current_head():
+            _done.setdefault(engine, set()).add(store)
+            return
+        if _remote_role():
+            _check_only(at, script, store)
             _done.setdefault(engine, set()).add(store)
             return
         with _cross_process_lock(engine, store):
@@ -122,6 +127,31 @@ def upgrade(engine: Engine, store: str) -> None:
                 )
             _run(engine, cfg, script, store)
         _done.setdefault(engine, set()).add(store)
+
+
+def _remote_role() -> bool:
+    """An AgentCore runner or MCP process (``HUBZOID_ROLE``, see
+    ``hubzoid.runner.role``). Read here directly so an ordinary process never
+    imports the runner package."""
+    import os
+
+    return (os.environ.get("HUBZOID_ROLE") or "").strip().lower() in ("runner", "mcp")
+
+
+def _check_only(at: str | None, script, store: str) -> None:
+    """An AgentCore runner or MCP process never migrates or takes the migration
+    lock: the hub service owns the schema. It accepts a database at a revision it
+    does not know (a newer Hubzoid upgraded it, and releases only add tables and
+    columns) and refuses one that is behind, which the hub service has not
+    upgraded yet."""
+    if at is not None and at not in {r.revision for r in script.walk_revisions()}:
+        log.warning("migrations: %s store is at %s, newer than this runner; using it as is", store, at)
+        return
+    raise SchemaError(
+        f"The {store} database is at schema revision {at or 'none'}, older than this runner "
+        "needs. The hub service upgrades it when it starts: deploy the hub service first, "
+        "then the AgentCore runtime."
+    )
 
 
 def _run(engine: Engine, cfg, script, store: str) -> None:

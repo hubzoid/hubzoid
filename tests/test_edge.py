@@ -141,6 +141,24 @@ def test_request_headers_inbound_scheme_wins():
     assert xfp == [b"https"]
 
 
+def test_a_named_front_door_header_gives_the_scheme(monkeypatch):
+    # CloudFront (HTTPS) in front of a load balancer (HTTP): the load balancer
+    # says http, CloudFront's own header says what the person used.
+    req = _http_request([
+        (b"host", b"hub.example.com"),
+        (b"x-forwarded-proto", b"http"),
+        (b"cloudfront-forwarded-proto", b"https"),
+    ])
+    xfp = [v for k, v in edge._request_headers(req, "https") if k == b"x-forwarded-proto"]
+    assert xfp == [b"http"]                      # unset: the inbound header wins, as before
+    monkeypatch.setenv("HUBZOID_FORWARDED_PROTO_HEADER", "CloudFront-Forwarded-Proto")
+    xfp = [v for k, v in edge._request_headers(req, "https") if k == b"x-forwarded-proto"]
+    assert xfp == [b"https"]
+    req = _http_request([(b"host", b"hub.example.com"), (b"x-forwarded-proto", b"http")])
+    xfp = [v for k, v in edge._request_headers(req, "https") if k == b"x-forwarded-proto"]
+    assert xfp == [b"http"]                      # named but absent: unchanged
+
+
 def test_request_headers_no_scheme_left_untouched():
     # Localhost run declares no public scheme: nothing is asserted (stays http).
     req = _http_request([(b"host", b"localhost:3080")])

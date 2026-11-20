@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -656,7 +657,19 @@ def build_mcp_app(
         settings = settingslib.load(hub_dir)
     from .mcp_oauth import HubOAuth
 
-    mcp, count = build_server(hub_dir, settings=settings, auth=HubOAuth(hub_dir, settings.mcp_public_url))
+    # A hub whose MCP server also runs on AgentCore (HUBZOID_MCP_AGENTCORE_URL) signs
+    # tokens for that address too; this endpoint still accepts only its own.
+    extra = (settings.mcp_agentcore_url,) if settings.mcp_agentcore_url else ()
+    find = None
+    if not extra and (os.environ.get("HUBZOID_MCP_RUNTIME_NAME") or "").strip():
+        # Its address by its name (HUBZOID_MCP_RUNTIME_NAME), once the runtime exists.
+        from .runner.mcp_app import own_url
+
+        def find():
+            return own_url(settings)
+    mcp, count = build_server(hub_dir, settings=settings,
+                              auth=HubOAuth(hub_dir, settings.mcp_public_url, extra_resources=extra,
+                                            find_extra=find))
     stateless = settings.mcp_stateless
     log.info("mcp: serving %d tool(s) at %s (%s)", count, path, "stateless" if stateless else "sessions")
     return mcp.http_app(path=path, stateless_http=stateless)

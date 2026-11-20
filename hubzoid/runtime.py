@@ -166,15 +166,37 @@ def litellm_region(model_id: str) -> dict:
     return {"aws_region_name": bedrock.require_region(model_id)} if bedrock.is_bedrock(model_id) else {}
 
 
+def remote_enabled(hub_dir: Path) -> bool:
+    """This hub's turns go to an AgentCore runner (``HUBZOID_RUNNER=agentcore``)
+    and this process is not itself a runner. Callers pass the runner-only
+    arguments to ``build`` only then, so every other call is as before."""
+    return settingslib.load(Path(hub_dir)).runner == "agentcore" and not _in_runner()
+
+
+def _in_runner() -> bool:
+    """Inside an AgentCore runner or MCP microVM (``HUBZOID_ROLE``): its turns
+    always run here. Read directly so other processes never import the runner."""
+    import os
+
+    return (os.environ.get("HUBZOID_ROLE") or "").strip().lower() in ("runner", "mcp")
+
+
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
           max_turns: int | None = None, model: str | None = None,
-          guardrails: bool = True) -> Runtime:
+          guardrails: bool = True, local: bool = False, bundle: dict | None = None) -> Runtime:
     """The hub's runtime (`_build`), with the main agent's guardrails attached
     when it sets any (`hubzoid.guardrails`). `guardrails=False` is for builds
     that run the hub's own prompts, not people's messages: scheduled tasks,
     workflow agent calls and doctor's reply check. A bad `guardrails:` value
-    raises here, so a hub never starts unprotected."""
-    rt = _build(hub_dir, extra_tools=extra_tools, max_turns=max_turns, model=model)
+    raises here, so a hub never starts unprotected.
+
+    With `HUBZOID_RUNNER=agentcore` the turns run on an AgentCore runner
+    (`hubzoid.runner`); guardrails still run here, around the remote stream.
+    `local=True` keeps a build in this process whatever the setting (evals,
+    whose fake tools exist only here). `bundle` names the extra tools so a
+    runner can rebuild them (a scheduled task's: {"kind": "schedule", ...})."""
+    rt = _build(hub_dir, extra_tools=extra_tools, max_turns=max_turns, model=model,
+                local=local, bundle=bundle)
     if guardrails and (Path(hub_dir) / "AGENTS.md").is_file():
         from . import guardrails as guardrails_lib
 
@@ -185,7 +207,8 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
 
 
 def _build(hub_dir: Path, *, extra_tools: dict | None = None,
-           max_turns: int | None = None, model: str | None = None) -> Runtime:
+           max_turns: int | None = None, model: str | None = None,
+           local: bool = False, bundle: dict | None = None) -> Runtime:
     """Pick the backend for this hub based on `MODEL` in <hub>/.env.
 
     `MODEL=claude-local` -> Claude Agent SDK (subprocess + `claude` login).
@@ -216,6 +239,16 @@ def _build(hub_dir: Path, *, extra_tools: dict | None = None,
                 "hub %s: no MODEL in .env; defaulting to %s",
                 hub_dir.name, model_id,
             )
+
+    if settings.runner != "local" and not local and not _in_runner():
+        if settings.runner != "agentcore":
+            raise ValueError(f"HUBZOID_RUNNER={settings.runner!r}: use 'local' (default) or 'agentcore'.")
+        if extra_tools and not bundle:
+            raise ValueError("These extra tools cannot be rebuilt on an AgentCore runner (no bundle named).")
+        from .runner.client import AgentCoreRuntime
+
+        return AgentCoreRuntime(hub_dir, settings, model_id=model_id, max_turns=max_turns,
+                                model=model, bundle=bundle)
 
     from . import testing_runtime
     eff = classify(model_id)

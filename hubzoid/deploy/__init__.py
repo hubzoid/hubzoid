@@ -3,6 +3,8 @@ deployment from outside.
 
     hubzoid deploy init railway|maritime [HUB]   Dockerfile, .dockerignore and
                                                  deploy/<provider>/ (steps, variables)
+    hubzoid deploy init aws [HUB]                the same, plus deploy/aws/stack.yaml: ECS
+                                                 hub service, AgentCore runner (CloudFormation)
     hubzoid deploy verify URL                    HTTPS, health, sign-in, public URL
 
 Like Agno's per-provider starters and Mastra's deployers: one released image,
@@ -12,4 +14,4 @@ into the image from Git; its state lives on a durable volume at /data
 """
 from __future__ import annotations
 
-PROVIDERS = ("railway", "maritime")
+PROVIDERS = ("railway", "maritime", "aws")

@@ -296,6 +296,34 @@ def check_model_auth(hub: Path, found: list | None = None) -> Result:
 REPLY_SECONDS = 60  # one real call can take longer than other checks' limit
 
 
+def check_runner(hub: Path) -> Result:
+    """Active: where agent turns run. With HUBZOID_RUNNER=agentcore, one call to
+    the AgentCore runner without a model call (``hubzoid runner hello``)."""
+    from .. import settings as settingslib
+
+    settings = settingslib.load(hub)
+    if settings.runner != "agentcore":
+        return Result("skipped", "Agent turns run in this service (no AgentCore runner).")
+    if not settings.agentcore_runtime_arn and not settings.agentcore_endpoint:
+        return Result("fail", "HUBZOID_RUNNER=agentcore, but HUBZOID_AGENTCORE_RUNTIME_ARN is not set.", {},
+                      "Set the runtime's ARN, or set HUBZOID_RUNNER=local.", "runner_config")
+    from ..runner.client import RunnerError, hello
+    from ..runner.protocol import VERSION
+
+    try:
+        out = hello(hub, settings)
+    except RunnerError as exc:
+        return Result("fail", f"Runs on AWS AgentCore, which did not answer: {exc}", {"code": exc.code},
+                      "Check the runtime in the AgentCore console (status, logs) and that this service "
+                      "may invoke it.", "runner_unavailable")
+    details = {"runner": out.get("runner_version"), "protocol": out.get("protocol"),
+               "hub_service": out.get("hub_version"), "seconds": out.get("seconds")}
+    if out.get("protocol") != VERSION:
+        return Result("fail", "The AgentCore runner speaks another protocol version.", details,
+                      "Deploy the same Hubzoid version to the hub service and the runtime.", "runner_version")
+    return Result("ok", f"Agent turns run on AWS AgentCore (answered in {out.get('seconds')} s).", details)
+
+
 def check_model_reply(hub: Path) -> Result:
     """Active: one tiny real model call (spends a few tokens). It stops itself
     just before the check's own limit, so its reason is what the report shows."""
@@ -552,6 +580,8 @@ CHECKS: tuple[CheckDef, ...] = (
              timeout=REPLY_SECONDS),
     CheckDef("connectors.reachability", "active", "Connector hosts answer (network probe).", "HUB-102",
              check_connector_reachability),
+    CheckDef("runner.agentcore", "active", "Where agent turns run (AWS AgentCore runner).", "HUB-185",
+             check_runner, timeout=REPLY_SECONDS),
 )
 BY_ID = {c.id: c for c in CHECKS}
 
