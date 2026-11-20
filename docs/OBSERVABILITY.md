@@ -23,6 +23,19 @@ to the exporter, no Hubzoid code involved:
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(public_key:secret_key)>
 ```
 
+When the endpoint is Langfuse (its path ends in `/api/public/otel`), Hubzoid
+also sends `x-langfuse-ingestion-version: 4` by itself, on every export path:
+the claude-local subprocess, the `HUBZOID_OTEL_NORMALIZE` relay and the
+LiteLLM path. Langfuse v4 asks OTLP senders for this header and may delay or
+stop uploads without it. You do not need to add it to `OTEL_EXPORTER_OTLP_HEADERS`.
+A value you set there yourself wins, and the header is never sent twice. Other
+OTLP endpoints get no extra header.
+
+Exporters that Hubzoid does not start are yours to configure. If you run
+`opentelemetry-instrument hubzoid run` (see Signals below) or a collector, and
+it sends straight to Langfuse, add `x-langfuse-ingestion-version=4` to its
+headers yourself.
+
 Unset `HUBZOID_OTEL_ENDPOINT` (the default) and nothing is emitted.
 
 On the **claude-local** path, also set this to get cost in Langfuse (see the
@@ -90,7 +103,9 @@ point in front of *many* hubs and backends, do the same rename there instead of
 per-bridge. A ready reference config is in
 [`otel-collector.yaml`](./otel-collector.yaml): point `HUBZOID_OTEL_ENDPOINT` at
 the collector (leave `HUBZOID_OTEL_NORMALIZE` **off** so you don't normalize
-twice), and the collector exports to Langfuse. It is stock `otelcol-contrib` + a
+twice), and the collector exports to Langfuse. Its Langfuse exporter sets
+`x-langfuse-ingestion-version: "4"` itself, since Hubzoid only adds that header
+when it talks to Langfuse directly. It is stock `otelcol-contrib` + a
 config file, and is a no-op on the LiteLLM path. For a single hub, the in-bridge
 flag is simpler — this is for fleets that already have collector infrastructure.
 

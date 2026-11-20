@@ -211,7 +211,9 @@ Environment variables explicitly supported:
                          the broker. Unset = per-user connections off. See
                          hubzoid.connections.
   HUBZOID_OTEL_ENDPOINT  OTLP/HTTP base URL to push traces to (e.g. a Langfuse
-                         `.../api/public/otel`). Unset = observability off. See
+                         `.../api/public/otel`). Unset = observability off. For
+                         a Langfuse endpoint Hubzoid adds the v4 ingestion header
+                         (`x-langfuse-ingestion-version: 4`) itself. See
                          docs/OBSERVABILITY.md.
   HUBZOID_OTEL_NORMALIZE true | false (default). claude-local only. When true,
                          the bridge intercepts the `claude` subprocess's OTLP

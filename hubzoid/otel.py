@@ -60,7 +60,24 @@ def claude_otel_env(*, endpoint, user, hub, surface) -> dict[str, str]:
         ),
         **content_env(),
         **_direct_signal_endpoints(endpoint),
+        **_langfuse_headers_env(endpoint),
     }
+
+
+def _langfuse_headers_env(endpoint: str) -> dict[str, str]:
+    """OTEL_EXPORTER_OTLP_HEADERS with the Langfuse v4 ingestion header added,
+    when the subprocess's traces go straight to Langfuse. Through the bridge's
+    normalize relay the endpoint is loopback and the relay adds it instead.
+    An operator's OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is where traces really go.
+    Claude Code passes the generic headers as explicit exporter headers, which
+    beat OTEL_EXPORTER_OTLP_TRACES_HEADERS per key, so a version the operator
+    set there is left alone."""
+    target = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or endpoint
+    if _has_ingestion_header(os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS")):
+        return {}
+    raw = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+    merged = langfuse_otlp_headers(raw, target)
+    return {"OTEL_EXPORTER_OTLP_HEADERS": merged} if merged != (raw or "") else {}
 
 
 def _direct_signal_endpoints(endpoint: str) -> dict[str, str]:
@@ -232,6 +249,55 @@ def parse_otlp_headers(raw: str | None) -> dict[str, str]:
     return out
 
 
+# Langfuse v4 ingests OTLP faster when told the spans are v4-shaped; without
+# this header Langfuse Cloud may delay or stop uploads (from 19 Nov 2026).
+# Hubzoid's spans already fit v4: user.id and the hub tag ride every span and
+# no langfuse.trace.input/output is set.
+LANGFUSE_INGESTION_HEADER = "x-langfuse-ingestion-version"
+LANGFUSE_INGESTION_VERSION = "4"
+
+
+def is_langfuse_endpoint(endpoint: str | None) -> bool:
+    """True when `endpoint` is a Langfuse OTLP endpoint: its path ends in
+    `/api/public/otel` (the base Hubzoid documents), or in that plus
+    `/v1/traces`. Cloud and self-hosted Langfuse both serve it there."""
+    if not endpoint:
+        return False
+    from urllib.parse import urlsplit
+    path = urlsplit(endpoint.strip()).path.rstrip("/").lower()
+    return path.endswith("/api/public/otel") or path.endswith("/api/public/otel/v1/traces")
+
+
+def with_langfuse_headers(headers: dict[str, str] | None, endpoint: str | None) -> dict[str, str]:
+    """`headers` plus the Langfuse v4 ingestion header when `endpoint` is
+    Langfuse. A value the operator already set (any case) wins and is never
+    duplicated. Other endpoints get `headers` back unchanged."""
+    out = dict(headers or {})
+    if not is_langfuse_endpoint(endpoint):
+        return out
+    if any(k.lower() == LANGFUSE_INGESTION_HEADER for k in out):
+        return out
+    out[LANGFUSE_INGESTION_HEADER] = LANGFUSE_INGESTION_VERSION
+    return out
+
+
+def _has_ingestion_header(raw: str | None) -> bool:
+    return any(k.lower() == LANGFUSE_INGESTION_HEADER for k in parse_otlp_headers(raw))
+
+
+def langfuse_otlp_headers(raw: str | None, endpoint: str | None) -> str:
+    """An OTEL_EXPORTER_OTLP_HEADERS string with the Langfuse v4 ingestion
+    header appended when `endpoint` is Langfuse and the header is not already
+    there. Otherwise `raw` (or "") unchanged, byte for byte."""
+    raw = raw or ""
+    if not is_langfuse_endpoint(endpoint):
+        return raw
+    if _has_ingestion_header(raw):
+        return raw
+    pair = f"{LANGFUSE_INGESTION_HEADER}={LANGFUSE_INGESTION_VERSION}"
+    return f"{raw.rstrip().rstrip(',')},{pair}" if raw.strip() else pair
+
+
 def local_intercept_endpoint(port: int) -> str:
     """The bridge's own loopback OTLP endpoint (the claude subprocess points
     here when normalize is on; the OTLP exporter appends `/v1/traces`)."""
@@ -265,6 +331,28 @@ async def forward_otlp(body: bytes, *, forward_url: str, headers: dict,
     return resp.status_code
 
 
+def _litellm_langfuse_headers(endpoint: str) -> None:
+    """Add the Langfuse v4 ingestion header where LiteLLM's OTel exporter will
+    read it. LiteLLM sends to OTEL_EXPORTER_OTLP_ENDPOINT, else OTEL_ENDPOINT,
+    with headers from OTEL_EXPORTER_OTLP_HEADERS, else OTEL_HEADERS. With
+    neither, the OTLP exporter reads OTEL_EXPORTER_OTLP_TRACES_HEADERS. Extend
+    the variable that is in use, so the auth it holds is never hidden. An
+    empty LiteLLM value counts as none: the exporter then falls back too."""
+    env = os.environ
+    target = env["OTEL_EXPORTER_OTLP_ENDPOINT"] if "OTEL_EXPORTER_OTLP_ENDPOINT" in env else endpoint
+    if not is_langfuse_endpoint(target):
+        return
+    # The variable LiteLLM reads (os.getenv with a default: present wins, even empty).
+    lite = next((k for k in ("OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS") if k in env), None)
+    if lite and env[lite].strip():
+        key = lite
+    elif (env.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") or "").strip():
+        key = "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
+    else:
+        key = lite or "OTEL_EXPORTER_OTLP_HEADERS"
+    env[key] = langfuse_otlp_headers(env.get(key), target)
+
+
 def openai_otel_setup(*, endpoint, hub) -> bool:
     """Enable OTel on the OpenAI/LiteLLM path via LiteLLM's native `otel`
     callback (tokens + gen_ai.cost.total_cost). Process-level, so it carries
@@ -283,6 +371,7 @@ def openai_otel_setup(*, endpoint, hub) -> bool:
         return False
     os.environ["OTEL_EXPORTER"] = "otlp_http"
     os.environ["OTEL_ENDPOINT"] = endpoint
+    _litellm_langfuse_headers(endpoint)
     os.environ["OTEL_RESOURCE_ATTRIBUTES"] = _merge_resource_attr(
         os.environ.get("OTEL_RESOURCE_ATTRIBUTES"), {"hubzoid.hub": _attr(hub)}
     )

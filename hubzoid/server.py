@@ -296,7 +296,9 @@ def build_app() -> FastAPI:
         from fastapi import Response
 
         _otel_forward_url = settings.otel_endpoint.rstrip("/") + "/v1/traces"
-        _otel_headers = otellib.parse_otlp_headers(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"))
+        _otel_headers = otellib.with_langfuse_headers(
+            otellib.parse_otlp_headers(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")),
+            settings.otel_endpoint)
 
         @app.post("/otel/v1/traces")
         async def _otel_intercept(request: Request):
