@@ -614,7 +614,12 @@ def bedrock_used_tiers(hub: Path) -> set[str]:
     try:
         from .loaders import agents as agents_loader
 
-        names += [a.spec.model for a in agents_loader.load_subagents(hub) if a.spec.model]
+        for a in agents_loader.load_subagents(hub):
+            engine = (getattr(a.spec, "engine", None) or "").strip()
+            if engine and engine != "bedrock":
+                continue            # a station that names another engine does not use Bedrock
+            if a.spec.model:
+                names.append(f"bedrock/{a.spec.model}" if engine == "bedrock" else a.spec.model)
     except Exception:  # noqa: BLE001 - the agents check reports a broken file
         pass
     try:

@@ -347,3 +347,62 @@ def test_doctor_checks_region_identity_and_only_the_tiers_the_hub_uses(monkeypat
     del os.environ["AWS_REGION"]
     monkeypatch.setattr(boto3.session, "Session", lambda profile_name=None: type("S", (), {"region_name": None})())
     assert bedrock.check("bedrock/sonnet")[0][0] == "fail"
+
+
+# --- after review: mixed calls, catalog, routes, doctor -----------------------------------
+def test_a_subscription_call_on_a_bedrock_hub_carries_nothing_of_bedrock(monkeypatch):
+    from hubzoid import factory_claude
+
+    os.environ.update(PARENT, MODEL="bedrock/sonnet", AWS_REGION="ap-south-1", CLAUDE_CODE_USE_BEDROCK="1")
+    seen = _capture(monkeypatch)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN_SECONDARY")      # no failover pool without a hub directory
+    asyncio.run(factory_claude.claude_complete("hi", model_setting="claude-local/opus"))
+    env = seen["options"].env
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "" and env["AWS_ACCESS_KEY_ID"] == ""
+    assert env["ANTHROPIC_API_KEY"] == "" and "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    os.environ["MODEL"] = "claude-local"                          # the older manual setup: kept as before
+    asyncio.run(factory_claude.claude_complete("hi", model_setting="claude-local/opus"))
+    assert "CLAUDE_CODE_USE_BEDROCK" not in seen["options"].env and "AWS_ACCESS_KEY_ID" not in seen["options"].env
+
+
+def test_a_subscription_call_on_a_bedrock_hub_without_a_token_fails_clearly(monkeypatch):
+    from hubzoid import factory_claude
+
+    os.environ.update(MODEL="bedrock/sonnet", AWS_REGION="ap-south-1", ANTHROPIC_API_KEY="sk-ant")
+    _capture(monkeypatch)
+    with pytest.raises(RuntimeError, match="CLAUDE_CODE_OAUTH_TOKEN"):     # never the key, never Bedrock
+        asyncio.run(factory_claude.claude_complete("hi", model_setting="claude-local/opus"))
+
+
+def test_chat_choices_on_another_engine_are_refused():
+    from hubzoid.factory_claude import turn_model
+
+    for chosen in ("openai/gpt-4o", "codex-local", "apac.amazon.nova-pro-v1:0"):
+        with pytest.raises(RuntimeError, match="Choose another model"):
+            turn_model(chosen, "bedrock/sonnet")
+    assert turn_model("opus", "bedrock/sonnet") == "opus"
+    with pytest.raises(RuntimeError):
+        turn_model("openai/gpt-4o", "claude-local")
+
+
+def test_routes_india_profiles_and_doctor_lookups(monkeypatch):
+    import boto3
+
+    assert runtime.classify("bedrock/in.anthropic.claude-sonnet-5").engine == "claude"
+    route = "bedrock/converse/arn:aws:bedrock:us-east-2:1:inference-profile/us.anthropic.claude-sonnet-5-5"
+    assert bedrock.region(route, {})[0] == "us-east-2"
+    os.environ["AWS_REGION"] = "ap-south-1"
+    aws = _Aws(missing={"apac.amazon.nova-micro-v1:0"})
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: aws)
+    assert any(st == "fail" for st, _t in bedrock.check("bedrock/converse/apac.amazon.nova-micro-v1:0"))
+
+
+def test_doctor_counts_only_stations_on_bedrock(tmp_path):
+    from hubzoid import doctor
+
+    hub = _hub(tmp_path, "MODEL=bedrock/sonnet\nAWS_REGION=ap-south-1\n")
+    folder = hub / "agents" / "checker"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "AGENTS.md").write_text("---\nname: checker\ndescription: d\nisolated: true\nengine: claude-local\n"
+                                      "model: opus\n---\nCheck.\n")
+    assert "opus" not in doctor.bedrock_used_tiers(hub)

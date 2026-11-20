@@ -283,8 +283,16 @@ def _child_env(model: str | None = None) -> dict[str, str]:
         out = config_secrets.child_env_overrides(os.environ, bedrock=True)
         out.update(bedrock.child_env(raw))
     else:
-        out = config_secrets.child_env_overrides(os.environ)
-        if not config_secrets._truthy(os.environ.get("CLAUDE_CODE_USE_BEDROCK")):
+        # A subscription call on a hub whose own model is bedrock/...: the call
+        # names the subscription on purpose, so nothing of Bedrock reaches it,
+        # even a CLAUDE_CODE_USE_BEDROCK set by hand. Without that hub model, a
+        # hand-set flag is the older manual Bedrock setup and is kept as before.
+        mixed = raw.lower().startswith("claude-local") and bedrock.is_bedrock(os.environ.get("MODEL"))
+        out = config_secrets.child_env_overrides(os.environ, bedrock=False if mixed else None)
+        if mixed:
+            out.update({k: "" for k in ("CLAUDE_CODE_USE_BEDROCK", "AWS_BEARER_TOKEN_BEDROCK")
+                        if os.environ.get(k)})
+        if mixed or not config_secrets._truthy(os.environ.get("CLAUDE_CODE_USE_BEDROCK")):
             out.update(bedrock.subscription_scrub())
     model = raw.lower()
     if model.startswith("claude-local") and not os.environ.get("ANTHROPIC_BASE_URL"):
@@ -292,6 +300,10 @@ def _child_env(model: str | None = None) -> dict[str, str]:
         if reason is None:
             login = claude_login()
             reason = "the claude login" if login and login.signed_in and login.method == "subscription" else None
+        if reason is None and mixed:
+            raise RuntimeError(
+                f"{raw} runs on the Claude subscription, and this hub has no CLAUDE_CODE_OAUTH_TOKEN or "
+                "`claude` login. Add the token to the hub's .env, or use bedrock/<tier> for this task.")
         if reason:
             keys = [k for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") if os.environ.get(k)]
             out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"] = ""
@@ -761,16 +773,19 @@ def turn_model(chosen: str, model_setting: str) -> str:
     runtime's is refused: switching provider within a conversation is not supported."""
     from . import bedrock
 
-    low = chosen.strip().lower()
+    from .runtime import _apply_model_override, classify
+
     on_bedrock = model_setting.strip().lower().startswith("bedrock/")
-    if low.startswith("claude-local") or bedrock.is_bedrock(low):
-        if bedrock.is_bedrock(low) != on_bedrock or (on_bedrock and not bedrock.is_claude(chosen)):
-            raise RuntimeError(
-                f"The model {chosen!r} runs on {'Bedrock' if bedrock.is_bedrock(low) else 'the Claude subscription'}"
-                f", and this agent runs on {'Bedrock' if on_bedrock else 'the Claude subscription'}. "
-                "Choose another model, or ask an administrator to fix the chat model list.")
-        return bedrock.cli_model(chosen) if on_bedrock else (_parse_model_pin(chosen) or chosen)
-    return chosen
+    resolved = _apply_model_override(model_setting, chosen)[0]
+    eff = classify(resolved)
+    if eff.engine != "claude" or eff.provider != ("bedrock" if on_bedrock else "subscription"):
+        where = "Bedrock" if eff.provider == "bedrock" else "the Claude subscription" \
+            if eff.provider == "subscription" else "another engine"
+        raise RuntimeError(
+            f"The model {chosen!r} runs on {where}, and this agent runs on "
+            f"{'Claude on Bedrock' if on_bedrock else 'the Claude subscription'}. "
+            "Choose another model, or ask an administrator to fix the chat model list.")
+    return bedrock.cli_model(resolved) if on_bedrock else (_parse_model_pin(resolved) or chosen)
 
 
 _CLAUDE_LOCAL_DEFAULT = "sonnet"

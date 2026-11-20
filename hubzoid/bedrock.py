@@ -33,8 +33,9 @@ TIER_MODELS = {
 }
 _TIER_ENV = {t: f"ANTHROPIC_DEFAULT_{t.upper()}_MODEL" for t in TIERS}
 
-_GEO = ("us", "us-gov", "eu", "apac", "jp", "au", "global")
-_CLAUDE_ID = re.compile(r"^(?:(?:" + "|".join(_GEO) + r")\.)?anthropic\.claude-[a-z0-9.\-]+(?::\d+)?$")
+#: A cross-region profile's geography prefix (us, us-gov, eu, apac, in, jp, au, global ...).
+_GEO_RE = r"[a-z]{2,6}(?:-[a-z]{2,4})?"
+_CLAUDE_ID = re.compile(r"^(?:" + _GEO_RE + r"\.)?anthropic\.claude-[a-z0-9.\-]+(?::\d+)?$")
 _ARN = re.compile(r"^arn:aws(?:-[a-z]+)*:bedrock:(?P<region>[a-z0-9-]*):(?P<account>\d*):"
                   r"(?P<kind>foundation-model|inference-profile|application-inference-profile)/(?P<id>[^\s\[]+)$")
 _ONE_M = "[1m]"
@@ -90,6 +91,12 @@ def litellm_route(model: str) -> bool:
     """``bedrock/converse/<id>`` and the other LiteLLM route prefixes: kept on LiteLLM."""
     x = inner(model)
     return "/" in x and not x.lower().startswith("arn:")
+
+
+def resource(model: str) -> str:
+    """The Bedrock model id or ARN, without ``bedrock/`` or a LiteLLM route prefix."""
+    x = inner(model)
+    return x.split("/", 1)[1] if litellm_route(model) else x
 
 
 def is_claude(model: str | None, *, resolve: bool = True) -> bool:
@@ -150,7 +157,7 @@ def region(model: str | None = None, env: Mapping[str, str] | None = None) -> tu
     agree: the region in an ARN model id, AWS_REGION_NAME, AWS_REGION,
     AWS_DEFAULT_REGION, then the AWS profile's region."""
     env = os.environ if env is None else env
-    parts = arn(inner(model)) if model else None
+    parts = arn(resource(model)) if model else None
     if parts and parts["region"]:
         return parts["region"], "the model ARN"
     for key in ("AWS_REGION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION"):
@@ -284,11 +291,11 @@ def check(model: str, *, used_tiers: set[str] | None = None) -> list[tuple[str, 
     ids: list[tuple[str, str, bool]] = []          # (label, id, strict)
     if claude:
         pins = tier_pins(where)
-        ids.append(("model", primary_id(model, where) if not litellm_route(model) else inner(model), True))
+        ids.append(("model", primary_id(model, where) if not litellm_route(model) else resource(model), True))
         for t in TIERS:
             ids.append((t, pins[t], t in (used_tiers or set())))
-    elif not litellm_route(model):
-        ids.append(("model", inner(model), True))
+    else:
+        ids.append(("model", resource(model), True))
     client = boto3.client("bedrock", region_name=where)
     for label, ident_, strict in ids:
         status, text = _lookup(client, _bare(ident_), where)
@@ -306,7 +313,7 @@ def _lookup(client, ident: str, where: str) -> tuple[str, str]:
     try:
         if parts is not None and parts["kind"] == "foundation-model":
             client.get_foundation_model(modelIdentifier=parts["id"])
-        elif parts is not None or ident.split(".", 1)[0] in _GEO:
+        elif parts is not None or ident.split(":", 1)[0].count(".") >= 2:   # geo.provider.model: a profile
             got = client.get_inference_profile(inferenceProfileIdentifier=ident)
             if parts is not None and parts["kind"] == "application-inference-profile":
                 backing = ((got.get("models") or [{}])[0] or {}).get("modelArn", "").rsplit("/", 1)[-1]

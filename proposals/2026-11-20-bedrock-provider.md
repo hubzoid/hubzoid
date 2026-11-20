@@ -233,6 +233,24 @@ Finding 1 asked for the explicit `claude-local/...` question to be closed before
 - **Dollar limits.** A scope with a dollar limit and a Bedrock row with no reported cost refuses further Bedrock Claude calls (`unpriced_usage`).
 - **Not done here:** a load-time warning for chat catalog entries on another provider. They are refused when a turn names them, with a message.
 
+## Build review (20 November 2026)
+
+Codex (gpt-6.1-sol, high) reviewed the build once. Accepted and fixed:
+
+1. A subscription call on a Bedrock hub with `CLAUDE_CODE_USE_BEDROCK` also set by hand stayed on Bedrock. Now a `claude-local` call on a hub whose model is `bedrock/...` blanks the flag and the AWS credentials. Without that hub model, a hand-set flag is the older manual setup and is kept.
+2. Such a call with no subscription token or login used an inherited API key. It now fails with a message naming the token.
+3. A chat choice on another engine (`openai/...`, `codex-local`, a non-Claude Bedrock model) reached the Claude runtime. Every choice is now resolved against the hub and refused unless it is Claude on the same provider.
+4. `bedrock/converse/<arn>` lost its ARN's region, and doctor skipped the lookup for LiteLLM routes. Both now use the id after the route prefix.
+5. Doctor counted a station with `engine: claude-local` as using a Bedrock tier.
+
+Skipped, with reasons:
+
+- Counting Bedrock rows with no cost and no tokens as unknown spend. Such a row is a call that failed before reporting usage, mostly before reaching AWS. Blocking every later dollar-limited call on it would stop a hub after any error. Rows with tokens and no cost still block.
+- Mapping a bare Bedrock id on a `claude-local` hub to a subscription pin. There is no reliable mapping, and it would change `claude-local`. A `claude-local` hub uses `bedrock/<id>` to reach Bedrock.
+- The full final-query matrix for chat, schedules and judges. The focused tests cover the child environment at `query()` for `call_llm`, stations, mixed calls and failover, and construction plus the per-turn clone for chat. Real subscription checks passed on Claude Code 2.1.285. The AWS end-to-end run waits for a test account.
+
+Also found against a real account: ap-south-1 offers the 5.5 models only as `global.` profiles and has an `in.` prefix, so the id rules accept any geography prefix and the docs say what that region offers.
+
 ## References
 
 - Claude Code on Amazon Bedrock, environment variables and prompt caching docs (links above).

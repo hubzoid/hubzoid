@@ -73,8 +73,15 @@ LiteLLM, which would otherwise fall back to different ones (`us-east-1` and
 `opus`, `sonnet` and `haiku` mean on Bedrock what they mean on `claude-local`
 with this release (Opus 5.5, Sonnet 5.5 and Haiku 4.5), as cross-region
 inference profiles for your region: `us.` for `us-*`, `eu.` for `eu-*`, `apac.`
-for `ap-*`, `us-gov.` for `us-gov-*`, otherwise `global.`. In ap-south-1 that is
-`apac.anthropic.claude-sonnet-5-5`.
+for `ap-*`, `us-gov.` for `us-gov-*`, otherwise `global.`.
+
+What an account is offered differs by region, so check before you choose. In
+ap-south-1 (checked 20 November 2026) the 5.5 models are offered only as
+`global.` profiles, the `apac.` profiles cover older models only, and an `in.`
+(India) prefix offers Sonnet 5, Opus 5 and Haiku 4.5. So a hub there either sets
+`ANTHROPIC_BEDROCK_REGION_PREFIX=global`, or keeps traffic in India with pins
+such as `MODEL=bedrock/in.anthropic.claude-sonnet-5` and
+`ANTHROPIC_DEFAULT_OPUS_MODEL=in.anthropic.claude-opus-5`.
 
 - `ANTHROPIC_BEDROCK_REGION_PREFIX=global` uses `global.` profiles. Those can
   route outside your region's geography, so Hubzoid never switches to them on
