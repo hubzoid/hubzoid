@@ -128,6 +128,11 @@ doctor, evals and the channel list say what used to fail silently.
   sub-agent doesn't see the conversation.
 - Over MCP, sub-agents offered as skills no longer log the "tools whitelist
   ignored" warning meant for a misconfiguration.
+- Usage: the per-agent rows now follow the period (24 hours, 7 days, 30 days)
+  like the totals above them. They used to show this month whatever the
+  period. Monthly limit bars still count the calendar month and say so.
+  Settings › Agents always shows 30 days, as its columns say, even when the
+  address carries another period.
 
 ### Docs
 - One section on the two ways to connect Slack and WhatsApp, with a before and

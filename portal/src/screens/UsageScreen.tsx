@@ -1,10 +1,10 @@
-// Usage: what each agent used this month against its limits, as bars, and the
-// limits themselves as a few fields (budgets.yaml stays one click away). The
-// totals for a period sit above. Same API as `hubzoid budgets`.
+// Usage: the totals for a period, then each agent's use in that same period
+// with its monthly limits as bars, and the limits themselves as a few fields
+// (budgets.yaml stays one click away). Same API as `hubzoid budgets`.
 import { useContext, useState } from "react";
 import { App, Input, Modal, Segmented } from "antd";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { ApiError, request, type Hub, type Summary } from "../api";
+import { ApiError, request, type Hub, type Summary, type SummaryHub } from "../api";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
 import { AppContext } from "../app/lib/app-context";
@@ -55,11 +55,13 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
           sub={s?.has_workflows && s.runs_available ? `${(s.totals.failed ?? 0).toLocaleString()} failed` : undefined} />
         <Stat label="Approx. cost" value={s ? usd(s.totals.cost_usd) : "—"} sub="Estimated from model prices" />
       </ul>
-      <h3 className="hz-usage-sub">This month by agent</h3>
-      <p className="hz-usage-note">Each model call checks its agent's limit first. No limit, no stop.</p>
+      <h3 className="hz-usage-sub">By agent, last {PERIODS.find((p) => p.value === period)!.label}</h3>
+      <p className="hz-usage-note">Limits count this calendar month. Each model call checks its agent's limit first. No limit, no stop.</p>
       <ul className="hz-usage-list">
         {hubs.map((h) => (
-          <AgentUsage key={h.key} hub={h} open={open === h.key} toggle={() => setOpen(open === h.key ? null : h.key)} />
+          // `used` follows the period; the bars stay on the month their limits count.
+          <AgentUsage key={h.key} hub={h} used={s?.hubs.find((r) => r.key === h.key)} loaded={!!s}
+            open={open === h.key} toggle={() => setOpen(open === h.key ? null : h.key)} />
         ))}
       </ul>
     </div>
@@ -83,7 +85,21 @@ const BARS: { key: string; label: string; used: (s: Status) => number; held: (s:
   { key: "max_cost_usd", label: "", used: (s) => Number(s.month.cost_usd), held: (s) => Number(s.reserved.cost_usd), format: (n) => `$${n.toFixed(2)}` },
 ];
 
-function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: () => void }) {
+/** What an agent used in the chosen period, from the same summary as the totals. */
+function PeriodUse({ used, loaded }: { used?: SummaryHub; loaded: boolean }) {
+  if (!loaded) return <span className="hz-usage-muted">Loading…</span>;
+  const messages = used?.messages ?? 0;
+  const tokens = (used?.input_tokens ?? 0) + (used?.output_tokens ?? 0);
+  return (
+    <span>
+      {messages.toLocaleString()} {messages === 1 ? "message" : "messages"} · {short(tokens)} tokens · {usd(used ? used.cost_usd : 0)}
+    </span>
+  );
+}
+
+function AgentUsage({ hub, used, loaded, open, toggle }: {
+  hub: Hub; used?: SummaryHub; loaded: boolean; open: boolean; toggle: () => void;
+}) {
   const app = useContext(AppContext);
   const agent = app?.agents.list.find((a) => a.hub === hub.key);
   const name = agentName(agent?.name, hub.name, hub.key);
@@ -98,29 +114,28 @@ function AgentUsage({ hub, open, toggle }: { hub: Hub; open: boolean; toggle: ()
         <AgentAvatar name={name} src={agent?.avatar_url} size={28} />
         <span className="hz-usage-name">{name}</span>
         <span className="hz-usage-bars">
-          {!s ? (
-            <span className="hz-usage-muted">{data.error ? "Couldn’t load" : "Loading…"}</span>
-          ) : bars.length === 0 ? (
-            <span className="hz-usage-free">
-              <span>{short(s.month.output_tokens)} output tokens · {usd(Number(s.month.cost_usd))}</span>
-              <span className="hz-usage-muted">No monthly limit</span>
-            </span>
-          ) : (
+          <span className="hz-usage-free">
+            <PeriodUse used={used} loaded={loaded} />
+            {!s ? (
+              <span className="hz-usage-muted">{data.error ? "Couldn’t load limits" : "Loading limits…"}</span>
+            ) : bars.length === 0 && <span className="hz-usage-muted">No monthly limit</span>}
+          </span>
+          {s && bars.length > 0 && (
             bars.map((b) => {
               const cap = Number(month[b.key]);
               // What running calls hold counts against the limit too.
               const held = b.held(s);
-              const used = b.used(s) + held;
-              const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+              const total = b.used(s) + held;
+              const pct = cap > 0 ? Math.min(100, (total / cap) * 100) : 0;
               const tone = pct >= 100 ? "is-bad" : pct >= 80 ? "is-warn" : "";
               return (
                 <span key={b.key} className="hz-bar-wrap">
                   <span className="hz-bar-text">
-                    <span>{b.format(used)} of {b.format(cap)} {b.label}{held > 0 ? `, ${b.format(held)} held by running calls` : ""}</span>
+                    <span>{b.format(total)} of {b.format(cap)} {b.label}{b.label ? " " : ""}this month{held > 0 ? `, ${b.format(held)} held by running calls` : ""}</span>
                     <span className={tone ? `hz-bar-pct ${tone}` : "hz-bar-pct"}>{pct >= 100 ? "Limit reached" : `${Math.round(pct)}%`}</span>
                   </span>
-                  <span className={`hz-meter ${tone}`} role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={used}
-                    aria-label={`${name}: ${b.format(used)} of ${b.format(cap)} ${b.label} this month`}>
+                  <span className={`hz-meter ${tone}`} role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={total}
+                    aria-label={`${name}: ${b.format(total)} of ${b.format(cap)} ${b.label}${b.label ? " " : ""}this month`}>
                     <span style={{ width: `${pct}%` }} />
                   </span>
                 </span>
