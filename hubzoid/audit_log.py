@@ -254,7 +254,12 @@ def tool_call(*, tool: str, hub_dir=None, server: str | None = None, connector: 
               error: str | None = None, duration_ms: float | None = None, result_bytes: int | None = None,
               arguments: Any = None, call_id: str | None = None) -> None:
     """One tool call: who called which tool, from where, allowed or refused,
-    how it ended, how long it took."""
+    how it ended, how long it took. Also an OpenTelemetry ``execute_tool``
+    span when a tracer is set up (``opentelemetry-instrument``)."""
+    tracer = _tracer()
+    if tracer is not None:
+        _tool_span(tracer, tool=tool, server=server or connector, decision=decision, reason=reason,
+                   error=error, duration_ms=duration_ms, call_id=call_id)
     if not modes():
         return
     try:
@@ -311,6 +316,51 @@ def sign_in_failed(*, email: str | None, client: str | None, locked_seconds: int
     emit("auth", "auth.sign_in_failed", actor=email, client=client)
     if locked_seconds:
         emit("auth", "auth.locked_out", actor=email, client=client, locked_seconds=int(locked_seconds))
+
+
+def _tracer():
+    """Hubzoid's tracer when the OpenTelemetry API is installed and a real
+    tracer provider is set (for example by ``opentelemetry-instrument``),
+    else None. Spans are never made into the no-op provider."""
+    try:
+        from opentelemetry import trace
+    except ImportError:
+        return None
+    try:
+        provider = trace.get_tracer_provider()
+        if type(provider).__name__ in ("ProxyTracerProvider", "NoOpTracerProvider"):
+            return None
+        return trace.get_tracer("hubzoid")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _tool_span(tracer, *, tool, server, decision, reason, error, duration_ms, call_id) -> None:
+    """The GenAI ``execute_tool`` span (the names Mastra and eve use), with
+    who and where as hubzoid.* attributes. Never tool arguments or results."""
+    try:
+        from .logs import context
+
+        end = time.time_ns()
+        start = end - int((duration_ms or 0) * 1_000_000)
+        ctx = context()
+        attrs = {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": tool,
+                 "hubzoid.decision": decision}
+        for key, value in (("gen_ai.tool.call.id", call_id), ("error.type", error or (reason if decision == "deny"
+                                                                                       else None)),
+                           ("hubzoid.server", server), ("hubzoid.hub", ctx.get("hub")),
+                           ("hubzoid.surface", ctx.get("surface")), ("hubzoid.user", ctx.get("subject")),
+                           ("hubzoid.chat_id", ctx.get("chat_id"))):
+            if value:
+                attrs[key] = str(value)
+        span = tracer.start_span(f"execute_tool {tool}", start_time=start, attributes=attrs)
+        if error or decision == "deny":
+            from opentelemetry.trace import Status, StatusCode
+
+            span.set_status(Status(StatusCode.ERROR, error or reason or "denied"))
+        span.end(end_time=end)
+    except Exception:  # noqa: BLE001 - telemetry never breaks the call
+        log.debug("audit: tool span failed", exc_info=True)
 
 
 def size_of(result: Any) -> int | None:

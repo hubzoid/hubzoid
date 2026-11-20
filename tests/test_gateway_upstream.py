@@ -164,3 +164,33 @@ def test_behind_on_the_network_with_sign_in_off_is_refused(tmp_path, monkeypatch
     assert any("Sign-in is off" in p for p in problems)
     _, problems = cli._behind_plan(hub, "not a url", env)
     assert any("--behind" in p for p in problems)
+
+
+def test_database_pool_settings_for_a_server_database():
+    from hubzoid import db
+
+    args: dict = {}
+    opts = db.pool_options({"HUBZOID_DB_POOL_SIZE": "3", "HUBZOID_DB_MAX_OVERFLOW": "2",
+                            "HUBZOID_DB_POOL_RECYCLE": "1700", "HUBZOID_DB_POOL_TIMEOUT": "x",
+                            "HUBZOID_DB_CONNECT_TIMEOUT": "5"}, args)
+    assert opts == {"pool_size": 3, "max_overflow": 2, "pool_recycle": 1700}
+    assert args == {"connect_timeout": 5}
+    assert db.pool_options({}, {}) == {}
+
+
+def test_sqlite_on_a_network_filesystem_is_found():
+    from hubzoid import doctor
+
+    mounts = ("/dev/root / ext4 rw 0 0\n"
+              "fs-1.efs.ap-south-1.amazonaws.com:/ /data nfs4 rw 0 0\n")
+    assert doctor.network_filesystem(Path("/data/hubs/x/.hubzoid"), mounts) == "nfs4"
+    assert doctor.network_filesystem(Path("/srv/app"), mounts) is None
+    assert doctor.network_filesystem(Path("/database"), mounts) is None
+
+
+def test_control_from_another_host_says_where_the_deployment_runs(tmp_path):
+    import json as _json
+
+    (tmp_path / "control.json").write_text(_json.dumps({"socket": "/nope.sock", "host": "other-task"}))
+    with pytest.raises(ConnectionError, match="runs on other-task"):
+        sup_lib.request(tmp_path, {"op": "status"})
