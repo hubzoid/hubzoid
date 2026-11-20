@@ -136,6 +136,10 @@ def test_results_record_version_and_commit(tmp_path, fake_model):
     assert record["hubzoid_version"] == __version__
     assert record["git_commit"] == head
     assert record["git_dirty"] is True          # the hub's files were never committed
+    subprocess.run(["git", "-C", str(hub), "add", "-A", "--", ".", ":(exclude).hubzoid"], check=True)
+    subprocess.run(["git", "-C", str(hub), "-c", "user.email=t@example.com", "-c", "user.name=t",
+                    "commit", "-q", "-m", "hub"], check=True)
+    assert quality.provenance(hub)[2] is False  # its own results folder does not count
     xml = (tmp_path / "j.xml").read_text()
     assert f'name="git_commit" value="{head}"' in xml
     assert 'name="git_dirty" value="true"' in xml

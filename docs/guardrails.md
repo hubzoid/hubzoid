@@ -14,7 +14,7 @@ guardrails:
   personal_data_types: [email, phone, card]
   personal_data_patterns:          # your own extra patterns, name: regex
     internal-id: 'INT-\d{6}'
-  threshold: 0.7                   # model checks flag a score at or above this
+  threshold: 0.8                   # model checks flag a score at or above this
   model: haiku                     # optional: the model that runs the checks
   on_error: allow                  # allow | block, when a check fails
 ---
@@ -31,7 +31,7 @@ file and the problem named, so a typo never leaves an agent unprotected.
 |---|---|---|
 | `prompt_injection` | A model scores the message for attempts to override the agent's instructions, jailbreaks, fake system or developer messages, role tricks and attempts to pull out its instructions, tools or credentials | One small model call per message |
 | `moderation` | The same call scores hate, harassment, threats or violence, sexual and self-harm content | Shared with the call above |
-| `personal_data` | Pattern matching: email addresses, phone numbers of 10 to 15 digits, card numbers that pass the Luhn check, and your own patterns | Free |
+| `personal_data` | Pattern matching: email addresses, phone numbers as people write them (with a `+` country code, a bracketed area code, ten digits, or 3-3-4 and 5-5 groups), card numbers that pass the Luhn check, and your own patterns. Dates, times and prices are left alone | Free |
 
 The model checks use `model:` when set, else Haiku on a Claude hub
 (`claude-local` or Bedrock), else the hub's own model. They run on the hub's own
@@ -43,11 +43,16 @@ usage row of kind `guardrail`.
 | Mode | Incoming message | Agent's reply |
 |---|---|---|
 | `warn` | Goes through. The decision is logged | Goes through. Logged |
-| `redact` (personal data) | Each match becomes `[redacted]` before the model sees it, in this message and in the history sent with it | Each match becomes `[redacted]` as the reply streams |
+| `redact` (personal data) | Each match becomes `[redacted]` before the model sees it, in this message and in the history sent with it | Each match becomes `[redacted]` as the reply and its visible reasoning stream |
 | `block` | The agent does not run. The person sees "This message was stopped by the agent's safety check." | Personal data: masked as with `redact`, since a streamed reply cannot be taken back |
 
 A blocked message is left out of the conversation history the model sees in
-later turns, so it cannot come back.
+later turns, so it cannot come back, even if its reply is edited. The hub
+remembers it by a hash of its text (in `.hubzoid/guardrails/blocked`), never the
+text itself.
+
+A long message is checked in full, in pieces of 20,000 characters. A message
+over about 114,000 characters is too long to check and follows `on_error`.
 
 The conversation keeps what the person typed. Masking applies to what the
 model sees and what people are shown.
@@ -73,9 +78,9 @@ approvals remain the protection for what an agent can do with what it reads
 Every warn, redact and block is one row in the access decision log, which the
 Console's Activity page and `hubzoid audit` show: tool `guardrail:<check>`, a
 block as refused (`deny`), anything that went through as `allow`, and a reason
-such as `block: score 0.94: claims new system instructions` or
-`redact: reply: email`. The message text is never logged. A check that failed
-appears as `guardrail:error`.
+such as `block: score 0.94` or `redact: reply: email`. Only scores and kinds
+are logged, never words from the message. A check that failed appears as
+`guardrail:error`.
 
 ## Testing them
 

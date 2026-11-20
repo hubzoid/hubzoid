@@ -132,7 +132,9 @@ def provenance(hub_dir: Path) -> tuple[str | None, str | None, bool | None]:
                               capture_output=True, text=True, timeout=5)
         if head.returncode == 0 and head.stdout.strip():
             commit = head.stdout.strip()
-            status = subprocess.run(["git", "-C", str(hub_dir), "status", "--porcelain", "--", "."],
+            # The hub's own state and output folders are not its content.
+            excluded = [f":(exclude){name}" for name in sorted(_SKIP_DIRS - {"__pycache__"})]
+            status = subprocess.run(["git", "-C", str(hub_dir), "status", "--porcelain", "--", ".", *excluded],
                                     capture_output=True, text=True, timeout=5)
             dirty = bool(status.stdout.strip()) if status.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):

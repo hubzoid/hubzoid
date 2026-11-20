@@ -79,7 +79,7 @@ guardrails:
   personal_data_types: [email, phone, card]
   personal_data_patterns:          # the hub's own extra patterns, name: regex
     internal-id: 'INT-\d{6}'
-  threshold: 0.7                   # model-based checks: score at or above this is flagged
+  threshold: 0.8                   # model-based checks: score at or above this is flagged
   model: haiku                     # optional, the model that runs the checks
   on_error: allow                  # allow | block, when the checking model fails
 ---

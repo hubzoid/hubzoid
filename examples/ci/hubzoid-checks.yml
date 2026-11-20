@@ -31,17 +31,26 @@ jobs:
 
       - name: Unit tests for the hub's own code
         if: hashFiles('tests/**/*.py') != ''
-        run: python -m pytest -q tests
+        run: |
+          pip install pytest
+          python -m pytest -q tests
 
       - name: Required evals (the release gate)
-        # Pull requests from forks get no secrets: the gate cannot call a model there.
-        if: github.event.pull_request.head.repo.fork != true
         env:
           CI: "true"
+          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           # One of these, stored as a repository secret, never in the hub:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: hubzoid eval run "$HUB_DIR" --required --junit eval-results.xml
+        run: |
+          # A pull request from a fork gets no secrets, so the gate cannot run there.
+          # It fails rather than passing unchecked: a maintainer reruns it from a
+          # branch in this repository.
+          if [ "$FROM_FORK" = "true" ]; then
+            echo "::error::Required evals need the model credential, which forks do not get. Push the branch to this repository to run the gate."
+            exit 1
+          fi
+          hubzoid eval run "$HUB_DIR" --required --junit eval-results.xml
 
       - name: Keep the results
         if: always()

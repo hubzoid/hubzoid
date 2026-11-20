@@ -16,7 +16,7 @@ Copy [`examples/ci/hubzoid-checks.yml`](../examples/ci/hubzoid-checks.yml) to
 push to `main` it:
 
 1. installs the hub's `requirements.txt` (or Hubzoid alone);
-2. runs `pytest` when the repository has tests;
+2. installs `pytest` and runs it when the repository has tests;
 3. runs `hubzoid eval run "$HUB_DIR" --required --junit eval-results.xml`;
 4. keeps the JUnit file and the results JSON as a build artifact.
 
@@ -45,7 +45,9 @@ Evals run the real agent, so CI needs the hub's model credential: an
 `ANTHROPIC_API_KEY` or a Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`)
 for a Claude hub, or the provider key for another model. Store it as a GitHub
 repository secret, never in the hub's files. Pull requests from forks get no
-secrets, so the example skips the eval step there and runs `pytest` only.
+secrets, so the gate cannot run there. The example fails the check for a fork
+rather than passing it unchecked: a maintainer pushes the branch to the
+repository to run it.
 
 Each run costs about one agent turn per case, plus one judge call per case with
 `## Criteria` ([what a run costs](evals.md#what-a-run-costs)).

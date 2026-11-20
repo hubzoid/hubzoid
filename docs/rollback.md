@@ -34,6 +34,11 @@ install":
    pip install "hubzoid==<previous version>"
    ```
 
+   With PostgreSQL, add `--postgres` so the database goes back too
+   (`--postgres-env` names its variable when it is not `DATABASE_URL`). A plain
+   restore puts back the files only, and the earlier version refuses the newer
+   schema ([PostgreSQL](BACKUP.md#postgresql)).
+
    With an image, run the previous image tag (or digest) on the restored data.
 3. Start it and run `hubzoid doctor` and `hubzoid eval run --required`.
 
