@@ -126,6 +126,16 @@ def _destination(hub_dir: Path, name: str) -> str | None:
     return names.destination(name, env)
 
 
+@secrets_app.command("new-key")
+def new_key_cmd() -> None:
+    """Print a new deployment key for HUBZOID_SECRET_KEY. Keep it in your secret
+    store: every service of a deployment uses the same one, and stored secrets
+    can't be read without it."""
+    from cryptography.fernet import Fernet
+
+    print(Fernet.generate_key().decode())
+
+
 @secrets_app.command("list")
 def list_cmd(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),

@@ -72,6 +72,16 @@ def keys(hub_dir: Path, env=None) -> list[bytes]:
     if raw:
         return _parse(raw)
     path = key_path(hub_dir, env)
+    from .settings import truthy
+
+    if truthy(env.get("HUBZOID_REQUIRE_SECRET_KEY")):
+        # Hosted with several services or containers: a key file made or
+        # found here may differ from the others', and stored secrets and
+        # signed identities would stop matching. Say so instead.
+        raise SecretKeyError(
+            "HUBZOID_REQUIRE_SECRET_KEY is on and HUBZOID_SECRET_KEY is not set. Set HUBZOID_SECRET_KEY "
+            f"to the deployment's key (from your secret store, or the contents of {path} if this "
+            "deployment already has one); `hubzoid secrets new-key` prints a new one.")
     cache_key = str(path.resolve()) if path.exists() else str(path)
     with _lock:
         cached = _cache.get(cache_key)

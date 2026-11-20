@@ -37,7 +37,9 @@ def to_xml(suite: SuiteResult) -> bytes:
                        errors=str(errors), time=f"{total_time:.3f}", timestamp=suite.started_at or "")
     props = ET.SubElement(ts, "properties")
     for key, value in (("model", suite.model), ("judge_model", suite.judge_model or ""),
-                       ("trigger", suite.trigger or ""), ("run_as", suite.run_as or "")):
+                       ("trigger", suite.trigger or ""), ("run_as", suite.run_as or ""),
+                       ("hubzoid_version", suite.hubzoid_version or ""), ("git_commit", suite.git_commit or ""),
+                       ("git_dirty", "" if suite.git_dirty is None else str(suite.git_dirty).lower())):
         ET.SubElement(props, "property", name=key, value=value or "")
     for case in suite.cases:
         tc = ET.SubElement(ts, "testcase", classname=f"{suite.hub}.evals", name=case.name,

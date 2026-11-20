@@ -35,6 +35,33 @@ def enqueue_live(hub_dir, name, *, markdown=False, overrides=None, envelope=None
         raise
 
 
+def enqueue_personal(hub_dir, name, *, envelope, workflow_id):
+    """Queue a personal ("Run for me") run on the engine in another process,
+    with the same queue and per-person partition as ``runtime.start_run``.
+    Returns the run id, or None when no engine serves this hub."""
+    from dbos import DBOSClient
+    from .runtime import _app_name
+    ready = readiness(hub_dir, hub_dir.name)
+    if not ready:
+        return None
+    definition = ready.get('definitions', {}).get(name)
+    if definition is None:
+        raise ValueError(f'Workflow {name!r} is not served by the live owner')
+    options = {'workflow_name': name, 'queue_name': definition['queue'], 'workflow_id': workflow_id}
+    partition = definition.get('manual_partition')
+    if partition == name:
+        options['queue_partition_key'] = f"{name}:{envelope['acts_as']}"
+    elif partition:
+        options['queue_partition_key'] = partition
+    client = DBOSClient(system_database_url=db.dbos_url(hub_dir),
+                        application_name=_app_name(hub_dir.name), retry_connection_errors=False)
+    try:
+        client.enqueue(options, hub_dir.name, None, dict(envelope))
+        return workflow_id
+    finally:
+        client.destroy()
+
+
 class LiveHandle:
     def __init__(self, client, handle, hub_dir):
         self.client, self.handle, self.hub_dir = client, handle, hub_dir

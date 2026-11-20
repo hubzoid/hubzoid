@@ -73,7 +73,7 @@ exception process.
 
 | Key | Extra model call? | Notes |
 |---|---|---|
-| `expect_tools` / `forbid_tools` | no | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. |
+| `expect_tools` / `forbid_tools` | no | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. A name that matches no tool in the agent fails the case, so a misspelled guard can't pass forever. An MCP server's or connector's tool is `mcp__<server>__<tool>` (a connector's server is `my_<id>`); those are only known when a turn runs, so they aren't failed. A sub-agent call is `handover_<name>` on every backend. A skill is not a tool: check it with `expect_tool_args: {load_skill: {name: ...}}`. |
 | `contains` / `not_contains` | no | **Case-insensitive.** A bare string is accepted where a list is expected. |
 | `timeout` | no | Defaults to 120s. A timed-out case fails; it never hangs the suite. |
 | `## Criteria` | **yes** | Graded 1–10 against `AGENTS.md` + these criteria. |
@@ -253,11 +253,19 @@ gets evaluated on what it rewrote, with no extra wiring.
 ### In CI
 
 ```yaml
-- run: hubzoid eval run ./my-hub --no-judge     # every push: 1 call per case
-- run: hubzoid eval run ./my-hub                # on main: full, judged
+- run: hubzoid eval run ./my-hub --required     # the release gate: what quality/manifest.yaml requires
+- run: hubzoid eval run ./my-hub                # everything, judged
 ```
 
 Non-zero exit fails the build. Keep `.hubzoid/evals/*.json` as an artifact.
+`--required` runs exactly the [required evals](#required-evals-in-doctor) and
+exits 2 when the gate cannot be trusted (no manifest, a name that matches no
+case, a required case that is off or checks nothing). A ready workflow file is
+in [CI for a hub](ci.md).
+
+Every results file records `hubzoid_version` and, when the hub folder is in a
+Git work tree, `git_commit` and `git_dirty` (uncommitted changes in the hub
+folder). JUnit carries them as properties.
 
 ## Langfuse (optional)
 

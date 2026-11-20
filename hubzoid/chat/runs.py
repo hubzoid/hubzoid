@@ -98,7 +98,9 @@ def _admit(hub_dir, run) -> dict | None:
             requested_by=run.email, requested_by_kind="app", started_from="app",
             origin_id=run.conversation_id, person_present=True,
             credential_kind="app", credential_id=run.credential_id)
-    via_key = run.credential == "api_key"
+    from ..auth import automated
+
+    via_key = automated(run.credential)
     return run_identity.admit_or_refuse(
         hub_dir, run_kind="api" if via_key else "chat", run_id=run.message_id,
         acts_as_id=run.owner_id, acts_as_email=run.email, started_from="api" if via_key else "chat",
@@ -284,8 +286,11 @@ class RunManager:
                     app_scope.token_scope(ctx.hub_dir, caller), \
                     _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)
+                first_text = None  # when the answer itself started, not a tool or thinking event
                 try:
                     async for item in stream:
+                        if first_text is None and isinstance(item, str) and item.strip():
+                            first_text = time.monotonic()
                         chunks = run.builder.feed(item)
                         if chunks:
                             self._publish(run, chunks)
@@ -295,6 +300,8 @@ class RunManager:
                 finally:
                     await run_events.aclose(stream)
                     usage = _request_ctx.drain_usage()
+                    if first_text is not None:
+                        usage["first_token_ms"] = int((first_text - run.started) * 1000)
         except asyncio.CancelledError:
             status = "cancelled"
             task = asyncio.current_task()

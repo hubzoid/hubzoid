@@ -452,16 +452,50 @@ def test_access_logs_never_hold_link_tokens_or_oauth_codes(hub):
     client(hub)  # mounting installs the filter
     logger = logging.getLogger("uvicorn.access")
     assert any(isinstance(f, logredact.RedactCredentials) for f in logger.filters)
-    record = logger.makeRecord(
-        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
-        ("203.0.113.7:5000", "GET", "/auth/set-password?token=SECRET-TOKEN&x=1", "1.1", 200), None)
+    def access_record():
+        return logger.makeRecord(
+            "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+            ("203.0.113.7:5000", "GET", "/auth/set-password?token=SECRET-TOKEN&x=1", "1.1", 200), None)
+
+    # Hubzoid's own filter, on its own.
+    record = access_record()
+    logredact.RedactCredentials().filter(record)
+    assert "SECRET-TOKEN" not in record.getMessage() and "token=[redacted]&x=1" in record.getMessage()
+    # The logger's whole chain. Other libraries may add their own filters here
+    # (litellm 1.102 redacts uvicorn.access query strings at import).
+    record = access_record()
     for f in logger.filters:
         f.filter(record)
-    assert "SECRET-TOKEN" not in record.getMessage() and "token=[redacted]&x=1" in record.getMessage()
+    assert "SECRET-TOKEN" not in record.getMessage()
     assert logredact.redact("/api/auth/link/SECRET-TOKEN") == "/api/auth/link/[redacted]"
     assert logredact.redact("/oauth/google/callback?code=C0DE&state=S7") == \
         "/oauth/google/callback?code=[redacted]&state=[redacted]"
     assert logredact.redact("/c/abc?q=1") == "/c/abc?q=1"
+
+
+def test_the_edge_access_log_never_holds_an_api_key(monkeypatch):
+    """A client may put its key in the query string (``?api_key=``); the edge's
+    access log used to record it in full."""
+    import logging
+
+    from hubzoid import edge
+    from hubzoid.auth import logredact
+
+    logger = logging.getLogger("uvicorn.access")
+    # Start from no Hubzoid filter, so the one found below is the edge's own,
+    # and run it alone (litellm adds its own uvicorn.access scrubber at import).
+    for f in [f for f in logger.filters if isinstance(f, logredact.RedactCredentials)]:
+        logger.removeFilter(f)
+    edge._redact_oauth_callback_logs()   # what the edge does as it starts
+    (mine,) = [f for f in logger.filters if isinstance(f, logredact.RedactCredentials)]
+    record = logger.makeRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("203.0.113.7:5000", "GET", "/v1/models?api_key=hz_SECRET1&x=1&Client_Secret=S2&api%5Fkey=S3", "1.1", 200),  # gitleaks:allow
+        None)
+    mine.filter(record)
+    line = record.getMessage()
+    assert "hz_SECRET1" not in line and "S2" not in line and "S3" not in line and "x=1" in line
+    assert "api%5Fkey=[redacted]" in line
 
 
 def test_the_local_owner_never_signs_in_with_a_password(hub):

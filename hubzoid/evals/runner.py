@@ -75,6 +75,16 @@ def judge_tools(rt) -> list[str]:
         return []
 
 
+def tool_inventory(rt, hub_dir=None):
+    """The hub's tools, for checking the names a case names; None on error."""
+    try:
+        from .judge import tool_inventory as inventory_of
+        return inventory_of(rt, hub_dir)
+    except Exception as exc:  # noqa: BLE001 — an unknown inventory is survivable
+        log.debug("could not read the tool inventory: %s", exc)
+        return None
+
+
 def offered_tools(rt, available: list[str] | None) -> list[str] | None:
     """`available` without the tools this case's caller is not shown, so the
     judge never expects a call to a tool the agent could not see. Asked inside
@@ -125,7 +135,8 @@ async def _record_usage(hub_dir, case, started: float) -> None:
         usage_lib.record, hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="eval",
         subject=None, chat_id=_chat_id(case), model=raw.get("model"), input_tokens=raw.get("input_tokens"),
         output_tokens=raw.get("output_tokens"), cost_usd=raw.get("cost_usd"), status=raw.get("status") or "ok",
-        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"))
+        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"),
+        trigger="eval", **usage_lib.usage_details(raw))
 
 
 async def _consume(rt, prompt: str, turn_no: int, out: _Turn) -> None:
@@ -287,7 +298,8 @@ def _judge_extras(judge_fn) -> set[str]:
 async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                    tools_available: list[str] | None = None,
                    hub_dir: Path | None = None,
-                   run_as: str | None = None) -> CaseResult:
+                   run_as: str | None = None,
+                   inventory=None) -> CaseResult:
     """Run a single case to a verdict. Never raises — failures become results."""
     result = CaseResult(name=case.name, tags=list(case.tags), prompt=case.prompts[0],
                         case_digest=case.digest or None)
@@ -323,10 +335,12 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     done: list[_Turn] = []
     names: list[str] = []
     turn_no = 0
+    guards: list = []
     try:
-        from .. import tool_fakes
+        from .. import guardrails, tool_fakes
 
-        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes):
+        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes), \
+                _request_ctx.guard_recorder() as guards:
             if judge_fn is not None and case.is_judged:
                 tools_available = offered_tools(rt, tools_available)
             for turn_no, text in enumerate(case.prompts, start=1):
@@ -339,10 +353,13 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                 with (_request_ctx.tool_call_recorder() as recorded,
                       _request_ctx.tool_result_recorder() as results):
                     turn_started = time.monotonic()
+                    # Guardrails check this turn's message, as in chat, not the history before it.
+                    guard_token = guardrails.NEW_INPUT.set(text)
                     try:
                         await asyncio.wait_for(_consume(rt, prompt, turn_no, turn),
                                                timeout=max(0, deadline-time.monotonic()))
                     finally:
+                        guardrails.NEW_INPUT.reset(guard_token)
                         names += [c.get("name", "?") for c in recorded]
                         _finish_turn(turn, turn_no, recorded, results)
                         await _record_usage(hub_dir, case, turn_started)
@@ -351,15 +368,18 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                     break
     except asyncio.TimeoutError:
         _record(result, case, done, names, started)
+        result.guards = list(guards)
         result.error = f"timed out after {case.timeout}s" + _on_turn(case, turn_no)
         return result
     except Exception as exc:  # noqa: BLE001 — a crashed case is a failed case
         _record(result, case, done, names, started)
+        result.guards = list(guards)
         result.error = f"{type(exc).__name__}: {exc}" + _on_turn(case, turn_no)
         log.exception("eval case %s crashed", case.name)
         return result
 
     _record(result, case, done, names, started)
+    result.guards = list(guards)
     final = done[-1].raw if done else ""
     result.response = assertions.strip_chrome(final)
 
@@ -380,7 +400,8 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     if fakes is not None:
         _mark_blocked(result.tools, fakes.blocked)
     result.checks = assertions.run_free_checks(
-        case, response=result.response, tool_calls=result.tool_calls, tools=result.tools)
+        case, response=result.response, tool_calls=result.tool_calls, tools=result.tools,
+        inventory=inventory)
     if fakes is not None:
         result.checks.append(_fakes_check(fakes))
 
@@ -489,9 +510,10 @@ async def arun_suite(
     suite = SuiteResult(hub=hub_dir.name, started_at=now_iso(),
                         judged=judge_fn is not None, trigger=trigger, run_as=run_as)
 
-    from .quality import hub_digest
+    from .quality import hub_digest, provenance
 
     suite.hub_digest = hub_digest(hub_dir, model=model)
+    suite.hubzoid_version, suite.git_commit, suite.git_dirty = provenance(hub_dir)
     # A faked case's runtime is built with the suite's fakes in scope (stand-ins
     # for tools the hub hasn't connected); a case without fakes gets a runtime
     # built as always, so nothing a fake needed leaks into it.
@@ -503,17 +525,19 @@ async def arun_suite(
     opened: list = []
     try:
         available: dict = {}
+        inventories: dict = {}
         for kind, rt in runtimes.items():
             await rt.aopen()
             opened.append(rt)
             # After aopen(), so MCP-provided tools are in the inventory too.
             available[kind] = judge_tools(rt) if judge_fn is not None else None
+            inventories[kind] = tool_inventory(rt, hub_dir)
         for case in cases:
             log.info("eval: running %s", case.name)
             kind = bool(case.is_faked)
             result = await _run_one(runtimes[kind], case, judge_fn=judge_fn,
                                     tools_available=available[kind],
-                                    hub_dir=hub_dir, run_as=run_as)
+                                    hub_dir=hub_dir, run_as=run_as, inventory=inventories[kind])
             suite.cases.append(result)
             if on_case is not None:
                 on_case(result)

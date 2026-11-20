@@ -26,6 +26,7 @@ import asyncio
 import dataclasses
 import logging
 import os
+import time
 from pathlib import Path
 
 from agents.tool import FunctionTool
@@ -35,6 +36,7 @@ from .identity import current_identity
 from .loader import load_restricted
 from .policy import DEFAULT_RESTRICTED_SURFACES, is_allowed
 
+from .. import audit_log
 from ..tool_classes import copy_tool
 
 log = logging.getLogger("hubzoid.access")
@@ -289,16 +291,32 @@ def checked_server(server, hub_dir: Path):
 
         from .evaluator import check_run
 
-        if await _stopped():
-            return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
-        name = str(getattr(server, "name", "") or "")
-        hub_server, connector = await asyncio.to_thread(server_source, hub_dir, name)
-        decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=str(tool_name),
-                                           server=hub_server, connector=connector)
-        refused = refusal(decision, tool_name)
-        if refused is not None:
-            return CallToolResult(content=[TextContent(type="text", text=refused)], isError=True)
-        result = await original(tool_name, arguments, *args, **kwargs)
+        with audit_log.call_scope() as (state, outer):
+            if await _stopped():
+                return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
+            name = str(getattr(server, "name", "") or "")
+            hub_server, connector = await asyncio.to_thread(server_source, hub_dir, name)
+            decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=str(tool_name),
+                                               server=hub_server, connector=connector)
+            refused = refusal(decision, tool_name)
+            where = dict(tool=str(tool_name), hub_dir=hub_dir, server=hub_server, connector=connector)
+            if refused is not None:
+                if outer:
+                    audit_log.tool_call(**where, decision="deny", reason=decision.reason, arguments=arguments)
+                else:
+                    state.setdefault("deny", decision.reason)
+                return CallToolResult(content=[TextContent(type="text", text=refused)], isError=True)
+            started = time.monotonic()
+            try:
+                result = await original(tool_name, arguments, *args, **kwargs)
+            except BaseException as exc:
+                if outer:
+                    audit_log.tool_call(**where, outcome="error", error=type(exc).__name__, arguments=arguments,
+                                        duration_ms=(time.monotonic() - started) * 1000)
+                raise
+            if outer:
+                audit_log.finished(where, result, started=started, arguments=arguments, state=state,
+                                   failed=bool(getattr(result, "isError", False)))
         from ..embed import scope as app_scope
 
         if app_scope.live_token():
@@ -332,18 +350,34 @@ def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -
     async def _checked_invoke(ctx, input_str):
         from .evaluator import check_run
 
-        if await _stopped():
-            return STOPPED
-        decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=ft.name,
-                                           server=hub_server, connector=connector)
-        refused = refusal(decision, ft.name, guarded=guarded)
-        if refused is not None:
-            return refused
-        # Allowed, or a restricted tool that refuses (and logs) in its own words.
-        from ..embed import scope as app_scope
+        with audit_log.call_scope() as (state, outer):
+            if await _stopped():
+                return STOPPED
+            decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=ft.name,
+                                               server=hub_server, connector=connector)
+            refused = refusal(decision, ft.name, guarded=guarded)
+            where = dict(tool=ft.name, hub_dir=hub_dir, server=hub_server, connector=connector)
+            if refused is not None:
+                if outer:
+                    audit_log.tool_call(**where, decision="deny", reason=decision.reason, arguments=input_str)
+                else:
+                    state.setdefault("deny", decision.reason)  # the outer wrapper records it
+                return refused
+            # Allowed, or a restricted tool that refuses (and logs) in its own words.
+            from ..embed import scope as app_scope
 
-        with app_scope.tool_scope(ft.name):
-            return app_scope.scrub(await original_invoke(ctx, input_str))
+            started = time.monotonic()
+            try:
+                with app_scope.tool_scope(ft.name):
+                    result = app_scope.scrub(await original_invoke(ctx, input_str))
+            except BaseException as exc:
+                if outer:
+                    audit_log.tool_call(**where, outcome="error", error=type(exc).__name__, arguments=input_str,
+                                        duration_ms=(time.monotonic() - started) * 1000)
+                raise
+            if outer:
+                audit_log.finished(where, result, started=started, arguments=input_str, state=state)
+            return result
 
     _checked_invoke.hubzoid_run_checked = True
     changes = {"on_invoke_tool": _checked_invoke}

@@ -49,6 +49,11 @@ BACKOFF_MAX = 60.0
 FAIL_LIMIT = 5
 FAIL_WINDOW = 600.0
 STABLE_AFTER = 600.0
+# A hub another service runs (``kind="external"``, HUBZOID_BRIDGE_UPSTREAM):
+# its health is checked this often, and it counts as down after this many
+# checks in a row fail.
+EXTERNAL_PROBE_SECONDS = 5.0
+EXTERNAL_MISSES = 2
 LOG_BYTES = 10 * 1024 * 1024
 LOG_KEEP = 3
 
@@ -77,7 +82,7 @@ class Unit:
     key: str = ""                # a bridge key for drain calls
     slug: str = ""
     hub_dir: Path | None = None
-    kind: str = "hub"            # hub | edge
+    kind: str = "hub"            # hub | edge | external (another service runs it)
     procs: list = field(default_factory=list)
     state: str = "stopped"       # starting ready draining restarting failed stopped
     generation: int = 0
@@ -91,6 +96,8 @@ class Unit:
     error: str = ""
     stamp: str = ""
     busy: bool = False           # a lifecycle operation holds it
+    next_probe: float = 0.0      # external: when to check its health again
+    misses: int = 0              # external: failed checks in a row
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def bridge_proc(self):
@@ -283,6 +290,11 @@ def request(state_dir: Path, payload: dict, *, timeout: float = 600.0) -> dict:
     except (OSError, ValueError):
         raise ConnectionError(f"No running deployment found in {state_dir}. Is `hubzoid run` running?")
     path = info.get("socket") or ""
+    host = info.get("host")
+    if host and host != socket.gethostname():
+        # The state folder is shared (a network volume): the control socket is
+        # on the machine or container that runs the deployment.
+        raise ConnectionError(f"The deployment in {state_dir} runs on {host}, not here. Run the command there.")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         try:
@@ -336,7 +348,7 @@ class Supervisor:
         unit.generation += 1
         unit.state, unit.error = "starting", ""
         unit.started_at = time.time()
-        unit.stamp = stamp(unit.hub_dir)
+        unit.stamp = stamp(unit.hub_dir) if unit.kind != "external" else ""
         self._write_table()
         # Each process is recorded as it starts, so a stop or a failed spawn
         # part-way through still finds (and stops) the ones already running.
@@ -350,10 +362,23 @@ class Supervisor:
             return self._failed_start(unit, f"could not start: {exc}")
         return True
 
+    def _await_external(self, unit: Unit) -> None:
+        """A down external hub: ready when it answers, else checked again."""
+        ok = self.probe(unit)
+        if ok is True:
+            unit.state, unit.error, unit.ready_since, unit.misses = "ready", "", time.time(), 0
+            unit.next_probe = time.time() + EXTERNAL_PROBE_SECONDS
+            self._write_table()
+            self.say(f"→ {unit.name}  ready")
+        else:
+            self._schedule_retry(unit, ok if isinstance(ok, str) else "does not answer its health check")
+
     def await_ready(self, unit: Unit, *, wait: float | None = None) -> bool:
         """Wait for a launched unit's health check: ready, or a failed start
         that is retried with backoff."""
         wait = self.ready_wait if wait is None else wait
+        if unit.kind == "external":
+            wait = min(wait, 15.0)  # it runs already, or its service is starting it: checked again later
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline and not self._stop.is_set():
             if any(p.poll() is not None for p in unit.procs[:1]):
@@ -377,6 +402,14 @@ class Supervisor:
 
     def _schedule_retry(self, unit: Unit, why: str) -> None:
         now = time.time()
+        if unit.kind == "external":
+            # Its own service restarts it: keep checking, never give up on it.
+            unit.retry_at, unit.delay = now + EXTERNAL_PROBE_SECONDS, EXTERNAL_PROBE_SECONDS
+            if unit.state != "restarting" or unit.error != why:
+                self.say(f"→ {unit.name}  {why}; its own service runs it, checking again")
+            unit.state, unit.error = "restarting", why
+            self._write_table()
+            return
         unit.failures = [t for t in unit.failures if now - t < FAIL_WINDOW] + [now]
         if len(unit.failures) >= FAIL_LIMIT:
             unit.state, unit.error = "failed", why
@@ -420,7 +453,14 @@ class Supervisor:
         stop_procs(unit.procs[:1])
         unit.procs = []
 
+    @staticmethod
+    def _external(unit: Unit) -> dict:
+        return {"ok": False, "hub": unit.name, "state": unit.state,
+                "error": f"{unit.name} runs as its own service ({unit.bridge_url}). Restart or stop it there."}
+
     def restart(self, unit: Unit, *, grace: float | None = None, check: bool = False) -> dict:
+        if unit.kind == "external":
+            return self._external(unit)
         with unit.lock:
             unit.busy = True
             try:
@@ -437,6 +477,8 @@ class Supervisor:
                 unit.busy = False
 
     def stop(self, unit: Unit, *, grace: float | None = None) -> dict:
+        if unit.kind == "external":
+            return self._external(unit)
         with unit.lock:
             unit.busy = True
             try:
@@ -448,6 +490,8 @@ class Supervisor:
                 unit.busy = False
 
     def start(self, unit: Unit) -> dict:
+        if unit.kind == "external":
+            return self._external(unit)
         with unit.lock:
             unit.busy = True
             try:
@@ -471,6 +515,11 @@ class Supervisor:
                 continue
             if unit.state != "ready":
                 continue
+            if unit.kind == "external":
+                if now >= unit.next_probe:
+                    unit.next_probe = now + EXTERNAL_PROBE_SECONDS
+                    threading.Thread(target=self._check_external, args=(unit,), daemon=True).start()
+                continue
             dead = [p for p in unit.procs if p.poll() is not None]
             if not dead:
                 if unit.delay and now - unit.ready_since > STABLE_AFTER:
@@ -484,12 +533,32 @@ class Supervisor:
                 unit.failures = []
             self._schedule_retry(unit, f"exited (status {code})")
 
+    def _check_external(self, unit: Unit) -> None:
+        """One health check of a hub another service runs: down after
+        EXTERNAL_MISSES failed checks in a row (the edge then answers
+        "restarting" for it), ready again as soon as it answers."""
+        if not unit.lock.acquire(blocking=False):
+            return
+        try:
+            ok = self.probe(unit)
+            if ok is True:
+                unit.misses = 0
+                return
+            unit.misses += 1
+            if unit.misses >= EXTERNAL_MISSES:
+                unit.misses = 0
+                self._schedule_retry(unit, ok if isinstance(ok, str) else "does not answer its health check")
+        finally:
+            unit.lock.release()
+
     def _retry(self, unit: Unit) -> None:
         if not unit.lock.acquire(blocking=False):
             return
         try:
             unit.busy = True
-            if unit.state == "restarting":
+            if unit.state == "restarting" and unit.kind == "external":
+                self._await_external(unit)
+            elif unit.state == "restarting":
                 unit.restarts += 1
                 self._start(unit)
         finally:
@@ -575,7 +644,8 @@ class Supervisor:
         os.chmod(path, 0o600)
         srv.listen(8)
         self._server = srv
-        info = json.dumps({"socket": str(path), "pid": os.getpid(), "generation": self.generation})
+        info = json.dumps({"socket": str(path), "pid": os.getpid(), "generation": self.generation,
+                           "host": socket.gethostname()})
         for folder in [self.state_dir, *self.pointers]:
             try:
                 Path(folder).mkdir(parents=True, exist_ok=True)

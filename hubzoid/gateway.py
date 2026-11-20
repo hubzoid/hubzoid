@@ -39,6 +39,25 @@ class GatewayBackend:
     # Per-hub display name (AGENTS.md `name:`, falls back to the folder name),
     # recorded in the deployment manifest.
     display_name: str = ""
+    # Where this hub's bridge runs when it is not a child of this gateway:
+    # HUBZOID_BRIDGE_UPSTREAM in the hub's own .env, for example its own ECS
+    # service (`hubzoid run <hub> --behind <public url>`). Empty means the
+    # gateway starts the bridge on loopback, as before.
+    upstream: str = ""
+    inbound_upstream: str = ""
+
+    @property
+    def external(self) -> bool:
+        """True when another service runs this hub's bridge."""
+        return bool(self.upstream)
+
+    @property
+    def bridge_url(self) -> str:
+        return self.upstream or f"http://127.0.0.1:{self.bridge_port}"
+
+    @property
+    def inbound_url(self) -> str:
+        return self.inbound_upstream or f"http://127.0.0.1:{self.inbound_port}"
 
 
 @dataclass(frozen=True)
@@ -62,37 +81,38 @@ class GatewayPlan:
         for b in self.backends:
             first = len(routes)
             base = f"/b/{b.slug}"
+            bridge = b.bridge_url
             routes.append({
                 "prefix": base + artifact_prefix,
-                "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                "upstream": bridge,
                 "strip_prefix": base,
             })
             routes.append({"prefix": base + "/portal/api",
-                           "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                           "upstream": bridge,
                            "strip_prefix": base})
             # Hub-scoped API by hub key, not slug: /api/hubs/<key>/* reaches this
             # hub's bridge unchanged, and the bridge refuses any other key.
             from .assertions import hub_key
 
             routes.append({"prefix": f"/api/hubs/{hub_key(b.hub_dir)}",
-                           "upstream": f"http://127.0.0.1:{b.bridge_port}"})
+                           "upstream": bridge})
             # The OpenAI-compatible chat API of this agent, for personal API
             # keys (the edge refuses every other credential there).
             for part in ("/api", "/branding", "/v1"):
                 routes.append({
                     "prefix": base + part,
-                    "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                    "upstream": bridge,
                     "strip_prefix": base,
                 })
             if b.mcp:
                 routes.append({
                     "prefix": base + "/mcp",
-                    "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                    "upstream": bridge,
                     "strip_prefix": base,
                 })
                 for prefix in (f"/.well-known/oauth-protected-resource{base}/mcp",
                                f"/.well-known/oauth-authorization-server{base}/mcp/oauth"):
-                    routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{b.bridge_port}"})
+                    routes.append({"prefix": prefix, "upstream": bridge})
             # Inbound surfaces (WhatsApp/Telegram/generic webhook): the hub's
             # inbound server owns /webhooks/<slug>/* (e.g. /webhooks/<slug>/whatsapp)
             # on a loopback port, each POST signature-, secret-, or HMAC-verified
@@ -104,11 +124,11 @@ class GatewayPlan:
             from .workflows.events import route_declarations
             for name in route_declarations(b.hub_dir):
                 routes.append({"prefix": f"/webhooks/{b.slug}/{name}",
-                               "upstream": f"http://127.0.0.1:{b.bridge_port}"})
+                               "upstream": bridge})
             if b.inbound:
                 routes.append({
                     "prefix": f"/webhooks/{b.slug}",
-                    "upstream": f"http://127.0.0.1:{b.inbound_port}",
+                    "upstream": b.inbound_url,
                 })
             for r in routes[first:]:
                 r["hub"] = b.slug  # the edge answers for it by this hub's state
@@ -210,7 +230,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> Gatewa
     seen_inbound_ports: dict[int, Path] = {}
     seen_labels: dict[str, Path] = {}
     # Ports hubs pin in their own .env; the others take the next free one.
-    pinned_ports = {int(p) for p in (_own_env_value(Path(h), "BRIDGE_PORT") for h in hub_dirs) if p.isdigit()}
+    pinned_ports = {int(p) for p in (_own_env_value(Path(h), "BRIDGE_PORT") for h in hub_dirs
+                                     if not _own_env_value(Path(h), UPSTREAM_ENV)) if p.isdigit()}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
         # Loading a hub's dotenv is local to that hub. Do not carry its secrets
@@ -230,19 +251,26 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> Gatewa
                              f"hub's state in that hub's folder and its own in --data-dir. Unset "
                              f"{datadir.ENV}, or run this hub on its own with `hubzoid run`.")
         bridge_port = s.bridge_port
+        upstream = upstream_url(_own_env_value(hub_dir, UPSTREAM_ENV), hub_dir.name, UPSTREAM_ENV)
+        inbound_upstream = upstream_url(_own_env_value(hub_dir, INBOUND_UPSTREAM_ENV), hub_dir.name,
+                                        INBOUND_UPSTREAM_ENV)
         pinned = bool(_own_env_value(hub_dir, "BRIDGE_PORT") or inherited_env.get("BRIDGE_PORT"))
-        if not pinned:
+        if upstream:
+            # Another service runs this bridge: no local port to plan or hold.
+            pass
+        elif not pinned:
             # No port of its own (`hubzoid init` leaves it unset): the next one
             # no other hub uses or pins and nothing else on this machine holds.
             bridge_port = next_free(bridge_port, set(seen_ports) | pinned_ports | set(seen_inbound_ports),
                                     is_free=is_free)
-        if bridge_port in seen_ports:
+        if not upstream and bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[bridge_port].name} and "
                 f"{hub_dir.name} both use BRIDGE_PORT={bridge_port}; give "
                 f"each hub a unique BRIDGE_PORT in its .env, or remove the line."
             )
-        seen_ports[bridge_port] = hub_dir
+        if not upstream:
+            seen_ports[bridge_port] = hub_dir
 
         base_slug = _slugify(hub_dir.name)
         n = seen_slugs.get(base_slug, 0)
@@ -275,13 +303,19 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> Gatewa
         # HUBZOID_INBOUND_PORT in its own .env.
         inbound_on = _inbound_enabled(hub_dir)
         inbound_port = _inbound_port_for(hub_dir)
-        if inbound_on and not _own_env_value(hub_dir, "HUBZOID_INBOUND_PORT"):
+        if inbound_on and upstream and not inbound_upstream:
+            raise ValueError(f"gateway: hub {hub_dir.name} sets {UPSTREAM_ENV} and runs an inbound "
+                             f"webhook server. Set {INBOUND_UPSTREAM_ENV} in its .env too, so the edge "
+                             "can reach /webhooks on that service.")
+        if inbound_on and inbound_upstream:
+            pass  # the hub's own service runs its inbound server
+        elif inbound_on and not _own_env_value(hub_dir, "HUBZOID_INBOUND_PORT"):
             # No port chosen in the hub's .env: the next free one from the
             # default, so inbound servers never collide with each other, a
             # bridge or another program.
             inbound_port = next_free(inbound_port, set(seen_inbound_ports) | set(seen_ports) | pinned_ports,
                                      is_free=is_free)
-        if inbound_on:
+        if inbound_on and not inbound_upstream:
             if inbound_port in seen_inbound_ports:
                 raise ValueError(
                     f"gateway: hubs {seen_inbound_ports[inbound_port].name} and "
@@ -302,8 +336,40 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> Gatewa
             inbound=inbound_on,
             inbound_port=inbound_port,
             display_name=meta["fm_name"] or hub_dir.name,
+            upstream=upstream,
+            inbound_upstream=inbound_upstream if inbound_on else "",
         ))
     return GatewayPlan(backends=tuple(backends))
+
+
+#: A hub's own `.env` names where its bridge runs when another service runs it.
+UPSTREAM_ENV = "HUBZOID_BRIDGE_UPSTREAM"
+INBOUND_UPSTREAM_ENV = "HUBZOID_INBOUND_UPSTREAM"
+
+
+def upstream_url(value: str, hub: str = "", key: str = UPSTREAM_ENV) -> str:
+    """A bridge address the edge may forward to: ``http(s)://host[:port]``, with
+    no path, query, fragment or credentials. Empty stays empty. Raises
+    ValueError naming the hub and setting otherwise."""
+    from urllib.parse import urlsplit
+
+    value = (value or "").strip()
+    if not value:
+        return ""
+    where = f" for hub {hub}" if hub else ""
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"gateway: {key}{where} is not a valid address: {exc}") from None
+    if (parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password
+            or parts.path not in ("", "/") or parts.query or parts.fragment):
+        raise ValueError(f"gateway: {key}{where} must look like http://host:port, with no path, "
+                         f"query or credentials.")
+    host = parts.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
 
 
 def _own_env_value(hub_dir: Path, key: str) -> str:

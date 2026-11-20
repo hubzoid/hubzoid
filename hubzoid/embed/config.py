@@ -22,6 +22,17 @@
         user_claim: sub
         scopes: {claim: scope, map: {"chat:finance": {agents: [finance], tools: ["*"]}}}
         # or: all_users: true  (every signed-in user of the app gets the maximum)
+      ci:                               # an API app: a machine calls the Hubzoid API with its own JWT
+        mode: jwt
+        issuer: https://token.actions.githubusercontent.com
+        audience: https://hub.acme.com
+        jwks_url: https://token.actions.githubusercontent.com/.well-known/jwks
+        api:
+          account: ci@acme.com          # every token acts as this one Hubzoid account
+          operations: [chat, read]      # like an API key's: chat, read, manage (never approve)
+          require: {repository: acme/reports}   # required exact claim matches
+An API app never embeds the chat (no access, scopes, origins or token_to), and
+it maps to one fixed account, never to an email claim.
 
 Tool names are the agent's own tool names, ``connector:<id>`` for a connector
 added in Settings, ``mcp:<server>`` for one of the hub's MCP servers, or ``*``.
@@ -47,7 +58,9 @@ DEFAULT_LIFETIME = 3600
 MAX_LIFETIME = 24 * 3600
 _KEYS = {"name", "enabled", "origins", "mode", "secret_ref", "jwks_url", "public_key", "issuer",
          "audience", "user_claim", "name_claim", "email_claim", "access", "scopes", "all_users",
-         "token_to", "token_header", "max_lifetime"}
+         "token_to", "token_header", "max_lifetime", "api"}
+API_OPERATIONS = ("chat", "read", "manage")
+_EMBED_ONLY = ("access", "scopes", "all_users", "origins", "token_to", "token_header")
 
 
 class AppsError(Exception):
@@ -65,6 +78,53 @@ class Access:
 
     def all_tools(self) -> bool:
         return "*" in self.tools
+
+
+@dataclass(frozen=True)
+class ApiAccess:
+    """An API app's identity on the Hubzoid API: one fixed account, the
+    operations its tokens may use (as an API key's) and the claims every token
+    must carry."""
+    account: str
+    operations: tuple[str, ...]
+    require: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def matches(self, claims: dict) -> bool:
+        for name, allowed in self.require:
+            value = claims.get(name)
+            if not isinstance(value, str) or value not in allowed:
+                return False
+        return True
+
+
+def _api(app_id: str, raw: dict, where: str) -> ApiAccess:
+    value = raw.get("api")
+    if not isinstance(value, dict) or set(value) - {"account", "operations", "require"}:
+        raise ValueError(f"{where}.api has account, operations and require.")
+    if raw.get("mode") != "jwt":
+        raise ValueError(f"{where}: an API app uses mode: jwt with the issuer's keys.")
+    extra = [k for k in _EMBED_ONLY if k in raw]
+    if extra:
+        raise ValueError(f"{where}: an API app doesn't embed the chat, so it has no {extra[0]}.")
+    account = value.get("account")
+    if not isinstance(account, str) or "@" not in account:
+        raise ValueError(f"{where}.api.account is the email of the Hubzoid account its tokens act as.")
+    ops = value.get("operations")
+    if (not isinstance(ops, list) or not ops or not all(isinstance(o, str) for o in ops)
+            or set(ops) - set(API_OPERATIONS)):
+        raise ValueError(f"{where}.api.operations lists some of {', '.join(API_OPERATIONS)} (never approve).")
+    require = value.get("require")
+    if not isinstance(require, dict) or not require:
+        raise ValueError(f"{where}.api.require names at least one claim every token must carry (for example "
+                         "repository or sub): an issuer such as GitHub Actions signs tokens for everyone.")
+    pairs = []
+    for name, want in require.items():
+        wants = [want] if isinstance(want, str) else want
+        if (not isinstance(name, str) or name in ("iss", "aud", "exp", "iat", "nbf")
+                or not isinstance(wants, list) or not wants or not all(isinstance(w, str) and w for w in wants)):
+            raise ValueError(f"{where}.api.require.{name} is a claim and the value (or values) it must have.")
+        pairs.append((name, tuple(wants)))
+    return ApiAccess(account=account.strip().lower(), operations=tuple(sorted(set(ops))), require=tuple(pairs))
 
 
 @dataclass(frozen=True)
@@ -89,6 +149,11 @@ class App:
     token_to: tuple[str, ...] = ()
     token_header: str = "Authorization"
     max_lifetime: int = DEFAULT_LIFETIME
+    api: ApiAccess | None = None
+
+    @property
+    def api_only(self) -> bool:
+        return self.api is not None
 
 
 def _norm(name: str) -> str:
@@ -163,8 +228,9 @@ def _one(app_id: str, raw: Any) -> App:
                                                 for o in origins):
         raise ValueError(f"{where}.origins is a list of web addresses such as https://erp.example.com "
                          "(http:// only on this machine).")
-    maximum = _access(raw.get("access"), f"{where}.access")
-    if not maximum.agents:
+    api = _api(app_id, raw, where) if "api" in raw else None
+    maximum = Access() if api else _access(raw.get("access"), f"{where}.access")
+    if not api and not maximum.agents:
         raise ValueError(f"{where}.access.agents names at least one agent this app may use.")
     lifetime = raw.get("max_lifetime", DEFAULT_LIFETIME)
     if not isinstance(lifetime, int) or isinstance(lifetime, bool) or not 60 <= lifetime <= MAX_LIFETIME:
@@ -210,7 +276,7 @@ def _one(app_id: str, raw: Any) -> App:
     if not isinstance(raw.get("all_users", False), bool):
         raise ValueError(f"{where}.all_users is true or false.")
     scopes = raw.get("scopes")
-    if mode == "jwt":
+    if mode == "jwt" and not api:
         if scopes is None and not all_users:
             raise ValueError(f"{where}: say how access is decided: scopes (map the token's scope values) "
                              "or all_users: true (every signed-in user of the app gets the maximum).")
@@ -224,7 +290,7 @@ def _one(app_id: str, raw: Any) -> App:
                 raise ValueError(f"{where}.scopes.claim names a claim.")
             for value, grant in scopes["map"].items():
                 scope_map[str(value)] = _access(grant, f"{where}.scopes.map.{value}")
-    elif scopes is not None or all_users:
+    elif mode != "jwt" and (scopes is not None or all_users):
         raise ValueError(f"{where}: scopes and all_users are for jwt mode; a pass lists the access itself.")
     token_to = raw.get("token_to") or []
     if isinstance(token_to, str):
@@ -246,7 +312,7 @@ def _one(app_id: str, raw: Any) -> App:
                public_key=public_key, user_claim=claims["user_claim"], name_claim=claims["name_claim"],
                email_claim=claims["email_claim"], scope_claim=scope_claim, scope_map=scope_map,
                all_users=all_users, token_to=tuple(t.strip() for t in token_to), token_header=header,
-               max_lifetime=lifetime)
+               max_lifetime=lifetime, api=api)
 
 
 def parse(data: Any) -> dict[str, App]:

@@ -13,7 +13,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronRight, Download, RefreshCw } from "lucide-react";
 import { query, type AuditRow, type Hub, type Person } from "../api";
 import { useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
@@ -22,7 +22,9 @@ import { LoadState, SentenceText, When } from "../components/common";
 import {
   ORG,
   describeAccessChange,
+  describeAuthEvent,
   describeDecision,
+  describeToolCall,
   formatTime,
   personName,
   relativeTime,
@@ -32,27 +34,34 @@ import {
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 20;   // one page of rows everywhere (founder review, HUB-140)
 
-type Feed = "changes" | "decisions";
+type Feed = "changes" | "decisions" | "calls" | "signins";
+const FEEDS: Feed[] = ["changes", "decisions", "calls", "signins"];
+// What each feed exports (GET /audit/export ?kind=).
+const EXPORT_KINDS: Record<Feed, string> = {
+  changes: "admin,auth", decisions: "access", calls: "tool", signins: "auth",
+};
 const RANGES: Record<string, number> = { "1d": 86400, "7d": 604800, "30d": 2592000 };
 
 export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
   const underTabs = useUnderTabs();
   // Every filter + page lives in the URL (shareable, restored on refresh/Back).
   const [q, setQ] = useHashQuery();
-  const feed: Feed = q.feed === "decisions" ? "decisions" : "changes";
+  const feed: Feed = FEEDS.includes(q.feed as Feed) ? (q.feed as Feed) : "changes";
+  const audited = feed === "calls" || feed === "signins";
   const agent = hub ? hub.key : q.agent || "";
   const person = (q.person || "").toLowerCase();
   const actor = (q.actor || "").toLowerCase();
   const action = q.action || "";
   const tool = q.tool || "";
   const outcome = q.outcome || "";
+  const result = q.result || "";
   const channel = q.channel || "";
   const range = q.range || ""; // relative token, kept for the Select display
   const sinceAbs = q.since || ""; // absolute ISO boundaries — the actual window
   const untilAbs = q.until || "";
   const page = Math.max(1, Number(q.page) || 1);
   const filtersActive = !!(
-    person || actor || action || tool || outcome || channel ||
+    person || actor || action || tool || outcome || result || channel ||
     range || sinceAbs || untilAbs || (!hub && agent)
   );
   // One debounce timer PER text input so they never cancel each other's pending
@@ -117,20 +126,32 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
         }
       : {
           ...commonParams,
-          outcome: outcome || undefined,
-          tool,
-          surface: channel,
+          kind: feed === "calls" ? "tool" : feed === "signins" ? "auth" : undefined,
+          // Allowed or denied means nothing for sign-in events: never sent there.
+          outcome: feed === "signins" ? undefined : outcome || undefined,
+          result: feed === "calls" ? result || undefined : undefined,
+          tool: feed === "signins" ? undefined : tool,
+          surface: feed === "signins" ? undefined : channel,
           since: sinceMs ? new Date(sinceMs).toISOString() : undefined,
           until: untilMs ? new Date(untilMs).toISOString() : undefined,
         };
-  const data = useData<{ rows: AuditRow[] }>(
+  const data = useData<{ rows: AuditRow[]; stored?: boolean }>(
     (feed === "changes" ? "/access-changes" : "/audit") + query(params),
   );
+  // Everything of this feed's kind in the chosen agent and time, as JSON lines.
+  const exportHref =
+    "/portal/api/audit/export" +
+    query({
+      hub: agent || undefined,
+      kind: EXPORT_KINDS[feed],
+      since: sinceMs ? new Date(sinceMs).toISOString() : undefined,
+      until: untilMs ? new Date(untilMs).toISOString() : undefined,
+    });
   const resetFilters = () => {
     setResetToken((t) => t + 1); // remount the text inputs so their defaultValue clears
     setQ({
       person: undefined, actor: undefined, action: undefined, tool: undefined,
-      outcome: undefined, channel: undefined, range: undefined,
+      outcome: undefined, result: undefined, channel: undefined, range: undefined,
       since: undefined, until: undefined, page: undefined,
     });
   };
@@ -155,8 +176,7 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
   );
 
   const rows = data.data?.rows ?? [];
-  const describe = (r: AuditRow) =>
-    feed === "changes" ? describeAccessChange(r, ctx) : describeDecision(r, ctx);
+  const describe = (r: AuditRow) => describeRow(feed, r, ctx);
   const [detail, setDetail] = useState<AuditRow | null>(null);
 
   return (
@@ -167,12 +187,22 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
           <Paragraph type="secondary">
             {feed === "changes"
               ? "Who changed access, for whom, and to what."
-              : "Every restricted tool call, and whether it was allowed."}
+              : feed === "decisions"
+                ? "Every restricted tool call, and whether it was allowed."
+                : feed === "calls"
+                  ? "Every tool call: who, which tool, allowed or refused, and how it ended."
+                  : "Failed sign-ins, lockouts and personal API key use."}
           </Paragraph>
         </div>
-        <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
-          Refresh
-        </Button>
+        <Space>
+          <Button icon={<Download size={16} />} href={exportHref} download="hubzoid-audit.jsonl"
+            title="Every record of this kind in the chosen agent and time, as JSON lines">
+            Export
+          </Button>
+          <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
+            Refresh
+          </Button>
+        </Space>
       </div>
 
       <div className="toolbar">
@@ -182,6 +212,8 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
           options={[
             { label: "Access changes", value: "changes" },
             { label: "Tool decisions", value: "decisions" },
+            { label: "Tool calls", value: "calls" },
+            { label: "Sign-in events", value: "signins" },
           ]}
         />
         {!hub && (
@@ -248,7 +280,7 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
             />
           </>
         )}
-        {feed === "decisions" && (
+        {(feed === "decisions" || feed === "calls") && (
           <>
             <Select
               aria-label="Outcome"
@@ -262,6 +294,20 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
                 { value: "deny", label: "Denied" },
               ]}
             />
+            {feed === "calls" && (
+              <Select
+                aria-label="Result"
+                value={result || undefined}
+                onChange={(v) => setQ({ result: v, page: undefined })}
+                placeholder="Any result"
+                allowClear
+                style={{ minWidth: 130 }}
+                options={[
+                  { value: "ok", label: "Finished" },
+                  { value: "error", label: "Failed" },
+                ]}
+              />
+            )}
             <Input
               key={`tool:${resetToken}`}
               aria-label="Filter by tool"
@@ -294,6 +340,12 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
         )}
       </div>
 
+      {audited && data.data && data.data.stored === false && (
+        <Paragraph type="secondary" className="hint">
+          Tool calls and sign-in events are kept when <Text code>HUBZOID_AUDIT</Text> is <Text code>db</Text> or{" "}
+          <Text code>both</Text> in the deployment's settings. See docs/DEPLOYING.md.
+        </Paragraph>
+      )}
       {!data.data ? (
         <LoadState error={data.error} retry={data.reload} />
       ) : (
@@ -326,7 +378,11 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
                     ? "Nothing matches these filters."
                     : feed === "changes"
                       ? "No access changes recorded yet. Grants, removals and blocks will appear here."
-                      : "No tool decisions recorded yet. They appear as soon as someone uses a restricted tool."
+                      : feed === "decisions"
+                        ? "No tool decisions recorded yet. They appear as soon as someone uses a restricted tool."
+                        : feed === "calls"
+                          ? "No tool calls recorded yet."
+                          : "No sign-in events recorded yet."
                 }
               >
                 {filtersActive && <Button onClick={resetFilters}>Reset filters</Button>}
@@ -401,6 +457,13 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
   );
 }
 
+function describeRow(feed: Feed, row: AuditRow, ctx: ActivityContext) {
+  if (feed === "changes") return describeAccessChange(row, ctx);
+  if (feed === "calls") return describeToolCall(row, ctx);
+  if (feed === "signins") return describeAuthEvent(row, ctx);
+  return describeDecision(row, ctx);
+}
+
 function EventDetail({
   row,
   feed,
@@ -416,8 +479,38 @@ function EventDetail({
 }) {
   const code = (v?: string | null) =>
     v ? <Text copyable className="identity">{v}</Text> : <Text type="secondary">—</Text>;
+  const plain = (v?: string | number | null) =>
+    v === undefined || v === null || v === "" ? <Text type="secondary">—</Text> : <Text>{String(v)}</Text>;
   const items = row
-    ? feed === "changes"
+    ? feed === "calls"
+      ? [
+          { key: "when", label: "When", children: <Text>{formatTime(row.ts)}</Text> },
+          { key: "decision", label: "Access", children: plain(row.decision === "deny" ? "Refused" : "Allowed") },
+          { key: "result", label: "Result", children: plain(row.outcome === "error" ? `Failed (${row.error ?? "error"})`
+                                                               : row.outcome === "ok" ? "Finished" : undefined) },
+          { key: "user", label: "Person", children: code(row.user) },
+          { key: "tool", label: "Tool", children: code(row.tool) },
+          { key: "server", label: "From", children: code(row.server) },
+          { key: "channel", label: "Channel", children: code(row.surface) },
+          { key: "agent", label: "Agent", children: <Text>{agentLabel}</Text> },
+          { key: "took", label: "Took", children: plain(typeof row.duration_ms === "number" ? `${row.duration_ms} ms` : undefined) },
+          { key: "size", label: "Result size", children: plain(typeof row.result_bytes === "number" ? `${row.result_bytes} bytes` : undefined) },
+          { key: "args", label: "Arguments", children: row.args === undefined ? plain(undefined)
+              : <Text code style={{ whiteSpace: "pre-wrap" }}>{typeof row.args === "string" ? row.args : JSON.stringify(row.args, null, 1)}</Text> },
+          { key: "client", label: "Address", children: code(row.client) },
+          { key: "chat", label: "Chat", children: code(row.chat_id) },
+          { key: "run", label: "Workflow run", children: code(row.run_id) },
+          { key: "reason", label: "Reason", children: plain(row.reason) },
+        ]
+      : feed === "signins"
+      ? [
+          { key: "when", label: "When", children: <Text>{formatTime(row.ts)}</Text> },
+          { key: "event", label: "Event", children: code(row.event) },
+          { key: "user", label: "Account", children: code(row.user ?? row.actor) },
+          { key: "client", label: "Address", children: code(row.client) },
+          { key: "locked", label: "Locked for", children: plain(row.locked_seconds ? `${row.locked_seconds} s` : undefined) },
+        ]
+      : feed === "changes"
       ? [
           { key: "when", label: "When", children: <Text>{formatTime(row.ts)}</Text> },
           { key: "action", label: "Action", children: <Text>{row.action ?? "—"}</Text> },
@@ -451,9 +544,7 @@ function EventDetail({
     >
       {row && (
         <div className="drawer-body">
-          <SentenceText
-            sentence={feed === "changes" ? describeAccessChange(row, ctx) : describeDecision(row, ctx)}
-          />
+          <SentenceText sentence={describeRow(feed, row, ctx)} />
           <Descriptions size="small" column={1} items={items} />
         </div>
       )}

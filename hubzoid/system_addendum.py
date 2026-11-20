@@ -58,7 +58,7 @@ def build(ctx: "HubContext", *, backend: str) -> str:
     if skills_section:
         parts.append(skills_section)
 
-    delegates_section = _delegates_section(ctx)
+    delegates_section = _delegates_section(ctx, backend=backend)
     if delegates_section:
         parts.append(delegates_section)
 
@@ -112,24 +112,31 @@ def _knowledge_section(ctx: "HubContext") -> str:
     return "\n".join(lines)
 
 
-def _delegates_section(ctx: "HubContext") -> str:
+def _delegates_section(ctx: "HubContext", *, backend: str = "") -> str:
+    """The sub-agents that run on their own model. Every backend waits for a
+    delegate's answer within the turn (on Claude, background sub-agents are
+    switched off: ``factory_claude._child_env``), so the wording is the same;
+    only how to call one differs (Claude's ``Agent`` tool, else a tool each)."""
     delegates = getattr(ctx, "delegates", None) or []
     if not delegates:
         return ""
     from . import handover
 
+    claude = backend == "claude-local"
+    how = ("Call the Agent tool with its name as `subagent_type`" if claude else "Call its tool")
     lines = [
         "## Delegate agents available",
         "",
-        "Each runs on its own model as a subagent. Call its tool with a clear "
-        "brief; it works in isolation and returns a result. Relay its answer "
-        "faithfully — do not rewrite or shorten it — then continue:",
+        f"Each runs on its own model as a subagent. {how} with a brief that holds "
+        "everything it needs: it does not see this conversation. Its answer comes "
+        "back within this turn. Relay it faithfully — do not rewrite or shorten "
+        "it — then continue:",
         "",
     ]
     for d in delegates:
         model = d.spec.model or "(hub model)"
-        lines.append(f"- {handover.tool_name(d.spec.name)}: {d.spec.description} "
-                     f"(model: {model})")
+        name = f"Agent(subagent_type: \"{d.spec.name}\")" if claude else handover.tool_name(d.spec.name)
+        lines.append(f"- {name}: {d.spec.description} (model: {model})")
     lines.append("")
     return "\n".join(lines)
 

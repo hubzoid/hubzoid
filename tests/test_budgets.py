@@ -357,3 +357,16 @@ def test_show_notes_that_dollar_limits_skip_an_unpriced_model(hub_dir):
     limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n    max_output_tokens: 100\n")
     out = " ".join(CliRunner().invoke(budgets_app, ["show", str(hub_dir)]).output.split())
     assert "Dollar limits don't" not in out and "Calls on typesafe/jev-1.13 are refused" in out
+
+
+def test_bedrock_claude_is_priced_but_an_unreported_cost_stops_a_dollar_limit(hub_dir):
+    assert budgets.priced("bedrock/sonnet") and budgets.priced("bedrock/apac.anthropic.claude-opus-5-5")
+    limits(hub_dir, "  month:\n    max_cost_usd: \"5\"\n")
+    spend(hub_dir, cost=0.2, model="bedrock/apac.anthropic.claude-sonnet-5-5")
+    assert budgets.admit(hub_dir, model="bedrock/sonnet") is not None
+    spend(hub_dir, cost=None, out=10, model="bedrock/apac.anthropic.claude-sonnet-5-5")
+    for _ in range(2):        # repeated calls keep being refused, never counted as zero
+        with pytest.raises(WorkItemError) as err:
+            budgets.admit(hub_dir, model="bedrock/sonnet")
+        assert err.value.code == "unpriced_usage"
+    assert budgets.admit(hub_dir, model="claude-local") is not None      # the subscription is unchanged

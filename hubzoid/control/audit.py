@@ -25,3 +25,6 @@ def write(conn, actor: str, action: str, *, subject: str | None = None, hub: str
         "VALUES (:t, :a, :ac, :s, :h, :p, :su, :r)"),
         {"t": time.time(), "a": actor, "ac": action, "s": subject, "h": hub, "p": summary,
          "su": surface, "r": request_id})
+    from .. import audit_log
+
+    audit_log.admin_event(actor, action, subject=subject, target_hub=hub, detail=summary, via=surface, conn=conn)

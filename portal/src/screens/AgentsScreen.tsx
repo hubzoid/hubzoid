@@ -3,7 +3,7 @@ import { AppContext } from "../app/lib/app-context";
 import { AgentAvatar as AppAvatar } from "../app/components/ui";
 import { formatRelative } from "../app/lib/format";
 import { agentName } from "../lib/agentName";
-import { Button, Card, Empty, Input, Tag, Typography } from "antd";
+import { Button, Card, Empty, Input, Pagination, Tag, Typography } from "antd";
 import { ChevronRight, Search } from "lucide-react";
 import { type EvalScore, type Hub, type SummaryHub, type Workflow } from "../api";
 import { useData } from "../hooks/useData";
@@ -179,6 +179,8 @@ type Filter = "all" | "attention" | "unused";
 
 /** Agents as one row each: who it is, what it is built with, who uses it and
  *  whether it is healthy. The row opens the agent; Chat starts a chat. */
+const AGENTS_PAGE = 10;
+
 export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?: Workflow[]; usage?: SummaryHub[] }) {
   const app = useContext(AppContext);
   const [search, setSearch] = useState("");
@@ -200,16 +202,21 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
     (!q || `${r.name} ${r.hub.key}`.toLowerCase().includes(q))
     && (filter === "all" || (filter === "attention" ? r.broken : usage && !r.m?.last_activity)));
   const filters: [Filter, string, number][] = [["all", "All", rows.length], ["attention", "Needs attention", attention], ["unused", "Not used yet", unused]];
+  const [page, setPage] = useState(1);
+  // A new search or filter starts at the first page; a shorter list keeps a page that exists.
+  const pages = Math.max(1, Math.ceil(list.length / AGENTS_PAGE));
+  const current = Math.min(page, pages);
+  const shown = list.slice((current - 1) * AGENTS_PAGE, current * AGENTS_PAGE);
   return (
     <>
       <div className="hz-agents-bar">
         <label className="hz-set-find hz-agents-find">
           <Search size={14} aria-hidden className="text-mute" />
-          <input aria-label="Find an agent" placeholder="Find an agent" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input aria-label="Find an agent" placeholder="Find an agent" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
         </label>
         <div className="hz-agents-filters" role="group" aria-label="Show">
           {filters.filter(([key, , n]) => key === "all" || n > 0).map(([key, label, n]) => (
-            <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>
+            <button key={key} type="button" aria-pressed={filter === key} onClick={() => { setFilter(key); setPage(1); }}>
               {label} <span>{n}</span>
             </button>
           ))}
@@ -230,11 +237,12 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
             <span role="columnheader">People</span>
             <span role="columnheader">Chats, 30 days</span>
             <span role="columnheader">Spend, 30 days</span>
+            <span role="columnheader">Errors, 30 days</span>
             <span role="columnheader">Last used</span>
             <span role="columnheader">Status</span>
             <span />
           </div>
-          {list.map(({ hub: h, agent, name, flows, broken, m }) => (
+          {shown.map(({ hub: h, agent, name, flows, broken, m }) => (
             <div key={h.key} className="hz-agent-row" role="row">
               <a href={agentHref(h.key)} className="hz-agent-row-link" aria-label={`Open ${name}`} />
               <span className="hz-agent-who" role="cell">
@@ -249,6 +257,7 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
               <span role="cell" className="hz-agent-num">{!m ? "—" : m.everyone ? "Everyone" : m.users_with_access}</span>
               <span role="cell" className="hz-agent-num">{!m ? "—" : m.chats.toLocaleString()}</span>
               <span role="cell" className="hz-agent-when"><Cost usd={m?.cost_usd ?? null} unpriced={m?.unpriced ?? 0} /></span>
+              <span role="cell" className="hz-agent-num">{!m ? "—" : (m.errors ?? 0).toLocaleString()}</span>
               <span role="cell" className={m?.last_activity ? "hz-agent-when" : "hz-agent-when is-empty"}>
                 {m?.last_activity ? formatRelative(m.last_activity) : "Not yet"}
               </span>
@@ -260,6 +269,12 @@ export function AgentGrid({ hubs, workflows, usage }: { hubs: Hub[]; workflows?:
               </span>
             </div>
           ))}
+        </div>
+      )}
+      {list.length > AGENTS_PAGE && (
+        <div className="hz-agents-pager">
+          <Pagination size="small" current={current} pageSize={AGENTS_PAGE} total={list.length} onChange={setPage}
+            showSizeChanger={false} showTotal={(total, [from, to]) => `${from} to ${to} of ${total}`} />
         </div>
       )}
     </>

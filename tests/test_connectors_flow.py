@@ -164,7 +164,7 @@ def test_discovery_registration_pkce_callback_tool_call(hub, tc, server, browser
 
     # Tokens at rest are encrypted; the API never shows them.
     record = tokens.token_record(hub, owner_id(hub), cid)
-    assert record["access_token"].startswith("hz_at_") and record["refresh_token"]
+    assert record["access_token"].count(".") == 2 and record["refresh_token"]   # a JWT access token (2.0.9)
     with connectors.engine(hub).connect() as conn:
         raw = str(conn.execute(text("SELECT * FROM hz_connector_tokens")).fetchall())
         raw += str(conn.execute(text("SELECT * FROM hz_connectors")).fetchall())

@@ -523,7 +523,7 @@ def personal_runs(hub_dir, viewer: str, account: str | None, *, run_id: str | No
             raw = w.input if isinstance(w.input, dict) else {}
             args = raw.get("args") or ()
             env = args[2] if len(args) == 3 and isinstance(args[2], dict) else {}
-            if (env.get("trigger") != "tool" or env.get("scope") != "personal"
+            if (env.get("trigger") not in ("tool", "api") or env.get("scope") != "personal"
                     or env.get("acts_as") != viewer or env.get("acts_as_account") != account):
                 continue
             owner = _run_owner(client, w.workflow_id)

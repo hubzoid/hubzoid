@@ -23,6 +23,19 @@ to the exporter, no Hubzoid code involved:
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(public_key:secret_key)>
 ```
 
+When the endpoint is Langfuse (its path ends in `/api/public/otel`), Hubzoid
+also sends `x-langfuse-ingestion-version: 4` by itself, on every export path:
+the claude-local subprocess, the `HUBZOID_OTEL_NORMALIZE` relay and the
+LiteLLM path. Langfuse v4 asks OTLP senders for this header and may delay or
+stop uploads without it. You do not need to add it to `OTEL_EXPORTER_OTLP_HEADERS`.
+A value you set there yourself wins, and the header is never sent twice. Other
+OTLP endpoints get no extra header.
+
+Exporters that Hubzoid does not start are yours to configure. If you run
+`opentelemetry-instrument hubzoid run` (see Signals below) or a collector, and
+it sends straight to Langfuse, add `x-langfuse-ingestion-version=4` to its
+headers yourself.
+
 Unset `HUBZOID_OTEL_ENDPOINT` (the default) and nothing is emitted.
 
 On the **claude-local** path, also set this to get cost in Langfuse (see the
@@ -90,7 +103,9 @@ point in front of *many* hubs and backends, do the same rename there instead of
 per-bridge. A ready reference config is in
 [`otel-collector.yaml`](./otel-collector.yaml): point `HUBZOID_OTEL_ENDPOINT` at
 the collector (leave `HUBZOID_OTEL_NORMALIZE` **off** so you don't normalize
-twice), and the collector exports to Langfuse. It is stock `otelcol-contrib` + a
+twice), and the collector exports to Langfuse. Its Langfuse exporter sets
+`x-langfuse-ingestion-version: "4"` itself, since Hubzoid only adds that header
+when it talks to Langfuse directly. It is stock `otelcol-contrib` + a
 config file, and is a no-op on the LiteLLM path. For a single hub, the in-bridge
 flag is simpler — this is for fleets that already have collector infrastructure.
 
@@ -130,12 +145,39 @@ Each hub runs its own bridge process, so set `HUBZOID_OTEL_ENDPOINT` per hub
 (all pointing at the same central Langfuse). Turns separate cleanly by
 `hubzoid.hub`, so one Langfuse view covers every hub.
 
+## Signals
+
+`HUBZOID_OTEL_SIGNALS` chooses what the agent runtime exports: any of
+`traces`, `metrics` and `logs` (default `traces`). An operator's own
+`OTEL_METRICS_EXPORTER` or `OTEL_LOGS_EXPORTER` still wins. Sampling uses the
+standard `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`.
+
+For spans from Hubzoid itself (the web server, the database and one
+`execute_tool` span per tool call, with `gen_ai.tool.name`,
+`gen_ai.tool.call.id`, `error.type` and the hub, person and surface), run it
+under the OpenTelemetry Python auto-instrumentation:
+
+```
+pip install opentelemetry-distro opentelemetry-exporter-otlp
+opentelemetry-bootstrap -a install
+opentelemetry-instrument hubzoid run
+```
+
+Tool spans never carry arguments or results. For the security view (every tool
+call, sign-in and admin change as a log line), see [AUDIT.md](AUDIT.md).
+
+On AWS, run the AWS Distro for OpenTelemetry collector as a sidecar and point
+`HUBZOID_OTEL_ENDPOINT` and `OTEL_EXPORTER_OTLP_ENDPOINT` at it
+([deploy/ecs-adot-collector.yaml](deploy/ecs-adot-collector.yaml)).
+
 ## Content privacy
 
 Prompt and response **bodies are not sent** by default (Claude Code redacts
-them). Only enable `OTEL_LOG_USER_PROMPTS=1` / `OTEL_LOG_ASSISTANT_RESPONSES=1`
-if you deliberately want message content in traces, and only where data
-governance allows it.
+them). `HUBZOID_OTEL_CONTENT` sets the most content telemetry may carry,
+whatever else is set: `none` (names, counts and timings), `tools` (plus which
+tools and servers, with their parameters) or `full` (plus prompts, answers and
+tool results). Unset leaves Claude Code's own `OTEL_LOG_*` switches as the
+environment has them. Choose `full` only where data governance allows it.
 
 ## Data governance (per customer)
 

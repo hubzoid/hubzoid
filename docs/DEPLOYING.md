@@ -36,10 +36,14 @@ If you don't have a reason to pick B, C or D, pick A.
 | Several hubs behind one web app on one machine (`hubzoid run` with a `hubzoid.yaml`) | One shared SQLite operational database in the deployment's state folder (`.hubzoid/`, or `--data-dir`), one SQLite DBOS file per hub | The common production shape. Each hub runs and restarts on its own. |
 | Either of the above with PostgreSQL | `DATABASE_URL` for Hubzoid and DBOS | For production that needs managed backups or a separate database server. |
 | The Docker image | Either SQLite on a volume or PostgreSQL | See Path B. |
+| Each hub as its own service behind one web app (ECS, Kubernetes) | PostgreSQL | One edge service runs `hubzoid run` with the deployment file, each hub runs `hubzoid run <hub> --behind <public URL>`. See Path C. |
 
 Not supported:
 
-- Two processes serving the same hub at once. Each hub has one bridge.
+- Two processes serving the same hub at once. Each hub has one bridge. Workflows
+  and chat replies are already guarded by the database, but live chat updates
+  and the supervisor's files are not shared between copies yet. Set your
+  orchestrator to stop the old copy before it starts the new one (Path C).
 - Several machines sharing one set of SQLite files (for example over NFS).
   Use PostgreSQL when processes run on different machines.
 - Several hubs sharing one SQLite DBOS file. `hubzoid run` refuses this.
@@ -157,8 +161,11 @@ reaches.
     `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`,
     `AWS_CONTAINER_AUTHORIZATION_TOKEN`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
     `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_BEARER_TOKEN_BEDROCK`.
-    These are kept when `CLAUDE_CODE_USE_BEDROCK` is on, because the CLI then
-    signs in with them.
+    These are kept for a Claude call on Bedrock (`MODEL=bedrock/...`, see
+    [Amazon Bedrock](bedrock.md)), because the CLI then signs in with them.
+    Hubzoid sets `CLAUDE_CODE_USE_BEDROCK` for that call's child itself, so do
+    not set it by hand. A hub that still sets it with `MODEL=claude-local`
+    keeps working as before.
   - Hubzoid service secrets: `BRIDGE_API_KEYS`, `HUBZOID_ARTIFACT_SECRET`,
     `HUBZOID_SECRET_KEY`, `HUBZOID_ADMIN_PASSWORD`, `HUBZOID_SMTP_USERNAME`,
     `HUBZOID_SMTP_PASSWORD`, every `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`,
@@ -660,7 +667,7 @@ enabled: true
 server for WhatsApp (`WHATSAPP_*`), Telegram (`TELEGRAM_*`) and generic
 webhooks (`WEBHOOK_INBOUND_*`); they arrive on the public port at
 `/webhooks/<hub>/…`. A file whose secrets are missing stays off, and
-`hubzoid doctor` and the start say which are missing. See [channels](channels.md)
+the start and `hubzoid channels list` say which are missing. See [channels](channels.md)
 and the Slack walkthrough in [docs/slack.md](slack.md).
 
 ### 10. Troubleshooting
@@ -861,22 +868,117 @@ must be writable by it (for example `chown -R 999:999 my-hub`, or run with
 
 ## Path C: ECS, Kubernetes, other orchestrators
 
-The image from Path B is the entry point. Wiring it into your
-orchestrator is your responsibility. Two constraints to know before you
-start:
+The image from Path B is the entry point. Use PostgreSQL (RDS or another
+managed Postgres). SQLite on a network filesystem is not safe: on ECS Fargate,
+never put SQLite databases (`.hubzoid/*.db` and the deployment's state folder)
+on EFS. `hubzoid doctor` fails such a setup.
 
-- **Run one bridge process per hub with SQLite.** Use durable local disks,
-  one supervised instance and no horizontal autoscaling. Use PostgreSQL for
-  multiple machines and rehearse workflow recovery and upgrades.
-- **SQLite on a network filesystem is not safe.** On ECS Fargate
-  specifically, do not put the SQLite databases (`.hubzoid/*.db` and the
-  deployment's state folder) on EFS - file locking semantics over NFS will
-  eventually corrupt them. Use the EC2 launch type with an EBS-backed volume,
-  or PostgreSQL. The same caveat applies to any networked filesystem.
+### One service, or one service per hub
 
-Beyond those, the image behaves like a standard FastAPI / Uvicorn
-service: it listens on the env-var `PORT` (default 3080), accepts
-`.env`-style config as container env vars, and exposes `/healthz`.
+**One service** runs `hubzoid run` with the deployment file, like Path A: the
+web app and every hub in one task. Simple, and every hub restarts with the
+task.
+
+**One service per hub** keeps each hub apart: its own task size, image,
+secrets, restarts and deploys.
+
+- The **edge service** runs `hubzoid run` with the deployment file and is the
+  only public door (behind the load balancer). For each hub that runs as its
+  own service, the hub's `.env` names where it runs:
+
+  ```
+  HUBZOID_BRIDGE_UPSTREAM=http://support.hubzoid.local:8000
+  HUBZOID_INBOUND_UPSTREAM=http://support.hubzoid.local:8100   # only with WhatsApp, Telegram or webhooks
+  ```
+
+  The edge starts no process for that hub. It routes the hub's paths there and
+  checks its `/healthz` every 5 seconds, so people see "restarting" while the
+  hub's service is down and the other hubs keep working. `hubzoid restart
+  <hub>` says to restart it in its own service.
+
+- Each **hub service** runs:
+
+  ```
+  hubzoid run /hubs/support --behind https://hub.example.com
+  ```
+
+  with these in its environment:
+
+  | Setting | Why |
+  |---|---|
+  | `HUBZOID_BRIDGE_HOST=0.0.0.0` | Listen on the task's network address, not only on loopback |
+  | `HUBZOID_INBOUND_HOST=0.0.0.0` | The same for the inbound service, only when the hub uses WhatsApp, Telegram or webhooks |
+  | `HUBZOID_TRUSTED_PROXIES=10.0.0.0/16` | The edge's network. The hub trusts the client address the edge forwards from there only, so sign-in limits and audit records see each person's address |
+  | `HUBZOID_AUTH=true` | A hub on the network refuses to start with sign-in off |
+  | `DATABASE_URL` | The same database as the edge: accounts, sessions and conversations are shared |
+  | `HUBZOID_SECRET_KEY` | The same deployment key as the edge, so the hub can check who is asking and read stored secrets |
+  | `HUBZOID_DEPLOYMENT` | The edge's `deployment.json` on the shared volume, so the hub knows the deployment (its slug, the other agents, sign-in) |
+  | `BRIDGE_API_KEYS` (in the hub's `.env`) | A random key, not the public `dev`: the bridge listens on the network |
+
+  `--behind` tells the hub what the edge would tell a hub it starts: its
+  public address (`/b/<hub>`), its MCP address, the web app mode and sign-in.
+  Missing settings stop the start with a message that names them.
+
+Share two things between the edge and every hub service, at the same paths in
+each: the hub folders, and the edge's data folder (`--data-dir`, which holds
+`deployment.json`). EFS works for both, with the databases in Postgres. The
+edge writes `deployment.json` and a pointer in each hub's `.hubzoid/` folder at
+start, so it needs write access. The edge reads each hub's `AGENTS.md`, `.env`
+flags, branding and webhook routes.
+
+### Settings for a hosted deployment
+
+| Setting | What it does |
+|---|---|
+| `HUBZOID_REQUIRE_SECRET_KEY=true` | Refuse to start without `HUBZOID_SECRET_KEY` instead of making a key file. `hubzoid secrets new-key` prints a key for your secret store. |
+| `HUBZOID_DB_POOL_SIZE`, `HUBZOID_DB_MAX_OVERFLOW` | Each process holds its own pool (default 5 plus 10 under load). Every bridge, the edge, the workflow owner's lock connection and DBOS add up: keep the total under the database's connection limit. |
+| `HUBZOID_DB_POOL_RECYCLE` | Seconds before a connection is replaced. Set it below the idle timeout of the database or a proxy. |
+| `HUBZOID_DB_POOL_TIMEOUT`, `HUBZOID_DB_CONNECT_TIMEOUT` | Seconds to wait for a free connection, and to open one. |
+| `HUBZOID_LOG_FORMAT=json` | One JSON object per log line, for CloudWatch Logs Insights or a SIEM. |
+| `HUBZOID_AUDIT=log` | One audit line per tool call, sign-in and admin change ([AUDIT.md](AUDIT.md)). |
+
+If you put RDS Proxy in front of the database, check how it treats session
+advisory locks first: the workflow owner and migrations hold one on a direct
+connection.
+
+### Health checks
+
+| Check | Use it for |
+|---|---|
+| `/healthz` | Liveness: the container's health check. It does not touch the database, so a database outage doesn't make the platform replace healthy tasks. |
+| `/readyz` | Readiness: the load balancer's target group. It answers 503 while the database does not answer or its schema is behind, so traffic waits and a bad deploy can roll back. |
+
+### Deploys
+
+Hubzoid runs one copy of each hub. Configure the orchestrator to stop the old
+task before it starts the new one (ECS: `minimumHealthyPercent` 0 and
+`maximumPercent` 100 for each hub service). A brief overlap is safe for
+workflows and chat replies, which the database guards, but people connected to
+the old copy see their live reply only when it ends.
+
+A new version upgrades the database when it starts, while the old version may
+still run. From 2.0.9, a release only adds tables and columns, and removes one
+a release after the code stopped using it, so the old version keeps working
+during the deploy. Read [UPGRADING.md](UPGRADING.md) for releases before that.
+
+### What each process keeps in memory
+
+Some settings are cached for a short time in each process, so a change made in
+one service reaches the others within this time:
+
+| What | For up to |
+|---|---|
+| Access decisions | none: a grant or removal applies on the next check everywhere |
+| Sign-in settings | 5 s |
+| Embedded apps | 3 s |
+| Group membership from `access.py` | 60 s |
+| A person's connections | 60 s |
+| Single sign-on provider metadata | 1 h |
+| Secrets from AWS Secrets Manager | until the service restarts |
+
+The Claude runtime resumes a chat from the session files of the task that
+answered before. A new task starts the conversation again from its stored
+history, which is correct but costs more for that one turn.
 
 For multi-hub setup, account ownership, migration preview, cutover and rollback,
 see [Administration](ADMINISTRATION.md).

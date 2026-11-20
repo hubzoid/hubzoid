@@ -49,7 +49,7 @@ def test_run_propagates_bridge_port_to_bridge_env(monkeypatch):
     monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
 
     cli.run(hubs=[MINIMAL], port=None, bridge_port=8010,
-            host="127.0.0.1", no_ui=True, slack=False)
+            host="127.0.0.1", no_ui=True, slack=False, behind=None)
 
     bridge = next(c for c in captured if "hubzoid.server:build_app" in c["cmd"])
     assert bridge["env"].get("BRIDGE_PORT") == "8010"

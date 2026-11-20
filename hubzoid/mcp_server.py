@@ -19,16 +19,22 @@ Design points:
     the current account and hub permissions; tools run under identity_scope
     with surface ``mcp`` and the same access rules as chat.
   * Tool set: the same registry the chat agent gets (built-ins + hub-local +
-    guarded restricted/), minus chat-scoped tools (`write_artifact`,
-    `read_upload`, ...) which have no chat directory to resolve outside a
-    chat, and minus model-delegates (an MCP caller brings their own model;
-    the hub does not spend inference on their behalf).
+    guarded restricted/, the file tools, ``remember`` and the hub change
+    tools, core skills), minus ``record_feedback`` (it rates a hub answer in a
+    chat). The file tools work in the caller's own file space and
+    ``upload_file`` hands them a file (``mcp_parity``). Sub-agents on their
+    own model are offered only with the ``mcp_delegates`` grant, because the
+    hub pays for their model calls. Plus, per request, the caller's own
+    connected apps (``mcp_connected_apps``).
   * Instructions: the initialize response carries the hub's AGENTS.md body
     (or the ``mcp_instructions:`` frontmatter override) so the connecting
     agent learns what the hub is and how to use its tools — the MCP-native
     home for the system prompt it would otherwise never see.
-  * Stateless Streamable HTTP: every request is self-contained, so the
-    endpoint scales behind load balancers and survives bridge restarts.
+  * Streamable HTTP with a session per connected assistant (MCP SDK session
+    manager: idle timeout, session cap, a session bound to the token that
+    opened it), so a tool can ask the person a question through elicitation.
+    ``MCP_STATELESS=true`` serves every request on its own instead (several
+    replicas without sticky sessions), without elicitation.
 
 """
 from __future__ import annotations
@@ -50,20 +56,10 @@ log = logging.getLogger("hubzoid.mcp")
 #: one bot token speaks for everyone.
 MCP_SURFACE = "mcp"
 
-# Tools whose behaviour is bound to a live chat (ContextVar chat_id -> the
-# chat's uploads/artifacts dirs). An MCP call has no chat, so exposing them
-# would silently write to / read from the process fallback dir instead of
-# doing what their descriptions promise. Excluded until they grow a
-# non-chat scope.
+# Tools bound to a chat that MCP does not have. The file tools are not here:
+# over MCP they work in the caller's own file space (``mcp_parity.space_id``).
 CHAT_SCOPED_TOOLS = frozenset({
-    "write_artifact",
-    "make_excel",
-    "make_pdf",
-    "make_word",
-    "list_artifacts",
-    "read_upload",
-    "read_upload_full",
-    "record_feedback",   # rates an answer in the caller's chat conversation; MCP has none
+    "record_feedback",   # rates the hub's answer in a chat; over MCP the answer is the assistant's
 })
 
 
@@ -84,8 +80,9 @@ def build_registry(
                  actual enforcement.)
 
     Mirrors the front half of `factory.build_agent` but never touches a
-    model: sub-agents are all promoted to skills (no delegates — a delegate
-    runs on the hub's model budget, which an MCP caller does not get).
+    model: sub-agents are all promoted to skills, and the ones that run on
+    their own model are also offered as ``handover_<name>`` behind the
+    ``mcp_delegates`` grant (``mcp_parity.delegate_tools``).
     """
     from . import factory
     from .loaders import knowledge as knowledge_loader
@@ -102,7 +99,7 @@ def build_registry(
         output_dir=memlib.session_output_dir(hub_dir, session_id),
         session_id=session_id,
         settings=settings,
-        skills=factory._load_skills_and_promoted_agents(hub_dir),
+        skills=factory._with_core_skills(factory._load_skills_and_promoted_agents(hub_dir)),
         knowledge=knowledge_loader.load_all(hub_dir),
         delegates=[],
     )
@@ -119,15 +116,31 @@ def build_registry(
     # call waiting for a person never reaches a card.
     from . import hitl
     from .apps import cards
+    from . import mcp_parity
+
     registry = cards.wrap(hub_dir, access.apply(hub_dir, {**builtin, **local}))
-    registry = hitl.equip(hub_dir, registry, questions=False)
+    # As in chat: remember, the hub change tools and personal memory, with the
+    # same gate (Save shared knowledge or managing the hub, in-app editing on).
+    factory._add_curator_tool(ctx, registry, access)
+    registry.setdefault("upload_file", mcp_parity.upload_tool(hub_dir, settings.max_upload_bytes))
+    registry.setdefault("my_requests", mcp_parity.my_requests_tool(hub_dir))
+    for name, ft in mcp_parity.delegate_tools(hub_dir, settings).items():
+        registry.setdefault(name, ft)
+    registry = hitl.equip(hub_dir, registry)
+    if "ask_question" in registry:
+        from .access.guard import run_checked as _run_checked
+
+        # The adapter replaces the call itself, so the account check and audit go back on top.
+        registry["ask_question"] = _run_checked(mcp_parity.ask_question_tool(registry["ask_question"]), hub_dir)
     for name in CHAT_SCOPED_TOOLS:
         registry.pop(name, None)
     # Read-only admin tools, for agent administrators only (MCP surface only).
     from .admin import mcp_tools as admin_tools
 
+    from .access.guard import run_checked
+
     for ft in admin_tools.make(hub_dir):
-        registry.setdefault(ft.name, ft)
+        registry.setdefault(ft.name, run_checked(ft, hub_dir))  # the account check and audit, as every tool
 
     permissions = {
         ft.name: permission
@@ -177,6 +190,34 @@ def _mcp_grant_id() -> str:
     except Exception:  # noqa: BLE001
         return ""
     return str((token.claims or {}).get("grant_id") or "")[:16] if token is not None else ""
+
+
+def _admitted(hub_dir: Path, run_id: str) -> tuple["access.Identity", str | None]:
+    """The identity one MCP call runs as, and the words refusing it, if any.
+
+    A signed-in caller's call is admitted as a run of their account under
+    their MCP grant (``run_identity``: an ended grant or a stopped account is
+    refused here, and ``check_run`` sees the credential on every tool). A
+    draining bridge refuses every call. Hub tools and connected-app tools
+    (``mcp_connected_apps``) are admitted the same way."""
+    from . import drain as drain_lib
+
+    ident = _mcp_identity(hub_dir)
+    if ident.user:
+        from .access import run_identity
+
+        try:
+            record = run_identity.admit_or_refuse(
+                hub_dir, run_kind="mcp", run_id=run_id,
+                acts_as_id=ident.account_id, acts_as_email=ident.user, started_from="mcp",
+                person_present=False, credential_kind="mcp_grant",
+                credential_id=_mcp_grant_id())
+        except run_identity.NotAdmitted as exc:
+            return ident, f"[{exc}]"
+        ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
+    if drain_lib.active():
+        return ident, f"[{drain_lib.MESSAGE}]"
+    return ident, None
 
 
 
@@ -233,34 +274,34 @@ def _registry_tool_class():
                 tool_arguments=args_json,
                 run_config=RunConfig(),
             )
-            ident = _mcp_identity(self._hub_dir)
-            if ident.user:
-                from .access import run_identity
-
-                try:
-                    record = run_identity.admit_or_refuse(
-                        self._hub_dir, run_kind="mcp", run_id=tool_ctx.tool_call_id,
-                        acts_as_id=ident.account_id, acts_as_email=ident.user, started_from="mcp",
-                        person_present=False, credential_kind="mcp_grant",
-                        credential_id=_mcp_grant_id())
-                except run_identity.NotAdmitted as exc:
-                    return ToolResult(content=f"[{exc}]", is_error=True)
-                ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
+            ident, refused = _admitted(self._hub_dir, tool_ctx.tool_call_id)
+            if refused is not None:
+                return ToolResult(content=refused, is_error=True)
             from . import _request_ctx
-            from . import drain as drain_lib
 
-            if drain_lib.active():
-                return ToolResult(content=f"[{drain_lib.MESSAGE}]", is_error=True)
-            with access.identity_scope(ident), _request_ctx.card_scope():
+            import time as _time
+
+            from . import mcp_parity
+
+            started = _time.time()
+
+            async def invoke():
+                out = await fn.on_invoke_tool(tool_ctx, args_json)
+                return out if isinstance(out, str) else json.dumps(out, default=str)
+
+            # The caller's own file space stands in for a chat (mcp_parity.space_id).
+            with access.identity_scope(ident), _request_ctx.card_scope(), \
+                    _request_ctx.chat_scope(mcp_parity.space_id(ident)), \
+                    _request_ctx.artifact_capture() as made:
                 try:
-                    result = await fn.on_invoke_tool(tool_ctx, args_json)
+                    text = await mcp_parity.settle_waiting(self._hub_dir, ident, await invoke(), invoke,
+                                                           since=started)
                 except Exception as exc:  # noqa: BLE001 — surface, don't crash the server
                     log.exception("mcp tool %s failed", fn.name)
                     return ToolResult(
                         content=f"[tool {fn.name} error: {type(exc).__name__}: {exc}]",
                         is_error=True,
                     )
-                text = result if isinstance(result, str) else json.dumps(result, default=str)
                 card = _request_ctx.take_card(text, tool=fn.name)
             if card is not None:
                 # A card: the text for the model, the checked result for the
@@ -270,6 +311,12 @@ def _registry_tool_class():
                 result_ = cards.call_tool_result(card)
                 return ToolResult(content=text, structured_content=result_["structuredContent"],
                                   meta=result_["_meta"])
+            if made:
+                from mcp.types import TextContent
+
+                return ToolResult(content=[TextContent(type="text", text=text),
+                                           *mcp_parity.resource_links(made)],
+                                  is_error=text.startswith(_DENIAL_PREFIX))
             return ToolResult(
                 content=text, is_error=text.startswith(_DENIAL_PREFIX)
             )
@@ -363,39 +410,116 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
     by_capability = {name for name, ft in (registry or {}).items()
                      if getattr(ft, "hubzoid_capability", None)}
 
+    def _shown(tools, ident):
+        if by_capability:
+            from .admin import mcp_tools as admin_tools
+
+            if not admin_tools.allowed(hub_dir, ident.user):
+                tools = [t for t in tools if t.name not in by_capability]
+        surfaces = _allowed_surfaces()
+        # Use the SAME fail-closed decision as invocation, so a user sees a
+        # tool exactly when invoking it would be allowed.
+        shown = []
+        with access.identity_scope(ident):
+            try:
+                vis = visible_map({t.name: gated[t.name] for t in tools if t.name in gated})
+            except Exception:  # noqa: BLE001 — hide on doubt; invoke still decides
+                log.exception("mcp: visibility check failed")
+                vis = {}
+            for t in tools:
+                if t.name in by_capability:
+                    ok = True  # already filtered above; the tool checks again on invoke
+                elif t.name in gated:
+                    ok = vis.get(t.name, False)
+                else:
+                    ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
+                if ok:
+                    shown.append(t)
+        return shown
+
     class _AccessListFilter(Middleware):
         async def on_list_tools(self, context, call_next):
-            tools = await call_next(context)
-            if not permissions and not gated and not by_capability:
-                return tools
-            ident = _mcp_identity(hub_dir)
-            if by_capability:
-                from .admin import mcp_tools as admin_tools
+            from . import mcp_connected_apps
 
-                if not admin_tools.allowed(hub_dir, ident.user):
-                    tools = [t for t in tools if t.name not in by_capability]
-            surfaces = _allowed_surfaces()
-            # Use the SAME fail-closed decision as invocation, so a user sees a
-            # tool exactly when invoking it would be allowed.
-            shown = []
+            tools = list(await call_next(context))
+            # Every name the hub serves, hidden from this caller or not.
+            served = {t.name for t in tools} | set(registry or {})
+            ident = _mcp_identity(hub_dir)
+            if permissions or gated or by_capability:
+                tools = _shown(tools, ident)
+            # Then the caller's own connected apps, asked for on every list. A
+            # failure there never costs the caller the hub's own tools.
+            try:
+                return tools + await mcp_connected_apps.list_tools(hub_dir, ident, served)
+            except Exception:  # noqa: BLE001
+                log.exception("mcp: connected apps not listed")
+                return tools
+
+        async def on_call_tool(self, context, call_next):
+            from . import mcp_connected_apps
+
+            name = getattr(context.message, "name", None)
+            # A name the hub serves always goes to the hub's tool and its guards.
+            if (not mcp_connected_apps.may_be_alias(name) or name in (registry or {})
+                    or await _served(context, name)):
+                return await call_next(context)
+            import uuid
+
+            import asyncio
+
+            # Blocking store work: in a thread (the request's context goes with it).
+            ident, refused = await asyncio.to_thread(_admitted, hub_dir, f"hubzoid-mcp-{uuid.uuid4().hex[:12]}")
+            if refused is not None:
+                from fastmcp.tools.tool import ToolResult
+
+                return ToolResult(content=refused, is_error=True)
+            import time as _time
+
+            from . import mcp_parity
+
+            started = _time.time()
             with access.identity_scope(ident):
-                try:
-                    vis = visible_map({t.name: gated[t.name] for t in tools if t.name in gated})
-                except Exception:  # noqa: BLE001 — hide on doubt; invoke still decides
-                    log.exception("mcp: visibility check failed")
-                    vis = {}
-                for t in tools:
-                    if t.name in by_capability:
-                        ok = True  # already filtered above; the tool checks again on invoke
-                    elif t.name in gated:
-                        ok = vis.get(t.name, False)
-                    else:
-                        ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
-                    if ok:
-                        shown.append(t)
-            return shown
+                result = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
+                text = _first_text(result)
+                if result is not None and not result.is_error and mcp_parity._waiting(text):
+                    async def again():
+                        # The app's whole answer (content, structured content, error flag).
+                        out = await mcp_connected_apps.call(hub_dir, ident, name, context.message.arguments)
+                        return out if out is not None else text
+
+                    # Retry under the name the assistant sees (my_<app>__<tool>), not the app's own.
+                    settled = await mcp_parity.settle_waiting(hub_dir, ident, text, again, since=started,
+                                                              tool_name=name)
+                    if not isinstance(settled, str):
+                        return settled
+                    if settled != text:
+                        from fastmcp.tools.tool import ToolResult
+
+                        return ToolResult(content=settled)
+            # Not one of the caller's connected-app tools: answered as any unknown name.
+            return result if result is not None else await call_next(context)
 
     return _AccessListFilter()
+
+
+def _first_text(result) -> str:
+    """The first text block of a ToolResult, or ""."""
+    for block in getattr(result, "content", None) or ():
+        if getattr(block, "type", None) == "text":
+            return block.text
+    return ""
+
+
+async def _served(context, name: str) -> bool:
+    """Whether the FastMCP server itself has a tool called ``name`` (a card's
+    status tool, as well as the registry)."""
+    server = getattr(getattr(context, "fastmcp_context", None), "fastmcp", None)
+    if server is None:
+        return False
+    try:
+        return await server.get_tool(name) is not None
+    except Exception:  # noqa: BLE001 — not found, however FastMCP says it
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -533,8 +657,9 @@ def build_mcp_app(
     from .mcp_oauth import HubOAuth
 
     mcp, count = build_server(hub_dir, settings=settings, auth=HubOAuth(hub_dir, settings.mcp_public_url))
-    log.info("mcp: serving %d tool(s) at %s (stateless)", count, path)
-    return mcp.http_app(path=path, stateless_http=True)
+    stateless = settings.mcp_stateless
+    log.info("mcp: serving %d tool(s) at %s (%s)", count, path, "stateless" if stateless else "sessions")
+    return mcp.http_app(path=path, stateless_http=stateless)
 
 
 def build_server(hub_dir: Path, *, settings: "settingslib.Settings | None" = None, auth=None):
@@ -556,4 +681,29 @@ def build_server(hub_dir: Path, *, settings: "settingslib.Settings | None" = Non
 
     if cards_lib.has_config(hub_dir):
         _add_cards(mcp, hub_dir, registry, permissions)
+    _add_file_resource(mcp, hub_dir)
     return mcp, len(registry)
+
+
+def _add_file_resource(mcp, hub_dir: Path) -> None:
+    """``hubzoid-file://artifacts/{name}``: a file the caller made, read back by
+    their assistant (each file result links to it). Only the caller's own."""
+    from fastmcp.resources import ResourceContent, ResourceResult
+
+    from . import mcp_parity
+
+    @mcp.resource("hubzoid-file://artifacts/{name}", name="hubzoid-file",
+                  description="A file this agent made for you over MCP.")
+    def own_file(name: str):
+        from urllib.parse import unquote
+
+        found = mcp_parity.read_own_file(hub_dir, _mcp_identity(hub_dir), unquote(name))
+        if found is None:
+            raise ValueError("No such file of yours here.")
+        data, mime = found
+        if mime.startswith("text/") or mime in ("application/json", "image/svg+xml"):
+            try:
+                return ResourceResult(contents=[ResourceContent(data.decode("utf-8"), mime_type=mime)])
+            except UnicodeDecodeError:
+                pass
+        return ResourceResult(contents=[ResourceContent(data, mime_type=mime)])

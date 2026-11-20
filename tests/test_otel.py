@@ -154,3 +154,40 @@ def test_openai_otel_setup_registers_litellm_callback(monkeypatch):
 
     assert otel.openai_otel_setup(endpoint="http://c:4318", hub="sales-hub") is True
     assert "otel" in fake.callbacks
+
+
+def test_signals_and_content_ceiling(monkeypatch):
+    for key in ("OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER", "HUBZOID_OTEL_CONTENT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_OTEL_SIGNALS", "traces,metrics")
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="web")
+    assert env["OTEL_METRICS_EXPORTER"] == "otlp" and env["OTEL_LOGS_EXPORTER"] == "none"
+    assert "OTEL_LOG_USER_PROMPTS" not in env   # unset: the environment decides, as before
+    monkeypatch.setenv("HUBZOID_OTEL_CONTENT", "tools")
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="web")
+    assert env["OTEL_LOG_TOOL_DETAILS"] == "1" and env["OTEL_LOG_USER_PROMPTS"] == "0"
+    assert env["OTEL_LOG_TOOL_CONTENT"] == "0"
+    assert otel.content_env({"HUBZOID_OTEL_CONTENT": "full"})["OTEL_LOG_USER_PROMPTS"] == "1"
+    assert otel.content_env({"HUBZOID_OTEL_CONTENT": "none"})["OTEL_LOG_TOOL_DETAILS"] == "0"
+
+
+def test_normalized_traces_keep_metrics_and_logs_on_the_collector(monkeypatch):
+    monkeypatch.setenv("HUBZOID_OTEL_ENDPOINT", "https://collector.example.com/otel/")
+    monkeypatch.setenv("HUBZOID_OTEL_SIGNALS", "traces,metrics,logs")
+    for key in ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+    env = otel.claude_otel_env(endpoint="http://127.0.0.1:8000/otel", user="u", hub="h", surface="web")
+    assert env["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] == "https://collector.example.com/otel/v1/metrics"
+    assert env["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] == "https://collector.example.com/otel/v1/logs"
+    env = otel.claude_otel_env(endpoint="https://collector.example.com/otel", user="u", hub="h", surface="web")
+    assert "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" not in env
+
+
+def test_content_ceiling_turns_off_litellm_message_logging(monkeypatch):
+    import litellm
+
+    monkeypatch.setattr(litellm, "turn_off_message_logging", False)
+    monkeypatch.setattr(litellm, "callbacks", [])
+    monkeypatch.setenv("HUBZOID_OTEL_CONTENT", "none")
+    assert otel.openai_otel_setup(endpoint="http://c:4318", hub="h")
+    assert litellm.turn_off_message_logging is True

@@ -175,6 +175,11 @@ class GitHubAdapter(Adapter):
     secret_keys = ("private_key_ref", "webhook_secret_ref", "token_ref")
     webhook = True
 
+    def receives_webhooks(self, conn) -> bool:
+        """Without a webhook secret the connection accepts no deliveries (manual
+        intake only, see `verify`), so it needs no public URL."""
+        return bool(getattr(conn.settings, "webhook_secret_ref", None))
+
     def check(self, config, settings: GitHubConfig):
         out = []
         if settings.mode == "app":

@@ -61,6 +61,9 @@ exporters:
     endpoint: ${env:LANGFUSE_OTEL_ENDPOINT}
     headers:
       Authorization: ${env:LANGFUSE_OTEL_AUTH}
+      # Langfuse v4 asks OTLP senders for this header. Hubzoid adds it by itself
+      # only when it exports straight to Langfuse, so a collector sets it here.
+      x-langfuse-ingestion-version: "4"
 
 service:
   pipelines:

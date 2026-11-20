@@ -264,7 +264,7 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
                 raise ControlError(str(exc), "bad_input") from None
             data = inputs_lib.dump(values)
             handle = runtime.start(target.name, envelope={
-                "trigger": trigger, "scope": "team", "started_by": actor, "inputs": data,
+                "trigger": trigger, "scope": "team", "started_by": actor, "inputs": data, "via": surface,
                 "inputs_display": inputs_lib.display(model, data)})
         run_id = handle.get_workflow_id()
     _audit(hub_dir, "run_start", target.name, actor=actor, surface=surface,

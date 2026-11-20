@@ -307,10 +307,22 @@ stored gets `503`, which asks the provider to retry it.
 
 ## Running
 
+Each surface turns on with a file in `channels/` (the flags `--whatsapp`,
+`--telegram`, `--webhook` and `--slack` are gone; they stop with exit code 2
+and name the file to add):
 ```
-hubzoid run <hub> --whatsapp --telegram --webhook   # combine with --slack + web UI
+# channels/whatsapp.yaml   (likewise telegram.yaml, webhook.yaml)
+version: 1
+id: whatsapp
+provider: whatsapp_inbound   # telegram | webhook
+enabled: true
+```
+```
+hubzoid run <hub>
 ```
 One shared inbound child on a loopback port; the public edge adds `/webhooks/<hub>`.
+`hubzoid channels list <hub>` shows each one as a `1.x channel` line. For the
+newer WhatsApp connection, see [two ways to connect Slack and WhatsApp](channels.md#two-ways-to-connect-slack-and-whatsapp).
 Standalone / systemd (serves whichever surfaces the `.env` configures):
 ```
 hubzoid inbound run <hub>

@@ -308,7 +308,17 @@ def parse_file(path: Path) -> Definition:
     except (OSError, UnicodeError, yamlfile.YamlError):
         raise ConnectorError("invalid_file", f"{path.name}: cannot read valid connector YAML. "
                              "Repair the file before editing it in Settings.", 422) from None
-    return parse_document(path, data, revision=hashlib.sha256(raw.encode()).hexdigest())
+    try:
+        return parse_document(path, data, revision=hashlib.sha256(raw.encode()).hexdigest())
+    except ConnectorError as exc:
+        if exc.code != "invalid_id":
+            raise
+        # The file name is the ID: say which file, and what it would need to be called.
+        hint = re.sub(r"[^a-z0-9_]", "_", path.stem.strip().lower())
+        better = f" (for example {hint}{path.suffix})" if ID_RE.match(hint) else ""
+        raise ConnectorError("invalid_id", f"{path.name}: the file name is the connector's ID. Use 2 to 40 "
+                             f"lowercase letters, digits or _, starting with a letter{better}. Until it is "
+                             "renamed, this connector is not loaded.", 422) from None
 
 
 def parse_document(path: Path, data: dict, *, revision: str | None = None) -> Definition:
@@ -381,7 +391,8 @@ def problems(hub_dir) -> list[str]:
     """What is wrong with each connector file, for doctor and Settings."""
     base = folder(hub_dir)
     out = []
-    for path in sorted(base.glob("*.yaml")) if base.is_dir() else []:
+    paths = sorted(p for p in base.glob("*.y*ml") if p.suffix in (".yaml", ".yml")) if base.is_dir() else []
+    for path in paths:
         try:
             parse_file(path)
         except ConnectorError as exc:

@@ -142,7 +142,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # it to an inline skill (hub still boots) rather than crashing the build.
     kept, fallbacks = _prepare_delegates(delegate_agents)
     for loaded in fallbacks:
-        skills.append(agents_loader.to_skill(loaded))
+        skills.append(agents_loader.to_skill(loaded, "its model could not be built"))
     skills = _with_core_skills(skills)     # chat runtime gets core skills
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
@@ -304,7 +304,8 @@ def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
     skill_agents, raw_delegates = agents_loader.split_subagents(hub_dir, hub_model)
     by_name: dict[str, object] = {s.spec.name: s for s in real}
     for loaded in skill_agents:
-        s = agents_loader.to_skill(loaded)
+        s = agents_loader.to_skill(loaded, handover.skill_reason(loaded.spec.model, hub_model),
+                                   over_mcp=hub_model is None)
         if s.spec.name in by_name:
             log.warning(
                 "skill name collision: %r exists in both skills/ and agents/. "

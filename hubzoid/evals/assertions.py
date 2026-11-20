@@ -92,6 +92,42 @@ def _norm_tool(name: str) -> str:
     return short_name((name or "").strip()).lower()
 
 
+def _call_name(call) -> str:
+    """Claude's ``Agent`` call with ``subagent_type`` reads as ``handover_<name>``."""
+    name = getattr(call, "name", "") or ""
+    args = getattr(call, "raw_args", None) or getattr(call, "args", None) or {}
+    if name == "Agent" and isinstance(args, dict) and args.get("subagent_type"):
+        from .. import handover
+
+        return handover.tool_name(str(args["subagent_type"]))
+    return name
+
+
+def _tool_known(name: str, inventory) -> bool:
+    norm = _norm_tool(name)
+    if norm in inventory.names:
+        return True
+    if norm.startswith("mcp__"):
+        server = norm[len("mcp__"):].split("__", 1)[0]
+        return server in inventory.servers           # its tools are only known when a turn runs
+    return inventory.bare_dynamic                    # may be an MCP tool listed at run time
+
+
+def check_tool_names(case, inventory) -> list[Check]:
+    """Fail a tool name that exists nowhere in the agent (``judge.tool_inventory``;
+    None skips), or the check could never fire."""
+    if inventory is None:
+        return []
+    out: list[Check] = []
+    fields = (("expect_tools", case.expect_tools), ("forbid_tools", case.forbid_tools),
+              ("expect_tool_args", list((getattr(case, "expect_tool_args", None) or {}).keys())))
+    for field, names in fields:
+        for name in names or []:
+            if not _tool_known(name, inventory):
+                out.append(Check("tool_name", False, f"{field}: no tool named {name} in this agent"))
+    return out
+
+
 def check_contains(response: str, needles: list[str]) -> list[Check]:
     """Substring checks, **case-insensitive**.
 
@@ -171,6 +207,7 @@ def run_free_checks(
     response: str,
     tool_calls: list[str],
     tools: list | None = None,
+    inventory=None,
 ) -> list[Check]:
     """Every model-free assertion declared on `case`, in table order.
 
@@ -184,7 +221,14 @@ def run_free_checks(
         from .results import ToolCallRecord
 
         tools = [ToolCallRecord(name=n) for n in tool_calls]
-    checks: list[Check] = []
+    else:
+        import dataclasses
+
+        tools = [dataclasses.replace(c, name=_call_name(c)) if dataclasses.is_dataclass(c) else c
+                 for c in tools]
+        if len(tools) == len(tool_calls):
+            tool_calls = [c.name for c in tools]
+    checks: list[Check] = check_tool_names(case, inventory)
     checks += check_expect_tools(tool_calls, case.expect_tools)
     checks += check_forbid_tools(tool_calls, case.forbid_tools, tools)
     checks += check_expect_tool_args(tools, getattr(case, "expect_tool_args", None) or {})

@@ -65,7 +65,8 @@ LATER_TABLES = ("hz_directory_providers", "hz_directory_accounts", "hz_scim_toke
                 "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
                 "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans", "hz_hitl_requests", "hz_hitl_grants", "hz_hitl_events", "hz_workflow_access", "hz_workflow_access_revisions", "hz_hub_changes", "hz_personal_memory",
                 "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles",
-                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes")
+                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes", "hz_audit_events",
+                "hz_mcp_signing_keys")
 
 
 @pytest.fixture(autouse=True)
@@ -374,6 +375,9 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_users", "auth_epoch"), ("hz_users", "deleted_at"),
                               ("hz_users", "managed_by"), ("hz_sessions", "mfa_at")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+        # And op_0083's usage details.
+        for column in ("origin", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "first_token_ms"):
+            conn.execute(text(f"ALTER TABLE hz_usage DROP COLUMN {column}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

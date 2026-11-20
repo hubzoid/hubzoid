@@ -99,14 +99,16 @@ class PortalAdmin:
     is_org_admin: bool
     manageable: list[str]
     # How the identity was verified: "session" (the Hubzoid session, or the
-    # local dev override).
+    # local dev override), "api-key" or "app-jwt", with the key or app id.
     via: str = "session"
+    credential_id: str = ""
 
     def actor(self) -> Actor:
         return Actor(
             subject=normalize(self.subject),
-            surface="console",
+            surface="console" if self.via == "session" else "api",
             via=self.via,
+            credential_id=self.credential_id,
         )
 
 
@@ -157,6 +159,15 @@ class CompanyLinkAction(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     hub: str = Field(min_length=1, max_length=255)
     action: Literal["copy", "replace", "off"]
+
+
+class MyRun(BaseModel):
+    """Start a "Run for me" report as yourself (``POST /portal/api/my/runs``)."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    workflow: str = Field(min_length=1, max_length=255)
+    inputs: dict = Field(default_factory=dict)
+    confirm: bool = False
 
 
 class WorkflowRun(BaseModel):
@@ -292,8 +303,11 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
             raise HTTPException(exc.status, exc.message)
         if not scope.any:
             return None
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir)
         return PortalAdmin(subject=subject, is_org_admin=scope.org_admin,
-                           manageable=sorted(scope.hubs))
+                           manageable=sorted(scope.hubs), via=via, credential_id=credential_id)
 
     return resolve
 
@@ -400,7 +414,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         subject = subject or _verify_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
-        return Actor(normalize(subject), "console", "session")
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir) if not dev else ("session", "")
+        return Actor(normalize(subject), "console" if via == "session" else "api", via, credential_id)
 
     def allowed_hubs(admin):
         return [
@@ -866,6 +883,37 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             raise HTTPException(403, "You no longer have access to this agent.")
         return {"runs": observe.personal_runs(path, email, account, run_id=run_id)}
 
+    @router.post("/my/runs", status_code=202)
+    @_denied
+    def my_run_start(request: Request, payload: MyRun):
+        """Start a "Run for me" report as yourself (``workflows.api_runs``):
+        the run the chat tool starts, recorded with ``trigger: "api"``. Read it
+        with ``GET /my/runs?hub=&run_id=``. ``Idempotency-Key`` makes a retry
+        return the same run."""
+        from .access.store import USE_HUB
+        from .workflows import api_runs
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        gs = store_for(path)
+        if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
+            raise HTTPException(403, "You no longer have access to this agent.")
+        try:
+            from .access.session import credential as credential_of
+
+            via, credential_id = credential_of(request, hub_dir)
+            kind = {"api-key": "api_key", "app-jwt": "app_jwt"}.get(via)
+            out = api_runs.start(path, payload.workflow, email=email, account=account, inputs=payload.inputs,
+                                 confirm=payload.confirm,
+                                 idempotency_key=request.headers.get("idempotency-key"),
+                                 credential=(kind, credential_id) if kind else None)
+        except api_runs.RunRefused as exc:
+            return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status)
+        body = {**out, "hub": key,
+                "result": f"/portal/api/my/runs?hub={quote(key)}&run_id={quote(out['run_id'])}"}
+        return JSONResponse(body, status_code=202 if out["created"] else 200)
+
     @router.get("/my/schedules/{schedule_id}")
     @_denied
     def my_schedule_edit(schedule_id: str, hub: str, request: Request):
@@ -1146,29 +1194,89 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         surface: str | None = None,
         since: str | None = None,
         until: str | None = None,
+        kind: Literal["access", "tool", "auth", "all"] = "access",
+        result: Literal["ok", "error"] | None = None,
         admin=Depends(require_admin),
     ):
+        """Activity: restricted-tool decisions (``kind=access``, as before),
+        every tool call and sign-in event (``tool``, ``auth``, stored when
+        ``HUBZOID_AUDIT`` includes ``db``), or all of them together."""
+        from . import audit_log
         from .access import audit as auditlib
 
+        if kind == "auth" and not admin.is_org_admin:
+            raise HTTPException(403, "Sign-in events need an organization administrator.")
         decision = outcome if outcome in ("allow", "deny") else ("deny" if denied else None)
         # Filters are applied inside read() before the tail cut, so paging is over
         # the filtered set. `selected()` keeps every hub within the admin's scope.
-        rows = [
-            dict(r, hub=h["key"])
-            for h in selected(admin, hub)
-            for r in auditlib.read(
-                Path(h["path"]),
-                limit=limit + offset,
-                user=user,
-                decision=decision,
-                tool=tool,
-                surface=surface,
-                since=since,
-                until=until,
-            )
-        ]
+        rows = []
+        for h in selected(admin, hub):
+            if kind in ("access", "all") and not result:
+                rows += [dict(r, hub=h["key"], kind="access")
+                         for r in auditlib.read(Path(h["path"]), limit=limit + offset, user=user,
+                                                decision=decision, tool=tool, surface=surface,
+                                                since=since, until=until)]
+            if kind != "access":
+                kinds = ((("tool", "auth") if admin.is_org_admin else ("tool",)) if kind == "all"
+                         else (kind,))
+                try:
+                    events = audit_log.read_events(Path(h["path"]), kinds=kinds, limit=limit + offset,
+                                                   user=user, decision=decision, outcome=result, tool=tool,
+                                                   surface=surface, since=since, until=until)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc))
+                for e in events:
+                    e = dict(e, hub=h["key"])
+                    e["user"] = e.pop("subject", None) or e.get("actor")
+                    e["ts"] = e["ts"][:19] + "+00:00"
+                    rows.append(e)
         rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
-        return {"rows": rows[offset : offset + limit]}
+        return {"rows": rows[offset : offset + limit], "stored": audit_log.modes() >= {"db"}}
+
+    @router.get("/audit/export")
+    def audit_export(
+        hub: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        kind: str = "tool,access,admin,auth",
+        limit: int = Query(100000, ge=1, le=1000000),
+        admin=Depends(require_admin),
+    ):
+        """Every stored audit record in the window, oldest first, one JSON
+        object per line (the same records the audit log lines carry). For a
+        backfill into a SIEM or an investigation. Admin and sign-in events for
+        the whole organization need an organization administrator."""
+        from fastapi.responses import StreamingResponse
+
+        from . import audit_log
+        import json as _json
+
+        kinds = tuple(k.strip() for k in kind.split(",") if k.strip())
+        unknown = [k for k in kinds if k not in audit_log.KINDS]
+        if unknown or not kinds:
+            raise HTTPException(422, f"kind must be some of {', '.join(audit_log.KINDS)}")
+        scope = [h["key"] for h in selected(admin, hub)]
+        if not scope:
+            raise HTTPException(404, "No agent here that you manage.")
+        if not admin.is_org_admin and {"admin", "auth"} & set(kinds):
+            kinds = tuple(k for k in kinds if k not in ("admin", "auth"))
+            if not kinds:
+                raise HTTPException(403, "Admin and sign-in events need an organization administrator.")
+        try:
+            records = audit_log.export(hub_dir, kinds=kinds, since=since, until=until,
+                                       hubs=None if (admin.is_org_admin and not hub) else scope, limit=limit)
+            first = next(records, None)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+
+        def lines():
+            if first is not None:
+                yield _json.dumps(first, default=str, ensure_ascii=False) + "\n"
+            for record in records:
+                yield _json.dumps(record, default=str, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson", headers={
+            "Content-Disposition": 'attachment; filename="hubzoid-audit.jsonl"', "Cache-Control": "no-store"})
 
     @router.get("/access-changes")
     def changes(
@@ -1390,6 +1498,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 active_users=u.get("active_users", 0),
                 input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
                 cost_usd=u.get("cost_usd"), unpriced=u.get("unpriced", 0),
+                errors=u.get("errors", 0),
                 last_activity=u.get("last_activity"),
                 users_with_access=len(subjects - {"*"}),
                 everyone="*" in subjects,
@@ -1430,6 +1539,57 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     recording_since=usage["recording_since"], has_workflows=bool(with_work),
                     runs_available=runs_ok, totals=totals, hubs=rows,
                     user_accounts=user_accounts)
+
+    _BUCKETS = {"24h": 3600, "7d": 86400, "30d": 86400}
+
+    def _usage_scope(admin, hub: str | None) -> dict[str, str]:
+        """Hub name -> key for the hubs this admin sees, or just `hub` (404
+        when it is not one of them, so a delegate learns nothing of others)."""
+        scope = {Path(h["path"]).name: h["key"] for h in allowed_hubs(admin)}
+        if not hub:
+            return scope
+        picked = {name: key for name, key in scope.items() if key == hub}
+        if not picked:
+            raise HTTPException(404, "no such agent")
+        return picked
+
+    @router.get("/usage")
+    def usage_insights(period: str = "7d", hub: str | None = None, admin=Depends(require_admin)):
+        """The Usage page: totals with the previous period, tokens and cost
+        over time, by channel, by origin, by model, by agent and response
+        times, from hz_usage. Workflow runs, missed slots and accounts stay
+        on /summary."""
+        import time as _time
+
+        from . import db
+        from . import usage as usage_lib
+
+        if period not in _PERIODS:
+            raise HTTPException(422, "period must be one of 24h, 7d, 30d")
+        now = _time.time()
+        scope = _usage_scope(admin, hub)
+        data = usage_lib.insights(db.operational_engine(hub_dir), scope, now - _PERIODS[period], now,
+                                  _BUCKETS[period])
+        return dict(period=period, hub=hub, generated=now, **data)
+
+    @router.get("/usage/people")
+    def usage_people(period: str = "7d", hub: str | None = None, q: str = "", sort: str = "cost",
+                     order: str = "desc", page: int = 0, size: int = 8, admin=Depends(require_admin)):
+        """Who used the agents in the period, searched, sorted and paged."""
+        import time as _time
+
+        from . import db
+        from . import usage as usage_lib
+
+        if period not in _PERIODS:
+            raise HTTPException(422, "period must be one of 24h, 7d, 30d")
+        size = max(1, min(int(size), 100))
+        now = _time.time()
+        scope = _usage_scope(admin, hub)
+        data = usage_lib.people(db.operational_engine(hub_dir), scope, now - _PERIODS[period], now,
+                                q=q[:200], sort=sort, descending=order != "asc",
+                                offset=max(0, int(page)) * size, limit=size)
+        return dict(period=period, page=max(0, int(page)), size=size, **data)
 
     @router.get("/overview")
     def overview(admin=Depends(require_admin)):

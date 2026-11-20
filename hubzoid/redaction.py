@@ -41,11 +41,23 @@ _URL_CREDENTIAL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+(?::[^/\s
 _TOKEN_SHAPES = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
     r"|xox[abposr]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}"
-    r"|AKIA[0-9A-Z]{16})\b")
-# One-time sign-in values in URLs and access-log lines.
+    r"|AKIA[0-9A-Z]{16}|hz[pb]_[A-Za-z0-9_-]{16,})\b")
+# Credentials in URLs and access-log lines (sign-in values, ``?api_key=``).
+
+
+def _query_value(match: "re.Match") -> str:
+    """A query value, redacted when its (percent-decoded) name is a credential's."""
+    from urllib.parse import unquote
+
+    name = unquote(match.group(2)).strip().lower()
+    if match.group(3) and (is_secret_key(name) or name in {"code", "state", "key", "signature", "sig"}):
+        return f"{match.group(1)}{match.group(2)}={REDACTED}"
+    return match.group(0)
+
+
 _URL_PATTERNS = (
     (re.compile(r"(/api/auth/link/)[^/?#\s\"']+"), r"\1" + REDACTED),
-    (re.compile(r"([?&](?:token|code|state)=)[^&#\s\"']+"), r"\1" + REDACTED),
+    (re.compile(r"([?&])([^=&#\s\"']{1,80})=([^&#\s\"']*)"), _query_value),
 )
 
 

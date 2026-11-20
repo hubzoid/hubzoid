@@ -32,7 +32,8 @@ OWNER = "admin@localhost"
 _ENV = ("HUBZOID_UI", "HUBZOID_AUTH", "WEBUI_AUTH", "HUBZOID_PUBLIC_URL", "WEBUI_URL",
         "HUBZOID_ALLOWED_ORIGINS", "HUBZOID_SECRET_KEY", "DATABASE_URL", "HUBZOID_OPERATIONAL_DB",
         "HUBZOID_DEPLOYMENT", "HUBZOID_RESTRICTED_SURFACES", "OWUI_NATIVE_MCP",
-        "HUBZOID_CONNECT_JOURNEY", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER")
+        "HUBZOID_CONNECT_JOURNEY", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER",
+        "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")
 
 
 def clean_env(monkeypatch) -> None:
@@ -285,6 +286,9 @@ class OAuthMcp:
         self._mp.setenv("HUBZOID_OWUI_DB", str(owui))
         self._mp.setenv("MCP_SERVER", "true")
         self._mp.setenv("MCP_PUBLIC_URL", self.url)
+        # One JSON-RPC call per request, no session (the module fixture starts
+        # before conftest's per-test MCP_STATELESS).
+        self._mp.setenv("MCP_STATELESS", "true")
         # The consent page's login check: the browser below carries this cookie.
         self._mp.setattr(session, "verified_email", lambda req, hub_dir=None, **kw: (
             self.email if req.cookies.get("token") == "owui-session" else ""))

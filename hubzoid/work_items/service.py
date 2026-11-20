@@ -66,6 +66,8 @@ def _can(hub_dir, actor: str, permission: str) -> bool:
 
 def _audit(hub_dir, actor: str, action: str, subject: str, *, surface: str | None = None,
            request_id: str | None = None) -> None:
+    """``request_id`` also carries the key behind a decision (``api-key:<id>``),
+    so two keys of one account stay apart in the audit."""
     try:
         _gs(hub_dir).audit_event(actor, action, subject=subject, hub=_hub(hub_dir),
                                  surface=surface, request_id=request_id)
@@ -493,7 +495,7 @@ def reconcile_stranded(hub_dir) -> int:
 
 
 def approve(hub_dir, op_id: str, actor: str, *, digest: str, expected_revision: int | None = None,
-            surface: str | None = None) -> dict:
+            surface: str | None = None, credential: str | None = None) -> dict:
     """A person approves the exact content of a waiting operation, then the
     work continues and sends it once."""
     row = store.get_op(hub_dir, op_id)
@@ -511,14 +513,15 @@ def approve(hub_dir, op_id: str, actor: str, *, digest: str, expected_revision: 
     rev = expected_revision if expected_revision is not None else row["revision"]
     row = store.update_op(hub_dir, op_id, expected_revision=rev,
                           approval_json={"digest": digest, "approver": _norm(actor), "at": store.now(),
-                                         "target_version": row.get("target_version")})
-    _audit(hub_dir, actor, "operation_approve", op_id, surface=surface)
+                                         "target_version": row.get("target_version"),
+                                         **({"via": credential} if credential else {})})
+    _audit(hub_dir, actor, "operation_approve", op_id, surface=surface, request_id=credential)
     item = _resume_after_decision(hub_dir, row)
     return {"operation": ops_lib.view(row, full=True), "work_item": _view(item, full=True) if item else None}
 
 
 def deny(hub_dir, op_id: str, actor: str, *, reason: str = "", expected_revision: int | None = None,
-         surface: str | None = None) -> dict:
+         surface: str | None = None, credential: str | None = None) -> dict:
     row = store.get_op(hub_dir, op_id)
     if row is None or row["hub"] != _hub(hub_dir):
         raise not_found("operation")
@@ -530,15 +533,16 @@ def deny(hub_dir, op_id: str, actor: str, *, reason: str = "", expected_revision
     rev = expected_revision if expected_revision is not None else row["revision"]
     row = store.update_op(hub_dir, op_id, expected_revision=rev, state="abandoned",
                           resolution_json={"decision": "deny", "by": _norm(actor), "at": store.now(),
-                                           "reason": (reason or "")[:500]})
-    _audit(hub_dir, actor, "operation_deny", op_id, surface=surface)
+                                           "reason": (reason or "")[:500],
+                                           **({"via": credential} if credential else {})})
+    _audit(hub_dir, actor, "operation_deny", op_id, surface=surface, request_id=credential)
     item = _stop_item(hub_dir, row, "approval_denied", "The person who asked for this work denied the action.")
     return {"operation": ops_lib.view(row, full=True), "work_item": _view(item, full=True) if item else None}
 
 
 def resolve(hub_dir, op_id: str, actor: str, *, decision: str, evidence=None,
             acknowledge_duplicate_risk: bool = False, expected_revision: int | None = None,
-            surface: str | None = None) -> dict:
+            surface: str | None = None, credential: str | None = None) -> dict:
     """The requester decides an ambiguous operation: done (with evidence),
     retry (accepting the risk of a duplicate) or abandon."""
     row = store.get_op(hub_dir, op_id)
@@ -560,7 +564,7 @@ def resolve(hub_dir, op_id: str, actor: str, *, decision: str, evidence=None,
     rev = expected_revision if expected_revision is not None else row["revision"]
     resolution = {"decision": decision, "by": _norm(actor), "at": store.now(),
                   "evidence": redaction.redact(evidence) if evidence else None,
-                  "attested": decision == "done"}
+                  "attested": decision == "done", **({"via": credential} if credential else {})}
     if decision == "done":
         row = store.update_op(hub_dir, op_id, expected_revision=rev, expect_state=("ambiguous",),
                               state="resolved_done", resolution_json=resolution,
@@ -572,7 +576,7 @@ def resolve(hub_dir, op_id: str, actor: str, *, decision: str, evidence=None,
     else:
         row = store.update_op(hub_dir, op_id, expected_revision=rev, expect_state=("ambiguous",),
                               state="abandoned", resolution_json=resolution)
-    _audit(hub_dir, actor, f"operation_resolve_{decision}", op_id, surface=surface)
+    _audit(hub_dir, actor, f"operation_resolve_{decision}", op_id, surface=surface, request_id=credential)
     if decision == "abandon":
         item = _stop_item(hub_dir, row, "operation_abandoned", "The person who asked for this work abandoned "
                           "an operation whose outcome was unknown.")

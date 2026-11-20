@@ -86,7 +86,7 @@ def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bo
 
             personal.after_run(hub_dir, hub, env, run_id, ok=ok, cause=cause,
                                published=list(published or []))
-        elif trigger == "tool" and ok and env.get("acts_as"):
+        elif trigger in ("tool", "api") and ok and env.get("acts_as"):
             from .personal import email_on
 
             started = env.get("started_at") or 0

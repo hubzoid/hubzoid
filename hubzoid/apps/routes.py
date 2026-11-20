@@ -72,7 +72,7 @@ def _request_identity(hub_dir: Path, request: Request, run_id: str):
     try:
         record = run_identity.admit_or_refuse(
             hub_dir, run_kind="chat", run_id=run_id, acts_as_id=user.id, acts_as_email=user.email,
-            started_from="chat", person_present=user.credential != "api_key",
+            started_from="chat", person_present=not user.via_key,
             credential_kind=user.credential, credential_id=user.credential_id)
     except run_identity.NotAdmitted as exc:
         raise WorkItemError("unavailable", str(exc), status=503, retryable=True) from None

@@ -125,6 +125,18 @@ def get_chat_id() -> str | None:
 # of the prompt text.
 _current_images: ContextVar[tuple[str, ...]] = ContextVar("hubzoid_images", default=())
 
+# The address of the person this request came from, as the bridge sees it
+# (behind the edge: the address the edge forwarded). For audit records.
+_current_client: ContextVar[str | None] = ContextVar("hubzoid_client", default=None)
+
+
+def set_client(address: str | None):
+    return _current_client.set(address or None)
+
+
+def get_client() -> str | None:
+    return _current_client.get()
+
 
 @contextmanager
 def image_scope(names) -> Iterator[None]:
@@ -160,6 +172,18 @@ def record_artifact(name: str, url: str) -> None:
         items = []
         _current_artifacts.set(items)
     items.append({"name": name, "url": url})
+
+
+@contextmanager
+def artifact_capture() -> Iterator[list]:
+    """Collect the files recorded inside the block (``record_artifact``), for a
+    caller outside a chat run (the hosted MCP server)."""
+    items: list = []
+    token = _current_artifacts.set(items)
+    try:
+        yield items
+    finally:
+        _current_artifacts.reset(token)
 
 
 def drain_artifacts() -> list:
@@ -324,6 +348,29 @@ def tool_result_recorder() -> Iterator[dict]:
         _current_tool_results.reset(token)
 
 
+# Guardrail decisions made during this request, recorded ONLY when the eval
+# runner listens (`guard_recorder`). A list mutated in place.
+_current_guards: ContextVar[list | None] = ContextVar("hubzoid_guards", default=None)
+
+
+def note_guard(decision: dict) -> None:
+    """Record one guardrail decision, if a recorder is active. No-op otherwise."""
+    holder = _current_guards.get()
+    if holder is not None:
+        holder.append(dict(decision))
+
+
+@contextmanager
+def guard_recorder() -> Iterator[list]:
+    """Record the guardrail decisions made inside the block (`hubzoid.guardrails`)."""
+    items: list = []
+    token = _current_guards.set(items)
+    try:
+        yield items
+    finally:
+        _current_guards.reset(token)
+
+
 @contextmanager
 def tool_call_recorder() -> Iterator[list]:
     """Record every tool call made inside the block into the yielded list.
@@ -366,12 +413,21 @@ class SessionSlot:
     Codex thread, OpenAI Session). ``resume_id`` and ``delta_prompt`` come in:
     a runtime that can resume sends only the new turn into that session; any
     other runtime ignores the slot and uses the full prompt. ``session_id``
-    goes out: the session the run ended in, for the next turn of the branch."""
+    goes out: the session the run ended in, for the next turn of the branch.
+    ``resume_cost`` comes in and ``session_cost`` goes out the same way: the
+    session's running cost as the runtime reported it, so a runtime that
+    reports a resumed session's total (Claude Code) records only the turn."""
 
     def __init__(self, resume_id: str | None = None, delta_prompt: str | None = None,
-                 images: list[str] | None = None, delta_images: list[str] | None = None):
+                 images: list[str] | None = None, delta_images: list[str] | None = None,
+                 resume_cost: float | None = None):
         self.resume_id = resume_id
         self.delta_prompt = delta_prompt
+        self.resume_cost = resume_cost if resume_id else None
+        self.session_cost: float | None = None
+        #: the person's new text this turn (their message and any refinement),
+        #: what the guardrails check (``hubzoid.guardrails``). None: the prompt.
+        self.new_input: str | None = None
         #: the branch's images (``delta_images``: the new turn's only), see ``turn_images``.
         self.images = images
         self.delta_images = delta_images or []
@@ -429,3 +485,12 @@ def native_session_scope(slot: SessionSlot | None) -> Iterator[None]:
         yield
     finally:
         _current_session_slot.reset(token)
+
+
+# An MCP sub-agent handover's own run id: the requests its run creates carry it,
+# so only they are withdrawn when the run ends (``mcp_parity._left_waiting``).
+_DELEGATE_RUN: "ContextVar[str | None]" = ContextVar("hubzoid_delegate_run", default=None)
+
+
+def delegate_run() -> "str | None":
+    return _DELEGATE_RUN.get()

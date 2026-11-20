@@ -307,6 +307,82 @@ function createFixture() {
     return [...state.catalogs[hub], ...stale.map(obsoletePerm)];
   }
 
+  // The Usage page (GET /usage, /usage/people): synthetic numbers that scale
+  // with the period like /summary, so switching the period changes them.
+  const USAGE = {
+    finance: { messages: 48, chats: 12, people: 5, input: 182000, output: 24100, cost: 1.84, unpriced: 0, errors: 2, p50: 9400, p95: 38000 },
+    support: { messages: 95, chats: 30, people: 11, input: 410000, output: 61000, cost: 3.9, unpriced: 3, errors: 1, p50: 6800, p95: 21000 },
+  };
+  const PERIOD_SECONDS = { "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400 };
+  const SCALE = { "24h": 1, "7d": 6, "30d": 22 };
+  function usageScope(a, params) {
+    let hubs = allowedHubs(a);
+    if (params.hub) {
+      hubs = hubs.filter((h) => h.key === params.hub);
+      if (!hubs.length) throw error(404, "no such agent");
+    }
+    return hubs;
+  }
+  function usageTotals(rows, k = 1) {
+    const sum = (f) => rows.reduce((n, r) => n + f(r), 0);
+    const input = Math.round(sum((r) => r.input) * k), output = Math.round(sum((r) => r.output) * k);
+    const messages = Math.round(sum((r) => r.messages) * k);
+    return {
+      calls: Math.round(messages * 2.5), messages, chats: Math.round(sum((r) => r.chats) * k), people: Math.round(sum((r) => r.people) * Math.min(k, 1.6)),
+      input_tokens: input, output_tokens: output, cache_read_tokens: Math.round(input * 0.55), cache_write_tokens: Math.round(input * 0.04),
+      reasoning_tokens: Math.round(output * 0.04), cost_usd: Math.round(sum((r) => r.cost) * k * 100) / 100,
+      unpriced: Math.round(sum((r) => r.unpriced) * k), errors: Math.round(sum((r) => r.errors) * k), cancelled: 0,
+    };
+  }
+  function usageInsights(a, params) {
+    const period = params.period || "7d";
+    if (!PERIOD_SECONDS[period]) throw error(422, "period must be one of 24h, 7d, 30d");
+    const hubs = usageScope(a, params), k = SCALE[period];
+    const base = hubs.map((h) => ({ key: h.key, ...(USAGE[h.key] || { messages: 0, chats: 0, people: 0, input: 0, output: 0, cost: 0, unpriced: 0, errors: 0, p50: null, p95: null }) }));
+    const totals = usageTotals(base, k);
+    const bucket = period === "24h" ? HOUR : 86400, n = PERIOD_SECONDS[period] / bucket, since = NOW - PERIOD_SECONDS[period];
+    const weights = Array.from({ length: n }, (_, i) => 1 + ((i * 7) % 5) / 4);
+    const wsum = weights.reduce((x, y) => x + y, 0);
+    const share = (v, i) => Math.round((v * weights[i]) / wsum);
+    return {
+      period, hub: params.hub || null, generated: NOW, bucket, since, until: NOW, recording_since: NOW - 20 * 86400,
+      totals, previous: period === "30d" ? null : usageTotals(base, k * 0.9),
+      series: weights.map((_, i) => ({ start: since + i * bucket, input_tokens: share(totals.input_tokens, i), cache_read_tokens: share(totals.cache_read_tokens, i),
+        output_tokens: share(totals.output_tokens, i), cost_usd: Math.round(totals.cost_usd * weights[i] / wsum * 100) / 100,
+        p50_ms: totals.calls ? 7000 + (i % 3) * 600 : null, p95_ms: totals.calls ? 26000 + (i % 4) * 2500 : null })),
+      by_surface: [["web", 0.45], ["slack", 0.25], ["workflow", 0.2], ["mcp", 0.1]].map(([surface, f]) => ({
+        surface, calls: Math.round(totals.calls * f), messages: surface === "workflow" ? 0 : Math.round(totals.messages * f),
+        tokens: Math.round((totals.input_tokens + totals.output_tokens) * f), cost_usd: Math.round(totals.cost_usd * f * 100) / 100 })),
+      by_trigger: [["chat", 0.6], ["schedule", 0.2], ["manual", 0.1], ["mcp", 0.07], [null, 0.03]].map(([trigger, f]) => ({
+        trigger, calls: Math.round(totals.calls * f), cost_usd: Math.round(totals.cost_usd * f * 100) / 100 })),
+      by_model: [["claude-sonnet-4.5", 0.8, null], ["gpt-5-mini", 0.2, 0.3]].map(([model, f, reason]) => ({
+        model, calls: Math.round(totals.calls * f), input_tokens: Math.round(totals.input_tokens * f), output_tokens: Math.round(totals.output_tokens * f),
+        cache_read_tokens: Math.round(totals.cache_read_tokens * f), cache_write_tokens: 0,
+        reasoning_tokens: reason == null ? null : Math.round(totals.output_tokens * f * reason),
+        cost_usd: Math.round(totals.cost_usd * f * 100) / 100, unpriced: 0, errors: 0 })),
+      by_hub: base.filter((r) => r.messages).map((r) => ({ key: r.key, ...usageTotals([r], k), p50_ms: r.p50, p95_ms: r.p95 })),
+      latency: { first_token_p50_ms: totals.calls ? 1600 : null, p50_ms: totals.calls ? 7900 : null, p95_ms: totals.calls ? 31000 : null },
+    };
+  }
+  const USAGE_PEOPLE = Array.from({ length: 19 }, (_, i) => ({
+    subject: `person${String(i + 1).padStart(2, "0")}@example.com`, kind: "person", agents: [i % 3 ? "support" : "finance"],
+    messages: 40 - i * 2, tokens: 90000 - i * 4000, cost_usd: Math.round((2.4 - i * 0.11) * 100) / 100, last: NOW - i * HOUR,
+  })).concat([{ subject: "workflow:md:daily-close", kind: "schedule", agents: ["finance"], messages: 0, tokens: 120000, cost_usd: 1.95, last: NOW - 6 * HOUR }]);
+  function usagePeople(a, params) {
+    const period = params.period || "7d";
+    if (!PERIOD_SECONDS[period]) throw error(422, "period must be one of 24h, 7d, 30d");
+    const keys = new Set(usageScope(a, params).map((h) => h.key)), k = SCALE[period];
+    const q = String(params.q || "").trim().toLowerCase();
+    const by = { cost: "cost_usd", tokens: "tokens", messages: "messages", name: "subject", last: "last" }[params.sort || "cost"] || "cost_usd";
+    const dir = params.order === "asc" ? 1 : -1;
+    const rows = USAGE_PEOPLE.filter((r) => r.agents.some((x) => keys.has(x)))
+      .map((r) => ({ ...r, messages: r.messages * k, tokens: r.tokens * k, cost_usd: Math.round(r.cost_usd * k * 100) / 100 }))
+      .filter((r) => !q || r.subject.includes(q) || r.agents.some((x) => x.includes(q)))
+      .sort((x, y) => (x[by] > y[by] ? 1 : x[by] < y[by] ? -1 : 0) * dir);
+    const size = Number(params.size || 8), page = Number(params.page || 0);
+    return { period, page, size, total: rows.length, rows: rows.slice(page * size, (page + 1) * size) };
+  }
+
   async function handle(method, endpoint, params, body) {
     if (state.role === "none") throw error(401, "Sign in to continue.");
     // Signed-in non-admins have a personal workspace; only the admin APIs
@@ -378,7 +454,20 @@ function createFixture() {
         return { ok: true };
       }
     }
+    const budgets = endpoint.match(/^\/hubs\/([^/]+)\/budgets$/);
+    if (budgets && method === "GET") {
+      requireHub(a, budgets[1]);
+      const capped = budgets[1] === "finance";
+      return {
+        present: capped, revision: "r1", yaml: capped ? "version: 1\nlimits:\n  month:\n    max_cost_usd: 50\n" : "version: 1\nlimits: {}\n",
+        limits: capped ? { month: { max_cost_usd: 50 } } : {},
+        month: { key: "2026-11", input_tokens: 400000, output_tokens: 52000, cost_usd: capped ? "41.20" : "3.10", unpriced_calls: 0 },
+        reserved: { input_tokens: 0, output_tokens: 0, cost_usd: "0" }, open_reservations: [],
+      };
+    }
     switch (endpoint) {
+      case "/usage": return usageInsights(a, params);
+      case "/usage/people": return usagePeople(a, params);
       case "/me":
         return {
           web_app: state.webApp,
@@ -728,7 +817,7 @@ function createFixture() {
             chats: u.chats * scale, messages: u.messages * scale, active_users: u.active_users,
             input_tokens: u.input_tokens * scale, output_tokens: u.output_tokens * scale,
             cost_usd: u.cost_usd == null ? null : Math.round(u.cost_usd * scale * 100) / 100,
-            unpriced: u.unpriced * scale, last_activity: u.last_activity,
+            unpriced: u.unpriced * scale, errors: (h.key === "finance" ? 2 : h.key === "support" ? 1 : 0) * scale, last_activity: u.last_activity,
             users_with_access: [...subjects].filter((s) => s !== EVERYONE).length,
             everyone: subjects.has(EVERYONE),
             denials: u.denials * scale, has_workflows: flows.length > 0,

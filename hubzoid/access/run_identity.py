@@ -44,7 +44,7 @@ log = logging.getLogger("hubzoid.access")
 
 # Credentials checked again on every tool call (``evaluator.check_run``). An
 # MCP call is its own run and its token is checked on each request already.
-LIVE_CREDENTIALS = ("session", "api_key")
+LIVE_CREDENTIALS = ("session", "api_key", "app_jwt")
 KINDS = ("chat", "api", "mcp", "workflow", "schedule", "webhook", "eval")
 _metadata = sa.MetaData()
 records = sa.Table(

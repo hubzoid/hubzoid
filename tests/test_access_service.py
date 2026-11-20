@@ -159,7 +159,7 @@ def test_ceiling_matrix(dep):
     svc, gs = dep.svc, dep.gs
     full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev",
             "access_tools", "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links",
-            "chat_dictation", "chat_read_aloud", "chat_web_search", "chat_model_compare"}
+            "chat_dictation", "chat_read_aloud", "chat_web_search", "chat_model_compare", "mcp_delegates"}
     assert svc.ceiling(actor(ROOT), "finance") == full
     # A delegate: what they hold, never manage_access.
     assert svc.ceiling(actor(DELEGATE), "finance") == {"use_hub", "ledger"}

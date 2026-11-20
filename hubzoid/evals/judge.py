@@ -45,6 +45,8 @@ still.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import json
 import logging
 import os
@@ -149,6 +151,61 @@ def available_tools(rt) -> list[str]:
         names.append(short_name(str(allowed)))
 
     return list(dict.fromkeys(n for n in names if n))
+
+
+@dataclass(frozen=True)
+class ToolInventory:
+    """A built hub's tool names (short, lowercased), the MCP servers whose tools
+    are only known at run time, and whether those also appear under bare names."""
+    names: frozenset[str]
+    servers: frozenset[str] = frozenset()
+    bare_dynamic: bool = False
+
+
+def tool_inventory(rt, hub_dir=None) -> ToolInventory | None:
+    """The tools a built Runtime declares, on any backend (duck-typed like
+    `available_tools`), or None when its shape isn't known."""
+    from .. import handover
+    from ..tool_events import short_name
+
+    names: set[str] = set()
+    servers: set[str] = set()
+    bare_dynamic = False
+    known = False
+    registry = getattr(rt, "_registry", None)
+    if not isinstance(registry, dict):
+        registry = getattr(rt, "registry", None)
+    if isinstance(registry, dict):
+        known = True
+        names |= {short_name(str(n)).lower() for n in registry}
+    agent = getattr(rt, "_agent", None)
+    if agent is not None and hasattr(agent, "tools"):
+        known = True
+        names |= {short_name(str(t.name)).lower() for t in agent.tools or [] if getattr(t, "name", None)}
+        for server in getattr(agent, "mcp_servers", None) or []:
+            servers.add(str(getattr(server, "name", "") or "").lower())
+            bare_dynamic = True
+    options = getattr(rt, "_options", None)
+    if options is not None:
+        for allowed in getattr(options, "allowed_tools", None) or []:
+            text = str(allowed)
+            if text.startswith("mcp__") and text.endswith("__*"):
+                servers.add(text[len("mcp__"):-len("__*")].lower())
+            else:
+                names.add(short_name(text).lower())
+        for name in (getattr(options, "agents", None) or {}):
+            names.add(handover.tool_name(name))
+    if not known:
+        return None
+    if hub_dir is not None:
+        try:
+            from ..connectors import registry as connectors
+            from ..connectors.per_user import server_key
+
+            servers |= {server_key(cid).lower() for cid in connectors.definitions(hub_dir)}
+        except Exception:  # noqa: BLE001 - no connector files: nothing to add
+            pass
+    return ToolInventory(frozenset(n for n in names if n), frozenset(s for s in servers if s), bare_dynamic)
 
 
 def hidden_tools(rt) -> set[str]:
@@ -283,11 +340,10 @@ def parse_verdict(text: str) -> tuple[int | None, str]:
 def resolve_model(hub_dir: Path, override: str | None = None) -> str:
     """Judge model: `--judge-model` > HUBZOID_EVAL_JUDGE_MODEL > the hub's own."""
     explicit = (override or os.environ.get(JUDGE_MODEL_ENV) or "").strip()
-    if explicit:
-        return explicit
     from .. import runtime as runtime_lib
-    from .. import settings as settingslib
-    return runtime_lib._resolve_model_id(hub_dir, settingslib.load(hub_dir))
+
+    # A bare name (`opus`) follows the hub's provider, as everywhere else.
+    return runtime_lib.follow_hub(hub_dir, explicit or None)
 
 
 async def _ask_claude_local(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
@@ -307,12 +363,15 @@ async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
     """Single-turn call for any OpenAI/LiteLLM-routed model."""
     import litellm
 
-    from .. import budgets
+    from .. import budgets, usage as usage_lib
 
     kwargs = {}
     bound = budgets.output_bound(model_id, _SYSTEM + prompt)
     if bound is not None:
         kwargs["max_tokens"] = bound
+    from ..runtime import litellm_region
+
+    kwargs.update(litellm_region(model_id))
     resp = await litellm.acompletion(
         model=model_id,
         messages=[{"role": "system", "content": _SYSTEM},
@@ -327,7 +386,7 @@ async def _ask_litellm(model_id: str, prompt: str) -> tuple[str, dict]:
         cost = None
     return (resp.choices[0].message.content or "").strip(), {
         "input_tokens": getattr(u, "prompt_tokens", None), "output_tokens": getattr(u, "completion_tokens", None),
-        "cost_usd": cost, "model": model_id}
+        "cost_usd": cost, "model": model_id, **usage_lib.litellm_details(u)}
 
 
 async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
@@ -338,15 +397,17 @@ async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) 
 
     from .. import budgets, usage as usage_lib
 
+    from ..runtime import classify
+
+    on_claude = classify(model_id).engine == "claude"
     if hub_dir is None:
-        call = _claude_with_usage(model_id, prompt) if model_id.lower().startswith("claude-local") \
-            else _ask_litellm(model_id, prompt)
+        call = _claude_with_usage(model_id, prompt) if on_claude else _ask_litellm(model_id, prompt)
         return (await call)[0]
     ticket = await asyncio.to_thread(budgets.admit, hub_dir, model=model_id, run_id=f"eval-judge-{time.time()}")
     token = budgets._CURRENT.set(ticket)
     started, usage, status = time.monotonic(), {}, "error"
     try:
-        if model_id.lower().startswith("claude-local"):
+        if on_claude:
             text, usage = await _claude_with_usage(model_id, prompt, hub_dir=hub_dir)
         else:
             text, usage = await _ask_litellm(model_id, prompt)
@@ -359,7 +420,7 @@ async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) 
             model=(usage or {}).get("model") or model_id, input_tokens=(usage or {}).get("input_tokens"),
             output_tokens=(usage or {}).get("output_tokens"), cost_usd=(usage or {}).get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
-            reservation=ticket.id if ticket else None)
+            reservation=ticket.id if ticket else None, trigger="eval", **usage_lib.usage_details(usage))
 
 
 def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):

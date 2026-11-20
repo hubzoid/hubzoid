@@ -20,6 +20,7 @@ STABLE_IDS = {
     "secrets.names", "auth.google_merge",
     "ui.mode", "ui.openwebui_extra", "ui.openwebui_data", "exposure.local_mode", "deployment.key",
     "tools.legacy_management_flag", "access.who", "mcp.access_group", "tools.schemas", "files.s3",
+    "connectors.files", "agents.mode",
 }
 
 
@@ -31,7 +32,8 @@ def hub(tmp_path, monkeypatch):
     for k in ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
               "MODEL", "WEBUI_AUTH", "WEBUI_SECRET_KEY", "HUBZOID_HOST", "BRIDGE_API_KEYS",
               "HUBZOID_UI", "HUBZOID_AUTH", "HUBZOID_SECRET_KEY", "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK",
-              "HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "WEBUI_URL"):
+              "HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "WEBUI_URL",
+              "HUBZOID_ALLOWED_ORIGINS"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     from hubzoid import access, migrations
@@ -254,3 +256,44 @@ def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
     assert _by_id(doc.run(hub))["access.who"].summary == "2 people may use hub"
     monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
     assert _by_id(doc.run(hub))["mcp.access_group"].status == "warn"
+
+
+def test_connector_files_that_do_not_load_are_named(hub):
+    """A connector file the loader leaves out (a hyphen in its name, a bad .yml)
+    used to leave doctor green while the connector was simply missing."""
+    folder = hub / "connectors"
+    folder.mkdir()
+    good = "name: Jira\nurl: https://jira-mcp.example.org/mcp\nsign_in: none\n"
+    (folder / "jira-cloud.yaml").write_text(good)
+    (folder / "helpdesk.yml").write_text("name: Desk\nurl: ftp://nope\n")
+    (folder / "tickets.yaml").write_text(good)
+    check = _by_id(doc._hub_checks(hub))["connectors.files"]
+    assert check.status == "warn" and "2 connector file(s)" in check.summary
+    joined = " ".join(check.detail)
+    assert "jira-cloud.yaml" in joined and "jira_cloud.yaml" in joined and "helpdesk.yml" in joined
+
+
+def test_the_network_opt_in_with_a_public_url_warns(hub, monkeypatch):
+    """With HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK a tunnel visitor is the owner again: say so."""
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.ngrok-free.app")
+    assert doc._local_mode_guard(auth_on=False).status == "warn"
+    monkeypatch.setenv("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", "true")
+    check = doc._local_mode_guard(auth_on=False)
+    assert check.status == "warn" and "act as the hub's owner" in check.summary
+
+
+def test_the_gateway_public_url_flag_counts_for_the_start_warning(monkeypatch, capsys):
+    for k in ("HUBZOID_PUBLIC_URL", "HUBZOID_ALLOWED_ORIGINS", "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK"):
+        monkeypatch.delenv(k, raising=False)
+    cli._note_public_url_in_local_mode(False, "https://hub.example")
+    assert "https://hub.example" in " ".join(capsys.readouterr().out.split())
+
+
+def test_a_public_url_recorded_by_the_gateway_counts(hub, monkeypatch):
+    """`hubzoid gateway --public-url` records the address in the deployment, not the env."""
+    from hubzoid import deployment
+
+    monkeypatch.setattr(deployment, "read", lambda hub_dir, *a, **k: {"public_url": "https://gw.example.org"})
+    check = doc._local_mode_guard(auth_on=False, hub=hub)
+    assert check.status == "warn" and "https://gw.example.org" in check.summary
+    assert doc._local_mode_guard(auth_on=False).status == "ok"

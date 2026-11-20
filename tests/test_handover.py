@@ -85,3 +85,87 @@ class TestScopedToolNames:
     def test_empty_whitelist_returns_all_available(self):
         out = handover.scoped_tool_names([], ["read_file", "write_artifact"])
         assert out == ["read_file", "write_artifact"]
+
+
+class TestSkillReason:
+    """Why a sub-agent is loaded as a skill, for doctor and the load-time log."""
+
+    @pytest.mark.parametrize("sub, hub, words", [
+        (None, "claude-local", "names no model"),
+        ("claude-local/opus", None, "over MCP"),
+        ("openrouter/anthropic/claude-haiku-4.5", "claude-local", "different engine"),
+        ("claude-local/sonnet", "claude-local", "same as the agent's"),
+        ("claude-local/opus", "claude-local/sonnet", ""),          # a delegate: no reason
+    ])
+    def test_reasons(self, sub, hub, words):
+        reason = handover.skill_reason(sub, hub)
+        assert (words in reason) and bool(reason) == bool(words)
+
+
+def _subagent(tmp_path, model):
+    from hubzoid.loaders import agents as agents_loader
+
+    hub = tmp_path / "hub"
+    (hub / "agents").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("---\nname: hub\n---\nMain.\n")
+    (hub / "agents" / "reset.md").write_text(
+        f"---\nname: reset\ndescription: Resets passwords.\nmodel: {model}\ntools: [read_knowledge]\n---\nReset.\n")
+    return hub, agents_loader.load_subagents(hub)[0]
+
+
+def test_the_mcp_path_does_not_warn_about_ignored_tools(tmp_path, caplog):
+    """Over MCP every sub-agent is a skill by design; its warning was the same
+    as a real misconfiguration's. The chat path still warns, with the reason."""
+    from hubzoid import factory
+
+    hub, _ = _subagent(tmp_path, "claude-local/opus")
+    with caplog.at_level(logging.WARNING, logger="hubzoid.loaders.agents"):
+        skills = factory._load_skills_and_promoted_agents(hub)
+    assert [s.spec.name for s in skills] == ["reset"]
+    assert not [r for r in caplog.records if "whitelist" in r.message]
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hubzoid.loaders.agents"):
+        factory._load_skills_and_delegates(hub, "claude-local/opus")
+    (record,) = [r for r in caplog.records if "whitelist" in r.getMessage()]
+    assert "same as the agent's" in record.getMessage()
+
+
+def test_doctor_says_which_subagents_lost_their_tools(tmp_path, monkeypatch):
+    from hubzoid import doctor
+
+    monkeypatch.setenv("MODEL", "claude-local")
+    hub, _ = _subagent(tmp_path, "openrouter/anthropic/claude-haiku-4.5")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.id == "agents.mode" and check.status == "warn"
+    (row,) = check.detail
+    assert row.startswith("reset: instructions for the main agent") and "different engine" in row
+
+    (hub / "agents" / "reset.md").write_text(
+        "---\nname: reset\ndescription: Resets.\nmodel: claude-local/opus\ntools: [read_knowledge]\n---\nReset.\n")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.status == "ok" and check.detail == ["reset: runs on its own, on claude-local/opus"]
+
+
+def test_doctor_reports_a_delegate_whose_model_cannot_be_built(tmp_path, monkeypatch):
+    """The OpenAI Agents factory loads such a delegate as a skill; doctor must not say it runs on its own."""
+    from hubzoid import doctor
+
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-sonnet-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-key")  # gitleaks:allow
+    hub, _ = _subagent(tmp_path, "anthropic/claude-haiku-4-5")
+    (check,) = doctor._subagent_checks(hub)
+    assert check.status == "warn" and any("could not be built" in d for d in check.detail)
+
+
+def test_doctor_prints_how_each_subagent_runs_when_all_is_well(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    monkeypatch.setenv("MODEL", "claude-local")
+    hub, _ = _subagent(tmp_path, "claude-local/opus")
+    out = " ".join(CliRunner().invoke(app, ["doctor", str(hub), "--skip-secret-fetch"]).output.split())
+    assert "reset: runs on its own, on claude-local/opus" in out

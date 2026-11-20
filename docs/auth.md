@@ -22,20 +22,22 @@ settings as described in [upgrading to 2.0](UPGRADING.md#upgrading-to-20-open-we
 
 ## Local mode
 
-Nothing to set. Every request that addresses this machine is the **local
-owner**, `admin@localhost`, an administrator. That covers `localhost` and other
-`.localhost` names, IP addresses, the address the server listens on, and the
-addresses in `HUBZOID_PUBLIC_URL` and `HUBZOID_ALLOWED_ORIGINS`. A request
-that uses any other host name is not treated as the owner, which stops another
-web page from reaching your hub through DNS rebinding. If you open the hub
-through a tunnel or a LAN name, list that address in `HUBZOID_PUBLIC_URL` or
-`HUBZOID_ALLOWED_ORIGINS`.
+Nothing to set. A request made **on this machine** is the **local owner**,
+`admin@localhost`, an administrator: it is addressed to `localhost` or a
+loopback address, comes from this machine, carries no proxy or tunnel header
+(`X-Forwarded-For`, `Cf-Connecting-Ip` and the like), and any `Origin` is this
+machine too. Anything else gets no owner, so **a tunnel (ngrok, Cloudflare
+Tunnel) doesn't make its visitors the owner**; signed webhooks through it still
+work. To open the web app through a tunnel or a LAN name, turn sign-in on.
+
+A raw TCP forward (`ssh -R`) adds no header and looks like a local visit: turn
+sign-in on before you expose the port that way.
 
 Local mode keeps the public port on loopback. `hubzoid run --host 0.0.0.0`
 (or `HUBZOID_HOST`) without sign-in stops with exit code 2 and explains how to
 turn sign-in on. On a network you trust you can accept the risk with
 `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`: then anyone who can reach the
-port uses the hub as its owner.
+port uses the hub as its owner. Docker without sign-in needs this setting.
 
 The local owner never signs in with a password, a link or an external
 provider, including after you turn sign-in on.

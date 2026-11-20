@@ -215,14 +215,42 @@ def check_disk(hub: Path) -> Result:
     return Result("ok", f"{free_gb:.1f} GB free on the deployment disk.", details)
 
 
+def hub_model(hub: Path) -> str:
+    """The hub's model as the runtime resolves it (.env, then AGENTS.md), not
+    MODEL from the environment alone."""
+    try:
+        from .. import runtime, settings as settingslib
+
+        return runtime._resolve_model_id(Path(hub), settingslib.load(Path(hub))).strip()
+    except Exception:  # noqa: BLE001 - an unreadable hub: the environment decides
+        return (os.environ.get("MODEL") or "claude-local").strip()
+
+
 def check_model_auth(hub: Path, found: list | None = None) -> Result:
     """``found``: the logins already read (``logins.detect()``), so the CLIs
     aren't asked again."""
-    model = (os.environ.get("MODEL") or "claude-local").strip()
+    model = hub_model(hub)
     low = model.lower()
 
     def login_of(runtime: str, read):
         return read() if found is None else next((lg for lg in found if lg.runtime == runtime), None)
+
+    from .. import bedrock
+
+    if bedrock.is_bedrock(model):
+        from .. import doctor
+
+        results = bedrock.check(model, used_tiers=doctor.bedrock_used_tiers(hub))
+        bad = [t for st, t in results if st == "fail"]
+        details = {"runtime": "bedrock", "model": model, "checks": [t for _st, t in results]}
+        if bad:
+            return Result("fail", bad[0], details,
+                          "Set AWS_REGION and AWS credentials (a role, AWS_PROFILE or keys) in the hub's .env, grant "
+                          "the Bedrock IAM policy in docs/bedrock.md, then restart.", "model_signin")
+        from .. import factory_claude
+
+        note = factory_claude.ignored_key_note(None, bedrock=True)
+        return Result("ok", f"Amazon Bedrock: {results[0][1]}" + (f" {note}" if note else ""), details)
 
     if low.startswith("claude-local"):
         from .. import factory_claude, logins
@@ -276,8 +304,11 @@ def check_model_reply(hub: Path) -> Result:
     ok, reason = runtime.reply_check(hub, timeout=REPLY_SECONDS - 2)
     if ok:
         return Result("ok", "The model answered.")
-    return Result("fail", f"The model did not answer: {reason}", {}, "Check the model sign-in, then try again.",
-                  "model_reply")
+    fix = "Check the model sign-in, then try again."
+    if hub_model(hub).lower().startswith("bedrock/"):
+        fix = ("Check the IAM policy (bedrock:InvokeModel and InvokeModelWithResponseStream on the model and its "
+               "inference profile, see docs/bedrock.md) and the model's access in the Bedrock console, then try again.")
+    return Result("fail", f"The model did not answer: {reason}", {}, fix, "model_reply")
 
 
 def check_signin(hub: Path) -> Result:

@@ -127,7 +127,11 @@ function step(name) {
       for (const view of [{ width: 1440, height: 950 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(view);
         await go("/agents");
-        const last = page.getByRole("link", { name: "Open Agent 30", exact: true });
+        // Ten agents a page: the last row is on the last page.
+        await page.locator(".hz-agents-pager").waitFor();
+        await page.locator(".hz-agents-pager .ant-pagination-item").last().click();
+        await page.getByText("31 to 33 of 33").waitFor();
+        const last = page.locator(".hz-agent-row:not(.is-head) .hz-agent-row-link").last();
         await last.waitFor();
         await last.scrollIntoViewIfNeeded();
         const box = await last.boundingBox();
@@ -141,23 +145,42 @@ function step(name) {
     }
 
     // ---- landing -----------------------------------------------------------
-    step("Usage holds the five totals, with a period switch");
+    step("Usage: six totals, and the period and agent filter drive every section");
     await go("/usage");
     await page.getByRole("heading", { name: "Usage" }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "1440px usage page has no clipped content");
     const totals = page.getByRole("list", { name: "Totals" });
-    await totals.getByText("Across 924 conversations").waitFor();
-    assert.equal(await totals.getByRole("listitem").count(), 5);
+    await totals.getByText("Across 252 conversations").waitFor();          // 7 days is the default
+    assert.equal(await totals.getByRole("listitem").count(), 6);
     await totals.getByText("Workflow runs").waitFor();
-    const usersCard = totals.getByRole("listitem").filter({ hasText: "Users" });
-    await usersCard.getByText("42", { exact: true }).waitFor();
-    await usersCard.getByText("Across 3 agents", { exact: true }).waitFor();
+    const usersCard = totals.getByRole("listitem").filter({ hasText: "People active" });
+    await usersCard.getByText("Of 42 accounts", { exact: true }).waitFor();
     const boxes = await totals.getByRole("listitem").evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().top));
-    assert.ok(boxes.every(y => y === boxes[0]), "Five totals fit on one desktop row");
-    await page.getByText("7 days", { exact: true }).click();
-    await totals.getByText("Across 252 conversations").waitFor();
-    await usersCard.getByText("42", { exact: true }).waitFor();   // accounts do not depend on the period
-    assert.ok((await hash()).includes("period=7d"), await hash());
+    assert.ok(boxes.every(y => y === boxes[0]), "Six totals fit on one desktop row");
+    await page.getByRole("region", { name: "How it was used" }).getByText("Earlier, not tracked").waitFor();
+    await page.getByRole("region", { name: "By agent, last 7 days" }).getByRole("row").filter({ hasText: "Finance Assistant" }).getByText("288").waitFor();
+    await page.getByText("30 days", { exact: true }).click();
+    await totals.getByText("Across 924 conversations").waitFor();
+    await usersCard.getByText("Of 42 accounts", { exact: true }).waitFor();   // accounts do not depend on the period
+    await page.getByRole("note").getByText(/^Recording started/).waitFor();   // no full earlier 30 days
+    await page.getByRole("region", { name: "By agent, last 30 days" }).getByRole("row").filter({ hasText: "Finance Assistant" }).getByText("1,056").waitFor();
+    assert.ok((await hash()).includes("period=30d"), await hash());
+    await go("/usage?period=30d&agent=finance");
+    await totals.getByText("Across 264 conversations").waitFor();          // Finance alone: 12 chats x 22
+    await page.getByRole("region", { name: "Tokens over time" }).getByText("Table", { exact: true }).click();
+    await page.getByRole("region", { name: "Tokens over time" }).getByRole("columnheader", { name: "From cache" }).waitFor();
+    const people = page.getByRole("region", { name: "By person" });
+    await people.getByRole("textbox", { name: "Find a person" }).fill("person04");
+    await people.getByText("person04@example.com").waitFor();
+    assert.equal(await people.getByText("person05@example.com").count(), 0);
+    await people.getByRole("textbox", { name: "Find a person" }).fill("");
+    await go("/usage");
+    // People are paged on the server: page two shows the next people, not page one again.
+    await people.getByText("person01@example.com").waitFor();
+    await people.locator(".ant-pagination-item-2").click();
+    await people.getByText("person08@example.com").waitFor();
+    assert.equal(await people.getByText("person01@example.com").count(), 0);
+    await people.locator(".ant-pagination-item-1").click();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview.png"), fullPage: true });
 
     step("Agents lists every agent with what its folder holds and whether it needs attention");
@@ -1670,7 +1693,7 @@ function step(name) {
     await page.setViewportSize({ width: 390, height: 844 });
     await go("/usage");
     await page.getByRole("list", { name: "Totals" }).getByText("Messages", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("list", { name: "Totals" }).getByRole("listitem").count(), 5);
+    assert.equal(await page.getByRole("list", { name: "Totals" }).getByRole("listitem").count(), 6);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Mobile dashboard has no horizontal overflow");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview-mobile.png"), fullPage: true });
     await go("/agents/finance/access");

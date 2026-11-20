@@ -575,6 +575,11 @@ def run(
                                                            ".hubzoid next to hubzoid.yaml."),
     host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public port binds to (or HUBZOID_HOST env). 0.0.0.0 exposes it on the network, which needs sign-in (HUBZOID_AUTH=true). The bridge always stays on 127.0.0.1."),
     no_ui: bool = typer.Option(False, "--no-ui", hidden=True, help="One hub's own process under a supervisor."),
+    behind: str = typer.Option(None, "--behind", help="One hub only: run its bridge as its own service behind "
+                                                     "a Hubzoid deployment whose public address this is "
+                                                     "(for example https://hub.example.com). The deployment's "
+                                                     "hubzoid.yaml names this service in the hub's "
+                                                     "HUBZOID_BRIDGE_UPSTREAM. See docs/DEPLOYING.md."),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open the web app in a browser. It opens only from a terminal, on a loopback host."),
     slack: bool = typer.Option(
         False,
@@ -639,8 +644,8 @@ def run(
             console.print("[red]--bridge-port is for one hub. In a deployment, set BRIDGE_PORT in a hub's .env, "
                           "or leave it out and each hub gets a free port.[/red]")
             raise typer.Exit(2)
-        if no_ui:
-            console.print("[red]--no-ui runs one hub.[/red]")
+        if no_ui or behind:
+            console.print(f"[red]{'--behind' if behind else '--no-ui'} runs one hub.[/red]")
             raise typer.Exit(2)
         _refuse_channel_flags(slack, whatsapp, telegram, webhook)
         _run_deployment(targets, port=port, host=host, public_url=None, name="Hubzoid",
@@ -654,8 +659,10 @@ def run(
             raise typer.Exit(2)
         os.environ.update(values)
     hub = targets[0].resolve()
-    if not no_ui:
+    if not no_ui or behind:
         _refuse_channel_flags(slack, whatsapp, telegram, webhook)
+    if behind:
+        no_ui = True  # the deployment's edge is the public door
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
         # If the user is currently inside a hub folder, point that out.
@@ -707,11 +714,22 @@ def run(
     auth_on = appmode.auth_enabled(hub)
     if not no_ui:
         _refuse_unauthenticated_network(hub, host, auth_on)
+        _note_public_url_in_local_mode(auth_on)
     _check_openwebui_upgrade(hub, auth_on)
+
+    bridge_host = "127.0.0.1"
+    behind_env: dict[str, str] = {}
+    if behind:
+        behind_env, problems = _behind_plan(hub, behind, os.environ)
+        for problem in problems:
+            console.print(f"[red]{escape(problem)}[/red]")
+        if problems:
+            raise typer.Exit(2)
+        bridge_host = behind_env["HUBZOID_HOST"]
 
     # A health response from an already running hub is not readiness for this
     # child. Refuse occupied ports before starting anything or routing to it.
-    _ensure_port_available("127.0.0.1", br_port, "Bridge", "--bridge-port")
+    _ensure_port_available(bridge_host, br_port, "Bridge", "--bridge-port")
     if not no_ui:
         if br_port == ui_port:
             console.print("[red]Bridge and public ports must be different.[/red]")
@@ -740,12 +758,16 @@ def run(
         bridge_env.update(mcp_env)
         if settingslib.truthy(bridge_env.get("MCP_SERVER")):
             mcp_url = (bridge_env.get("MCP_PUBLIC_URL") or "").strip() or None
+    bridge_env.update(behind_env)
     bridge_cmd = [
         sys.executable, "-m", "uvicorn",
         "hubzoid.server:build_app", "--factory",
-        "--host", "127.0.0.1", "--port", str(br_port),
+        "--host", bridge_host, "--port", str(br_port),
         "--log-level", settings.log_level,
-    ]
+    ] + _forwarded_args(bridge_host, os.environ)
+    if behind:
+        _run_hub_service(hub, bridge_cmd, bridge_env, br_port=br_port, bridge_host=bridge_host)
+        return
     if no_ui:
         _run_hub_process(hub, bridge_cmd, bridge_env, br_port=br_port)
         return
@@ -862,6 +884,116 @@ def _refuse_channel_flags(slack: bool, whatsapp: bool, telegram: bool, webhook: 
                       + "".join(f"    {line}\n" for line in legacy.file_text(provider).splitlines()), highlight=False)
     console.print("Its secrets stay in the hub's .env. See docs/channels.md.")
     raise typer.Exit(2)
+
+
+def _bridge_host(env) -> str:
+    """Where a hub run as its own service (`run --behind`) listens:
+    HUBZOID_BRIDGE_HOST, else this machine only."""
+    return (env.get("HUBZOID_BRIDGE_HOST") or "").strip() or "127.0.0.1"
+
+
+def _forwarded_args(host: str, env) -> list[str]:
+    """uvicorn's --forwarded-allow-ips for a bridge on the network: the
+    deployment's edge (HUBZOID_TRUSTED_PROXIES), so sign-in limits and audit
+    records see each person's address, not the edge's. A bridge on loopback
+    keeps uvicorn's default (its edge is on this machine)."""
+    from . import appmode
+
+    raw = [x.strip() for x in (env.get("HUBZOID_TRUSTED_PROXIES") or "").split(",") if x.strip()]
+    if appmode.is_loopback_host(host) or not raw:
+        return []
+    return ["--forwarded-allow-ips", ",".join(raw)]
+
+
+def _behind_plan(hub: Path, behind: str, env) -> tuple[dict[str, str], list[str]]:
+    """What a hub run as its own service behind a deployment's edge
+    (`run <hub> --behind <public url>`) is told, as the edge would tell a
+    bridge it starts, and what stops it. Returns ``(env, problems)``."""
+    from urllib.parse import urlsplit
+
+    from . import appmode, deployment
+    from . import gateway as gateway_lib
+    from .inbound.routing import hub_slug
+
+    problems: list[str] = []
+    base = (behind or "").strip().rstrip("/")
+    try:
+        parts = urlsplit(base)
+        bad = (parts.scheme not in ("http", "https") or not parts.hostname or parts.username
+               or parts.password or parts.query or parts.fragment)
+    except ValueError:
+        bad = True
+    if bad:
+        problems.append("--behind needs the deployment's public address, for example https://hub.example.com.")
+    host = _bridge_host(env)
+    auth_on = appmode.auth_enabled(hub)
+    if not appmode.is_loopback_host(host):
+        if not auth_on and not settingslib.truthy(env.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
+            problems.append(f"Sign-in is off, so a bridge listening on {host} (HUBZOID_BRIDGE_HOST) would let "
+                            "anyone who reaches it use the hub as its owner. Turn sign-in on (HUBZOID_AUTH=true), "
+                            "or set HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true to accept that.")
+        if not (env.get("HUBZOID_TRUSTED_PROXIES") or "").strip():
+            problems.append(f"The bridge listens on {host}, so set HUBZOID_TRUSTED_PROXIES to the address or "
+                            "network of the deployment's edge (for example 10.0.0.0/16). Without it every "
+                            "person looks like the edge's address, and sign-in limits would lock everyone out.")
+        keys = (env.get("BRIDGE_API_KEYS") or gateway_lib._own_env_value(hub, "BRIDGE_API_KEYS") or "dev")
+        if "dev" in {k.strip() for k in keys.split(",")}:
+            problems.append("The bridge key is the public 'dev' and the bridge listens on the network. Set "
+                            "BRIDGE_API_KEYS in the hub's .env to a random value (the edge reads the same one).")
+    op_url = (env.get("HUBZOID_OPERATIONAL_DB") or env.get("DATABASE_URL") or "").strip()
+    if not op_url:
+        problems.append("Set DATABASE_URL (or HUBZOID_OPERATIONAL_DB) to the deployment's database: hubs behind "
+                        "one edge share accounts, sessions and conversations there.")
+    if not (env.get("HUBZOID_SECRET_KEY") or "").strip():
+        problems.append("Set HUBZOID_SECRET_KEY to the deployment's key (the edge's), so this hub can check who "
+                        "is asking and read the deployment's stored secrets.")
+    manifest = deployment.manifest_path(hub, env)
+    if manifest is None or not manifest.is_file():
+        problems.append("This hub can't find the deployment's manifest. Mount the edge's data folder (with "
+                        "deployment.json) at the same path in this service and set HUBZOID_DEPLOYMENT to its "
+                        "deployment.json, with the hub folder at the same path as on the edge.")
+    slug = hub_slug(hub, env)
+    out = {"HUBZOID_GATEWAY": "1", "HUBZOID_UI": appmode.UI_HUBZOID,
+           "HUBZOID_AUTH": "true" if auth_on else "false", "HUBZOID_HOST": host,
+           "HUBZOID_INBOUND_HOST": host, "HUBZOID_PUBLIC_URL": f"{base}/b/{slug}"}
+    mcp = gateway_lib._mcp_enabled(hub)
+    out["MCP_SERVER"] = "true" if mcp else "false"
+    if mcp:
+        out["MCP_PUBLIC_URL"] = gateway_lib._own_env_value(hub, "MCP_PUBLIC_URL") or f"{base}/b/{slug}/mcp"
+    if op_url:
+        out["HUBZOID_OPERATIONAL_DB"] = op_url
+    return out, problems
+
+
+def _run_hub_service(hub: Path, bridge_cmd, bridge_env, *, br_port: int, bridge_host: str) -> None:
+    """`run <hub> --behind <url>`: one hub's bridge and its 1.x channels as
+    their own service (an ECS task, a container). The deployment's edge routes
+    to it and checks its health. Ends when any of its processes ends, so the
+    platform restarts the service."""
+    from . import db as dblib
+
+    _migrate_first(dblib.operational_url(hub))
+    children: list = []
+    previous = _install_shutdown_handlers()
+    probe = "127.0.0.1" if bridge_host in ("0.0.0.0", "::") else bridge_host
+    probe = f"[{probe}]" if ":" in probe else probe
+    try:
+        console.print(f"[cyan]→ bridge[/cyan]  {escape(bridge_host)}:{br_port}  (hub: {hub.name}, "
+                      f"behind {escape(bridge_env.get('HUBZOID_PUBLIC_URL', ''))})")
+        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env, start_new_session=False)
+        children.append(bridge_proc)
+        if not _wait_for_bridge(bridge_proc, f"http://{probe}:{br_port}/healthz"):
+            console.print("[red]bridge failed to come up[/red]")
+            raise typer.Exit(1)
+        console.print("[green]→ bridge[/green]  ready")
+        for spec in _channel_specs(hub, bridge_env):
+            children.append(subprocess.Popen(spec.cmd, env=spec.env, start_new_session=False))
+        _wait_any(children)
+    finally:
+        try:
+            _stop_processes(children[::-1])
+        finally:
+            _restore_shutdown_handlers(previous)
 
 
 def _run_hub_process(hub: Path, bridge_cmd, bridge_env, *, br_port: int) -> None:
@@ -1020,6 +1152,19 @@ def _warn_retired(hub: Path) -> None:
         if not r.fatal:
             console.print(f"[yellow]{escape(Path(hub).name)}: {escape(r.name)} is an Open WebUI setting "
                           f"Hubzoid 2.0 no longer uses. {escape(r.advice)}[/yellow]")
+
+
+def _note_public_url_in_local_mode(auth_on: bool, public_url: str | None = None) -> None:
+    """Sign-in off with a public URL: say that visitors through it aren't the owner."""
+    from . import appmode
+
+    if auth_on or appmode.unauthenticated_network_allowed():
+        return
+    remote = appmode.non_local_origins(extra=public_url)
+    if remote:
+        console.print(f"[yellow]Sign-in is off: only this computer is the owner. Visitors through "
+                      f"{escape(', '.join(remote))} get no access (signed webhooks still arrive). "
+                      "To open the web app there, turn sign-in on (HUBZOID_AUTH=true).[/yellow]")
 
 
 def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None:
@@ -1311,7 +1456,7 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
     # Only inspect ports the gateway owns. Independently managed bridges are
     # verified by their health identity below, never stopped or taken over.
     owned_ports = [(host, ui_port, "Public", "--port")]
-    owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends]
+    owned_ports += [("127.0.0.1", b.bridge_port, "Bridge", "BRIDGE_PORT") for b in gp.backends if not b.external]
     if len({p for _, p, _, _ in owned_ports}) != len(owned_ports):
         console.print("[red]Gateway and bridge ports must be distinct.[/red]")
         raise typer.Exit(2)
@@ -1585,6 +1730,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
             "agent as the local owner.[/red] Turn sign-in on (HUBZOID_AUTH=true), bind to "
             "127.0.0.1, or set HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true to accept that.")
         raise typer.Exit(2)
+    _note_public_url_in_local_mode(auth_on, pub)
     if len(hub_dirs) > 1 and deployment_env.get('HUBZOID_DBOS_DB', '').startswith('sqlite'):
         console.print('[red]A multi-hub gateway requires separate SQLite DBOS files. Unset HUBZOID_DBOS_DB or use PostgreSQL.[/red]')
         raise typer.Exit(2)
@@ -1644,7 +1790,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
 
     procs: list[subprocess.Popen] = []
     previous = _install_shutdown_handlers()
-    bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
+    bridges = [b.bridge_url for b in gp.backends]
     try:
         _gateway_web_app_serve(gp=gp, procs=procs, bridges=bridges, process_env=process_env,
                                dep_secret=dep_secret, dep_values=dep_values, auth_on=auth_on,
@@ -1671,6 +1817,17 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     key = _deployment_bridge_key(gw_data)
     units = []
     for b in gp.backends:
+        if b.external:
+            # Its own service runs it (`hubzoid run <hub> --behind <url>`): the
+            # supervisor only checks its health, so the edge still answers
+            # "restarting" for it while it is down.
+            units.append(sup_lib.Unit(
+                name=b.hub_dir.name.lower(), slug=b.slug, hub_dir=b.hub_dir, specs=[], kind="external",
+                health_url=f"{b.upstream}/healthz",
+                identity=dict(expected_hub=b.hub_dir.name, expected_model=b.model_label),
+                bridge_url=b.upstream))
+            console.print(f"[cyan]→ {b.slug}[/cyan]  runs as its own service at {escape(b.upstream)}")
+            continue
         bridge_env = os.environ.copy()
         if dep_secret:
             # A bridge takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret and never
@@ -2438,7 +2595,7 @@ def doctor(
                 # Names and sources only. The report never holds a value.
                 for row in c.detail:
                     console.print(f"    [dim]{row['key']}: {row['layer']} ({row['source']})[/dim]")
-            elif c.status in ("warn", "fail") and isinstance(c.detail, list):
+            elif (c.status in ("warn", "fail") or c.id == "agents.mode") and isinstance(c.detail, list):
                 for line in c.detail:
                     console.print(f"    [dim]{line}[/dim]")
     if not result["ok"]:
@@ -2456,16 +2613,31 @@ def audit(
     denied: bool = typer.Option(False, "--denied", help="Show only denied attempts."),
     as_json: bool = typer.Option(False, "--json", help="Print the entries as JSON: "
                                  "{entries: [{ts, user, decision, tool, surface, reason}]}."),
+    export: bool = typer.Option(False, "--export", help="Write every stored audit record in the window as "
+                                "JSON lines, oldest first: tool calls, sign-in events, access decisions and "
+                                "admin changes. For a SIEM backfill or an investigation."),
+    since: str = typer.Option(None, "--since", help="With --export: from this time (ISO 8601, UTC if no zone)."),
+    until: str = typer.Option(None, "--until", help="With --export: up to this time."),
+    kind: str = typer.Option("tool,access,admin,auth", "--kind", help="With --export: which records."),
+    all_hubs: bool = typer.Option(False, "--all-hubs", help="With --export: every hub in the deployment's "
+                                  "database, not only this one."),
+    out: Path = typer.Option(None, "--out", help="With --export: write to this file instead of the output."),
+    export_limit: int = typer.Option(1000000, "--export-limit", help="With --export: at most this many records. "
+                                     "A last line says where to continue when more remain."),
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
     Reads the decision log the runtime writes to the operational database for
     every restricted tool call. Open WebUI does not record tool-level access, so
-    this is the only place it exists.
+    this is the only place it exists. `--export` writes every stored audit
+    record (see HUBZOID_AUDIT in docs/DEPLOYING.md) as JSON lines.
     """
     from .access import audit as auditlib
 
     hub = hub.resolve()
+    if export:
+        _audit_export(hub, since=since, until=until, kind=kind, all_hubs=all_hubs, out=out, limit=export_limit)
+        return
     rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
     if as_json:
         keys = ("ts", "user", "decision", "tool", "surface", "reason")
@@ -2485,6 +2657,46 @@ def audit(
             f"[dim]{r.get('surface', '')}·{r.get('reason', '')}[/dim]"
         )
     console.print(f"[dim]{len(rows)} entr{'y' if len(rows) == 1 else 'ies'} shown[/dim]")
+
+
+def _audit_export(hub: Path, *, since, until, kind: str, all_hubs: bool, out: Path | None,
+                  limit: int = 1000000) -> None:
+    from . import audit_log
+    from .access.identity import normalize
+
+    try:
+        settingslib.load(hub)  # the hub's .env: its database and HUBZOID_AUDIT
+    except Exception:  # noqa: BLE001 - the manifest or environment may still name the database
+        pass
+    kinds = tuple(k.strip() for k in kind.split(",") if k.strip())
+    unknown = [k for k in kinds if k not in audit_log.KINDS]
+    if unknown or not kinds:
+        console.print(f"[red]--kind takes some of: {', '.join(audit_log.KINDS)}[/red]")
+        raise typer.Exit(2)
+    try:
+        records = audit_log.export(hub, kinds=kinds, since=since, until=until,
+                                   hubs=None if all_hubs else [normalize(hub.name)], limit=max(1, limit))
+        first = next(records, None)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2)
+    fh = open(out, "w", encoding="utf-8") if out else sys.stdout
+    count = 0
+    try:
+        for record in ([first] if first is not None else []):
+            fh.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
+            count += 1
+        for record in records:
+            fh.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
+            count += 1
+    finally:
+        if out:
+            fh.close()
+    if out:
+        console.print(f"[green]{count} record(s)[/green] written to {escape(str(out))}")
+    if not audit_log.modes() >= {"db"}:
+        Console(stderr=True).print("[dim]Tool calls and sign-in events are stored only with HUBZOID_AUDIT=db or "
+                                   "both.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -3644,6 +3856,13 @@ _STARTER_ENV = """\
 # OPENAI_API_KEY=
 # MODEL=openai/gpt-4o-mini
 
+# --- Amazon Bedrock (your own AWS account; optional) --------------------------
+# Claude on Bedrock runs on the same Claude runtime, billed by AWS. Prefer an
+# instance or task role, or AWS_PROFILE, to access keys. See docs/bedrock.md.
+# MODEL=bedrock/sonnet          # or bedrock/opus, bedrock/haiku, a Bedrock id
+# AWS_REGION=ap-south-1         # required: the hub won't start without a region
+# AWS_PROFILE=
+
 # --- Jev decisions (hub.call_jev and the call_jev chat tool, experimental) --
 # A dedicated OpenRouter key used only for Jev. OPENROUTER_API_KEY above is
 # never used for Jev, and the chat model never uses this key. The chat tool
@@ -3930,6 +4149,7 @@ def eval_run(
     run_as: str = typer.Option(None, "--run-as", help="Run cases as this account (an email), with the workflow identity rules. A case's own run_as wins. Grants nothing."),
     junit: Path = typer.Option(None, "--junit", help="Also write a JUnit XML report to this file, for CI."),
     as_json: bool = typer.Option(False, "--json", help="Print the results as JSON (the same record as the results file) and nothing else."),
+    required: bool = typer.Option(False, "--required", help="Run exactly the cases quality/manifest.yaml requires, on the hub's own model: the CI release gate. Exit 2 when the manifest is missing, requires nothing, names no case, or a required case is off or checks nothing."),
 ) -> None:
     """Run the hub's eval cases. Exits non-zero if any fail — that is the CI gate.
 
@@ -3938,6 +4158,10 @@ def eval_run(
     (substrings, tool calls and their arguments) run first; a case with a
     `## Criteria` section is then graded by a model, but only if the free
     checks passed.
+
+    With `--required`, the run is exactly what `quality/manifest.yaml` asks for,
+    chosen as `hubzoid doctor` chooses it: exit 0 all passed, 1 a case failed,
+    2 the gate cannot be trusted (nothing ran).
     """
     import os
 
@@ -3951,8 +4175,22 @@ def eval_run(
         run_as = suite_lib.check_run_as(run_as)
     except EvalCaseError as exc:
         _eval_fail(f"--run-as: {exc}", 2, as_json)
-    selected = _load_cases(hub, tag, case, as_json=as_json)
+    if required:
+        from .evals import quality as quality_lib
+
+        if tag or case or no_judge or model:
+            _eval_fail("--required runs exactly what quality/manifest.yaml requires, with its judge, "
+                       "on the hub's own model, as doctor counts it: leave out --tag, --case, --no-judge "
+                       "and --model.", 2, as_json)
+        try:
+            selected = quality_lib.gate_cases(hub)
+        except quality_lib.QualityError as exc:
+            _eval_fail(str(exc), 2, as_json, "invalid_manifest")
+    else:
+        selected = _load_cases(hub, tag, case, as_json=as_json)
     out = _JsonQuiet(console) if as_json else console
+    if required:
+        out.print(f"[dim]required by quality/manifest.yaml: {len(selected)} case(s)[/dim]")
 
     judged = [c for c in selected if c.is_judged]
     out.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")
@@ -4249,6 +4487,10 @@ app.add_typer(handoffs_app, name="handoffs",
               rich_help_panel="Commands")
 
 from .budgets_cli import budgets_app  # noqa: E402
+from .mcp_signing_cli import mcp_app as _mcp_signing_app  # noqa: E402
+
+app.add_typer(_mcp_signing_app, name="mcp", help="The hosted MCP server's sign-in: signing keys.",
+              rich_help_panel="Commands")
 from .sandbox.cli import sandbox_app  # noqa: E402
 
 app.add_typer(budgets_app, name="budgets",

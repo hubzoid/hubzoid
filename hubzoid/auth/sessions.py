@@ -17,12 +17,8 @@ A session is created only if the account has not changed since its
 credential was read (``expect_updated_at``): a password reset, role or status
 change racing a sign-in can't leave a session that outlives it.
 
-Local mode (sign-in off): every request is the local owner, ``admin@localhost``.
-Because that owner is implicit, a request is only treated as the local owner
-when it names this server by ``localhost`` (or a ``.localhost`` name), an IP
-address, the address the server listens on, or one of the deployment's
-configured origins. A web page reaching the server through DNS rebinding names
-it by the attacker's host name and is refused.
+Local mode (sign-in off): only a request made on this machine is the local
+owner, ``admin@localhost`` (``local_request_allowed``; docs/auth.md).
 """
 from __future__ import annotations
 
@@ -122,6 +118,41 @@ def local_request_allowed(request: Request) -> bool:
     """Whether a request may act as the implicit local owner (see module doc).
     The listening address comes from the server socket (``scope["server"]``),
     which no request header can change."""
+    if appmode.unauthenticated_network_allowed():
+        return _network_request_allowed(request)
+    host = _host_name(request)
+    server = request.scope.get("server") or ()
+    listening = server[0].strip("[]").lower() if server and isinstance(server[0], str) else ""
+    peer = request.client.host if request.client is not None else None
+    origin = (request.headers.get("origin") or "").strip()
+    try:
+        origin_host = (urlparse(origin).hostname or "") if origin else ""
+    except ValueError:      # e.g. "http://[" : not a page of this machine
+        origin_host = ""
+    if host and not (appmode.is_loopback_name(host) or host == listening):
+        key, why = "local:host", f"addressed to {host[:100]!r}"
+    elif appmode.is_forwarded(request.headers):
+        key, why = "local:proxy", "that came through a proxy or tunnel"
+    elif peer is not None and not appmode.is_loopback_host(peer):
+        key, why = "local:peer", f"from {peer[:64]!r}"
+    elif origin and not (origin_host and (appmode.is_loopback_name(origin_host) or origin_host == host)):
+        # `Origin: null` (a sandboxed page, an agent-written artifact) proves nothing local.
+        key, why = "local:origin", f"from the page {origin[:100]!r}"
+    else:
+        return True
+    # Once per kind: a stream of internet visitors must not grow this set.
+    if key not in _warned_hosts:
+        _warned_hosts.add(key)
+        log.warning("auth: sign-in is off, so only this computer is the owner; a request %s was not "
+                    "treated as the owner. To use Hubzoid from another address, turn sign-in on "
+                    "(HUBZOID_AUTH=true).", why)
+    return False
+
+
+def _network_request_allowed(request: Request) -> bool:
+    """The wider rule under HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK: the Host is
+    ``localhost``, an IP address, the listening address or a configured
+    origin's name. Only a page using DNS rebinding (its own name) is refused."""
     host = _host_name(request)
     if not host or host == "localhost" or host.endswith(".localhost"):
         return True
@@ -263,9 +294,75 @@ def _key_user(request: Request, hub_dir: Path, token: str) -> AuthUser | None:
                     operations=info["operations"], hubs=hubs)
 
 
+def _unknown_jwt_bearer(request: Request) -> bool:
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return False
+    token = raw[7:].strip()
+    return not token.startswith("hzp_") and token.count(".") == 2
+
+
+def app_bearer(request: Request, hub_dir: Path) -> str:
+    """A machine JWT (``Authorization: Bearer <jwt>``) from a registered API
+    app (``apps:`` with an ``api:`` block), else "". Only routes the
+    credential: ``_app_user`` verifies it."""
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return ""
+    token = raw[7:].strip()
+    if token.startswith("hzp_") or token.count(".") != 2:
+        return ""
+    from ..embed import tokens
+
+    return token if tokens.api_app(Path(hub_dir), token) is not None else ""
+
+
+def _app_user(request: Request, hub_dir: Path, token: str) -> AuthUser:
+    """The account an API app's JWT acts as, within the app's operations. Like
+    a key, it never falls back to the cookie or the local owner, and a
+    refusal is final."""
+    from ..embed import tokens
+    from ..embed.config import AppsError
+    from . import api_keys
+
+    if request.cookies.get(SESSION_COOKIE):
+        raise HTTPException(status_code=400, detail={
+            "code": "ambiguous_credentials",
+            "message": "Send either a session cookie or a token, not both."})
+    try:
+        app, _claims = tokens.api_caller(Path(hub_dir), token)
+    except AppsError as exc:
+        status = exc.status if exc.status in (401, 403) else 503
+        raise HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
+    try:
+        from ..access import store_for
+        from . import users as userlib
+
+        account = userlib.find_by_email(Path(hub_dir), app.api.account)
+        suspended = account is not None and store_for(Path(hub_dir)).is_suspended(account["email"])
+    except (SQLAlchemyError, OSError, RuntimeError):
+        log.warning("auth: app token check failed (store unavailable)", exc_info=True)
+        raise HTTPException(status_code=503, detail=dict(_UNAVAILABLE))
+    if account is None or account.get("status") != "active" or suspended:
+        raise HTTPException(status_code=403, detail={
+            "code": "account_unavailable",
+            "message": f"The account this app acts as ({app.api.account}) can't be used. Ask an administrator."})
+    if not api_keys.allows(app.api.operations, request.method, request.url.path):
+        raise HTTPException(status_code=403, detail={
+            "code": "key_not_allowed",
+            "message": "This app's tokens can't do this. An administrator can add operations to its api block."})
+    from .. import audit_log
+
+    audit_log.app_token_used(app.id, account["email"])
+    return AuthUser(id=account["id"], email=account["email"], name=account["name"], role=account["role"],
+                    method="app_jwt", credential="app_jwt", credential_id=f"app:{app.id}",
+                    operations=app.api.operations, hubs=None)
+
+
 def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
     """Who is making this request, or None. A personal API key (bearer) is
-    checked first and never falls back to the cookie or the local owner.
+    checked first, then a machine JWT from an API app; neither ever falls back
+    to the cookie or the local owner.
     Local mode: the local owner."""
     hub_dir = Path(hub_dir)
     hit = _cached(request, hub_dir)
@@ -276,6 +373,17 @@ def resolve(request: Request, hub_dir: Path) -> AuthUser | None:
         user = _key_user(request, hub_dir, token)
         _remember(request, hub_dir, user)
         return user
+    machine = app_bearer(request, hub_dir)
+    if machine:
+        user = _app_user(request, hub_dir, machine)
+        _remember(request, hub_dir, user)
+        return user
+    if _unknown_jwt_bearer(request):
+        # A JWT-shaped bearer that is no API app's (an embedding pass, an MCP
+        # token, a stranger's token) is never the cookie's person or the
+        # local owner: those routes check it themselves, or refuse it.
+        _remember(request, hub_dir, None)
+        return None
     if not appmode.auth_enabled(hub_dir):
         user = local_owner(hub_dir) if local_request_allowed(request) else None
     else:

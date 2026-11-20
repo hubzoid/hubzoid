@@ -132,9 +132,12 @@ def run(hub_dir, env=None, port=None) -> int:
 
     bind_port = port or inbound_port(env)
     slug = hub_slug(hub_dir, env)
-    log.info("hubzoid inbound starting on 127.0.0.1:%s (hub=%s, public path /webhooks/%s/*)",
-             bind_port, Path(hub_dir).name, slug)
-    uvicorn.run(app, host="127.0.0.1", port=bind_port, log_level="info")
+    # A hub run as its own service (`run --behind`) is reached by the
+    # deployment's edge over the network; otherwise this machine only.
+    host = (env.get("HUBZOID_INBOUND_HOST") or "").strip() or "127.0.0.1"
+    log.info("hubzoid inbound starting on %s:%s (hub=%s, public path /webhooks/%s/*)",
+             host, bind_port, Path(hub_dir).name, slug)
+    uvicorn.run(app, host=host, port=bind_port, log_level="info")
     return 0
 
 

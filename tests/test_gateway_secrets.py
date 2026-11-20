@@ -220,7 +220,7 @@ def test_standalone_run_keeps_hub_only_layers_out_of_the_edge(tmp_path, monkeypa
                           "solo-hub": {"SOLO_HUB_SECRET": "solo-hub-secret-value"},
                           "solo-restricted": {"SOLO_RESTRICTED_SECRET": "solo-restricted-secret-value"}})
     cli.run(hubs=[hub], port=3090, bridge_port=8190, host="127.0.0.1", no_ui=False,
-            slack=False, whatsapp=False, telegram=False, webhook=False)
+            slack=False, whatsapp=False, telegram=False, webhook=False, behind=None)
 
     bridge = next(c["env"] for c in launched if "hubzoid.server:build_app" in c["cmd"])
     edge = next(c["env"] for c in launched if "hubzoid.edge:_factory" in c["cmd"])

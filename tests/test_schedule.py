@@ -812,15 +812,16 @@ def test_runtime_factory_passes_model_and_max_turns(tmp_path, monkeypatch):
     """The scheduled-run factory threads `task.model` into runtime.build."""
     captured = {}
 
-    def fake_build(hub_dir, *, extra_tools=None, max_turns=None, model=None):
+    def fake_build(hub_dir, *, extra_tools=None, max_turns=None, model=None, guardrails=True):
         captured.update(model=model, max_turns=max_turns,
-                        has_git="run_git" in (extra_tools or {}))
+                        has_git="run_git" in (extra_tools or {}), guardrails=guardrails)
         return object()
 
     monkeypatch.setattr("hubzoid.runtime.build", fake_build)
     t = _task(name="m", model="claude-local/opus", max_turns=17)
     runner._default_runtime_factory(tmp_path, t, lambda **k: None)
-    assert captured == {"model": "claude-local/opus", "max_turns": 17, "has_git": True}
+    # A scheduled task runs the hub's own prompt: no guardrails (hubzoid.guardrails).
+    assert captured == {"model": "claude-local/opus", "max_turns": 17, "has_git": True, "guardrails": False}
 
 
 def test_runtime_build_model_override_wins_over_env(tmp_path, monkeypatch):

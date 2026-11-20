@@ -86,13 +86,13 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
         "chat_dictation": "tools", "chat_read_aloud": "tools", "chat_web_search": "tools",
         "chat_model_compare": "tools",
         "workflows_view": "tools", "workflows_manage": "tools", "access_tools": "tools",
-        "schedule_reports": "tools", "share_domain_links": "tools",
+        "schedule_reports": "tools", "share_domain_links": "tools", "mcp_delegates": "tools",
         "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
     # Display order follows the drawer's groups (no empty Workflows group): the
     # agent's own tools first, Hubzoid tools last, and inside Hubzoid tools the
     # unsectioned rows, then Chat features, then Workflows, then Access control.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "ledger", "payroll", "manage_access", "curator", "jev", "share_public_links",
+        "use_hub", "ledger", "payroll", "manage_access", "curator", "jev", "mcp_delegates", "share_public_links",
         "chat_dictation", "chat_read_aloud", "chat_web_search", "chat_model_compare",
         "workflows_view", "workflows_manage", "schedule_reports", "share_domain_links", "access_tools"]
     assert [by[p]["section"] for p in ("curator", "chat_dictation", "workflows_view", "access_tools")] == [

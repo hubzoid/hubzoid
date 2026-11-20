@@ -41,16 +41,83 @@ Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
 * The caller needs `use_hub` to connect, plus the named grant for each
-  restricted capability. Saving shared knowledge (`remember`) is a chat
-  tool and is not offered over MCP.
+  restricted capability. Saving shared knowledge (`remember`) and the hub
+  change tools work as in chat: they need **Save shared knowledge** or
+  managing the hub, and in-app editing on. A manager's knowledge change
+  applies, anyone else's is reviewed in Settings, Hub changes.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
 
-Chat-scoped tools (`write_artifact`, `make_excel`, `make_pdf`, `make_word`, `read_upload`, …) are not exposed —
-they need a live chat to resolve their directories. Model-delegates are not
-exposed either: an MCP caller brings their own model; the hub does not spend
-inference for them.
+## What an assistant can do, next to chat
+
+| In chat | Over hosted MCP |
+|---|---|
+| Files (`write_artifact`, `make_excel`, `make_pdf`, `make_word`, `list_artifacts`) | The same tools, in the person's own file space. Each result has the download link and an MCP `resource_link` (`hubzoid-file://artifacts/<name>`) the assistant can read back. Only the person who made a file can read it. |
+| Attach a file | `upload_file` (text, or base64 for anything else, up to 2.5 MB). `read_upload`, `read_upload_full` and the hub's own tools read it. Larger files: the web app. |
+| A follow-up question (`ask_question`) | Asked through MCP elicitation when the client supports it (Claude Code does), and the answer comes back in the result. Otherwise the assistant is told to ask the person itself. |
+| An approval card | When the caller may approve it and the client supports elicitation, asked in place and recorded as their decision, then the call runs once. Otherwise the result says where to approve, and calling again with the same arguments then runs it once. Approvals that need someone else wait in their inbox. |
+| `remember`, hub changes | The same, with the same gate (above). |
+| Core skills such as `dashboard` | Listed by `list_skills`, as in chat. |
+| Sub-agents with their own `model:` | `handover_<name>`, only for people with **Use sub-agents on this agent's model from an assistant** (`mcp_delegates`). The hub's runtime runs once as the caller and hands the task to that sub-agent, so the agent pays for those model calls. Without the grant the sub-agent is still offered as a skill for the assistant's own model. |
+| Workflows | `list_workflows`, `workflow_runs`, `run_workflow`, pause, resume, cancel, each "Run for me" report tool and personal schedules, under the same workflow access. |
+
+`record_feedback` stays in chat: it rates the hub's answer, and over MCP the
+answer is the assistant's own.
+
+## Connected apps
+
+The apps a person connects in Settings ([connectors](mcp.md)) reach their
+assistant too. On every `tools/list` the hub asks which apps this caller may
+use in this agent, with the same check as chat: the connector is offered here,
+the caller holds `connector_<id>`, and they connected it (or it uses a shared
+key). Each app's tools follow the hub's own, named `my_<id>__<tool>`:
+
+| In the app | Over hosted MCP | In Claude Code |
+|---|---|---|
+| `whoami` | `my_crm__whoami` | `mcp__<server name>__my_crm__whoami` |
+
+A call goes to the app as the caller, with their own token (refreshed when
+due) or the connector's shared key, after the same checks as a hub tool and as
+chat:
+
+* the caller's account, MCP grant and `use_hub`: a stopped account or an ended
+  grant is refused;
+* the connector grant and the admin's tool allow-list, checked again on the
+  call, not only when listing;
+* the hub's approval rules (`hitl.yaml`), matched with the app's own tool name
+  and the server key `my_<id>`, as in chat. A call waiting for a person is not
+  forwarded;
+* a row in the access log on surface `mcp`. A call whose row cannot be written
+  is not forwarded.
+
+What the app returns comes back as it sent it: content, structured content and
+the error flag. A call whose outcome is unknown (the app stopped answering) is
+not retried.
+
+**Reconnect after connecting an app.** The endpoint sends no notice when a
+person's tools change, so an assistant sees a newly connected
+app once it lists tools again: in Claude Code, `/mcp`, then Reconnect.
+`connect_account` says so when it is called over MCP.
+
+* A character MCP tool names may not hold becomes `_` and the name ends in a
+  short hash; a name over 128 characters is cut and ends in a hash. The call
+  always goes to the app's own name. Assistants may limit names further (Claude
+  counts the whole `mcp__<server>__<tool>`), so keep connector IDs short.
+* A name the hub serves stays the hub's tool: an app tool that would take it is
+  left out, as is a name two app tools would share.
+* An app's output schema is not passed on. The hub sometimes answers for the
+  app (an approval waiting, a refusal), which would not match it. The app's
+  structured content still is.
+* Descriptions come from the app, labelled with the connector's name: treat
+  them as the app's text.
+* Each app's tool list is cached for 60 seconds per person and credential. An
+  app that does not answer within 10 seconds is left out of that listing, and
+  a listing waits at most 20 seconds for all of a person's apps.
+* Tools only: an app's resources, prompts and other MCP features are not
+  passed on.
+* Forwarding never runs the hub's model. An approval rule with `ask: auto`
+  asks Hubzoid's decision model, as it does in chat.
 
 ## Instructions
 
@@ -87,11 +154,63 @@ and MCP.
 `MCP_ACCESS_GROUP` is no longer read: groups grant nothing, and
 `hubzoid doctor` warns while it is set. See [access management](access-management.md).
 
+## Access tokens and outside verifiers
+
+Access tokens are JWTs ([RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)):
+`typ: at+jwt`, signed RS256 with a key of the deployment. Anything that can
+read the issuer's metadata can check them, for example a load balancer or AWS
+AgentCore's JWT authorizer:
+
+| What | Where |
+|---|---|
+| Issuer (`iss`) | `<MCP_PUBLIC_URL>/oauth` |
+| Audience (`aud`) | `MCP_PUBLIC_URL` |
+| Authorization server metadata, with `jwks_uri` | `/.well-known/oauth-authorization-server/<path of the issuer>` |
+| OpenID-style discovery (same fields, for verifiers that only read this) | `<issuer>/.well-known/openid-configuration` |
+| Public keys | `<issuer>/jwks` |
+
+Claims: `sub` (the Hubzoid account id), `client_id`, `scope` (`hub:access`),
+`iat`, `exp` (ten minutes), `jti` and `hz_grant` (the connection). There is
+no email or name in the token. Hubzoid still checks the connection and the
+person's access on every call, so a revoked connection or a blocked person
+stops on the next call, not when the token expires. Refresh tokens stay opaque
+and are replaced on every use. Hubzoid issues no ID tokens.
+
+**Signing keys.** One key set per deployment. By default Hubzoid creates the
+first key and keeps it in the operational database, encrypted with the
+deployment key, so back them up together. To manage the key yourself, set
+`HUBZOID_MCP_SIGNING_KEY` to a PEM RSA private key (from the secret store or
+AWS Secrets Manager). Then the database keys are not used.
+
+```sh
+hubzoid mcp signing-keys list
+hubzoid mcp signing-keys rotate          # new key signs; the old one verifies 11 more minutes
+hubzoid mcp signing-keys rotate --now    # the old key stops verifying at once
+```
+
+Other bridges pick up a rotation within 30 seconds. An outside verifier that
+cached the public keys may accept an old token until it expires (ten minutes
+at most). With an operator-managed key, rotate by moving the current PEM to
+`HUBZOID_MCP_SIGNING_KEYS_PREVIOUS`, setting a new one and restarting.
+
+**AWS AgentCore (not tested yet).** A Runtime's JWT authorizer can point its
+`discoveryUrl` at the metadata above and check `allowedAudience` (the MCP URL;
+Claude registers a new client id per install, so `allowedClients` does not
+fit). Still to test on AWS: an invocation URL that does not end in `/mcp`, how
+Claude finds the sign-in server through a Runtime, IAM and JWT callers on one
+Runtime, and forwarding `Authorization` so Hubzoid can check the connection.
+
 ## Operational notes
 
-* Stateless Streamable HTTP: no sessions, safe behind load balancers and
-  across bridge restarts; one POST per JSON-RPC call.
+* Streamable HTTP with a session per connected assistant, which elicitation
+  needs. The MCP SDK ends a session after 30 idle minutes, caps the number of
+  sessions and binds each to the token that opened it. A bridge restart ends
+  every session and the client opens a new one. `MCP_STATELESS=true` serves
+  each request on its own instead (several replicas without sticky sessions),
+  and then questions and approvals fall back to the assistant asking.
 * Auth failures return 401 with OAuth discovery in `WWW-Authenticate`.
 * Keep the exposed tool list curated: each tool schema uses client context.
 * Revoke connections at `/mcp/oauth/connections` (under the hub prefix in a gateway).
+* `my_requests` lists the approvals and questions waiting for the person, with
+  the Inbox link. It never decides.
 * The hub access audit log records tool authorization decisions.

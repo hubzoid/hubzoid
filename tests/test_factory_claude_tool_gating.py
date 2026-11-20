@@ -85,6 +85,7 @@ def test_no_delegates_keeps_tools_empty():
     runtime = _build()  # MINIMAL, echo has no model
     assert runtime._options.tools == []
     assert not runtime._options.agents
+    assert "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" not in (runtime._options.env or {})
 
 
 def test_delegate_hub_enables_only_the_agent_spawn_tool(monkeypatch):
@@ -102,6 +103,8 @@ def test_delegate_hub_enables_only_the_agent_spawn_tool(monkeypatch):
     assert opts.agents["opus-helper"].tools == ["mcp__hubzoid__read_knowledge"]
     # hubzoid MCP tools still present in allowed_tools.
     assert any(t.startswith("mcp__hubzoid__") for t in opts.allowed_tools)
+    # A delegate answers within the turn, as on the other backends.
+    assert opts.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
 
 
 def test_delegate_hub_still_blocks_dangerous_builtins(monkeypatch):

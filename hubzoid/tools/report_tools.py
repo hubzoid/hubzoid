@@ -351,35 +351,53 @@ def _run_tool(hub_dir: Path, wf):
     return wf_access.guard_run(tool, hub_dir, wf.name, surfaces=surfaces)
 
 
-async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, shown: str) -> str:
+def start_personal(hub_dir: Path, wf, actor: str, data, shown: str, *, trigger: str = "tool",
+                   via: str | None = None, workflow_id: str | None = None,
+                   chat: dict | None = None, extra: dict | None = None) -> tuple[str | None, bool, str]:
+    """Start one "Run for me" run as ``actor`` on this process's engine:
+    ``(run id, already running, refusal)``. Shared by the chat tool and the
+    API (``workflows.api_runs``). Without ``workflow_id`` an active run with the
+    same inputs is returned instead of a second one."""
     from ..access import store_for
     from ..workflows import personal, runtime
 
     if store_for(hub_dir).schedule_hold():
-        return "New runs are on hold while a backup runs. Try again in a few minutes."
+        return None, False, "New runs are on hold while a backup runs. Try again in a few minutes."
     account = _account(hub_dir, actor)
     prefix = f"{personal.tool_run_prefix(wf.name, actor, account)}{_inputs_ref(data)}-"
-    active = await asyncio.to_thread(lambda: [w.workflow_id for w in runtime._DBOS.list_workflows(
-        name=wf.name, workflow_id_prefix=prefix, status=list(_ACTIVE), load_input=False,
-        load_output=False)])
-    if active:
-        return (f"That report is already running for you (run {active[0]}). "
-                'Ask me "is it ready?" any time.')
-    run_id = prefix + secrets.token_hex(4)
+    if workflow_id is None:
+        active = [w.workflow_id for w in runtime._DBOS.list_workflows(
+            name=wf.name, workflow_id_prefix=prefix, status=list(_ACTIVE), load_input=False,
+            load_output=False)]
+        if active:
+            return active[0], True, ""
+    run_id = workflow_id or prefix + secrets.token_hex(4)
+    env = {"trigger": trigger, "via": via, "scope": "personal", "acts_as": actor,
+           "acts_as_account": account, "started_by": actor, "inputs": data,
+           "inputs_display": shown, "started_at": time.time()}
+    if chat:
+        env["chat"] = chat  # its questions and result come back to this chat
+    env.update(extra or {})
+    runtime.start_run(wf.name, env, workflow_id=run_id)
+    return run_id, False, ""
+
+
+async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, shown: str) -> str:
     from .. import _request_ctx
     from ..workflows import chat_link
 
-    env = {"trigger": "tool", "scope": "personal", "acts_as": actor,
-           "acts_as_account": account, "started_by": actor, "inputs": data,
-           "inputs_display": shown, "started_at": time.time()}
     chat = chat_link.origin(_request_ctx.native_session())
-    if chat:
-        env["chat"] = chat  # its questions and result come back to this chat
     try:
-        await asyncio.to_thread(runtime.start_run, wf.name, env, workflow_id=run_id)
+        run_id, already, refusal = await asyncio.to_thread(start_personal, hub_dir, wf, actor, data, shown,
+                                                            via=surface, chat=chat or None)
     except Exception:  # noqa: BLE001
         log.exception("report_tools: could not start %s", wf.name)
         return "The report could not be started right now. Try again shortly."
+    if refusal:
+        return refusal
+    if already:
+        return (f"That report is already running for you (run {run_id}). "
+                'Ask me "is it ready?" any time.')
     status = await _wait(run_id, wf.tool_wait, hub_dir)
     if status == "ASKING":
         # The run stopped to ask this person: show its card here, in the chat.

@@ -46,9 +46,14 @@ def test_host_option_reads_env_for_run_and_gateway():
         assert host.envvar == "HUBZOID_HOST"
 
 
-def test_bridge_always_binds_loopback():
+def test_bridge_binds_loopback_unless_it_runs_as_its_own_service():
+    """The bridge stays on 127.0.0.1. Only `hubzoid run --behind`, a hub as its
+    own service behind the deployment's edge (2.0.9), binds it elsewhere."""
     source = inspect.getsource(cli)
-    assert '"--host", "127.0.0.1", "--port", str(br_port)' in source
+    assert '"--host", bridge_host, "--port", str(br_port)' in source
+    start = source.index('    bridge_host = "127.0.0.1"\n')
+    block = source[start:source.index("\n\n", start)]
+    assert block.count("bridge_host = ") == 2 and "    if behind:\n" in block
 
 
 def test_image_has_no_pytorch_or_cuda():

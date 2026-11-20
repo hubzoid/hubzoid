@@ -59,7 +59,7 @@ DEFAULTS = ("grant", "included")
 #: Modules that register capabilities when imported. `catalog` imports them
 #: first, so the registry is complete in every process that asks.
 REGISTRANTS: tuple[str, ...] = ("hubzoid.tools", "hubzoid.tools.curator", "hubzoid.tools.call_jev",
-                                "hubzoid.artifacts", "hubzoid.chat.features")
+                                "hubzoid.artifacts", "hubzoid.chat.features", "hubzoid.mcp_parity")
 
 NOT_CHECKED = "Not checked"
 DISABLED = "Turned off for this agent"

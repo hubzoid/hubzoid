@@ -221,7 +221,9 @@ def domains(hub_dir: Path, principal=None) -> list[dict]:
         brand = branding_store.service_for(hub_dir).active_state()
     except Exception:  # noqa: BLE001
         brand = {"revision": None, "generation": 0}
-    model = os.environ.get("MODEL") or "claude-local"
+    from .diagnostics import hub_model
+
+    model = hub_model(hub_dir)
     edit = "Edit hubzoid.yaml (or ask Claude Code or Codex to); every agent picks it up within a few seconds."
     out = [
         {"domain": "chat", "owner": "HUB-71", "file": chat_active.source, "revision": chat_active.revision,

@@ -15,12 +15,18 @@ What a key can do is the smallest of:
       - ``chat``: talk to agents: ``/api/chat``, ``/api/conversations``,
         ``/v1/chat/completions``, ``/v1/models``, the agent list and ``/api/me``;
       - ``read``: any read (GET) the owner can make;
-      - ``manage``: any other change the owner can make,
+      - ``manage``: any other change the owner can make, except decisions;
+      - ``approve``: decide approvals and questions (``/api/requests/.../decisions``)
+        and work-item operations (approve, deny, resolve) the owner may decide.
+        In no preset: a key gets it only when someone asks for it,
   * and, when chosen, a list of agents (hubs).
 
 Some things a key can never do, whatever its operations: make or revoke keys,
-change two-step sign-in or the password, prove a recent sign-in, approve
-requests (``/change-requests/.../confirm``) or sign out other devices.
+change two-step sign-in or the password, prove a recent sign-in, confirm access
+change requests (``/change-requests/.../confirm``) or sign out other devices.
+
+How others do it: Agno resolves approvals with the ``approvals:write`` scope,
+which its service accounts do not get by default (``agno/os/scopes.py``).
 """
 from __future__ import annotations
 
@@ -36,7 +42,7 @@ import sqlalchemy as sa
 from .schema import api_keys, engine_for, users
 
 PREFIX = "hzp_"
-OPERATIONS = ("chat", "read", "manage")
+OPERATIONS = ("chat", "read", "manage", "approve")
 PRESETS = {
     "chat": ("chat",),
     "read": ("read",),
@@ -55,6 +61,15 @@ _NEVER = (
     ("POST", "/api/me/sessions"), ("DELETE", "/api/me/sessions"),
     ("", "/api/me/identity-links"), ("", "/oauth/"),
 )
+# Decisions: only ``approve`` reaches them, whatever else the key may do.
+_DECISION = re.compile(r"^(/api/requests/[^/]+/decisions"
+                       r"|/portal/api/hubs/[^/]+/operations/[^/]+/(approve|deny|resolve))/?$")
+
+
+def is_decision(path: str) -> bool:
+    return bool(_DECISION.match(path or ""))
+
+
 # Paths that run in one agent: a key limited to some agents reaches only theirs.
 HUB_PATHS = ("/api/chat", "/api/conversations", "/v1/", "/api/shares", "/api/models")
 # A key limited to some agents uses the OpenAI-compatible API, which runs in
@@ -102,7 +117,7 @@ def create(hub_dir: Path, user, *, name: str, operations, hubs=None,
         raise KeyRefused("Give the key a name of at most 120 characters.")
     ops = sorted({str(o) for o in (operations or [])})
     if not ops or any(o not in OPERATIONS for o in ops):
-        raise KeyRefused("Choose what the key may do: chat, read or manage.")
+        raise KeyRefused("Choose what the key may do: chat, read, manage or approve.")
     if hubs is not None:
         hubs = sorted({str(h).strip().lower() for h in hubs if str(h).strip()})
         if not hubs:
@@ -197,6 +212,9 @@ def resolve(hub_dir: Path, token: str) -> dict | None:
         # proof of who they were: nobody can sign in as that owner to see or
         # revoke it, so it stops once sign-in is on.
         return None
+    from .. import audit_log
+
+    audit_log.api_key_used(m["id"], m["email"])
     if not m["last_used_at"] or now - m["last_used_at"] > TOUCH_SECONDS:
         with engine.begin() as conn:
             conn.execute(api_keys.update().where(api_keys.c.id == m["id"])
@@ -220,6 +238,8 @@ def allows(operations, method: str, path: str) -> bool:
     if "/change-requests/" in path and path.endswith(("/confirm", "/reject")):
         return False
     ops = set(operations or ())
+    if is_decision(path):
+        return method == "POST" and "approve" in ops
     if "chat" in ops:
         reads = method in ("GET", "HEAD")
         if reads and _under(path, _CHAT):

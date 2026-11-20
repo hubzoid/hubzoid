@@ -9,18 +9,18 @@ testing an unreleased branch.
 
 | Journey | Guides |
 |---|---|
-| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md), [authoring](authoring-a-hub.md), [hub settings and checks](hub-settings.md) |
+| First hub and first chat | [Quickstart](quickstart.md), [providers](providers.md) and [Amazon Bedrock](bedrock.md), [authoring](authoring-a-hub.md), [hub settings and checks](hub-settings.md) |
 | Understand the direction | [Product context](PRODUCT_CONTEXT.md) |
-| Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md) |
+| Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md), [guardrails](guardrails.md) |
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |
 | People in the loop | [Approvals, questions, workflow access, hub changes and memory](approvals-and-hub-changes.md) |
 | Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131) |
 | Start from a ready-to-use hub | [Software Factory](https://github.com/hubzoid/software-factory-hub), [Order & Invoice Desk](https://github.com/hubzoid/order-desk-hub), [Customer Desk](https://github.com/hubzoid/customer-desk-hub), [Engineering Desk](https://github.com/hubzoid/engineering-desk-hub) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Put the chat inside your own app (ERPNext, Odoo, a dashboard) | [Embedding the chat](embedding.md) |
-| Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |
-| Operate and recover | [Deployment](DEPLOYING.md), [secrets](secrets.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
-| Evaluate and observe | [Evals](evals.md), [observability](OBSERVABILITY.md) |
+| Use other chat channels | [Channels](channels.md) ([Slack](channels/slack.md), [GitHub](channels/github.md), [Linear](channels/linear.md), [email](channels/email.md), [WhatsApp](channels/whatsapp.md)), [two ways to connect Slack and WhatsApp](channels.md#two-ways-to-connect-slack-and-whatsapp), the 1.x [Slack app](slack.md) and [inbound surfaces](inbound-surfaces.md) |
+| Operate and recover | [Deployment](DEPLOYING.md), [secrets](secrets.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md), [rolling back](rollback.md) |
+| Evaluate and observe | [Evals](evals.md), [CI for a hub](ci.md), [observability](OBSERVABILITY.md), [audit log](AUDIT.md) |
 | Brand a deployment | [Branding and attribution](branding.md) |
 
 The account contract, verification records and historical plans document

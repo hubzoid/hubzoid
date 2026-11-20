@@ -35,6 +35,14 @@ def _supports_cache_control(model: str | None) -> bool:
     if not model:
         return False
     m = model.lower()
+    if m.startswith("bedrock/"):
+        # Bedrock caches only some families (Claude, Nova): ask LiteLLM's table.
+        try:
+            from litellm.utils import supports_prompt_caching
+
+            return bool(supports_prompt_caching(model))
+        except Exception:  # noqa: BLE001 - unknown to LiteLLM: no cache mark
+            return False
     return any(marker in m for marker in _CACHEABLE_MARKERS)
 
 

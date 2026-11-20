@@ -56,9 +56,13 @@ def _message(ch: dict) -> str:
         return (f"Applied as change #{ch['id']} ({', '.join(ch['paths'])}). {live}"
                 + (f" {ch['problem']}" if ch.get("problem") else ""))
     if ch["status"] == "pending":
+        from .. import _request_ctx
+
+        # A chat shows the change as a card; elsewhere (MCP) it is reviewed in Settings.
+        where = ("a manager can apply it from the card above" if _request_ctx.native_session() is not None
+                 else "in Settings, Hub changes")
         return (f"Proposed as change #{ch['id']}. Nothing changed yet: someone who manages this hub reviews "
-                "the diff and applies it (a manager can apply it from the card above). Tell the person that, "
-                "in one sentence.")
+                f"the diff and applies it ({where}). Tell the person that, in one sentence.")
     if ch["status"] == "conflict":
         return f"Change #{ch['id']} conflicts: {ch['problem']}"
     return f"Change #{ch['id']} is {ch['status']}." + (f" {ch['problem']}" if ch.get("problem") else "")

@@ -82,4 +82,31 @@ def build(model_id: str) -> LitellmModel:
             f"Add the Azure resource endpoint "
             f"(https://<resource>.openai.azure.com) to your hub's .env file."
         )
+    if model_id.strip().lower().startswith("bedrock/"):
+        from . import bedrock
+
+        return _RegionalModel(model=model_id, region=bedrock.require_region(model_id))
     return LitellmModel(model=model_id, base_url=base_url, api_key=key)
+
+
+class _RegionalModel(LitellmModel):
+    """A Bedrock model on LiteLLM with the hub's one region passed on every
+    call (``aws_region_name``), never LiteLLM's own us-west-2 fallback."""
+
+    def __init__(self, *, model: str, region: str):
+        super().__init__(model=model)
+        self.region = region
+
+    def _settings(self, model_settings):
+        import dataclasses
+
+        extra = {**(getattr(model_settings, "extra_args", None) or {}), "aws_region_name": self.region}
+        return dataclasses.replace(model_settings, extra_args=extra)
+
+    async def get_response(self, system_instructions, input, model_settings, *args, **kwargs):
+        return await super().get_response(system_instructions, input, self._settings(model_settings),
+                                          *args, **kwargs)
+
+    def stream_response(self, system_instructions, input, model_settings, *args, **kwargs):
+        return super().stream_response(system_instructions, input, self._settings(model_settings),
+                                       *args, **kwargs)

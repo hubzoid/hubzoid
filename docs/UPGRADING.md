@@ -16,6 +16,30 @@ describe those releases as they were.
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
+## Upgrading to 2.0.9
+
+Seven changes in behaviour, and four additive database changes that Hubzoid applies when it starts. Back up the operational database before upgrading, as for any release: migrations go forward only.
+
+| What changes | What to do |
+|---|---|
+| **Sign-in off: only this computer is the owner.** A request through a tunnel or proxy (it carries `X-Forwarded-For`, `Cf-Connecting-Ip`, `X-Forwarded-Host` and the like), from another machine, from another site's page, or addressed to a name in `HUBZOID_PUBLIC_URL` is no longer the owner. Earlier, listing a tunnel's address made every visitor the owner. | To use the web app through a tunnel or LAN name, turn sign-in on (`HUBZOID_AUTH=true`). On a network you trust, `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` keeps the earlier rule. Signed webhooks through a tunnel keep working with sign-in off. |
+| **Evals check the tool names they name.** A name in `expect_tools`, `forbid_tools` or `expect_tool_args` that matches no tool in the agent fails the case. A misspelled `forbid_tools` used to pass forever. Names under an MCP server or connector whose tools are only known at run time are not failed. | Fix the names the failures point at. On Claude, a sub-agent call now reads as `handover_<name>`, as on the other backends. |
+| **Hosted MCP keeps a session per connected assistant**, so the hub can ask the person a question or an approval through MCP elicitation. Over MCP, people also get the file tools, `upload_file`, `remember` (with chat's gate) and core skills. Sub-agents on their own model need the new `mcp_delegates` grant. | Nothing for one Hubzoid process per agent. A bridge restart ends the sessions and Claude Code opens new ones. Behind several replicas without sticky sessions, set `MCP_STATELESS=true` (no elicitation). Grant `mcp_delegates` to the people who may spend the agent's model from their assistant ([MCP server](mcp-server.md#what-an-assistant-can-do-next-to-chat)). |
+| **Amazon Bedrock is an opt-in model provider.** A Claude id under `bedrock/` now runs on the Claude runtime instead of LiteLLM, and a Bedrock hub needs a region to start. `claude-local` hubs are unchanged, apart from the newer bundled Claude Code (claude-agent-sdk 0.2.162 or later). | Nothing for `claude-local`. A hub that set `CLAUDE_CODE_USE_BEDROCK` by hand keeps working, and can move to `MODEL=bedrock/sonnet` with `AWS_REGION` ([Amazon Bedrock](bedrock.md)). To keep a Claude model on LiteLLM, write `bedrock/converse/<id>`. |
+
+Also in 2.0.9:
+
+| What changes | What to do |
+|---|---|
+| **MCP access tokens are JWTs** (RS256, `typ: at+jwt`) that outside verifiers can check. Tokens issued before the upgrade keep working until they expire (ten minutes). Connected assistants need nothing. | Back up the operational database with the deployment key as before: the first signing key is kept there, encrypted. Or set `HUBZOID_MCP_SIGNING_KEY` ([MCP server](mcp-server.md#access-tokens-and-outside-verifiers)). |
+| **Only a key with the new `approve` operation decides.** A key with `manage` could approve, deny or resolve work-item operations through Settings; now only `approve` reaches those routes and `/api/requests/.../decisions`. `approve` is in no preset. | If a script decided work-item operations with a `manage` key, make a key with `--operations manage,approve` (or tick "Also decide approvals and questions" in Settings). |
+| **The API reference lists exactly the published routes**, with `stable` or `beta`, the key operations that may call each one, and the main shapes. It adds the chat engine, runs, hub changes, memory, notification webhooks, workflow runs and work-item decisions, and no longer lists the bridge-only `/v1/files`. | Nothing. See [the API](api.md#stability). |
+| **Four additive database changes**, applied at start: `op_0082` (a chat's Claude session cost), `op_0090` (the audit log table), `op_0083` (what started each usage row, cache and reasoning tokens) and `op_0084` (MCP signing keys). With a shared database, `hubzoid run` brings it up to date once before any hub starts. | Back up first. Nothing else. |
+| **A resumed Claude chat records each turn's own cost.** Claude Code reports a resumed session's running total, and each turn used to save that total, so chat costs read several times too high. | Nothing. Usage rows written before the upgrade keep the cost they recorded: they are not repaired. Compare costs from the upgrade on. |
+| **The Usage page shows where usage comes from**, with one period and agent filter for every section. Rows written before 2.0.9 count in every total and show as "Earlier, not tracked" where they lack the new fields. | Nothing ([administration](ADMINISTRATION.md)). |
+| **New, all off unless set:** a hub as its own service behind one web app, the audit log (`HUBZOID_AUDIT`), JSON logs, `/readyz`, hosting settings for the deployment key and database pool, guardrails in `AGENTS.md`, `hubzoid eval run --required` for CI, and GitHub `rules.status_failures`. | Nothing. To use them: [deployment](DEPLOYING.md), [audit log](AUDIT.md), [guardrails](guardrails.md), [CI for a hub](ci.md). A GitHub App that uses `status_failures` needs Commit statuses: read and the Status event ([GitHub](channels/github.md)). |
+| **New dependency:** `regex`, already installed with LiteLLM. | Nothing with pip or the Docker image. |
+
 ## Templates moved out of the package
 
 Hubzoid no longer bundles hub templates. `hubzoid init` writes a small starter

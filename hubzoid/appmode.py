@@ -258,6 +258,35 @@ def is_loopback_host(host: str | None) -> bool:
         return False
 
 
+def is_loopback_name(host: str | None) -> bool:
+    """``localhost``, a ``.localhost`` name or a loopback address."""
+    h = (host or "").strip().strip("[]").lower().rstrip(".")
+    return h == "localhost" or h.endswith(".localhost") or is_loopback_host(h)
+
+
+#: Headers a proxy or tunnel adds; a browser on this machine sends none.
+FORWARDING_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host",
+                      "cf-connecting-ip", "true-client-ip", "fastly-client-ip")
+
+
+def is_forwarded(headers) -> bool:
+    """Whether a request carries any header a proxy or tunnel adds."""
+    return any(headers.get(h) is not None for h in FORWARDING_HEADERS)
+
+
+def unauthenticated_network_allowed(env: Mapping[str, str] | None = None) -> bool:
+    """``HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true``."""
+    from .settings import truthy
+
+    return truthy(_env("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK", env))
+
+
+def non_local_origins(env: Mapping[str, str] | None = None, *, extra: str | None = None) -> list[str]:
+    """Configured origins (plus ``extra``) that aren't this machine."""
+    out = [*allowed_origins(env), normalize_origin(extra)]
+    return list(dict.fromkeys(o for o in out if o and not is_loopback_name(urlparse(o).hostname)))
+
+
 def mode_summary(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> dict:
     """Small, secret-free description used by doctor, the deployment manifest
     and the web app's session endpoint."""

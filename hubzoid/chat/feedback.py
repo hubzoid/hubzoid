@@ -951,6 +951,111 @@ class FeedbackService:
                     provider_receipt=None, error_code=None, created_at=t, updated_at=t))
         return eid
 
+    # -- request.created: approvals and questions, from the persisted HITL events ----------------
+    REQUEST_LOOKBACK = 24 * 3600
+
+    def _request_recipients(self, req: dict) -> set[str]:
+        """Account ids of the people who may act on a request: the requester
+        and the named approvers (resolved to accounts)."""
+        from ..auth import users
+
+        out: set[str] = set()
+        for who in (req.get("approvers") or ["requester"]):
+            if who == "requester":
+                if req.get("requester_id"):
+                    out.add(str(req["requester_id"]))
+                continue
+            who = str(who).strip()
+            if "@" in who:
+                try:
+                    found = users.store(self.hub_dir).find_by_email(who.lower())
+                except Exception:  # noqa: BLE001 - an unreadable account sends nothing, never a guess
+                    found = None
+                if found:
+                    out.add(str(found["id"]))
+            elif who:
+                out.add(who)
+        return out
+
+    def ingest_requests(self, *, now: float | None = None) -> int:
+        """Queue ``request.created`` webhook deliveries for new approvals and
+        questions. Reads the HITL event log after a cursor (starting a day back
+        after a restart), so a crash between a request and its notice loses
+        nothing; ``source_event_id`` makes it idempotent. No inbox item: the
+        Inbox already lists requests. Returns the deliveries queued."""
+        from ..hitl import gate
+        from ..hitl import service as hitl
+        from ..hitl import store as st
+
+        now = _now() if now is None else now
+        doc = _settings(self.hub_dir)["notifications"]
+        if not doc["enabled"] or "request.created" not in doc["events"]:
+            return 0
+        with self.engine.connect() as conn:
+            wanted = [tg for tg in conn.execute(sa.select(targets).where(
+                targets.c.hub_id == self.hub, targets.c.deleted_at.is_(None), targets.c.enabled == 1,
+                targets.c.verified_at.is_not(None))) if "request.created" in json.loads(tg.events)]
+        if not wanted:
+            return 0
+        hub_id = gate.hub_id_of(self.hub_dir)
+        cursor = getattr(self, "_request_cursor", 0)
+        e = st.events.c
+        with hitl.engine(self.hub_dir).connect() as conn:
+            rows = conn.execute(sa.select(st.events).where(
+                e.hub_id == hub_id, e.type == "request.created", e.sequence > cursor,
+                e.created_at > now - self.REQUEST_LOOKBACK).order_by(e.sequence).limit(500)).mappings().all()
+        queued = 0
+        for row in rows:
+            # The cursor moves only past events handled here: a failure leaves
+            # the event for the next pass.
+            req = hitl.get(self.hub_dir, hub_id, row["request_id"])
+            if req is None or req.get("status") != "pending":
+                self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
+                continue
+            recipients = self._request_recipients(req)
+            source = f"request.created:{req['id']}"
+            t = _now()
+            with self.engine.begin() as conn:
+                if conn.execute(sa.select(notification_events.c.id).where(
+                        notification_events.c.source_event_id == source)).first():
+                    self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
+                    continue
+                eid = str(uuid.uuid4())
+                conn.execute(notification_events.insert().values(
+                    id=eid, source_event_id=source, event_kind="request.created", hub_id=self.hub,
+                    conversation_id=req.get("conversation_id") or "", branch_id=None, run_id=req.get("run_id"),
+                    message_id=None, created_at=t))
+                for tg in wanted:
+                    personal = tg.owner_id is not None
+                    if personal and str(tg.owner_id) not in recipients:
+                        continue
+                    if personal and _prefs(self.hub_dir, str(tg.owner_id)).get(
+                            "notifications.delivery", doc["delivery"]) == "never":
+                        continue
+                    conn.execute(deliveries.insert().values(
+                        id=str(uuid.uuid4()), event_id=eid, recipient_id=str(tg.owner_id) if personal else None,
+                        target_scope=tg.scope, target_id=tg.id, target_revision=tg.revision, state="pending",
+                        attempt=0, next_attempt_at=t, provider_receipt=None, error_code=None,
+                        created_at=t, updated_at=t))
+                    queued += 1
+            self._request_cursor = max(getattr(self, "_request_cursor", 0), int(row["sequence"]))
+        return queued
+
+    def delivery_needed(self) -> bool:
+        """Whether the background deliverer has work at boot: a pending
+        delivery, or an enabled target that wants ``request.created``."""
+        with self.engine.connect() as conn:
+            if conn.execute(sa.select(deliveries.c.id).where(deliveries.c.state == "pending").limit(1)).first():
+                return True
+            return any("request.created" in json.loads(tg.events) for tg in conn.execute(sa.select(targets).where(
+                targets.c.hub_id == self.hub, targets.c.deleted_at.is_(None), targets.c.enabled == 1)))
+
+    def next_due(self) -> float | None:
+        """When the next pending delivery is due, or None."""
+        with self.engine.connect() as conn:
+            return conn.execute(sa.select(sa.func.min(deliveries.c.next_attempt_at)).where(
+                deliveries.c.state == "pending")).scalar()
+
     def notifications(self, actor_id: str, *, limit: int = 30, readable=None) -> dict:
         with self.engine.connect() as conn:
             rows = conn.execute(sa.select(inbox, notification_events).join(
@@ -1131,6 +1236,14 @@ class FeedbackService:
                 continue
             payload = {"type": ev.event_kind, "conversation_id": ev.conversation_id, "event_id": ev.id,
                        "occurred_at": ev.created_at}
+            if ev.event_kind == "request.created":
+                try:
+                    payload = self._request_payload(ev)
+                except Exception:  # noqa: BLE001 - nothing was sent: try again later
+                    log.warning("chat: request.created payload unavailable; retrying", exc_info=True)
+                    self._set_delivery(d[0], state="pending", attempt=d.attempt,
+                                       next_attempt_at=now + RETRY_SECONDS[min(d.attempt + 1, len(RETRY_SECONDS) - 1)])
+                    continue
             try:
                 ok, receipt = (send or send_webhook)(d, payload)
             except TimeoutError:
@@ -1145,6 +1258,19 @@ class FeedbackService:
                                    next_attempt_at=now + RETRY_SECONDS[d.attempt + 1])
             n += 1
         return n
+
+    def _request_payload(self, ev) -> dict:
+        """What a ``request.created`` webhook says: which request, what kind,
+        which agent and where to decide it. Never its title, arguments or
+        question, which can hold business data."""
+        from ..hitl import gate
+        from ..hitl import service as hitl
+
+        rid = ev.source_event_id.split(":", 1)[1]
+        req = hitl.get(self.hub_dir, gate.hub_id_of(self.hub_dir), rid) or {}
+        return {"type": ev.event_kind, "event_id": ev.id, "occurred_at": ev.created_at, "request_id": rid,
+                "kind": req.get("kind"), "agent": self.hub, "conversation_id": ev.conversation_id or None,
+                "url": hitl.requests_url() or None}
 
     def _set_delivery(self, delivery_id: str, **values) -> None:
         with self.engine.begin() as conn:

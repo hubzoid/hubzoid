@@ -25,11 +25,16 @@ Isolated agents (stations), all optional, on sub-agents only:
   isolated:    true makes the agent a station: called from a workflow, with only
                its own instructions and exactly the tools it lists (none when empty).
                It is never loaded as a skill or delegate of the main agent.
-  engine:      claude-local or codex-local (default: the hub's runtime).
+  engine:      claude-local, bedrock or codex-local (default: the hub's runtime).
   response_schema: a JSON Schema file in the agent's folder for its result.
   input:       forward (default) or never.
   sandbox:     a sandbox profile for the agent's workspace.
   timeout_seconds: an optional limit on its active time.
+
+Main agent only:
+  guardrails:  checks on what people send and what the agent replies
+               (hubzoid.guardrails). Refused on a sub-agent, which receives
+               work from the main agent, not from people.
 """
 from __future__ import annotations
 
@@ -59,6 +64,8 @@ class AgentSpec(BaseModel):
     input: str = "forward"
     sandbox: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
+    # Main agent only: hubzoid.guardrails parses and validates it.
+    guardrails: dict | bool | None = None
 
 
 @dataclass
@@ -143,20 +150,31 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                     match = mds[0]
             if match is None or agent_read_refusal(hub_dir, match):
                 continue
-            out.append(_with_settings(hub_dir, _load_one(match, default_name=_safe_id(child.name))))
+            out.append(_with_settings(hub_dir, _no_guardrails(_load_one(match, default_name=_safe_id(child.name)))))
         elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
-            out.append(_with_settings(hub_dir, _load_one(child, default_name=_safe_id(child.stem))))
+            out.append(_with_settings(hub_dir, _no_guardrails(_load_one(child, default_name=_safe_id(child.stem)))))
     return out
 
 
-def to_skill(loaded: "LoadedAgent"):
+def _no_guardrails(loaded: LoadedAgent) -> LoadedAgent:
+    """A sub-agent receives work from the main agent, not from people, so
+    guardrails there would never run: refuse them rather than ignore them."""
+    if loaded.spec.guardrails is not None:
+        raise ValueError(f"{loaded.source_path}: guardrails is set on the main agent's AGENTS.md only, "
+                         "where people's messages arrive")
+    return loaded
+
+
+def to_skill(loaded: "LoadedAgent", reason: str = "", *, over_mcp: bool = False):
     """Convert one sub-agent into a LoadedSkill (loaded inline by the main agent).
 
     A `tools:` whitelist is meaningless for a skill (the main agent owns the
-    whole registry), so it is dropped with a log warning if present — this
-    mirrors the historical behavior for promoted agents.
+    whole registry), so it is dropped with a log warning if present, naming
+    `reason` (``handover.skill_reason``). Over MCP every sub-agent is a skill
+    by design (the caller brings its own model), so that path logs at debug:
+    its warning was indistinguishable from a real misconfiguration.
     """
     import logging
 
@@ -164,10 +182,12 @@ def to_skill(loaded: "LoadedAgent"):
 
     log = logging.getLogger("hubzoid.loaders.agents")
     if loaded.spec.tools:
-        log.warning(
+        why = f" because {reason}" if reason else ""
+        log.log(
+            logging.DEBUG if over_mcp else logging.WARNING,
             "%s: tools whitelist %r is ignored — this agent is loaded as a "
-            "skill; the main agent owns all tools.",
-            loaded.source_path, loaded.spec.tools,
+            "skill%s; the main agent owns all tools.",
+            loaded.source_path, loaded.spec.tools, why,
         )
     spec = SkillSpec(name=loaded.spec.name, description=loaded.spec.description)
     return LoadedSkill(spec=spec, body=loaded.instructions,

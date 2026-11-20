@@ -830,6 +830,53 @@ export function describeDecision(row: AuditRow, ctx: ActivityContext): Sentence 
   };
 }
 
+/** A tool call from the audit log (every tool, not only restricted ones). */
+export function describeToolCall(row: AuditRow, ctx: ActivityContext): Sentence {
+  const who = row.user && row.user !== "anonymous" ? ctx.people(row.user) : "Someone not signed in";
+  const hubName = row.hub ? ctx.agentName(row.hub) : "";
+  const toolName = row.tool || "a tool";
+  const surface = row.surface && row.surface !== "system" ? ` via ${humanize(row.surface)}` : "";
+  const from = row.server ? ` from ${row.server.replace(/^connector:/, "")}` : "";
+  if (row.decision === "deny")
+    return {
+      tone: "negative",
+      tag: "Denied",
+      parts: [person(who), text(" was refused "), tool(toolName), text(from), ...inAgent(hubName), text(surface)],
+      detail: explainDecisionReason(row.reason),
+    };
+  const took = typeof row.duration_ms === "number" ? ` in ${formatDuration(row.duration_ms)}` : "";
+  if (row.outcome === "error")
+    return {
+      tone: "negative",
+      tag: "Error",
+      parts: [person(who), text("’s call to "), tool(toolName), text(from), text(" failed"), ...inAgent(hubName),
+              text(surface)],
+      detail: row.error ? `It ended with ${row.error}${took}.` : undefined,
+    };
+  return {
+    tone: "positive",
+    tag: "Ran",
+    parts: [person(who), text(" used "), tool(toolName), text(from), ...inAgent(hubName), text(surface)],
+    detail: took ? `It finished${took}.` : undefined,
+  };
+}
+
+const AUTH_EVENTS: Record<string, { tag: string; phrase: string; tone: Sentence["tone"] }> = {
+  "auth.attempt_failed": { tag: "Failed", phrase: " failed a sign-in step", tone: "negative" },
+  "auth.sign_in_failed": { tag: "Failed", phrase: " entered a wrong password", tone: "negative" },
+  "auth.locked_out": { tag: "Locked", phrase: " was locked out after too many tries", tone: "negative" },
+  "auth.api_key_used": { tag: "Key", phrase: " used a personal API key", tone: "neutral" },
+};
+
+/** A sign-in event from the audit log (failures, lockouts, API key use). */
+export function describeAuthEvent(row: AuditRow, ctx: ActivityContext): Sentence {
+  const known = AUTH_EVENTS[row.event ?? ""] ?? { tag: "Sign-in", phrase: ` ${humanize(row.event ?? "event")}`,
+                                                  tone: "neutral" as const };
+  const who = row.user || row.actor ? ctx.people((row.user || row.actor) as string) : "Someone";
+  const from = row.client ? ` from ${row.client}` : "";
+  return { tone: known.tone, tag: known.tag, parts: [person(who), text(known.phrase + from)] };
+}
+
 /** Keep unfamiliar cron expressions exact rather than inventing a schedule. */
 export function describeCron(cron: string): string {
   const p = cron.trim().split(/\s+/);

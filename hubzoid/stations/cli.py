@@ -52,16 +52,28 @@ def doctor(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(F
 
     stations = out.get("stations") or {}
     claude_login = False
-    if any(s["engine"] != "codex-local" for s in stations.values()):   # no claude station: no login probe
+    if any(s["engine"] == "claude-local" for s in stations.values()):   # no subscription station: no login probe
         probed = claude_probe()
         claude_login = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) or bool(probed and probed.signed_in)
+    aws = False
+    if any(s["engine"] == "bedrock" for s in stations.values()):        # credentials only, no call
+        from ..bedrock import region
+
+        try:
+            import boto3
+
+            aws = bool(region("bedrock/sonnet")[0]) and (
+                bool(os.environ.get("AWS_BEARER_TOKEN_BEDROCK")) or boto3.session.Session().get_credentials() is not None)
+        except Exception:  # noqa: BLE001
+            aws = False
     report = {"valid": out["valid"], "checks": out["checks"], "stations": {}}
     for name, s in stations.items():
         report["stations"][name] = {
             "digest": s["digest"], "engine": s["engine"], "model": s["model"] or "(the engine's default)",
             "tools": s["tools"], "structured_output": "native" if s["schema"] else "text",
             "sandbox": s["sandbox"], "input": s["input"],
-            "credentials_available": codex_available() if s["engine"] == "codex-local" else claude_login,
+            "credentials_available": codex_available() if s["engine"] == "codex-local"
+            else aws if s["engine"] == "bedrock" else claude_login,
         }
 
     def render(v):

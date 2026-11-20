@@ -62,6 +62,22 @@ _FORWARDED_PREFIX = "x-forwarded-prefix"
 _CLIENT_ADDRESS = frozenset({"x-forwarded-for", "x-real-ip", "forwarded"})
 
 
+def _direct_from_this_machine(request: Request) -> bool:
+    """A loopback peer with no proxy or tunnel header, as the request arrived."""
+    from . import appmode
+
+    peer = request.client.host if request.client else None
+    if not peer or not appmode.is_loopback_host(peer) or appmode.is_forwarded(request.headers):
+        return False
+    # Headers only a proxy sends. A bridge can't read these as evidence (the edge
+    # itself asserts X-Forwarded-Proto from the public URL), so they count here.
+    return not any(request.headers.get(h) is not None for h in _PROXY_HINTS)
+
+
+_PROXY_HINTS = ("x-forwarded-proto", "x-forwarded-port", "x-forwarded-server", "x-forwarded-ssl",
+                "front-end-https", "via")
+
+
 def _trusted_proxies() -> list:
     """Proxies whose ``X-Forwarded-For`` the edge believes:
     ``HUBZOID_TRUSTED_PROXIES`` (addresses or networks, comma-separated, or
@@ -183,8 +199,30 @@ _PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
 
 
 def _personal_key(request) -> bool:
+    """A person's API key, or a JWT-shaped bearer (a machine token from an API
+    app). The bridge verifies either; bridge keys are never JWT-shaped."""
     auth = (request.headers.get("authorization") or "").strip()
-    return auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_")
+    if auth[:7].lower() != "bearer ":
+        return False
+    token = auth[7:].strip()
+    return token.startswith("hzp_") or _jwt_shaped(token)
+
+
+def _jwt_shaped(token: str) -> bool:
+    """A JWT: three parts and a JSON header naming an algorithm. A bridge key
+    is any string, so ``a.b.c`` alone must not pass as a token for the public
+    chat API."""
+    import base64
+    import json
+
+    if token.count(".") != 2 or len(token) > 8192:
+        return False
+    head = token.split(".", 1)[0]
+    try:
+        header = json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4)))
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(header, dict) and isinstance(header.get("alg"), str)
 
 
 def _personal_key_call(request, path: str | None = None) -> bool:
@@ -363,7 +401,8 @@ def _request_headers(
                if k.decode("latin-1").lower() != _FORWARDED_PREFIX
                and k.decode("latin-1").lower() not in _CLIENT_ADDRESS]
     client = client_address(request)
-    if client:
+    if client and not _direct_from_this_machine(request):
+        # Only a non-local request carries an address: a bridge reads any as "not local".
         headers.append((b"x-forwarded-for", client.encode("latin-1")))
     if forwarded_prefix:
         headers.append((_FORWARDED_PREFIX.encode("latin-1"),
@@ -461,17 +500,19 @@ def build_edge_app(
         table = source.current() if source is not None else static
         norm_routes, default_base, default_bases = table.routes, table.default_base, table.default_bases
         path, query = _path_and_query(request)
-        if request.method in ('GET', 'HEAD') and (
-                path == '/healthz' or (path.startswith('/b/') and path.endswith('/healthz'))):
+        check = path.rsplit('/', 1)[-1]
+        if request.method in ('GET', 'HEAD') and check in ('healthz', 'readyz') and (
+                path == '/' + check or (path.startswith('/b/') and path.endswith('/' + check))):
             # The public health check (also a gateway hub's /b/<slug>/healthz):
             # whether a bridge answers, and nothing about the hub or its model.
-            # Start-up checks ask the bridge itself.
+            # Start-up checks ask the bridge itself. /readyz asks the bridge's
+            # readiness (its database and schema) instead: for a load balancer.
             hit = _match(path, norm_routes)
             candidates = hit.upstreams() if hit is not None else default_bases
             ok = False
             for base in candidates:
                 try:
-                    if (await request.app.state.client.get(base.rstrip('/') + '/healthz', timeout=5)).status_code == 200:
+                    if (await request.app.state.client.get(base.rstrip('/') + '/' + check, timeout=5)).status_code == 200:
                         ok = True
                         break
                 except httpx.HTTPError:
@@ -613,6 +654,9 @@ def _factory() -> Starlette:
                                   ({"default", "default_fallbacks", "routes",
                                   "states"}), read again when it changes.
     """
+    from . import logs
+
+    logs.configure()
     from . import supervisor as _supervisor
 
     _supervisor.watch_parent()

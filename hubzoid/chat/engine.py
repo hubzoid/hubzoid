@@ -1572,27 +1572,37 @@ class ChatEngine:
         ended, under the same runtime configuration. Anything else (an edit,
         a regeneration, a continuation, a deleted or moved head, a changed
         agent or model) starts from the full history."""
+        return self.bound_session(plan, config_digest)[0]
+
+    def bound_session(self, plan: RunPlan, config_digest: str) -> tuple[str | None, float | None]:
+        """``binding_for`` with the session's running cost at the end of the
+        last run (None when not known), so a resumed turn records only its own
+        cost. ``(None, None)`` when the run starts from the full history."""
         if plan.kind not in ("send", "respond") or plan.extra_turns or (plan.options or {}).get("model"):
-            return None
+            return None, None
         with self.engine.connect() as conn:
             b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()
             if b is None or b.config_digest != config_digest:
-                return None
+                return None, None
             prompt_parent = conn.execute(sa.select(messages.c.parent_id).where(
                 messages.c.id == plan.prompt_message_id)).scalar()
-        return b.native_session_id if prompt_parent == b.head_message_id else None
+        if prompt_parent != b.head_message_id:
+            return None, None
+        return b.native_session_id, b.native_cost_usd
 
     def record_binding(self, *, branch_id: str, conversation_id: str, runtime: str | None,
-                       session_id: str | None, head_message_id: str, config_digest: str, ok: bool) -> None:
+                       session_id: str | None, head_message_id: str, config_digest: str, ok: bool,
+                       session_cost: float | None = None) -> None:
         """After a run: keep the session it ended in, or drop the binding when
-        the run did not complete (its session state is uncertain)."""
+        the run did not complete (its session state is uncertain).
+        ``session_cost``: the session's running cost the runtime reported."""
         with self.engine.begin() as conn:
             conn.execute(g.bindings.delete().where(g.bindings.c.branch_id == branch_id))
             if ok and session_id and runtime:
                 conn.execute(g.bindings.insert().values(
                     branch_id=branch_id, conversation_id=conversation_id, runtime=runtime,
                     native_session_id=session_id[:255], head_message_id=head_message_id,
-                    config_digest=config_digest, updated_at=_now()))
+                    config_digest=config_digest, updated_at=_now(), native_cost_usd=session_cost))
 
     # -- recovery ---------------------------------------------------------------------------
     def sweep(self) -> int:

@@ -289,7 +289,9 @@ failure goes to the same place with `?error=<code>`.
 - **Per turn**: restricted surfaces only, an
   agent that offers the connector, `connector_<id>` in that agent, the allowed
   tools, never a server that would replace a hub MCP server. On every backend
-  the tools are named `mcp__my_<id>__<tool>`.
+  the tools are named `mcp__my_<id>__<tool>`. An assistant connected to the
+  hub's own MCP endpoint gets them as `my_<id>__<tool>`
+  ([mcp-server.md](mcp-server.md#connected-apps)).
 
 ### Limits
 
@@ -331,6 +333,7 @@ and allow-lists.
 | Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server |
 | OpenAI Agents | Per-turn Streamable HTTP clients; their tools join a per-turn clone of the agent |
 | Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools |
+| Hosted MCP (`/mcp`, an assistant such as Claude Code) | Not a backend: each `tools/list` lists the caller's apps as `my_<id>__<tool>` and each call is forwarded with the same client and checks ([mcp-server.md](mcp-server.md#connected-apps)) |
 
 Tool names are the same on all three: `mcp__my_<id>__<tool>`, as Claude names
 MCP tools (Mastra and Agno prefix the same way). OpenAI accepts only letters,

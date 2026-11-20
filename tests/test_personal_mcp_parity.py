@@ -427,3 +427,117 @@ def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
     a = connector_tool_name("my_mail", "x" * 80 + "a")
     b = connector_tool_name("my_mail", "x" * 80 + "b")
     assert len(a) == len(b) == 64 and a != b and a.startswith("mcp__my_mail__")
+
+
+# ---------------------------------------------------------------------------
+# A connector's tool allow-list hides the other tools on Claude too
+# ---------------------------------------------------------------------------
+def _claude_options(servers, allowed_mail):
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    return ClaudeAgentOptions(
+        mcp_servers={"hubzoid": {"type": "sdk"},
+                     "jira": {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}},
+                     "cal": {"type": "http", "url": servers["cal"], "headers": {"Authorization": "Bearer tok-x"}}},
+        allowed_tools=["mcp__hubzoid__hub_note", *(f"mcp__jira__{t}" for t in allowed_mail), "mcp__cal__*"])
+
+
+@pytest.mark.asyncio
+async def test_claude_hides_tools_outside_a_connectors_allow_list(servers):
+    """The OpenAI and Codex backends never list a tool outside the admin's
+    allow-list; Claude used to show it and refuse it only when called."""
+    from hubzoid import factory_claude
+
+    opts = await factory_claude._hide_unlisted_connector_tools(_claude_options(servers, ["whoami"]))
+    assert opts.disallowed_tools == ["mcp__jira__mail_search"]          # hidden from the model
+    assert set(opts.mcp_servers) == {"hubzoid", "jira", "cal"}          # an unlimited server is untouched
+    # No allow-list anywhere: nothing is listed or hidden.
+    plain = _claude_options(servers, ["*"])
+    assert await factory_claude._hide_unlisted_connector_tools(plain) is plain
+
+
+@pytest.mark.asyncio
+async def test_claude_leaves_out_a_limited_connector_it_cannot_list(servers):
+    from hubzoid import factory_claude
+
+    opts = _claude_options(servers, ["whoami"])
+    opts.mcp_servers["jira"] = {"type": "http", "url": "http://127.0.0.1:9/mcp", "headers": {}}
+    opts.mcp_servers["jira__admin"] = {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}}
+    opts.allowed_tools.append("mcp__jira__admin__whoami")
+    out = await factory_claude._hide_unlisted_connector_tools(opts)
+    assert "jira" not in out.mcp_servers and "mcp__jira__whoami" not in out.allowed_tools
+    assert "mcp__jira__admin__whoami" in out.allowed_tools      # a longer connector keeps its list
+
+
+@pytest.mark.asyncio
+async def test_claude_refuses_a_call_outside_the_allow_list(servers, tmp_path):
+    """Hiding works from a listing; a tool the server adds after it is still
+    refused when called (the PreToolUse hook)."""
+    from hubzoid import factory_claude
+
+    hub = tmp_path / "h"
+    hub.mkdir()
+    opts = factory_claude._identity_checked(_claude_options(servers, ["whoami"]), hub, _who(X))
+    admit = opts.hooks["PreToolUse"][0].hooks[0]
+    refused = await admit({"tool_name": "mcp__jira__delete_everything", "tool_input": {}}, "t1", None)
+    assert refused["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "does not allow this tool" in refused["hookSpecificOutput"]["permissionDecisionReason"]
+    other = await admit({"tool_name": "mcp__jira__whoami", "tool_input": {}}, "t2", None)
+    assert "does not allow this tool" not in str(other)
+
+
+# Hosted MCP: the hub's /mcp endpoint, the way Claude Code reaches it. A
+# fourth access path to the same per-person servers, not another backend.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def hosted(hub, monkeypatch):
+    """The hub's hosted MCP app, with an OAuth grant each for X and Y."""
+    from hubzoid import mcp_server
+    from tests.mcp_credentials import RESOURCE, seed
+
+    monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
+    seed(hub, token="mcp-x", email=X, account_id="ux")
+    seed(hub, token="mcp-y", email=Y, account_id="uy")
+    h.grant(hub, X, Y, permissions=("use_hub",))
+    return mcp_server.build_mcp_app(hub)
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_lists_each_callers_own_connected_tools(hosted):
+    x, y = await h.hosted(hosted, ("mcp-x", "tools/list", {}), ("mcp-y", "tools/list", {}))
+    assert {"my_mail__whoami", "my_mail__mail_search"} <= h.tool_names(x)
+    assert not {n for n in h.tool_names(x) if n.startswith("my_cal__")}
+    assert {"my_mail__whoami", "my_cal__cal_today"} <= h.tool_names(y)
+    assert "list_knowledge" in h.tool_names(x) & h.tool_names(y)   # hub tools stay
+    whoami = next(t for t in x["result"]["tools"] if t["name"] == "my_mail__whoami")
+    assert whoami["description"].startswith("Mail: ")               # the app's text, labelled
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_calls_reach_the_app_as_each_caller_at_once(hosted):
+    call = {"name": "my_mail__whoami", "arguments": {}}
+    x, y = await h.hosted(hosted, ("mcp-x", "tools/call", call), ("mcp-y", "tools/call", call))
+    assert h.text_of(x) == X and h.text_of(y) == Y
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_never_reaches_an_app_the_caller_did_not_connect(hosted):
+    (out,) = await h.hosted(hosted, ("mcp-x", "tools/call", {"name": "my_cal__cal_today", "arguments": {}}))
+    assert h.failed(out)
+    assert "calendar of" not in json.dumps(out)
+
+
+def test_hosted_aliases_are_valid_mcp_names_that_never_collapse():
+    """``<server key>__<tool>`` within MCP's 128 characters of [A-Za-z0-9_.-];
+    names that differ upstream stay different, and a plain name is unchanged."""
+    import re
+
+    from hubzoid.mcp_connected_apps import alias
+
+    assert alias("my_mail", "search") == "my_mail__search"
+    assert alias("my_jira", "issue.get") == "my_jira__issue.get"          # '.' is valid in MCP
+    spaced, slashed = alias("my_jira", "issue get"), alias("my_jira", "issue/get")
+    assert spaced != slashed and spaced.startswith("my_jira__issue_get_")
+    long_a, long_b = alias("my_mail", "x" * 200 + "a"), alias("my_mail", "x" * 200 + "b")
+    assert len(long_a) == len(long_b) == 128 and long_a != long_b
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", n) for n in (spaced, slashed, long_a))

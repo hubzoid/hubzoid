@@ -28,6 +28,14 @@ os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
 # about something else; tests/test_backup_verify.py runs the schedule itself.
 os.environ.setdefault("HUBZOID_BACKUPS", "off")
 
+# With sign-in off only a connection from this machine is the owner, so the
+# in-process test client connects from 127.0.0.1 (a test may pass `client=`).
+from functools import partialmethod  # noqa: E402
+
+from starlette.testclient import TestClient as _TestClient  # noqa: E402
+
+_TestClient.__init__ = partialmethod(_TestClient.__init__, client=("127.0.0.1", 50000))
+
 # A test must never signal "every process I own": os.kill(-1) or os.killpg(0/1)
 # (killpg(1) is kill(-1)). On a CI runner that kills the runner itself, and the
 # job hangs with no log. A stand-in process (MagicMock pid == 1) is the usual way in.
@@ -151,6 +159,13 @@ def _planned_ports_ignore_this_machine(request, monkeypatch):
     import hubzoid.gateway as gateway
 
     monkeypatch.setattr(gateway, "port_free", lambda port, host="127.0.0.1": True)
+
+
+@pytest.fixture(autouse=True)
+def _mcp_without_sessions(monkeypatch):
+    """Most MCP tests post one JSON-RPC call per request, with no session. A
+    test of sessions (elicitation) removes this first."""
+    monkeypatch.setenv("MCP_STATELESS", "true")
 
 
 _REAL_MODEL_MARKERS = ("e2e", "e2e_llm", "e2e_ui", "e2e_browser", "real_logins")

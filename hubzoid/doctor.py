@@ -62,6 +62,7 @@ def _hub_checks(hub: Path) -> list[Check]:
                 out.append(Check("runtime.codex_login", "fail", f"Install Codex CLI {' or '.join(REVIEWED_CODEX_VERSIONS)} (or set HUBZOID_CODEX_BIN to one) and complete file-backed codex login as the service user"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("runtime.build", "fail", f"Agent does not build: {type(exc).__name__}: {exc}"))
+    out.extend(_subagent_checks(hub))
     try:
         from .loaders import tools_local
 
@@ -112,6 +113,14 @@ def _hub_checks(hub: Path) -> list[Check]:
                          [f"{w['name']} ({w['schedule'] or 'manual'}, {w['timezone']})" for w in defs]))
 
     try:
+        from .connectors import registry as connectors
+
+        bad = connectors.problems(hub)
+        if bad:
+            out.append(Check("connectors.files", "warn", f"{len(bad)} connector file(s) did not load", bad))
+    except Exception:  # noqa: BLE001 - no connector folder: nothing to report
+        pass
+    try:
         from . import access
 
         restricted = access.load_restricted(hub)
@@ -128,6 +137,39 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))
     return out
+
+
+def _subagent_checks(hub: Path) -> list[Check]:
+    """`agents.mode`: how each sub-agent runs, and why its model: or tools: is ignored."""
+    try:
+        from . import handover, model as modellib, settings as settingslib
+        from .loaders import agents as agents_loader
+        from .runtime import _resolve_model_id
+
+        hub_model = _resolve_model_id(hub, settingslib.load(hub))
+        subs = [a.spec for a in agents_loader.load_subagents(hub) if not a.spec.isolated]
+    except Exception:  # noqa: BLE001 - a broken agent file fails runtime.build
+        return []
+    rows, ignored = [], False
+    for spec in subs:
+        why = handover.skill_reason(spec.model, hub_model)
+        followed = handover.follow(spec.model, hub_model)
+        if not why and handover.engine(followed) == "litellm":
+            try:
+                modellib.build(spec.model)   # the OpenAI factory makes a delegate it can't build a skill
+            except Exception as exc:  # noqa: BLE001
+                why = f"its model could not be built ({exc})"[:200]
+        if not why:
+            rows.append(f"{spec.name}: runs on its own, on {followed}")
+            continue
+        ignored = ignored or bool(spec.model or spec.tools)
+        rows.append(f"{spec.name}: instructions for the main agent, because {why}; its model: and tools: don't apply")
+    if not rows:
+        return []
+    if ignored:
+        return [Check("agents.mode", "warn", "Some sub-agents don't run on their own, so their model: and tools: "
+                      f"are ignored (the agent uses {hub_model})", rows)]
+    return [Check("agents.mode", "ok", f"{len(rows)} sub-agent(s)", rows)]
 
 
 _SECRET_CHECK_IDS = {"deployment": "secrets.deployment", "hub": "secrets.hub", "restricted": "secrets.restricted"}
@@ -259,6 +301,51 @@ def _sqlite(hub: Path) -> Check | None:
         return Check("deps.sqlite", "fail", problem[0].upper() + problem[1:], {"sqlite": sqlite3.sqlite_version})
     if url.startswith("sqlite"):
         return Check("deps.sqlite", "ok", f"SQLite {sqlite3.sqlite_version}", {"sqlite": sqlite3.sqlite_version})
+    return None
+
+
+_NETWORK_FS = ("nfs", "nfs4", "efs", "cifs", "smbfs", "smb3", "9p", "fuse.sshfs")
+
+
+def network_filesystem(path: Path, mounts: str | None = None) -> str | None:
+    """The network filesystem type ``path`` sits on (Linux mount table), or None."""
+    if mounts is None:
+        try:
+            mounts = Path("/proc/mounts").read_text()
+        except OSError:
+            return None
+    target = str(Path(path).resolve())
+    best, kind = "", None
+    for line in mounts.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        point = parts[1].replace("\\040", " ")
+        if (target == point or target.startswith(point.rstrip("/") + "/")) and len(point) > len(best):
+            best, kind = point, parts[2]
+    return kind if kind in _NETWORK_FS else None
+
+
+def _sqlite_on_network(hub: Path) -> Check | None:
+    """SQLite's locking is unsafe on NFS (EFS): its database files must sit on
+    local disk, or the deployment must use Postgres (docs/DEPLOYING.md)."""
+    from . import db
+
+    for label, getter in (("operational", db.operational_url), ("workflow", db.dbos_url)):
+        try:
+            url = getter(hub)
+        except Exception:  # noqa: BLE001 — reported by the db checks
+            continue
+        if not url.startswith("sqlite:///"):
+            continue
+        path = Path(url[len("sqlite:///"):]).parent
+        kind = network_filesystem(path)
+        if kind:
+            return Check("db.network_fs", "fail",
+                         f"The {label} database is SQLite on a network filesystem ({kind}, {path}). SQLite's "
+                         "locks are not safe there: data can be lost.",
+                         {"recovery": "Use Postgres (DATABASE_URL) for a hosted deployment, or keep the SQLite "
+                                      "files on local disk."})
     return None
 
 
@@ -397,7 +484,7 @@ def _app_checks(hub: Path) -> list[Check]:
     found = _openwebui_data(hub, auth_on=summary["auth"])
     if found:
         out.append(found)
-    out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out.append(_local_mode_guard(auth_on=summary["auth"], hub=hub))
     out.append(_deployment_key(hub))
     return [c for c in out if c is not None]
 
@@ -432,15 +519,28 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
                  f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
 
 
-def _local_mode_guard(*, auth_on: bool) -> Check | None:
+def _local_mode_guard(*, auth_on: bool, hub: Path | None = None) -> Check | None:
     """`hubzoid run` keeps local mode (sign-in off) on loopback."""
     from . import appmode, settings as settingslib
+
+    recorded = appmode._manifest(hub, None).get("public_url")
 
     if auth_on:
         return None
     host = os.environ.get("HUBZOID_HOST", "127.0.0.1").strip()
     detail = {"host": host}
     if appmode.is_loopback_host(host):
+        remote = appmode.non_local_origins(extra=recorded)
+        if remote and appmode.unauthenticated_network_allowed():
+            return Check("exposure.local_mode", "warn",
+                         f"Sign-in is off and HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true: visitors through "
+                         f"{', '.join(remote)} act as the hub's owner. Turn sign-in on (HUBZOID_AUTH=true) "
+                         "unless only people you trust can reach that address", {**detail, "public": remote})
+        if remote:
+            return Check("exposure.local_mode", "warn",
+                         f"Sign-in is off: only this computer is the owner. Visitors through {', '.join(remote)} "
+                         "get no access (signed webhooks still arrive). Turn sign-in on (HUBZOID_AUTH=true) "
+                         "to open the web app there", {**detail, "public": remote})
         return Check("exposure.local_mode", "ok", f"Local mode: the web app stays on {host}", detail)
     if settingslib.truthy(os.environ.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
         return Check("exposure.local_mode", "warn",
@@ -487,6 +587,10 @@ def _model(hub: Path) -> Check:
     from . import runtime as runtime_lib, settings as settingslib
 
     model = runtime_lib._resolve_model_id(hub, settingslib.load(hub))
+    from . import bedrock
+
+    if bedrock.is_bedrock(model):
+        return _bedrock_model(hub, model)
     if model == "claude-local" or model.startswith("claude-local/"):
         from . import factory_claude, logins
 
@@ -511,6 +615,68 @@ def _model(hub: Path) -> Check:
     missing = status.get("missing_keys") or []
     return Check("model.credentials", "fail",
                  f"{model}: missing {', '.join(missing) or 'provider credentials'}", missing)
+
+
+def bedrock_used_tiers(hub: Path) -> set[str]:
+    """The Claude tiers a Bedrock hub's tasks, sub-agents, stations and chat
+    models ask for. Doctor checks only these strictly."""
+    from . import bedrock, runtime as runtime_lib
+
+    names: list[str] = []
+    try:
+        from .loaders import agents as agents_loader
+
+        for a in agents_loader.load_subagents(hub):
+            engine = (getattr(a.spec, "engine", None) or "").strip()
+            if engine and engine != "bedrock":
+                continue            # a station that names another engine does not use Bedrock
+            if a.spec.model:
+                names.append(f"bedrock/{a.spec.model}" if engine == "bedrock" else a.spec.model)
+    except Exception:  # noqa: BLE001 - the agents check reports a broken file
+        pass
+    try:
+        from . import scheduling
+
+        names += [t.model for t in scheduling.load_tasks(hub)[0] if getattr(t, "model", None)]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .chat.config import service_for
+
+        names += [e["model"] for e in service_for(hub).active().document["models"]["catalog"].values()]
+    except Exception:  # noqa: BLE001
+        pass
+    used = set()
+    for name in names:
+        followed = runtime_lib.follow_hub(hub, name)
+        if bedrock.is_bedrock(followed) and bedrock.inner(followed).lower() in bedrock.TIERS:
+            used.add(bedrock.inner(followed).lower())
+    return used
+
+
+def _bedrock_model(hub: Path, model: str) -> Check:
+    """Region, AWS identity and the model's lookup (`bedrock.check`). Inference
+    access is proven by the active reply check, not here."""
+    from . import bedrock, factory_claude
+
+    results = bedrock.check(model, used_tiers=bedrock_used_tiers(hub))
+    note = factory_claude.ignored_key_note(None, bedrock=True)
+    if note:
+        results.append(("ok", note))
+    try:
+        from .chat.config import service_for
+
+        web = service_for(hub).active().document["retrieval"]["web"]
+        if web.get("enabled") and web.get("search") == "native" and bedrock.is_claude(model, resolve=False):
+            results.append(("warn", "retrieval.web.search is native, but Bedrock has no web search tool, "
+                                    "so chat offers none."))
+    except Exception:  # noqa: BLE001
+        pass
+    rank = {"ok": 0, "warn": 1, "fail": 2}
+    worst = max((r[0] for r in results), key=lambda x: rank.get(x, 0), default="ok")
+    lines = [text for _status, text in results]
+    head = next((t for st, t in results if st == worst), lines[0] if lines else model)
+    return Check("model.credentials", worst, f"{model}: {head}", lines)
 
 
 def _backup_age(last: dict | None, failed: dict | None) -> Check:
@@ -800,6 +966,9 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         sqlite_check = _sqlite(hub)
         if sqlite_check:
             checks.append(sqlite_check)
+        network = _sqlite_on_network(hub)
+        if network:
+            checks.append(network)
         checks += _schema(hub)
         checks += _eval_checks(hub)
         checks += _auth(hub)

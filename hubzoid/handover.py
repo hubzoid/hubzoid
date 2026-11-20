@@ -20,15 +20,32 @@ _CLAUDE_DEFAULT_TIER = "sonnet"  # mirror factory_claude._CLAUDE_LOCAL_DEFAULT
 
 
 def engine(model_id: str | None) -> str:
-    """Which runtime engine a model id belongs to."""
-    if (model_id or "").strip().lower().startswith("codex-local"):
+    """Which runtime engine a model id belongs to. A Claude model on Bedrock is
+    its own engine here (``claude-bedrock``): a native delegate shares the
+    parent's CLI process and credentials, so it must match the provider too."""
+    low = (model_id or "").strip().lower()
+    if low.startswith("codex-local"):
         return "codex"
-    return "claude" if (model_id or "").strip().lower().startswith(_CLAUDE_PREFIX) \
-        else "litellm"
+    if low.startswith(_CLAUDE_PREFIX):
+        return "claude"
+    from . import bedrock
+
+    return "claude-bedrock" if bedrock.is_claude(model_id) else "litellm"
+
+
+def follow(sub_model: str | None, hub_model: str | None) -> str | None:
+    """On a Bedrock Claude hub a bare Claude name (``haiku``, ``claude-*``, a
+    Bedrock Claude id) follows the hub onto Bedrock. Elsewhere the id is used
+    as written, as before."""
+    if not (sub_model or "").strip() or engine(hub_model) != "claude-bedrock":
+        return sub_model
+    from .runtime import _apply_model_override
+
+    return _apply_model_override(hub_model or "", sub_model or "")[0]
 
 
 def resolve_tier(model_id: str | None) -> str:
-    """The Claude tier pin for a claude-local id. Bare claude-local -> sonnet."""
+    """The Claude tier pin for a claude-local or bedrock/ id. Bare claude-local -> sonnet."""
     s = (model_id or "").strip()
     if "/" not in s:
         return _CLAUDE_DEFAULT_TIER
@@ -40,6 +57,8 @@ def norm(model_id: str | None) -> str:
     """Canonical identity used for equality comparison within one engine."""
     if engine(model_id) == "claude":
         return f"claude::{resolve_tier(model_id)}"
+    if engine(model_id) == "claude-bedrock":
+        return f"bedrock::{resolve_tier(model_id)}"
     if engine(model_id) == "codex":
         return "codex::" + ((model_id or "").strip().partition("/")[2] or "default")
     return f"litellm::{(model_id or '').strip()}"
@@ -47,15 +66,23 @@ def norm(model_id: str | None) -> str:
 
 def classify(sub_model: str | None, hub_model: str | None) -> str:
     """Return 'delegate' or 'skill' for a sub-agent given the hub's model."""
-    if not (sub_model or "").strip():
-        return "skill"
-    if not (hub_model or "").strip():
-        return "skill"
-    if engine(sub_model) != engine(hub_model):
-        return "skill"
-    if norm(sub_model) == norm(hub_model):
-        return "skill"
-    return "delegate"
+    return "skill" if skill_reason(sub_model, hub_model) else "delegate"
+
+
+def skill_reason(sub_model: str | None, hub_model: str | None) -> str:
+    """Why a sub-agent is a skill, in a few words ("" for a delegate)."""
+    sub, hub = (sub_model or "").strip(), (hub_model or "").strip()
+    if not sub:
+        return "it names no model:"
+    if not hub:
+        return "it is offered over MCP, where the caller brings its own model"
+    sub = follow(sub, hub) or sub
+    if engine(sub) != engine(hub):
+        return (f"its model {sub!r} runs on a different engine or provider than the agent's {hub!r}; "
+                "a delegate must use the same engine and provider")
+    if norm(sub) == norm(hub):
+        return f"its model {sub!r} is the same as the agent's {hub!r}"
+    return ""
 
 
 def tool_name(agent_name: str) -> str:

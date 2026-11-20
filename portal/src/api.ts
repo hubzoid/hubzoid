@@ -284,6 +284,19 @@ export type AuditRow = {
   tool?: string;
   reason?: string;
   surface?: string;
+  /** Tool calls and sign-in events (HUBZOID_AUDIT with db). */
+  kind?: "access" | "tool" | "auth";
+  event?: string;
+  outcome?: "ok" | "error";
+  error?: string;
+  duration_ms?: number;
+  result_bytes?: number;
+  server?: string;
+  client?: string;
+  chat_id?: string;
+  run_id?: string;
+  args?: unknown;
+  locked_seconds?: number;
 };
 export type Overview = {
   hubs: number;
@@ -301,6 +314,8 @@ export type SummaryHub = {
   output_tokens: number;
   cost_usd: number | null;
   unpriced: number;
+  /** Calls that failed in the period. */
+  errors?: number;
   last_activity: number | null;
   users_with_access: number;
   everyone: boolean;
@@ -335,6 +350,37 @@ export type Summary = {
    *  `accounts` is null when the account directory could not be read. */
   user_accounts?: { accounts: number | null; hubs: number };
 };
+
+/** One period's usage totals (GET /usage). Cache and reasoning tokens are
+ *  parts of input and output; reasoning is null when not reported (Claude). */
+export type UsageTotals = {
+  calls: number; messages: number; chats: number; people: number;
+  input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number;
+  reasoning_tokens: number | null; cost_usd: number | null; unpriced: number; errors: number; cancelled: number;
+};
+export type UsagePoint = {
+  start: number; input_tokens: number; cache_read_tokens: number; output_tokens: number;
+  cost_usd: number; p50_ms: number | null; p95_ms: number | null;
+};
+export type UsageModel = {
+  model: string | null; calls: number; input_tokens: number; output_tokens: number; cache_read_tokens: number;
+  cache_write_tokens: number; reasoning_tokens: number | null; cost_usd: number | null; unpriced: number; errors: number;
+};
+export type UsageHub = UsageTotals & { key: string; p50_ms: number | null; p95_ms: number | null };
+export type UsageInsights = {
+  period: "24h" | "7d" | "30d"; hub: string | null; generated: number; bucket: number; since: number; until: number;
+  recording_since: number | null; totals: UsageTotals; previous: UsageTotals | null; series: UsagePoint[];
+  by_surface: { surface: string; calls: number; messages: number; tokens: number; cost_usd: number }[];
+  /** origin: chat, schedule, manual, event, mcp, eval, or null for calls recorded before it was tracked. */
+  by_trigger: { trigger: string | null; calls: number; cost_usd: number }[];
+  by_model: UsageModel[]; by_hub: UsageHub[];
+  latency: { first_token_p50_ms: number | null; p50_ms: number | null; p95_ms: number | null };
+};
+export type UsagePerson = {
+  subject: string | null; kind: "person" | "schedule" | "workflow" | "system"; agents: string[];
+  messages: number; tokens: number; cost_usd: number; last: number;
+};
+export type UsagePeople = { period: string; page: number; size: number; total: number; rows: UsagePerson[] };
 
 // status 0 means the request never got a response (network/abort): the server
 // may or may not have applied it. `certain` is true only when we have a response

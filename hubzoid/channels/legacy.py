@@ -118,7 +118,11 @@ def plan(hub_dir: Path, env: Mapping[str, str], *, two_point_oh_slack: bool | No
         if provider in seen or _missing(provider, env):
             continue
         if provider == "slack_assistant" and two_point_oh_slack:
-            continue  # those tokens belong to a 2.0 Slack connection
+            # Those tokens belong to a 2.0 Slack connection: say so.
+            out.notes.append(f"{Path(hub_dir).name}/.env has the Slack app settings, but a 2.0 Slack "
+                             "connection in channels/ uses those tokens, so the 1.x Slack app is off. "
+                             "Use one or the other (see docs/channels.md, 'Two ways to connect').")
+            continue
         _turn_on(out, provider)
         out.notes.append(f"{Path(hub_dir).name}/.env has the {provider} settings but no channel file. It "
                          f"starts for this release; add channels/{SUGGESTED[provider]}.yaml "

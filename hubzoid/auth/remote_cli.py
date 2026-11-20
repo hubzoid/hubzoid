@@ -3,6 +3,7 @@
     hubzoid auth login --server https://team.example.com
     hubzoid auth whoami
     hubzoid auth keys create "CI evals" --preset read --days 30
+    hubzoid auth keys create "Approver bot" --operations read,approve
     hubzoid auth keys list
     hubzoid auth sessions list
     hubzoid auth sessions revoke-others
@@ -187,11 +188,19 @@ def keys_list(server: str = _SERVER, as_json: bool = _JSON):
 @keys_app.command("create")
 def keys_create(name: str, server: str = _SERVER,
                 preset: str = typer.Option("chat", help="chat, read or all."),
+                operations: str = typer.Option(None, "--operations",
+                                               help="Instead of a preset: a comma list of chat, read, "
+                                                    "manage and approve (approve decides approvals and "
+                                                    "questions as you)."),
                 agent: list[str] = typer.Option(None, "--agent", help="Limit to this agent (repeat)."),
                 days: int = typer.Option(90, help="Days until it expires."),
                 as_json: bool = _JSON):
     """Make a key. It is printed once: store it somewhere safe."""
-    body = {"name": name, "preset": preset, "expires_in_days": days}
+    body = {"name": name, "expires_in_days": days}
+    if operations:
+        body["operations"] = [o.strip() for o in operations.split(",") if o.strip()]
+    else:
+        body["preset"] = preset
     if agent:
         body["hubs"] = list(agent)
     data = _run(server, "POST", "/api/me/api-keys", body, as_json=as_json)

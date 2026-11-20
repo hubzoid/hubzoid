@@ -63,7 +63,7 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
         "new",
     }
     ps = c.get("/portal/api/permissions?hub=ops").json()["permissions"]
-    assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator",
+    assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator", "mcp_delegates",
                                              "chat_dictation", "chat_read_aloud", "chat_web_search",
                                              "chat_model_compare",
                                              "share_public_links", "jev", "workflows_view",

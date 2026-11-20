@@ -165,7 +165,11 @@ def record_failure(hub_dir: Path, *, ip: str | None = None, email: str | None = 
             attempts.c.key.in_(wanted), attempts.c.failures >= max_failures(),
             sa.or_(attempts.c.locked_until.is_(None), attempts.c.locked_until <= now),
         ).values(locked_until=now + LOCK_SECONDS))
-        return _wait(conn, wanted, now)
+        locked = _wait(conn, wanted, now)
+    from .. import audit_log
+
+    audit_log.sign_in_failed(email=email, client=ip, locked_seconds=locked)
+    return locked
 
 
 def record_success(hub_dir: Path, *, ip: str | None = None, email: str | None = None) -> None:

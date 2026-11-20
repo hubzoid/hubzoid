@@ -3,9 +3,179 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [Unreleased]
+## [2.0.9]
+
+An assistant connected over MCP (Claude Code, Claude) can now do what chat
+does, and gets the apps a person connected in Settings. Amazon Bedrock is an
+opt-in model provider. The Hubzoid API is published with JWT access tokens and
+machine callers. Hosted deployments can run each hub as its own service, with
+an audit log of tool calls and sign-ins. Guardrails and a CI release gate are
+new and off unless set. The Usage page shows where usage comes from, and a
+resumed Claude chat's cost is no longer counted again on every turn. Plus
+fixes from a team that built an IT helpdesk agent on 2.0.8, and dependency
+updates with published security advisories.
+
+### Security
+- **Only a key with the new `approve` operation decides.** A personal API key
+  with `manage` could approve, deny or resolve work-item operations through
+  Settings, while approvals and questions refused every key. Now `approve`, in
+  no preset, is the one operation that reaches `/api/requests/.../decisions` and
+  work-item approve, deny and resolve. The decision records the key
+  (`decided_via: api_key`, the key id in the settle event, `via` on work-item
+  decisions). Hub changes stay person-only. Portal actors keep their credential
+  kind, so a key can no longer pass the session-only check on access changes.
+- **Sign-in off: only this computer is the owner.** A request through a tunnel
+  or proxy, from another machine, or from another site's page is no longer the
+  local owner. A raw TCP forward (`ssh -R`) adds no header and still looks
+  local: turn sign-in on before using one. `hubzoid run` and doctor warn when
+  a public URL is set with sign-in off. See [docs/auth.md](docs/auth.md#local-mode) and the upgrade notes.
+- **A connector's `tools:` allow-list hides the other tools on Claude too**,
+  and a call outside it is refused.
+- **Credential query values (`?api_key=`) are redacted in access logs.**
+- Dependencies with published advisories are raised (Pillow, pypdf, authlib,
+  cryptography, mcp, fastmcp, litellm and the Docker lock; #142). OIDC, Google
+  and Microsoft sign-in work when authlib runs on httpx2.
 
 ### Added
+- **Each hub as its own service behind one web app.** A hub's `.env` may set
+  `HUBZOID_BRIDGE_UPSTREAM` (and `HUBZOID_INBOUND_UPSTREAM`) to where its bridge
+  runs. The edge routes that hub there and checks its health, so people see
+  "restarting" while it is down and the other hubs keep working. The hub's own
+  service runs `hubzoid run <hub> --behind <public URL>`, listens on
+  `HUBZOID_BRIDGE_HOST` and trusts forwarded client addresses only from
+  `HUBZOID_TRUSTED_PROXIES`. It refuses to start on the network with sign-in
+  off, or without the shared database, deployment key or trusted proxy range.
+  See docs/DEPLOYING.md, Path C.
+- **Audit log for security teams** (`HUBZOID_AUDIT=off|log|db|both`, off by
+  default). One redacted record per tool call (who, which tool, allowed or
+  refused, outcome, duration, result size, argument names and identifiers),
+  per sign-in event (failures, lockouts, API key use) and per admin change.
+  `log` writes JSON lines for CloudWatch or a SIEM, `db` keeps them for the
+  Activity page (`HUBZOID_AUDIT_RETENTION_DAYS`, default 90).
+  `HUBZOID_AUDIT_ARGS=redacted` keeps argument values after the credential
+  scrub and masks personal data. See docs/AUDIT.md.
+- **Activity: Tool calls and Sign-in events**, with filters for agent, time,
+  person, allowed or refused, finished or failed, tool and channel, and an
+  **Export** button.
+- **Audit export.** `GET /portal/api/audit/export` (admins) and `hubzoid audit
+  <hub> --export` write every stored record, oldest first, as JSON lines.
+- **JSON logs.** `HUBZOID_LOG_FORMAT=json` writes every log line as a JSON
+  object with the hub, person, surface, chat, workflow run, client address and
+  trace id, through the credential scrub.
+- **`/readyz`** beside `/healthz`, on the bridge and the edge: 503 while the
+  database does not answer or its schema is behind. For a load balancer's
+  target group.
+- **Hosted deployment settings.** `HUBZOID_REQUIRE_SECRET_KEY` refuses to make
+  a key file (`hubzoid secrets new-key` prints a key), `HUBZOID_DB_POOL_SIZE`,
+  `_MAX_OVERFLOW`, `_POOL_TIMEOUT`, `_POOL_RECYCLE` and
+  `HUBZOID_DB_CONNECT_TIMEOUT` size the database pool, `HUBZOID_OTEL_SIGNALS`
+  chooses traces, metrics and logs, and `HUBZOID_OTEL_CONTENT` (none, tools,
+  full) caps the content telemetry carries. With a tracer set up, every tool
+  call is an `execute_tool` span.
+- `hubzoid doctor` fails a SQLite database on a network filesystem (EFS), and
+  `hubzoid status` from another container says where the deployment runs.
+- **Guardrails** (`proposals/2026-11-20-release-gate-and-guardrails.md`,
+  [docs](docs/guardrails.md)). A `guardrails:` key in the main agent's
+  `AGENTS.md` turns on checks on what people send and what the agent replies:
+  a prompt-injection check and a moderation check (one small model call per
+  message, Haiku on Claude hubs) and personal-data masking (email, phone, card
+  numbers and the hub's own patterns, in and out). Each is off, warn or block,
+  and personal data can also be redacted. A blocked message never reaches the
+  agent and is left out of later history. Decisions go to the access log and
+  the Activity page, never with the message text. Off unless set; workflows,
+  images and tool results are not checked. These are the guards both Mastra
+  and Agno ship.
+- **`hubzoid eval run --required`**: the CI release gate. It runs exactly the
+  cases `quality/manifest.yaml` requires, chosen as doctor chooses them, and
+  exits 2 when the gate cannot be trusted (no manifest, nothing required, a
+  name that matches no case, a required case that is off or checks nothing,
+  or `--tag`, `--case`, `--no-judge` or `--model` with it). Every results file
+  and JUnit report now records the Hubzoid version and the hub's Git commit.
+- **MCP access tokens are JWTs** (RFC 9068, RS256) that outside verifiers such
+  as AWS AgentCore can check from the issuer's metadata (`jwks_uri`) or an
+  OpenID-style discovery document. The live grant check still runs on every
+  call. One key set per deployment, encrypted in the operational database or
+  operator-managed (`HUBZOID_MCP_SIGNING_KEY`), with
+  `hubzoid mcp signing-keys list|rotate [--now]`. Refresh tokens, API keys and
+  sessions stay opaque.
+- **Machine callers with their own JWT.** An `apps:` entry with an `api:` block
+  lets a CI job or cloud workload call the API with a token from its own issuer
+  (GitHub Actions, a workload identity). It acts as one fixed account, every
+  token must carry the required claims, it gets a key's operation rules
+  without `approve`, and removing or disabling the app stops its running work.
+- **Start a "Run for me" report over the API:** `POST /portal/api/my/runs`, as
+  the caller, with `Idempotency-Key`, `confirm` for workflows that ask for a
+  yes, and the run in the person's history (`trigger: api`).
+- **The API reference lists exactly the published routes** with `stable` or
+  `beta`, the key operations that may call each one and the main request,
+  response and event shapes. It adds the chat engine, runs, hub changes,
+  memory, notification webhooks, workflow runs and work-item decisions, and a
+  snapshot test guards it.
+- **`my_requests` over MCP** lists the approvals and questions waiting for the
+  person, with the Inbox link. Read only.
+- `hubzoid auth keys create --operations` and an "Also decide approvals and
+  questions" option in Settings.
+- **MCP at par with chat** (`proposals/2026-11-20-mcp-parity.md`). Over hosted
+  MCP:
+  - `write_artifact`, `make_excel`, `make_pdf`, `make_word` and
+    `list_artifacts` work in each person's own file space and return the same
+    download link as chat, plus an MCP resource link the assistant can read
+    back. Only the person who made a file can read it.
+  - `upload_file` hands the hub a file the person gave their assistant (up to
+    2.5 MB), for `read_upload`, `read_upload_full` and the hub's own tools.
+  - `ask_question`, approvals and a workflow run's questions are asked in
+    place through MCP elicitation when the client supports it (Claude Code
+    does). An approval or a workflow run's answer is recorded in the inbox as
+    the person's decision, and an `ask_question` answer goes straight back to
+    the assistant. Otherwise the result says to ask the person, or where to
+    approve.
+  - `remember` and the hub change tools work with chat's gate (Save shared
+    knowledge or managing the hub, in-app editing on): a member's change is
+    reviewed in Settings, Hub changes.
+  - Core skills such as `dashboard` are listed.
+  - Sub-agents that run on their own `model:` are offered as `handover_<name>`
+    to people with the new grant **Use sub-agents on this agent's model from
+    an assistant** (`mcp_delegates`), because the agent pays for those model
+    calls. Usage is recorded under the person, on surface `mcp`.
+  - The endpoint keeps a session per connected assistant, which elicitation
+    needs. `MCP_STATELESS=true` keeps the earlier one-request mode, without
+    elicitation.
+- **Amazon Bedrock as a model provider** (`proposals/2026-11-20-bedrock-provider.md`,
+  [docs/bedrock.md](docs/bedrock.md)). Opt in per hub with
+  `MODEL=bedrock/sonnet` (or `opus`, `haiku`, a Bedrock id or ARN) and
+  `AWS_REGION`. Claude runs on the same Claude runtime, billed by AWS; other
+  Bedrock models run on LiteLLM. `claude-local` with the subscription stays the
+  default and is unchanged. A bare `model: opus` follows the hub's provider and
+  `claude-local/opus` or `bedrock/opus` picks one on purpose, so a hub can mix
+  them per task, each call with only its own credentials. The tiers are pinned
+  to what they mean on `claude-local`, as profiles for the region. A hub
+  without a region does not start. Doctor and Settings diagnostics check the
+  region, AWS identity and model, the web search switch hides on Bedrock, and a
+  dollar limit stops when the CLI reports no cost for a Bedrock call.
+- **Connected apps reach assistants over MCP.** An assistant connected to an
+  agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
+  person connected in Settings, as `my_<id>__<tool>`, called as that person
+  with the same grants, allow-lists, approval rules and access log as chat.
+  After connecting an app, reconnect the assistant to load its tools (in
+  Claude Code: `/mcp`, then Reconnect) (#144).
+- `hubzoid doctor` checks `agents.mode` (how each sub-agent runs, and why its
+  `model:` or `tools:` is ignored) and `connectors.files` (connector files that
+  didn't load).
+- Evals fail a case that names a tool the agent doesn't have.
+- `hubzoid channels list` shows running 1.x channels.
+
+- **Usage shows where usage comes from, what it costs and how it runs.** One
+  period (24 hours, 7 days, 30 days) and an agent filter drive every section:
+  six totals with the change against the previous period, tokens and cost over
+  time (input, input read from cache, output), by channel, by what started the
+  calls (chat, schedules, by hand, events, MCP, evals), a sortable, searchable
+  table of agents with their monthly limits, response times (first words in web
+  chat, p50 and p95), by model and by person (admins only, searched and paged).
+  Settings › Agents gains pages and an errors column. New read-only endpoints
+  `GET /portal/api/usage` and `/portal/api/usage/people`. Usage rows now record
+  what started each call and, where the provider reports them, cache and
+  reasoning tokens (one additive migration, `op_0083`). Rows written before it
+  count in every total and show as "Earlier, not tracked".
 - **Failed commit statuses as failed checks.** A GitHub connection's new
   `rules.status_failures` lists status contexts and the one login allowed to
   post each, for example Engineering Desk's `engineering-desk/review` gate. A
@@ -17,6 +187,63 @@ All notable changes to Hubzoid. Versions follow the package version in
   the Status event; an existing App needs both added (see
   docs/channels/github.md). Doctor warns when a rule is set without them, and
   every other read keeps working.
+
+### Changed
+- **A Claude id under `bedrock/` runs on the Claude runtime**, not LiteLLM.
+  Write `bedrock/converse/<id>` to keep a Claude model on LiteLLM. No sample,
+  test or known hub used `bedrock/` before.
+- **claude-agent-sdk 0.2.162 or later** (Claude Code 2.1.285), for the Bedrock
+  settings. It moves every Claude hub to the newer CLI.
+- `hub.call_llm(model="opus")` and an eval judge model of `opus` on a
+  `claude-local` hub now run on the subscription, as a scheduled task's
+  `model: opus` already did. They used to go to LiteLLM.
+- Settings diagnostics and the Get started card read the hub's model as the
+  runtime does (`.env`, then `AGENTS.md`), not `MODEL` from the environment only.
+
+### Fixed
+- **`request.created` webhooks are delivered.** They were accepted in a
+  target's events but never sent. They now come from the persisted request
+  events (so a restart loses none), go to the people who may act, and carry the
+  request id, kind and Inbox link, never its content.
+- **Webhook retries no longer stall.** The deliverer stopped after three idle
+  passes, so a retry waited for the next chat reply. It now sleeps until the
+  next due delivery and starts at boot when there is work.
+- `connect_account` over MCP no longer tells the person a connected app can be
+  used now while their assistant cannot see its tools: it says to reconnect.
+- `hubzoid channels doctor` no longer fails Slack Socket Mode, or GitHub without
+  a webhook secret, for a missing public URL.
+- Claude sub-agents answer within the turn; the prompt names Claude's call.
+- No misleading "tools whitelist ignored" warning over MCP.
+- Docs: the two ways to connect Slack and WhatsApp, and stale `--slack` steps.
+- Usage: the per-agent rows now follow the period (24 hours, 7 days, 30 days)
+  like the totals above them. They used to show this month whatever the
+  period. Monthly limit bars still count the calendar month and say so.
+  Settings › Agents always shows 30 days, as its columns say, even when the
+  address carries another period.
+- The usage cost of a resumed Claude chat counted the session's earlier turns
+  again on every turn, so costs read several times too high. Each turn now
+  records its own cost (migration op_0082).
+- **Traces keep reaching Langfuse v4.** Langfuse Cloud asks OTLP senders for
+  `x-langfuse-ingestion-version: 4` and may delay or stop uploads without it.
+  Hubzoid now adds it by itself when `HUBZOID_OTEL_ENDPOINT` is Langfuse (path
+  ends in `/api/public/otel`): on the claude-local subprocess, the
+  `HUBZOID_OTEL_NORMALIZE` relay and the LiteLLM path. No `.env` change is
+  needed. A value set in `OTEL_EXPORTER_OTLP_HEADERS` wins and is not
+  duplicated. Other OTLP endpoints are untouched. The reference collector
+  config sets the header on its Langfuse exporter.
+
+### Docs
+- [CI for a hub](docs/ci.md) with a ready GitHub Actions file
+  (`examples/ci/hubzoid-checks.yml`: the hub's tests, then the required evals),
+  and [Rolling back](docs/rollback.md): a change, the hub's files, or the
+  Hubzoid version, and how to rehearse it.
+- [Guardrails](docs/guardrails.md): the frontmatter, what each mode does, and
+  three starter safety cases to require with `required_tags: [safety]`.
+- `docs/api.md` rewritten around the published reference: credentials and key
+  operations, machine callers, conversations and events, approvals, workflows,
+  hub changes, webhooks with signature checking, and the stability rule.
+  `docs/mcp-server.md` describes the JWT access tokens, signing keys and what
+  is still untested on AWS AgentCore.
 
 ## [2.0.8]
 

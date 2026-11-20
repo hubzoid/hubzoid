@@ -38,9 +38,14 @@ def test_litellm_completion_is_cancelled_at_call_deadline(tmp_path, monkeypatch)
             raise
 
     monkeypatch.setattr(litellm, "acompletion", slow_completion)
+    call = {"prompt": "hello", "model": "openai/fake", "timeout": 0.05, "response_format": "text"}
+    # A first call pays one-off imports and store setup, which on a loaded
+    # parallel CI runner alone can pass 2 s; the bound below is about the deadline.
+    with pytest.raises(TimeoutError):
+        runtime.complete_once(hub_dir, dict(call))
+    cancelled.clear()
     started = time.monotonic()
     with pytest.raises(TimeoutError):
-        runtime.complete_once(hub_dir, {"prompt": "hello", "model": "openai/fake",
-                                        "timeout": 0.05, "response_format": "text"})
+        runtime.complete_once(hub_dir, dict(call))
     assert cancelled == [True]
     assert time.monotonic() - started < 2

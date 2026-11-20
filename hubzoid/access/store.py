@@ -614,6 +614,10 @@ class GrantStore:
                 "r": request_id,
             },
         )
+        from .. import audit_log
+
+        audit_log.admin_event(actor, action, subject=subject, target_hub=hub, detail=permission,
+                              via=surface, conn=conn)
 
     def write_audit(self, conn, actor, action, *, subject=None, hub=None,
                     permission=None, surface=None, request_id=None) -> None:

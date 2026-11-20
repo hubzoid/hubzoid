@@ -24,7 +24,7 @@ from ..capabilities import Capability, register
 CURATOR = register(Capability(
     permission="curator", label="Save shared knowledge", group="tools",
     description="Use remember and propose changes to this agent's instructions and knowledge.",
-    surfaces=("chat", "workflow"),
+    surfaces=("chat", "mcp", "workflow"),
 ))
 CURATOR_PERMISSION = CURATOR.permission
 

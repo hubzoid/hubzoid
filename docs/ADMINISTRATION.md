@@ -106,6 +106,10 @@ one-time sign-in link; nothing is emailed.
    only their permitted tools.
 5. Review **Activity → Access changes** for who changed what and **Tool
    decisions** for actual allow/deny decisions. Both are scoped to the administrator.
+   With the audit log on (`HUBZOID_AUDIT=db` or `both`), **Tool calls** lists every
+   tool call and **Sign-in events** (organization administrators only) lists failed
+   sign-ins, lockouts and API key use, with **Export** for a security team. See
+   [the audit log](AUDIT.md).
    Filter by time range, agent, person, who-changed-it/action (access changes), or
    tool/outcome/channel (tool decisions); filters and paging are kept in the URL, so a
    filtered view is shareable and survives refresh and Back. **Details** on any row opens
@@ -169,23 +173,45 @@ each one's settings are present. See
 
 ## The Agents page
 
-**Settings → Agents** lists the agents, with five summary cards under
-**Usage overview**. Choose the last 24 hours, 7 days or 30 days; Refresh reloads
-totals, agents and workflow status. A small update time appears beside Refresh.
-Hub administrators see only their agents.
+**Settings → Agents** lists the agents: what each is built with, people with
+access, chats, spend and errors in the last 30 days, when it was last used and
+its status. The columns always count 30 days, whatever period another page
+used. Find an agent by name, show only those that need attention or have not
+been used yet, and page through ten at a time. Hub administrators see only
+their agents. Click an agent to open it at Access. Its workflow and eval tags
+open **Runs & schedules** and **Evals**. Global Runs is no longer a navigation
+entry, and existing direct links still work.
 
-| Number | Meaning |
+## The Usage page
+
+**Settings → Usage** shows what agents used, how they ran and their limits.
+One period control (24 hours, 7 days, 30 days) and an agent filter drive every
+section, and both stay in the address so a link opens the same view. Hub
+administrators see only their agents.
+
+| Section | What it shows |
 |---|---|
-| Messages | Human messages across chat surfaces, with conversation count below. Background title/suggestion calls are excluded. |
-| Users | Sign-in accounts in your scope (the deployment for an organization administrator, accounts with access to your agents for a delegate), whatever the period. Blocked accounts count; legacy service identities and email-only grants do not. Shows unavailable, never 0, if accounts can't be read. |
-| Tokens used | Input and output tokens, including background and workflow model calls. |
-| Workflow runs | Runs in the selected period, with failed count below when applicable. |
-| Approx. cost | USD estimate from reported model cost or token prices; unpriced calls are excluded and marked with `*`. The help icon explains subscription billing and estimates. |
+| Totals | Messages (and conversations), people active (and sign-in accounts in your scope), tokens (and the share read from the prompt cache), approximate cost (and calls without a known price), workflow runs (failed runs and missed schedule slots), and the error rate among recorded calls (and tool calls denied). Each total shows the change against the previous period of the same length, hidden when that period was not fully recorded. |
+| Tokens or cost over time | Hourly for 24 hours, daily otherwise: input, input read from cache, output. Hover a bar for its numbers, or switch to a table. Days before recording started are marked. |
+| By channel | Calls and cost per surface: web chat, Slack, WhatsApp, Telegram, MCP, workflows, API. |
+| How it was used | Share of calls by what started them: chat, schedules, by hand, events, MCP, evals. Calls recorded before 2.0.9 show as "Earlier, not tracked". |
+| By agent | Messages, people, tokens, cost, errors, p50 response time and the monthly limit bar for each agent, searchable and sortable, ten a page. Open a row to set its limits ([usage limits](budgets.md)). Limits always count the calendar month. |
+| Response time | Time to the first words of a web chat reply (p50), and the full reply or model call at p50 and p95, over time. Failed and background calls are left out. |
+| By model | Calls, input, share from cache, output, reasoning tokens and cost for the model that answered. A turn's background and sub-agent calls count with it. Claude reports thinking inside output, so its reasoning reads "In output". Models with no known price are flagged. |
+| By person | People, schedules and workflows with the agents they used, messages, tokens, cost and last activity. Searched, sorted and paged on the server. |
 
-Usage comes from Hubzoid's recorded operational data, not historical chat-app
-messages. Click an agent to open it at Access; its workflow and eval tags
-open **Runs & schedules** and **Evals**.
-Global Runs is no longer a navigation entry; existing direct links still work.
+Numbers come from Hubzoid's own usage records (`hz_usage`), one row per chat
+turn or model call, with no message content. Costs are estimates from model
+prices. The provider's bill is final. Before 2.0.9 the per-agent rows showed
+the calendar month whatever period was chosen. They now follow the period.
+
+The page reads `GET /portal/api/usage?period=7d&hub=<agent>` (totals, the
+previous period, `series`, `by_surface`, `by_trigger`, `by_model`, `by_hub`,
+`latency`) and `GET /portal/api/usage/people?period=7d&hub=&q=&sort=cost&order=desc&page=0&size=8`.
+Workflow runs, missed slots, denied tools and accounts come from
+`GET /portal/api/summary`, whose agent rows now also carry `errors`. All need an
+administrator and are scoped to the agents the caller manages. An agent outside
+that scope answers 404.
 
 Public email and SSO account registration default to off. Managers create
 accounts with **Add user** (on an agent's Access tab or on People) and grant

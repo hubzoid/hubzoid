@@ -188,13 +188,21 @@ class Orchestrator:
             from .. import _request_ctx
             from .history import branch_images, message_images, user_text
 
-            resume = await db(self.engine.binding_for, plan, self.config_digest(plan.actor_id))
+            resume, resume_cost = await db(self.engine.bound_session, plan, self.config_digest(plan.actor_id))
             slot = _request_ctx.SessionSlot(
-                resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
+                resume_id=resume, resume_cost=resume_cost,
+                delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
                 if resume and path else None,
                 images=await db(branch_images, self.ctx.hub_dir, key, path),
                 delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
                 if path else [])
+            # What the guardrails check: the person's new message and any
+            # regenerate refinement, not the stored history before it.
+            new_parts = [await db(user_text, self.ctx.hub_dir, key, path[-1].get("content"))] \
+                if path and path[-1].get("role") == "user" else []
+            new_parts += [str(t.get("content") or "") for t in (plan.extra_turns or [])
+                          if isinstance(t, dict) and t.get("role") == "user"]
+            slot.new_input = "\n\n".join(p for p in new_parts if p)
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
             opts = plan.options or {}
@@ -207,7 +215,9 @@ class Orchestrator:
             if opts.get("tool_allowlist") is not None:
                 slot.tool_allowlist = list(opts["tool_allowlist"])
             # Who this reply acts for, for approvals and questions (hubzoid.hitl).
-            via_key = plan.credential == "api_key"
+            from ..auth import automated
+
+            via_key = automated(plan.credential)
             slot.hitl = {"account_id": plan.actor_id, "email": plan.actor_email, "present": not via_key,
                          "origin": "api" if via_key else "chat",
                          "conversation_id": plan.conversation_id, "branch_id": plan.branch_id,
@@ -295,7 +305,7 @@ class Orchestrator:
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
                      head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
-                     ok=status == "complete")
+                     ok=status == "complete", session_cost=getattr(slot, "session_cost", None))
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
         files = getattr(self.ctx, "files", None)
