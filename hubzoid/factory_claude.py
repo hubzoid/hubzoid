@@ -1087,7 +1087,8 @@ async def _hide_unlisted_connector_tools(options):
             log.warning("connector %s: its tools could not be listed (%s), so it is left out of this turn",
                         key, type(exc).__name__)
             servers.pop(key, None)
-            allowed = [t for t in allowed if not str(t).startswith(f"mcp__{key}__")]
+            longer = tuple(f"mcp__{k}__" for k in servers if len(str(k)) > len(key))  # erp__admin isn't erp
+            allowed = [t for t in allowed if not str(t).startswith(f"mcp__{key}__") or str(t).startswith(longer)]
             continue
         hidden += [f"mcp__{key}__{t}" for t in listed if t not in names]
     return dataclasses.replace(options, mcp_servers=servers, allowed_tools=allowed,

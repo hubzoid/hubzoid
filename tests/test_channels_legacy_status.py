@@ -21,7 +21,10 @@ def test_a_2_0_slack_file_turning_off_the_1x_app_says_so(tmp_path):
 def test_channels_list_shows_1x_channels(tmp_path, monkeypatch):
     from hubzoid.cli import app
 
-    for key in ("DATABASE_URL", "HUBZOID_OPERATIONAL_DB"):
+    import os
+
+    for key in ("DATABASE_URL", "HUBZOID_OPERATIONAL_DB",
+                *(k for k in os.environ if k.startswith(("SLACK_", "WHATSAPP_", "TELEGRAM_")))):
         monkeypatch.delenv(key, raising=False)
     hub = tmp_path / "ops"
     (hub / "channels").mkdir(parents=True)

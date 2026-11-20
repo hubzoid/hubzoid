@@ -462,8 +462,11 @@ async def test_claude_leaves_out_a_limited_connector_it_cannot_list(servers):
 
     opts = _claude_options(servers, ["whoami"])
     opts.mcp_servers["jira"] = {"type": "http", "url": "http://127.0.0.1:9/mcp", "headers": {}}
+    opts.mcp_servers["jira__admin"] = {"type": "http", "url": servers["mail"], "headers": {"Authorization": "Bearer tok-x"}}
+    opts.allowed_tools.append("mcp__jira__admin__whoami")
     out = await factory_claude._hide_unlisted_connector_tools(opts)
-    assert "jira" not in out.mcp_servers and not any(t.startswith("mcp__jira__") for t in out.allowed_tools)
+    assert "jira" not in out.mcp_servers and "mcp__jira__whoami" not in out.allowed_tools
+    assert "mcp__jira__admin__whoami" in out.allowed_tools      # a longer connector keeps its list
 
 
 @pytest.mark.asyncio
