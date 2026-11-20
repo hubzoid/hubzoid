@@ -66,10 +66,12 @@ def claude_otel_env(*, endpoint, user, hub, surface) -> dict[str, str]:
 
 def _langfuse_headers_env(endpoint: str) -> dict[str, str]:
     """OTEL_EXPORTER_OTLP_HEADERS with the Langfuse v4 ingestion header added,
-    when the subprocess exports straight to Langfuse. Through the bridge's
-    normalize relay the endpoint is loopback and the relay adds it instead."""
+    when the subprocess's traces go straight to Langfuse. Through the bridge's
+    normalize relay the endpoint is loopback and the relay adds it instead.
+    An operator's OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is where traces really go."""
+    target = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or endpoint
     raw = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
-    merged = langfuse_otlp_headers(raw, endpoint)
+    merged = langfuse_otlp_headers(raw, target)
     return {"OTEL_EXPORTER_OTLP_HEADERS": merged} if merged != (raw or "") else {}
 
 
@@ -320,6 +322,22 @@ async def forward_otlp(body: bytes, *, forward_url: str, headers: dict,
     return resp.status_code
 
 
+def _litellm_langfuse_headers(endpoint: str) -> None:
+    """Add the Langfuse v4 ingestion header where LiteLLM's OTel exporter will
+    read it. LiteLLM sends to OTEL_EXPORTER_OTLP_ENDPOINT, else OTEL_ENDPOINT,
+    with headers from OTEL_EXPORTER_OTLP_HEADERS, else OTEL_HEADERS. With
+    neither, the OTLP exporter reads OTEL_EXPORTER_OTLP_TRACES_HEADERS. Extend
+    the variable that is in use, so the auth it holds is never hidden."""
+    env = os.environ
+    target = env["OTEL_EXPORTER_OTLP_ENDPOINT"] if "OTEL_EXPORTER_OTLP_ENDPOINT" in env else endpoint
+    if not is_langfuse_endpoint(target):
+        return
+    key = next((k for k in ("OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS",
+                            "OTEL_EXPORTER_OTLP_TRACES_HEADERS") if k in env),
+               "OTEL_EXPORTER_OTLP_HEADERS")
+    env[key] = langfuse_otlp_headers(env.get(key), target)
+
+
 def openai_otel_setup(*, endpoint, hub) -> bool:
     """Enable OTel on the OpenAI/LiteLLM path via LiteLLM's native `otel`
     callback (tokens + gen_ai.cost.total_cost). Process-level, so it carries
@@ -338,10 +356,7 @@ def openai_otel_setup(*, endpoint, hub) -> bool:
         return False
     os.environ["OTEL_EXPORTER"] = "otlp_http"
     os.environ["OTEL_ENDPOINT"] = endpoint
-    # LiteLLM reads its export headers from OTEL_EXPORTER_OTLP_HEADERS.
-    headers = langfuse_otlp_headers(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"), endpoint)
-    if headers:
-        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = headers
+    _litellm_langfuse_headers(endpoint)
     os.environ["OTEL_RESOURCE_ATTRIBUTES"] = _merge_resource_attr(
         os.environ.get("OTEL_RESOURCE_ATTRIBUTES"), {"hubzoid.hub": _attr(hub)}
     )

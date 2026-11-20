@@ -157,3 +157,62 @@ def test_bridge_relay_forwards_with_ingestion_header(monkeypatch):
                     headers={"content-type": "application/x-protobuf"})
     assert r.status_code == 200
     assert captured["headers"] == {"Authorization": "Basic abc123", H: "4"}
+
+
+# --- review fixes: follow where each exporter really sends and reads -----------
+def _clear_litellm_env(monkeypatch):
+    for key in ("OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS",
+                "OTEL_EXPORTER_OTLP_TRACES_HEADERS", "OTEL_EXPORTER_OTLP_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_litellm_keeps_auth_in_otel_headers(monkeypatch):
+    import os
+    _fake_litellm(monkeypatch)
+    _clear_litellm_env(monkeypatch)
+    monkeypatch.setenv("OTEL_HEADERS", "Authorization=Basic abc=")
+    otel.openai_otel_setup(endpoint=LF, hub="h")
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in os.environ  # would hide OTEL_HEADERS
+    assert os.environ["OTEL_HEADERS"] == f"Authorization=Basic abc=,{H}=4"
+
+
+def test_litellm_keeps_auth_in_traces_headers(monkeypatch):
+    import os
+    _fake_litellm(monkeypatch)
+    _clear_litellm_env(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=Basic abc=")
+    otel.openai_otel_setup(endpoint=LF, hub="h")
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in os.environ
+    assert os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] == f"Authorization=Basic abc=,{H}=4"
+
+
+def test_litellm_creates_generic_headers_when_none_set(monkeypatch):
+    import os
+    _fake_litellm(monkeypatch)
+    _clear_litellm_env(monkeypatch)
+    otel.openai_otel_setup(endpoint=LF, hub="h")
+    assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == f"{H}=4"
+
+
+def test_litellm_follows_its_preferred_endpoint(monkeypatch):
+    import os
+    _fake_litellm(monkeypatch)
+    _clear_litellm_env(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer t")
+    # LiteLLM sends to OTEL_EXPORTER_OTLP_ENDPOINT over OTEL_ENDPOINT.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    otel.openai_otel_setup(endpoint=LF, hub="h")
+    assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Bearer t"
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", LF)
+    otel.openai_otel_setup(endpoint="http://collector:4318", hub="h")
+    assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == f"Authorization=Bearer t,{H}=4"
+
+
+def test_claude_env_follows_operator_traces_endpoint(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Basic abc=")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", LF + "/v1/traces")
+    env = otel.claude_otel_env(endpoint="http://collector:4318", user="u", hub="h", surface="s")
+    assert env["OTEL_EXPORTER_OTLP_HEADERS"] == f"Authorization=Basic abc=,{H}=4"
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4318/v1/traces")
+    env = otel.claude_otel_env(endpoint=LF, user="u", hub="h", surface="s")
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in env

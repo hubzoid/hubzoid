@@ -31,6 +31,11 @@ stop uploads without it. You do not need to add it to `OTEL_EXPORTER_OTLP_HEADER
 A value you set there yourself wins, and the header is never sent twice. Other
 OTLP endpoints get no extra header.
 
+Exporters that Hubzoid does not start are yours to configure. If you run
+`opentelemetry-instrument hubzoid run` (see Signals below) or a collector, and
+it sends straight to Langfuse, add `x-langfuse-ingestion-version=4` to its
+headers yourself.
+
 Unset `HUBZOID_OTEL_ENDPOINT` (the default) and nothing is emitted.
 
 On the **claude-local** path, also set this to get cost in Langfuse (see the
