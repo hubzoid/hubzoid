@@ -877,12 +877,6 @@ export function describeAuthEvent(row: AuditRow, ctx: ActivityContext): Sentence
   return { tone: known.tone, tag: known.tag, parts: [person(who), text(known.phrase + from)] };
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = ms / 1000;
-  return s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
-}
-
 /** Keep unfamiliar cron expressions exact rather than inventing a schedule. */
 export function describeCron(cron: string): string {
   const p = cron.trim().split(/\s+/);
