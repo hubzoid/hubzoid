@@ -295,8 +295,6 @@ class HubOAuth(OAuthProvider):
                 return None
             return (claims["hz_grant"], str(claims.get("client_id") or ""),
                     str(claims.get("scope") or "").split(), int(claims["exp"]), str(claims["sub"]))
-        if not token.startswith("hz_at_"):
-            return None
         with self.store.engine.connect() as c:
             d = self.store.get(c, token, "access")
         return (d["grant"], d["client_id"], d["scopes"], d["_expires"], None) if d else None
