@@ -3,7 +3,14 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [Unreleased]
+## [2.1.1]
+
+A hub's agent turns can run on Amazon Bedrock AgentCore, one microVM per chat,
+while the hub service keeps chats, sign-in, channels, workflows, schedules and
+approvals. The hub's MCP server can run there too, with the hub's own sign-in.
+`hubzoid deploy init aws` writes one CloudFormation stack for all of it,
+verified end to end on AWS. Everything is off unless set: one new empty table is
+the only change for existing deployments.
 
 ### Added
 - **Agent turns on Amazon Bedrock AgentCore (off unless set).** With
@@ -28,6 +35,9 @@ All notable changes to Hubzoid. Versions follow the package version in
   runner and MCP runtime with a resource policy that lets only the hub service
   invoke the runner. [docs/deploy/aws.md](docs/deploy/aws.md).
 - `hubzoid doctor` and Settings > Diagnostics check the runner when it is on.
+- `HUBZOID_FORWARDED_PROTO_HEADER` (off by default): the edge trusts a front
+  door's own scheme header, so sign-in cookies stay `Secure` behind CloudFront
+  and a plain-HTTP load balancer.
 
 ## [2.0.9]
 
