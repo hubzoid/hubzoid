@@ -130,12 +130,39 @@ Each hub runs its own bridge process, so set `HUBZOID_OTEL_ENDPOINT` per hub
 (all pointing at the same central Langfuse). Turns separate cleanly by
 `hubzoid.hub`, so one Langfuse view covers every hub.
 
+## Signals
+
+`HUBZOID_OTEL_SIGNALS` chooses what the agent runtime exports: any of
+`traces`, `metrics` and `logs` (default `traces`). An operator's own
+`OTEL_METRICS_EXPORTER` or `OTEL_LOGS_EXPORTER` still wins. Sampling uses the
+standard `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`.
+
+For spans from Hubzoid itself (the web server, the database and one
+`execute_tool` span per tool call, with `gen_ai.tool.name`,
+`gen_ai.tool.call.id`, `error.type` and the hub, person and surface), run it
+under the OpenTelemetry Python auto-instrumentation:
+
+```
+pip install opentelemetry-distro opentelemetry-exporter-otlp
+opentelemetry-bootstrap -a install
+opentelemetry-instrument hubzoid run
+```
+
+Tool spans never carry arguments or results. For the security view (every tool
+call, sign-in and admin change as a log line), see [AUDIT.md](AUDIT.md).
+
+On AWS, run the AWS Distro for OpenTelemetry collector as a sidecar and point
+`HUBZOID_OTEL_ENDPOINT` and `OTEL_EXPORTER_OTLP_ENDPOINT` at it
+([deploy/ecs-adot-collector.yaml](deploy/ecs-adot-collector.yaml)).
+
 ## Content privacy
 
 Prompt and response **bodies are not sent** by default (Claude Code redacts
-them). Only enable `OTEL_LOG_USER_PROMPTS=1` / `OTEL_LOG_ASSISTANT_RESPONSES=1`
-if you deliberately want message content in traces, and only where data
-governance allows it.
+them). `HUBZOID_OTEL_CONTENT` sets the most content telemetry may carry,
+whatever else is set: `none` (names, counts and timings), `tools` (plus which
+tools and servers, with their parameters) or `full` (plus prompts, answers and
+tool results). Unset leaves Claude Code's own `OTEL_LOG_*` switches as the
+environment has them. Choose `full` only where data governance allows it.
 
 ## Data governance (per customer)
 
