@@ -13,8 +13,7 @@ connected in Settings. Plus fixes from a team that built an IT helpdesk agent
 on 2.0.8, and dependency updates with published security advisories. With
 sign-in off, only this computer is the owner: a tunnel no longer makes its
 visitors admins. A connector's tool allow-list hides the other tools on Claude
-too, one restricted capability can be opened to a new surface alone, and
-doctor, evals and the channel list say what used to fail silently.
+too, and doctor, evals and the channel list say what used to fail silently.
 
 ### Security
 - **Only a key with the new `approve` operation decides.** A personal API key
@@ -170,11 +169,6 @@ doctor, evals and the channel list say what used to fail silently.
   with the same grants, allow-lists, approval rules and access log as chat.
   After connecting an app, reconnect the assistant to load its tools (in
   Claude Code: `/mcp`, then Reconnect) (#144).
-- **Surfaces per restricted capability.** An optional `surfaces:` on a
-  capability in `identity/permissions.yaml` replaces
-  `HUBZOID_RESTRICTED_SURFACES` for that capability alone, so password resets
-  can reach WhatsApp without every other restricted tool. `slack-channel` is
-  never allowed. See `proposals/2026-11-17-per-capability-surfaces.md`.
 - **`hubzoid doctor` checks sub-agents and connector files.** `agents.mode`
   lists each sub-agent, says whether it runs on its own, and warns when its
   `model:` or `tools:` is ignored and why (no model, another engine, the

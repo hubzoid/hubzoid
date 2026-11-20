@@ -544,25 +544,6 @@ def test_authenticated_mcp_cannot_read_private_files(hub, mcp_app, monkeypatch):
     assert marker not in text
 
 
-@pytest.mark.parametrize("loaded, edited, shown", [
-    ("[web]", "[mcpx]", False),       # off MCP when loaded; a bad edit later neither fails nor changes the list
-    ("[web, mcp]", "[web]", True),    # on MCP when loaded; narrowing the file applies on restart, as calls do
-])
-def test_tools_list_keeps_the_surfaces_loaded_after_an_edit(hub, monkeypatch, loaded, edited, shown):
-    """tools/list uses the surfaces captured with the guarded tool (the call-time
-    copy): an edit to identity/permissions.yaml before a restart, even an invalid
-    one, can't fail tools/list or make listing and calling disagree."""
-    from hubzoid import mcp_server
-
-    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
-    (hub / "identity").mkdir(exist_ok=True)
-    (hub / "identity" / "permissions.yaml").write_text(f"clickup:\n  surfaces: {loaded}\n")
-    app = mcp_server.build_mcp_app(hub)
-    (hub / "identity" / "permissions.yaml").write_text(f"clickup:\n  surfaces: {edited}\n")
-    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
-    assert ("clickup_echo" in names) is shown and "read_knowledge" in names
-
-
 # ---------------------------------------------------------------------------
 # Connected apps: a person's Settings connectors on the hosted surface
 # ---------------------------------------------------------------------------

@@ -18,14 +18,13 @@ describe those releases as they were.
 
 ## Upgrading to 2.0.9
 
-Eight changes in behaviour, and four additive database changes that Hubzoid applies when it starts. Back up the operational database before upgrading, as for any release: migrations go forward only.
+Seven changes in behaviour, and four additive database changes that Hubzoid applies when it starts. Back up the operational database before upgrading, as for any release: migrations go forward only.
 
 | What changes | What to do |
 |---|---|
 | **Sign-in off: only this computer is the owner.** A request through a tunnel or proxy (it carries `X-Forwarded-For`, `Cf-Connecting-Ip`, `X-Forwarded-Host` and the like), from another machine, from another site's page, or addressed to a name in `HUBZOID_PUBLIC_URL` is no longer the owner. Earlier, listing a tunnel's address made every visitor the owner. | To use the web app through a tunnel or LAN name, turn sign-in on (`HUBZOID_AUTH=true`). On a network you trust, `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` keeps the earlier rule. Signed webhooks through a tunnel keep working with sign-in off. |
 | **Evals check the tool names they name.** A name in `expect_tools`, `forbid_tools` or `expect_tool_args` that matches no tool in the agent fails the case, with the closest name. A misspelled `forbid_tools` used to pass forever. Names under an MCP server or connector whose tools are only known at run time are not failed. | Fix the names the failures point at. On Claude, a sub-agent call now reads as `handover_<name>`, as on the other backends. |
 | **Hosted MCP keeps a session per connected assistant**, so the hub can ask the person a question or an approval through MCP elicitation. Over MCP, people also get the file tools, `upload_file`, `remember` (with chat's gate) and core skills. Sub-agents on their own model need the new `mcp_delegates` grant. | Nothing for one Hubzoid process per agent. A bridge restart ends the sessions and Claude Code opens new ones. Behind several replicas without sticky sessions, set `MCP_STATELESS=true` (no elicitation). Grant `mcp_delegates` to the people who may spend the agent's model from their assistant ([MCP server](mcp-server.md#what-an-assistant-can-do-next-to-chat)). |
-| **Optional `surfaces:` per restricted capability** in `identity/permissions.yaml`. It replaces `HUBZOID_RESTRICTED_SURFACES` for that capability alone. | Nothing, unless you want one capability on a new surface ([access management](access-management.md#surfaces-per-capability)). |
 | **Amazon Bedrock is an opt-in model provider.** A Claude id under `bedrock/` now runs on the Claude runtime instead of LiteLLM, and a Bedrock hub needs a region to start. `claude-local` hubs are unchanged, apart from the newer bundled Claude Code (claude-agent-sdk 0.2.162 or later). | Nothing for `claude-local`. A hub that set `CLAUDE_CODE_USE_BEDROCK` by hand keeps working, and can move to `MODEL=bedrock/sonnet` with `AWS_REGION` ([Amazon Bedrock](bedrock.md)). To keep a Claude model on LiteLLM, write `bedrock/converse/<id>`. |
 
 Also in 2.0.9:

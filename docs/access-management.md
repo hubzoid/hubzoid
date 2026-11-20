@@ -359,32 +359,6 @@ naming a built-in (`use_hub`, `manage_access`, `curator` and so on) is ignored
 with a warning. Settings discovers capability names without executing
 the restricted Python modules.
 
-### Surfaces per capability
-
-By default a restricted tool can be used from the surfaces in
-`HUBZOID_RESTRICTED_SURFACES` (default `owui,web,api,mcp,workflow,app`), and
-the list applies to every restricted capability at once. To open one
-capability to another surface without opening the others, give it its own
-`surfaces:`:
-
-```yaml
-# identity/permissions.yaml
-reset:
-  label: Password resets
-  surfaces: [web, mcp, whatsapp]   # replaces HUBZOID_RESTRICTED_SURFACES for reset only
-```
-
-- The list replaces the hub-wide one for that capability; `[]` means no
-  surface. Grants still decide who may use it.
-- Names are where a request comes from: `web`, `api`, `mcp`, `workflow`, `app`,
-  `slack-dm`, `whatsapp`, `telegram`, `webhook`, `email`, `channel`, `cli`,
-  `owui`, plus any name listed in `HUBZOID_RESTRICTED_SURFACES`. An unknown name
-  stops the agent from loading with a message naming the file.
-- `slack-channel` is never allowed (a shared thread is answered under one
-  person's identity).
-- It applies to `restricted/` capabilities only. Connectors keep the hub-wide
-  list. A change takes effect when the agent restarts.
-
 ## Registering a capability (for Hubzoid contributors)
 
 A built-in tool appears in Settings by registering one `Capability` in the
