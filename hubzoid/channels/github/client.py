@@ -19,6 +19,11 @@ transport = None
 READ = {"metadata": "read", "contents": "read", "issues": "read", "pull_requests": "read", "checks": "read",
         "actions": "read"}
 WRITE_ISSUES = {"metadata": "read", "issues": "write", "pull_requests": "write"}
+#: for finding a pull request by its head commit
+PULLS_READ = {"metadata": "read", "pull_requests": "read"}
+#: commit statuses: asked for only when `rules.status_failures` is set, so an
+#: installation that never accepted this permission keeps every other read
+STATUS_READ = {"metadata": "read", "statuses": "read"}
 
 
 def api_url() -> str:
