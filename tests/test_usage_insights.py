@@ -213,18 +213,18 @@ def test_claude_reports_cache_tokens_as_part_of_input():
     assert "reasoning_tokens" not in row
 
 
-def test_codex_turns_sum_details_and_keep_a_failure():
+def test_codex_turns_sum_details_and_a_tokenless_record_changes_nothing():
     from hubzoid.factory_codex import _combine_usage
 
     out = _combine_usage([
         {"model": "gpt-5-codex", "input_tokens": 100, "output_tokens": 20, "cache_read_tokens": 60,
          "cache_write_tokens": 0, "reasoning_tokens": 8},
         {"model": "gpt-5-codex", "input_tokens": 50, "output_tokens": 10, "cache_read_tokens": 10,
-         "reasoning_tokens": 2, "status": "error"},
+         "reasoning_tokens": 2},
+        {},                                   # a delegate that failed before it reported usage
     ])
     assert (out["input_tokens"], out["cache_read_tokens"], out["reasoning_tokens"]) == (150, 70, 10)
-    assert out["status"] == "error"
-    assert "status" not in _combine_usage([{"model": "m", "input_tokens": 1, "output_tokens": 1}])
+    assert out["model"] == "gpt-5-codex" and "status" not in out
 
 
 def test_an_existing_store_gains_the_columns_and_keeps_its_rows(tmp_path):

@@ -104,7 +104,7 @@ export function UsageScreen({ hubs }: { hubs: Hub[] }) {
           {!d.previous && d.recording_since > d.since - (d.until - d.since) && (
             <div className="hz-usage-notice" role="note">
               <Info size={16} aria-hidden style={{ flex: "none", marginTop: 2 }} />
-              <span>Recording started {new Date(d.recording_since * 1000).toLocaleDateString([], { day: "numeric", month: "short" })}, so there is no full earlier {label.replace(/s$/, "")} period to compare with.</span>
+              <span>Recording started {new Date(d.recording_since * 1000).toLocaleDateString([], { day: "numeric", month: "short" })}, so the {label} before this period can’t be compared.</span>
             </div>
           )}
           <Totals d={d} s={s} agent={agent} label={label} />
@@ -295,6 +295,8 @@ function Agents({ d, s, hubs, label, nameOf }: { d: UsageInsights; s?: Summary; 
   const app = useContext(AppContext);
   const [find, setFind] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  // Saving limits or releasing a hold reloads both the row's bar and the panel.
+  const [limitsRev, setLimitsRev] = useState(0);
   const empty = { calls: 0, messages: 0, chats: 0, people: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
     cache_write_tokens: 0, reasoning_tokens: null, cost_usd: 0, unpriced: 0, errors: 0, cancelled: 0, p50_ms: null, p95_ms: null };
   const rows: AgentRow[] = hubs.map((h) => ({ ...empty, ...(d.by_hub.find((r) => r.key === h.key) ?? {}), key: h.key,
@@ -315,7 +317,7 @@ function Agents({ d, s, hubs, label, nameOf }: { d: UsageInsights; s?: Summary; 
     { title: "Errors", dataIndex: "errors", align: "right", sorter: num("errors"), responsive: ["md"],
       render: (v: number, r) => (v ? <Tag color={r.calls && v / r.calls > 0.02 ? "warning" : undefined}>{v}</Tag> : "0") },
     { title: "Response p50", dataIndex: "p50_ms", align: "right", sorter: num("p50_ms"), responsive: ["lg"], render: (v: number | null) => secs(v) },
-    { title: "Monthly limit", key: "limit", responsive: ["md"], render: (_, r) => <LimitCell hub={r.key} name={r.name} /> },
+    { title: "Monthly limit", key: "limit", responsive: ["md"], render: (_, r) => <LimitCell hub={r.key} name={r.name} rev={limitsRev} /> },
   ];
   return (
     <Card title={`By agent, last ${label}`} sub="Limits count this calendar month. Each model call checks its agent's limit first. Open a row to set limits."
@@ -333,7 +335,7 @@ function Agents({ d, s, hubs, label, nameOf }: { d: UsageInsights; s?: Summary; 
           expandedRowKeys: open ? [open] : [],
           onExpand: (expanded, r) => setOpen(expanded ? r.key : null),
           expandRowByClick: true,
-          expandedRowRender: (r) => <LimitsPanel hub={r.key} />,
+          expandedRowRender: (r) => <LimitsPanel hub={r.key} rev={limitsRev} changed={() => setLimitsRev((n) => n + 1)} />,
         }} />
     </Card>
   );
@@ -346,8 +348,8 @@ const BARS: { key: string; label: string; used: (s: Status) => number; held: (s:
   { key: "max_cost_usd", label: "", used: (s) => Number(s.month.cost_usd), held: (s) => Number(s.reserved.cost_usd), format: (n) => `$${n.toFixed(2)}` },
 ];
 
-function LimitCell({ hub, name }: { hub: string; name: string }) {
-  const data = useData<Status>(`/hubs/${encodeURIComponent(hub)}/budgets`, { keepStale: true });
+function LimitCell({ hub, name, rev }: { hub: string; name: string; rev: number }) {
+  const data = useData<Status>(`/hubs/${encodeURIComponent(hub)}/budgets${rev ? `?v=${rev}` : ""}`, { keepStale: true });
   const s = data.data;
   if (!s) return <span className="hz-usage-muted">{data.error ? "Couldn’t load" : "Loading…"}</span>;
   const month = s.limits?.month ?? {};
@@ -372,15 +374,15 @@ function LimitCell({ hub, name }: { hub: string; name: string }) {
   );
 }
 
-function LimitsPanel({ hub }: { hub: string }) {
+function LimitsPanel({ hub, rev, changed }: { hub: string; rev: number; changed: () => void }) {
   const base = `/hubs/${encodeURIComponent(hub)}/budgets`;
-  const data = useData<Status>(base, { keepStale: true });
+  const data = useData<Status>(`${base}${rev ? `?v=${rev}` : ""}`, { keepStale: true });
   const s = data.data;
   if (!s) return <p className="hz-usage-muted">{data.error ? "Couldn’t load limits" : "Loading…"}</p>;
   return (
     <>
-      <LimitsEditor key={s.revision} base={base} status={s} saved={data.reload} />
-      {s.open_reservations.length > 0 && <Reservations base={base} items={s.open_reservations} released={data.reload} />}
+      <LimitsEditor key={s.revision} base={base} status={s} saved={changed} />
+      {s.open_reservations.length > 0 && <Reservations base={base} items={s.open_reservations} released={changed} />}
     </>
   );
 }
@@ -459,9 +461,7 @@ function People({ period, hubParam, nameOf }: { period: string; hubParam: string
   useEffect(() => setPage(0), [q, period, hubParam]);
   const path = `/usage/people?period=${period}${hubParam}&q=${encodeURIComponent(q)}&sort=${sort.by}&order=${sort.order}&page=${page}&size=${PEOPLE_PAGE}`;
   const data = useData<UsagePeople>(path, { keepStale: true });
-  const [last, setLast] = useState<UsagePeople | undefined>(undefined);
-  useEffect(() => { if (data.data) setLast(data.data); }, [data.data]);
-  const shown = data.data ?? last;
+  const shown = data.data;
   const order = (by: string) => (sort.by === by ? (sort.order === "asc" ? "ascend" : "descend") : null);
   const columns = useMemo<ColumnsType<UsagePerson>>(() => [
     { title: "Person or schedule", key: "name", sorter: true, sortOrder: order("name"), render: (_, r) => (
@@ -484,11 +484,12 @@ function People({ period, hubParam, nameOf }: { period: string; hubParam: string
           <input aria-label="Find a person" placeholder="Find a person" value={find} onChange={(e) => setFind(e.target.value)} />
         </label>
       }>
-      {data.error && !shown ? <p className="hz-usage-muted" role="alert">Couldn’t load people: {data.error}</p> : (
+      {data.error ? <p className="hz-usage-muted" role="alert">Couldn’t load people: {data.error}</p> : (
         <Table<UsagePerson> className="hz-usage-table" size="middle" rowKey={(r) => r.subject ?? "anonymous"}
           dataSource={shown?.rows ?? []} columns={columns} loading={!shown} scroll={{ x: 520 }}
           locale={{ emptyText: q ? `No one matches “${q}”.` : "No one used the agents in this period." }}
-          onChange={(_p, _f, sorter) => {
+          onChange={(_p, _f, sorter, extra) => {
+            if (extra.action !== "sort") return;   // pages go through pagination.onChange
             const one = Array.isArray(sorter) ? sorter[0] : sorter;
             if (!one?.order || !one.columnKey) setSort({ by: "cost", order: "desc" });
             else setSort({ by: String(one.columnKey), order: one.order === "ascend" ? "asc" : "desc" });

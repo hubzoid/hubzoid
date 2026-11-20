@@ -175,6 +175,12 @@ function step(name) {
     assert.equal(await people.getByText("person05@example.com").count(), 0);
     await people.getByRole("textbox", { name: "Find a person" }).fill("");
     await go("/usage");
+    // People are paged on the server: page two shows the next people, not page one again.
+    await people.getByText("person01@example.com").waitFor();
+    await people.locator(".ant-pagination-item-2").click();
+    await people.getByText("person08@example.com").waitFor();
+    assert.equal(await people.getByText("person01@example.com").count(), 0);
+    await people.locator(".ant-pagination-item-1").click();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview.png"), fullPage: true });
 
     step("Agents lists every agent with what its folder holds and whether it needs attention");

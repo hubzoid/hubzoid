@@ -348,6 +348,7 @@ class CodexRuntime:
         proc = None
         shown = []
         usage = {}
+        failed = False
         parent_usage = _usage_rollup.get()
         records = parent_usage if parent_usage is not None else []
         rollup_token = _usage_rollup.set(records)
@@ -401,7 +402,7 @@ class CodexRuntime:
             raise
         except Exception as exc:
             self._error.set(exc)
-            usage["status"] = "error"
+            failed = True
             log.warning("Codex request failed (%s)", type(exc).__name__)
             kind = getattr(exc, "error_kind", None)
             if kind in agent_errors.PLAIN:
@@ -414,8 +415,13 @@ class CodexRuntime:
             if usage:
                 records.append(usage)
             _usage_rollup.reset(rollup_token)
-            if parent_usage is None and records:
-                _request_ctx.record_usage(_combine_usage(records))
+            if parent_usage is None and (records or failed):
+                # The row's status is this turn's own outcome: a delegate that
+                # failed and was recovered from does not fail the turn.
+                combined = _combine_usage(records) if records else {}
+                if failed:
+                    combined["status"] = "error"
+                _request_ctx.record_usage(combined)
         if parent_usage is not None:
             return  # The outer request owns artifact delivery and usage accounting.
         footer = tool_events.format_artifact_footer(_request_ctx.drain_artifacts(), "".join(shown))
@@ -623,6 +629,8 @@ def _reset_quietly(var, token) -> None:
 
 def _combine_usage(records):
     from .usage import estimate_cost
+    # A call that failed before reporting tokens names no model and costs nothing.
+    records = [row for row in records if "input_tokens" in row or "output_tokens" in row] or records
     models = {row.get("model") for row in records}
     costs = [estimate_cost(row.get("model"), row.get("input_tokens"), row.get("output_tokens")) for row in records]
     out = {
@@ -634,8 +642,6 @@ def _combine_usage(records):
     for key in ("cache_read_tokens", "cache_write_tokens", "reasoning_tokens"):
         if any(key in row for row in records):
             out[key] = sum(int(row.get(key) or 0) for row in records)
-    if any(row.get("status") == "error" for row in records):
-        out["status"] = "error"
     return out
 
 
