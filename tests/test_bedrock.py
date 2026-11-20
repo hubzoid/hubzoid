@@ -355,7 +355,9 @@ def test_a_subscription_call_on_a_bedrock_hub_carries_nothing_of_bedrock(monkeyp
 
     os.environ.update(PARENT, MODEL="bedrock/sonnet", AWS_REGION="ap-south-1", CLAUDE_CODE_USE_BEDROCK="1")
     seen = _capture(monkeypatch)
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN_SECONDARY")      # no failover pool without a hub directory
+    # No failover pool without a hub directory. Not monkeypatch: its undo runs
+    # after _clean has put the real environment back, and would leak the token.
+    os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN_SECONDARY")
     asyncio.run(factory_claude.claude_complete("hi", model_setting="claude-local/opus"))
     env = seen["options"].env
     assert env["CLAUDE_CODE_USE_BEDROCK"] == "" and env["AWS_ACCESS_KEY_ID"] == ""

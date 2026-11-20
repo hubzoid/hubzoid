@@ -286,6 +286,9 @@ class OAuthMcp:
         self._mp.setenv("HUBZOID_OWUI_DB", str(owui))
         self._mp.setenv("MCP_SERVER", "true")
         self._mp.setenv("MCP_PUBLIC_URL", self.url)
+        # One JSON-RPC call per request, no session (the module fixture starts
+        # before conftest's per-test MCP_STATELESS).
+        self._mp.setenv("MCP_STATELESS", "true")
         # The consent page's login check: the browser below carries this cookie.
         self._mp.setattr(session, "verified_email", lambda req, hub_dir=None, **kw: (
             self.email if req.cookies.get("token") == "owui-session" else ""))

@@ -25,7 +25,9 @@ def credential(request: Request, hub_dir: Path | None) -> tuple[str, str]:
     ``("api-key", "<key id>")`` for a personal key, ``("app-jwt", "app:<id>")``
     for a machine JWT, else ``("session", "")``. Reads the request's cached
     resolution, so it costs nothing after the identity check."""
-    if hub_dir is None:
+    if hub_dir is None or not (request.headers.get("authorization") or "").strip():
+        # No key or bearer: a session. Resolving the user here would create the
+        # local owner as a side effect when sign-in is off.
         return ("session", "")
     from .. import auth
 

@@ -178,12 +178,13 @@ def test_without_a_chat_the_file_goes_to_the_session_output(tools):
     assert (hub / "output" / "s" / "notes.docx").is_file() and "Saved **notes.docx**" in msg
 
 
-def test_tools_are_built_in_classified_and_not_on_mcp():
+def test_tools_are_built_in_classified_and_on_mcp():
+    """Over MCP they work in each person's own file space (MCP parity, 2.0.9)."""
     from hubzoid import mcp_server, tool_classes
 
     for name in ("make_excel", "make_pdf", "make_word"):
         assert tool_classes.BUILTIN[name] == "personal_store"
-        assert name in mcp_server.CHAT_SCOPED_TOOLS
+        assert name not in mcp_server.CHAT_SCOPED_TOOLS
 
 
 def test_optional_title_is_not_required():
