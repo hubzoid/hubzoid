@@ -30,6 +30,11 @@ Isolated agents (stations), all optional, on sub-agents only:
   input:       forward (default) or never.
   sandbox:     a sandbox profile for the agent's workspace.
   timeout_seconds: an optional limit on its active time.
+
+Main agent only:
+  guardrails:  checks on what people send and what the agent replies
+               (hubzoid.guardrails). Refused on a sub-agent, which receives
+               work from the main agent, not from people.
 """
 from __future__ import annotations
 
@@ -59,6 +64,8 @@ class AgentSpec(BaseModel):
     input: str = "forward"
     sandbox: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
+    # Main agent only: hubzoid.guardrails parses and validates it.
+    guardrails: dict | bool | None = None
 
 
 @dataclass
@@ -143,12 +150,21 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                     match = mds[0]
             if match is None or agent_read_refusal(hub_dir, match):
                 continue
-            out.append(_with_settings(hub_dir, _load_one(match, default_name=_safe_id(child.name))))
+            out.append(_with_settings(hub_dir, _no_guardrails(_load_one(match, default_name=_safe_id(child.name)))))
         elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
-            out.append(_with_settings(hub_dir, _load_one(child, default_name=_safe_id(child.stem))))
+            out.append(_with_settings(hub_dir, _no_guardrails(_load_one(child, default_name=_safe_id(child.stem)))))
     return out
+
+
+def _no_guardrails(loaded: LoadedAgent) -> LoadedAgent:
+    """A sub-agent receives work from the main agent, not from people, so
+    guardrails there would never run: refuse them rather than ignore them."""
+    if loaded.spec.guardrails is not None:
+        raise ValueError(f"{loaded.source_path}: guardrails is set on the main agent's AGENTS.md only, "
+                         "where people's messages arrive")
+    return loaded
 
 
 def to_skill(loaded: "LoadedAgent", reason: str = "", *, over_mcp: bool = False):

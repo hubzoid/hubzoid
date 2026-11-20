@@ -524,7 +524,7 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
 
     extra = {t.name: t for t in schedule_tools.make(hub_dir, task, emit)}
     return runtime_lib.build(hub_dir, extra_tools=extra, max_turns=task.max_turns,
-                             model=task.model)
+                             model=task.model, guardrails=False)   # the hub's own task prompt
 
 
 def service_subject(task_name: str) -> str:

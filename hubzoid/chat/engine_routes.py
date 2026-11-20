@@ -196,6 +196,13 @@ class Orchestrator:
                 images=await db(branch_images, self.ctx.hub_dir, key, path),
                 delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
                 if path else [])
+            # What the guardrails check: the person's new message and any
+            # regenerate refinement, not the stored history before it.
+            new_parts = [await db(user_text, self.ctx.hub_dir, key, path[-1].get("content"))] \
+                if path and path[-1].get("role") == "user" else []
+            new_parts += [str(t.get("content") or "") for t in (plan.extra_turns or [])
+                          if isinstance(t, dict) and t.get("role") == "user"]
+            slot.new_input = "\n\n".join(p for p in new_parts if p)
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
             opts = plan.options or {}

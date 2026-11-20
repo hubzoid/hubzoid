@@ -60,8 +60,12 @@ def clean(raw: str | None) -> str | None:
 
 def generate(hub_dir: Path, conversation_id: str, message: str, subject: str | None) -> str | None:
     """One tool-free model call for a short title. None when it fails."""
+    from .. import guardrails
     from .. import runtime as runtime_lib
 
+    cfg = guardrails.load_quiet(hub_dir)
+    if cfg is not None and cfg.masks:      # the title model sees what the agent sees
+        message = guardrails.mask_quiet(message or "", cfg)
     spec: dict = {"prompt": _PROMPT.format(message=(message or "")[:2000]), "system": _SYSTEM}
     model = (os.environ.get("HUBZOID_TITLE_MODEL") or "").strip()
     if model:

@@ -489,8 +489,15 @@ async def run_delegate(hub_dir: Path, agent: str, tool: str, task: str) -> str:
     try:
         await rt.aopen()
         try:
-            async with asyncio.timeout(DELEGATE_SECONDS):
-                text = await run_events.answer_only(rt, prompt)
+            from . import guardrails
+
+            # The guardrails check what the person sent (the task), not the handover wording.
+            token = guardrails.NEW_INPUT.set(task)
+            try:
+                async with asyncio.timeout(DELEGATE_SECONDS):
+                    text = await run_events.answer_only(rt, prompt)
+            finally:
+                guardrails.NEW_INPUT.reset(token)
         finally:
             raw.update(_request_ctx.drain_usage())
         err = getattr(rt, "last_error", None)

@@ -167,7 +167,25 @@ def litellm_region(model_id: str) -> dict:
 
 
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
-          max_turns: int | None = None, model: str | None = None) -> Runtime:
+          max_turns: int | None = None, model: str | None = None,
+          guardrails: bool = True) -> Runtime:
+    """The hub's runtime (`_build`), with the main agent's guardrails attached
+    when it sets any (`hubzoid.guardrails`). `guardrails=False` is for builds
+    that run the hub's own prompts, not people's messages: scheduled tasks,
+    workflow agent calls and doctor's reply check. A bad `guardrails:` value
+    raises here, so a hub never starts unprotected."""
+    rt = _build(hub_dir, extra_tools=extra_tools, max_turns=max_turns, model=model)
+    if guardrails and (Path(hub_dir) / "AGENTS.md").is_file():
+        from . import guardrails as guardrails_lib
+
+        cfg = guardrails_lib.load(Path(hub_dir).resolve())
+        if cfg is not None:
+            guardrails_lib.attach(rt, Path(hub_dir).resolve(), cfg)
+    return rt
+
+
+def _build(hub_dir: Path, *, extra_tools: dict | None = None,
+           max_turns: int | None = None, model: str | None = None) -> Runtime:
     """Pick the backend for this hub based on `MODEL` in <hub>/.env.
 
     `MODEL=claude-local` -> Claude Agent SDK (subprocess + `claude` login).
@@ -772,7 +790,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     raw: dict = {}
 
     async def _go() -> str:
-        rt = build(Path(hub_dir))
+        rt = build(Path(hub_dir), guardrails=False)   # the workflow's own prompt
         try:
             await rt.aopen()
             with _request_ctx.chat_scope(None):

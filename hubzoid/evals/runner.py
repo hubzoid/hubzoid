@@ -335,10 +335,12 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     done: list[_Turn] = []
     names: list[str] = []
     turn_no = 0
+    guards: list = []
     try:
-        from .. import tool_fakes
+        from .. import guardrails, tool_fakes
 
-        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes):
+        with _identity_scope(ident), _request_ctx.chat_scope(_chat_id(case)), tool_fakes.scope(fakes), \
+                _request_ctx.guard_recorder() as guards:
             if judge_fn is not None and case.is_judged:
                 tools_available = offered_tools(rt, tools_available)
             for turn_no, text in enumerate(case.prompts, start=1):
@@ -351,10 +353,13 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                 with (_request_ctx.tool_call_recorder() as recorded,
                       _request_ctx.tool_result_recorder() as results):
                     turn_started = time.monotonic()
+                    # Guardrails check this turn's message, as in chat, not the history before it.
+                    guard_token = guardrails.NEW_INPUT.set(text)
                     try:
                         await asyncio.wait_for(_consume(rt, prompt, turn_no, turn),
                                                timeout=max(0, deadline-time.monotonic()))
                     finally:
+                        guardrails.NEW_INPUT.reset(guard_token)
                         names += [c.get("name", "?") for c in recorded]
                         _finish_turn(turn, turn_no, recorded, results)
                         await _record_usage(hub_dir, case, turn_started)
@@ -363,15 +368,18 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                     break
     except asyncio.TimeoutError:
         _record(result, case, done, names, started)
+        result.guards = list(guards)
         result.error = f"timed out after {case.timeout}s" + _on_turn(case, turn_no)
         return result
     except Exception as exc:  # noqa: BLE001 — a crashed case is a failed case
         _record(result, case, done, names, started)
+        result.guards = list(guards)
         result.error = f"{type(exc).__name__}: {exc}" + _on_turn(case, turn_no)
         log.exception("eval case %s crashed", case.name)
         return result
 
     _record(result, case, done, names, started)
+    result.guards = list(guards)
     final = done[-1].raw if done else ""
     result.response = assertions.strip_chrome(final)
 
@@ -502,9 +510,10 @@ async def arun_suite(
     suite = SuiteResult(hub=hub_dir.name, started_at=now_iso(),
                         judged=judge_fn is not None, trigger=trigger, run_as=run_as)
 
-    from .quality import hub_digest
+    from .quality import hub_digest, provenance
 
     suite.hub_digest = hub_digest(hub_dir, model=model)
+    suite.hubzoid_version, suite.git_commit, suite.git_dirty = provenance(hub_dir)
     # A faked case's runtime is built with the suite's fakes in scope (stand-ins
     # for tools the hub hasn't connected); a case without fakes gets a runtime
     # built as always, so nothing a fake needed leaks into it.

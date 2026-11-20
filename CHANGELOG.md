@@ -80,6 +80,23 @@ doctor, evals and the channel list say what used to fail silently.
   call is an `execute_tool` span.
 - `hubzoid doctor` fails a SQLite database on a network filesystem (EFS), and
   `hubzoid status` from another container says where the deployment runs.
+- **Guardrails** (`proposals/2026-11-20-release-gate-and-guardrails.md`,
+  [docs](docs/guardrails.md)). A `guardrails:` key in the main agent's
+  `AGENTS.md` turns on checks on what people send and what the agent replies:
+  a prompt-injection check and a moderation check (one small model call per
+  message, Haiku on Claude hubs) and personal-data masking (email, phone, card
+  numbers and the hub's own patterns, in and out). Each is off, warn or block,
+  and personal data can also be redacted. A blocked message never reaches the
+  agent and is left out of later history. Decisions go to the access log and
+  the Activity page, never with the message text. Off unless set; workflows,
+  images and tool results are not checked. These are the guards both Mastra
+  and Agno ship.
+- **`hubzoid eval run --required`**: the CI release gate. It runs exactly the
+  cases `quality/manifest.yaml` requires, chosen as doctor chooses them, and
+  exits 2 when the gate cannot be trusted (no manifest, nothing required, a
+  name that matches no case, a required case that is off or checks nothing,
+  or `--tag`, `--case`, `--no-judge` or `--model` with it). Every results file
+  and JUnit report now records the Hubzoid version and the hub's Git commit.
 - **MCP at par with chat** (`proposals/2026-11-20-mcp-parity.md`). Over hosted
   MCP:
   - `write_artifact`, `make_excel`, `make_pdf`, `make_word` and
@@ -175,6 +192,10 @@ doctor, evals and the channel list say what used to fail silently.
   records its own cost (migration op_0082).
 
 ### Docs
+- [CI for a hub](docs/ci.md) with a ready GitHub Actions file
+  (`examples/ci/hubzoid-checks.yml`: the hub's tests, then the required evals),
+  and [Rolling back](docs/rollback.md): a change, the hub's files, or the
+  Hubzoid version, and how to rehearse it.
 - One section on the two ways to connect Slack and WhatsApp, with a before and
   after for moving over and a symptom table. Stale `--slack`/`--whatsapp`
   instructions are fixed, and the docs index links the channel pages.

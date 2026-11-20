@@ -115,6 +115,76 @@ def hub_digest(hub_dir: Path, *, model: str | None = None) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+def provenance(hub_dir: Path) -> tuple[str | None, str | None, bool | None]:
+    """What a results file records about what it tested: the Hubzoid version,
+    and, when the hub folder is in a Git work tree, its commit and whether the
+    folder had uncommitted changes. Never raises: Git missing, slow or not a
+    work tree leaves the Git fields None."""
+    import subprocess
+
+    from .. import __version__
+
+    hub_dir = Path(hub_dir)
+    commit: str | None = None
+    dirty: bool | None = None
+    try:
+        head = subprocess.run(["git", "-C", str(hub_dir), "rev-parse", "--verify", "HEAD"],
+                              capture_output=True, text=True, timeout=5)
+        if head.returncode == 0 and head.stdout.strip():
+            commit = head.stdout.strip()
+            # The hub's own state and output folders are not its content.
+            excluded = [f":(exclude){name}" for name in sorted(_SKIP_DIRS - {"__pycache__"})]
+            status = subprocess.run(["git", "-C", str(hub_dir), "status", "--porcelain", "--", ".", *excluded],
+                                    capture_output=True, text=True, timeout=5)
+            dirty = bool(status.stdout.strip()) if status.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        commit, dirty = None, None
+    return __version__, commit, dirty
+
+
+def checks_something(case) -> bool:
+    """Whether a case asserts anything beyond "the agent did not crash": a
+    reply check, a tool check, a judge, or fakes (which fail any unfaked tool
+    call)."""
+    return bool(case.contains or case.not_contains or case.expect_tools or case.forbid_tools
+                or case.expect_tool_args or case.is_judged or case.is_faked)
+
+
+def gate_cases(hub_dir: Path) -> list:
+    """The cases `hubzoid eval run --required` runs: exactly what the manifest
+    requires, chosen by `required()` as doctor chooses them. Raises
+    QualityError, naming the problem, when the gate cannot be trusted: no
+    manifest, nothing required, a requirement that matches no case, an
+    unreadable case file, or a required case that is disabled or checks
+    nothing."""
+    from . import cases as cases_lib
+
+    hub_dir = Path(hub_dir)
+    data = manifest(hub_dir)
+    if data is None:
+        raise QualityError(f"--required needs {MANIFEST}: list the cases CI must pass "
+                           "(required: [case ids], required_tags: [tags])")
+    if not (data.get("required") or data.get("required_tags")):
+        raise QualityError(f"{MANIFEST}: requires no cases, so the gate would check nothing")
+    try:
+        found = cases_lib.discover(hub_dir)
+    except cases_lib.EvalCaseError as exc:
+        raise QualityError(str(exc)) from None
+    wanted = required(hub_dir, found)
+    disabled = [c.name for c in wanted if not c.enabled]
+    if disabled:
+        raise QualityError(f"required case(s) switched off with enabled: false: {', '.join(disabled)}. "
+                           f"Turn them on or take them out of {MANIFEST}")
+    empty = [c.name for c in wanted if not checks_something(c)]
+    if empty:
+        raise QualityError(f"required case(s) check nothing, so they pass whenever the agent answers: "
+                           f"{', '.join(empty)}. Add contains, expect_tools or ## Criteria")
+    if hub_digest(hub_dir) == INCOMPLETE:
+        raise QualityError(f"the hub has more than {_MAX_FILES:,} files, so doctor can never confirm "
+                           "its results are current")
+    return wanted
+
+
 def manifest(hub_dir: Path) -> dict | None:
     """The parsed manifest, or None when the hub has none."""
     path = Path(hub_dir) / MANIFEST
