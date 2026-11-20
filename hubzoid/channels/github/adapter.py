@@ -16,6 +16,11 @@ Triggers, following Foreman's GitHub channel
 * a **failed check suite** on a pull request: passed to the hub's workflow.
   Which branches the hub owns, and how many repair attempts it may make, is
   the hub's own decision (its ``publish_branch``), not the channel's.
+* a **failed commit status** from a known poster (``rules.status_failures``,
+  off by default): a reviewer that reports through a status, such as
+  Engineering Desk's merge gate, is handled like a failed check suite on the
+  one open pull request whose head is that commit. Machinist's PR watcher
+  does the same (``internal/controlplane/github_followups.go``).
 
 Replies go to the issue or PR timeline, or as a reply in the inline review
 thread they came from, with a hidden marker so an uncertain post can be
@@ -46,7 +51,9 @@ TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 TRUSTED_LABELERS = {"admin", "maintain", "write", "triage"}
 MARKER_RE = re.compile(r"<!-- hubzoid:(hz-[0-9a-f]{16}) -->")
 HOOK_EVENTS = ("issue_comment", "pull_request_review_comment", "issues", "pull_request", "check_suite",
-               "check_run", "workflow_run")
+               "check_run", "workflow_run", "status")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+LOGIN_RE = r"^[A-Za-z0-9_.\-\[\]]+$"
 
 
 class Owner(BaseModel):
@@ -70,12 +77,24 @@ DEFAULT_ROUTES = {"mention": "answer", "review_mention": "revise", "label": "tri
 ROUTE_RE = r"^[a-z][a-z0-9_-]{0,63}$"
 
 
+class StatusFailure(BaseModel):
+    """A commit status that counts as a failed check: its context, and the one
+    login allowed to post it. A status from anyone else is ignored."""
+
+    model_config = ConfigDict(extra="forbid")
+    context: str = Field(min_length=1, max_length=255)
+    poster: str = Field(min_length=1, max_length=100, pattern=LOGIN_RE)
+
+
 class Rules(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mentions: bool = True
     label: str | None = Field(default="factory", min_length=1, max_length=100)
     pr_opened: bool = True
     ci_failure: bool = True
+    #: commit statuses handled like a failed check suite (needs `statuses: read`
+    #: and the Status event on the App, or Status on a token-mode webhook)
+    status_failures: list[StatusFailure] = Field(default_factory=list, max_length=10)
     routes: dict[Literal["mention", "review_mention", "label", "pull_request", "ci_failure"], str] = Field(
         default_factory=dict)
 
@@ -90,12 +109,19 @@ class Rules(BaseModel):
     def route(self, trigger: str) -> str:
         return self.routes.get(trigger) or DEFAULT_ROUTES[trigger]
 
+    def status_rule(self, context, poster) -> StatusFailure | None:
+        """The rule this status matches: same context, posted by its login."""
+        if not context or not poster:
+            return None
+        return next((r for r in self.status_failures
+                     if r.context == context and r.poster.lower() == str(poster).lower()), None)
+
 
 class Hook(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     event: Literal["issue_comment", "pull_request_review_comment", "issues", "pull_request", "check_suite",
-                   "check_run", "workflow_run"]
+                   "check_run", "workflow_run", "status"]
     workflow: str
 
 
@@ -330,7 +356,41 @@ class GitHubAdapter(Adapter):
                       "head_sha": suite.get("head_sha"),
                       "head_branch": suite.get("head_branch"), "check_suite_id": suite.get("id"),
                       "pull_requests": [p.get("number") for p in prs]})
+        if event == "status" and cfg.rules.ci_failure and cfg.rules.status_failures:
+            return self._status_failure(conn, body, actor)
         return None
+
+    def _status_failure(self, conn, body: dict, actor: ExternalActor) -> InboundEvent | None:
+        """A failed commit status from its known poster. Everything is checked
+        from the signed payload first; only then is GitHub asked which open
+        pull request has this commit as its head."""
+        cfg: GitHubConfig = conn.settings
+        rid = (body.get("repository") or {}).get("id")
+        sha = str(body.get("sha") or "")
+        context = body.get("context")
+        poster = (body.get("sender") or {}).get("login")
+        if body.get("state") != "failure" or not SHA_RE.match(sha) or cfg.repo(rid) is None:
+            return None
+        if cfg.rules.status_rule(context, poster) is None:
+            return None
+        pr = open_pull_for_head(conn, int(rid), sha)
+        if pr is None:
+            return None
+        number = int(pr["number"])
+        repo = body["repository"]
+        origin = Origin("github", self.workspace(conn), f"repo:{int(rid)}:issue:{number}",
+                        {"repository_id": int(rid), "full_name": repo.get("full_name"), "number": number},
+                        url=pr.get("html_url") or "")
+        head = pr.get("head") or {}
+        return InboundEvent(
+            semantic_key=f"ci:{rid}:{sha}:status:{context}", kind="ci_failure", origin=origin, actor=actor,
+            text=f"{context} failed on {head.get('ref')} at {sha}.", trigger=True,
+            message_id=f"status:{body.get('id')}",
+            data={"route": cfg.rules.route("ci_failure"), "unattended": True, "bot_allowed": True,
+                  "head_sha": sha, "head_branch": head.get("ref"), "pull_requests": [number],
+                  "failure_kind": "status", "status_context": context,
+                  "status_description": (body.get("description") or "")[:500], "status_poster": poster,
+                  "title": pr.get("title")})
 
     def _hook_event(self, verified, event, body, actor, hook: Hook) -> InboundEvent:
         rid = body["repository"]["id"]
@@ -455,6 +515,42 @@ class GitHubAdapter(Adapter):
         from .routes import mount
 
         mount(router, hub_dir)
+
+
+PULL_PAGES = 5
+
+
+def open_pull_for_head(conn, repository_id: int, sha: str) -> dict | None:
+    """The one open pull request in this repository whose head is `sha`, or
+    None. A commit that is the head of no open pull request, or of several, is
+    not acted on."""
+    try:
+        web = gh.for_repo(conn, repository_id, gh.PULLS_READ)
+        full = gh.current_name(conn, web, repository_id)
+        found: list[dict] = []
+        complete = False
+        for page in range(1, PULL_PAGES + 1):
+            items = web.request("GET", f"/repos/{full}/commits/{sha}/pulls",
+                                params={"per_page": 100, "page": page}).json() or []
+            found += [p for p in items if p.get("state") == "open" and (p.get("head") or {}).get("sha") == sha
+                      and ((p.get("base") or {}).get("repo") or {}).get("id") == repository_id]
+            if len(items) < 100 or len(found) > 1:
+                complete = True          # the list ended, or two matches already make it ambiguous
+                break
+    except ChannelError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - say it, never guess a pull request
+        raise ChannelError("provider_unavailable", "Could not find the pull request for a failed status.",
+                           status=503) from exc
+    if not complete:
+        log.info("status on %s in repository %s: more than %d pages of pull requests, ignored", sha[:12],
+                 repository_id, PULL_PAGES)
+        return None
+    if len(found) != 1:
+        log.info("status on %s in repository %s: %d open pull requests have it as their head, ignored",
+                 sha[:12], repository_id, len(found))
+        return None
+    return found[0]
 
 
 def _is_bot(sender: dict, bot_user_id) -> bool:
