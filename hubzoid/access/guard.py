@@ -362,15 +362,6 @@ def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -
     return out
 
 
-def captured_surfaces(ft) -> "frozenset[str] | None":
-    """The surface policy a guarded tool was built with (``guard_tool``): its
-    capability's own ``surfaces:`` or the hub-wide list, read when the agent
-    loaded. Listing and cards use this, so what a caller is shown always
-    matches what the call-time check allows, until the agent restarts."""
-    key = getattr(getattr(ft, "is_enabled", None), "hubzoid_key", None)
-    return key[2] if isinstance(key, tuple) and len(key) == 3 else None
-
-
 def apply(hub_dir: Path, registry: dict) -> dict:
     """Merge guarded restricted tools into `registry`, and make every tool
     recheck the run's account before it runs (``run_checked``).
@@ -379,13 +370,10 @@ def apply(hub_dir: Path, registry: dict) -> dict:
     an unguarded built-in). Every runtime's factory calls this, so the check is
     the same on Claude, Codex and the Agents SDK.
     """
-    from .loader import restricted_surfaces
-
     restricted = load_restricted(Path(hub_dir))
-    own = restricted_surfaces(Path(hub_dir)) if restricted else {}
     out = dict(registry)
     for ft, permission in restricted:
-        out[ft.name] = guard_tool(ft, permission, hub_dir, surfaces=own.get(permission))
+        out[ft.name] = guard_tool(ft, permission, hub_dir)
     if restricted:
         log.info(
             "access: %d restricted tool(s) under %d permission(s) loaded",

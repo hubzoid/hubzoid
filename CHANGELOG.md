@@ -8,9 +8,8 @@ All notable changes to Hubzoid. Versions follow the package version in
 Fixes from a team that built an IT helpdesk agent on 2.0.8, plus dependency
 updates with published security advisories. With sign-in off, only this
 computer is the owner: a tunnel no longer makes its visitors admins. A
-connector's tool allow-list hides the other tools on Claude too, one
-restricted capability can be opened to a new surface alone, and doctor, evals
-and the channel list say what used to fail silently.
+connector's tool allow-list hides the other tools on Claude too, and doctor,
+evals and the channel list say what used to fail silently.
 
 ### Security
 - **Sign-in off: only this computer is the owner.** A request is the local
@@ -39,11 +38,6 @@ and the channel list say what used to fail silently.
   when authlib runs on httpx2.
 
 ### Added
-- **Surfaces per restricted capability.** An optional `surfaces:` on a
-  capability in `identity/permissions.yaml` replaces
-  `HUBZOID_RESTRICTED_SURFACES` for that capability alone, so password resets
-  can reach WhatsApp without every other restricted tool. `slack-channel` is
-  never allowed. See `proposals/2026-11-17-per-capability-surfaces.md`.
 - **`hubzoid doctor` checks sub-agents and connector files.** `agents.mode`
   lists each sub-agent, says whether it runs on its own, and warns when its
   `model:` or `tools:` is ignored and why (no model, another engine, the
