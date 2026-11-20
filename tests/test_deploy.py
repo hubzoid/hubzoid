@@ -62,7 +62,7 @@ def test_init_refuses_a_folder_that_is_not_a_hub_and_an_unknown_provider(tmp_pat
     assert r.exit_code == 2 and json.loads(r.output)["detail"]["code"] == "invalid_request"
 
 
-@pytest.mark.parametrize("provider", ["railway", "maritime"])
+@pytest.mark.parametrize("provider", ["railway", "maritime", "aws"])
 def test_the_docs_pages_are_the_templates(provider):
     page = (ROOT / "docs" / "deploy" / f"{provider}.md").read_text()
     rendered = scaffold.render(provider, image="ghcr.io/hubzoid/hubzoid:<version>")[f"deploy/{provider}/README.md"]
