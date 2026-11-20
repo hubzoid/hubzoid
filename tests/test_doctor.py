@@ -32,7 +32,8 @@ def hub(tmp_path, monkeypatch):
     for k in ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
               "MODEL", "WEBUI_AUTH", "WEBUI_SECRET_KEY", "HUBZOID_HOST", "BRIDGE_API_KEYS",
               "HUBZOID_UI", "HUBZOID_AUTH", "HUBZOID_SECRET_KEY", "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK",
-              "HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "WEBUI_URL"):
+              "HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "WEBUI_URL",
+              "HUBZOID_ALLOWED_ORIGINS"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     from hubzoid import access, migrations

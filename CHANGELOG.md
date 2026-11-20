@@ -11,8 +11,9 @@ updates with published security advisories.
 ### Security
 - **Sign-in off: only this computer is the owner.** A request through a tunnel
   or proxy, from another machine, or from another site's page is no longer the
-  local owner. `hubzoid run` and doctor warn when a public URL is set with
-  sign-in off. See [docs/auth.md](docs/auth.md#local-mode) and the upgrade notes.
+  local owner. A raw TCP forward (`ssh -R`) adds no header and still looks
+  local: turn sign-in on before using one. `hubzoid run` and doctor warn when
+  a public URL is set with sign-in off. See [docs/auth.md](docs/auth.md#local-mode) and the upgrade notes.
 - **A connector's `tools:` allow-list hides the other tools on Claude too**,
   and a call outside it is refused.
 - **Credential query values (`?api_key=`) are redacted in access logs.**
