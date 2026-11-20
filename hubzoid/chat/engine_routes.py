@@ -188,9 +188,10 @@ class Orchestrator:
             from .. import _request_ctx
             from .history import branch_images, message_images, user_text
 
-            resume = await db(self.engine.binding_for, plan, self.config_digest(plan.actor_id))
+            resume, resume_cost = await db(self.engine.bound_session, plan, self.config_digest(plan.actor_id))
             slot = _request_ctx.SessionSlot(
-                resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
+                resume_id=resume, resume_cost=resume_cost,
+                delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
                 if resume and path else None,
                 images=await db(branch_images, self.ctx.hub_dir, key, path),
                 delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
@@ -295,7 +296,7 @@ class Orchestrator:
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
                      head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
-                     ok=status == "complete")
+                     ok=status == "complete", session_cost=getattr(slot, "session_cost", None))
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
         files = getattr(self.ctx, "files", None)

@@ -151,6 +151,9 @@ bindings = sa.Table(
     sa.Column("head_message_id", sa.String(64), nullable=False),
     sa.Column("config_digest", sa.String(80), nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # The session's running cost at the end of the last run (op_0082), so a
+    # resumed turn records only its own cost. NULL: not known.
+    sa.Column("native_cost_usd", sa.Float, nullable=True),
 )
 
 ACTIVE_RUN = ("admitted", "streaming", "waiting", "stopping")

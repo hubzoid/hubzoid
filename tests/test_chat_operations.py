@@ -512,6 +512,38 @@ def test_branch_binds_native_session_and_invalidates(client, monkeypatch):
     assert seen[3][0] == "sess-2"
 
 
+def test_the_bound_session_keeps_its_running_cost_for_the_next_turn(client, monkeypatch):
+    """op_0082: the next turn of a branch starts from the session's total, so a
+    runtime that reports a resumed session's total records only the turn."""
+    from hubzoid import _request_ctx
+
+    runtime = client.app.state.chat.runtime
+    original = runtime.stream_events
+    seen = []
+
+    def fake(prompt):
+        slot = _request_ctx.native_session()
+        seen.append((slot.resume_id, slot.resume_cost))
+        slot.runtime = "fake"
+        slot.session_id = "sess-1"
+        slot.session_cost = 1.25 * len(seen)
+        return original(prompt)
+
+    monkeypatch.setattr(runtime, "stream_events", fake)
+    cid, b = new_conv(client)
+    one = send(client, cid, "first question", b)
+    wait_run(client, one["run_id"])
+    two = send(client, cid, "second question", branch_of(client, cid, b["id"]), parent=one["assistant_message_id"])
+    wait_run(client, two["run_id"])
+    three = send(client, cid, "third", branch_of(client, cid, b["id"]), parent=two["assistant_message_id"])
+    wait_run(client, three["run_id"])
+    assert seen == [(None, None), ("sess-1", 1.25), ("sess-1", 2.5)]
+    # a regeneration starts from the full history: no session, no starting cost
+    regen = op(client, cid, {"kind": "regenerate", "target_message_id": three["user_message_id"]}).json()
+    wait_run(client, regen["run_id"])
+    assert seen[-1] == (None, None)
+
+
 def test_queued_message_whose_context_changed_needs_review(client):
     cid, b = new_conv(client)
     first = send(client, cid, "slow first", b)
