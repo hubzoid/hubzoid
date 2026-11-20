@@ -936,13 +936,22 @@ def _behind_plan(hub: Path, behind: str, env) -> tuple[dict[str, str], list[str]
             problems.append(f"The bridge listens on {host}, so set HUBZOID_TRUSTED_PROXIES to the address or "
                             "network of the deployment's edge (for example 10.0.0.0/16). Without it every "
                             "person looks like the edge's address, and sign-in limits would lock everyone out.")
+        keys = (env.get("BRIDGE_API_KEYS") or gateway_lib._own_env_value(hub, "BRIDGE_API_KEYS") or "dev")
+        if "dev" in {k.strip() for k in keys.split(",")}:
+            problems.append("The bridge key is the public 'dev' and the bridge listens on the network. Set "
+                            "BRIDGE_API_KEYS in the hub's .env to a random value (the edge reads the same one).")
     op_url = (env.get("HUBZOID_OPERATIONAL_DB") or env.get("DATABASE_URL") or "").strip()
     if not op_url:
         problems.append("Set DATABASE_URL (or HUBZOID_OPERATIONAL_DB) to the deployment's database: hubs behind "
                         "one edge share accounts, sessions and conversations there.")
-    if not (env.get("HUBZOID_SECRET_KEY") or "").strip() and deployment.manifest_path(hub, env) is None:
+    if not (env.get("HUBZOID_SECRET_KEY") or "").strip():
         problems.append("Set HUBZOID_SECRET_KEY to the deployment's key (the edge's), so this hub can check who "
                         "is asking and read the deployment's stored secrets.")
+    manifest = deployment.manifest_path(hub, env)
+    if manifest is None or not manifest.is_file():
+        problems.append("This hub can't find the deployment's manifest. Mount the edge's data folder (with "
+                        "deployment.json) at the same path in this service and set HUBZOID_DEPLOYMENT to its "
+                        "deployment.json, with the hub folder at the same path as on the edge.")
     slug = hub_slug(hub, env)
     out = {"HUBZOID_GATEWAY": "1", "HUBZOID_UI": appmode.UI_HUBZOID,
            "HUBZOID_AUTH": "true" if auth_on else "false", "HUBZOID_HOST": host,
@@ -2616,6 +2625,8 @@ def audit(
     all_hubs: bool = typer.Option(False, "--all-hubs", help="With --export: every hub in the deployment's "
                                   "database, not only this one."),
     out: Path = typer.Option(None, "--out", help="With --export: write to this file instead of the output."),
+    export_limit: int = typer.Option(1000000, "--export-limit", help="With --export: at most this many records. "
+                                     "A last line says where to continue when more remain."),
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
@@ -2628,7 +2639,7 @@ def audit(
 
     hub = hub.resolve()
     if export:
-        _audit_export(hub, since=since, until=until, kind=kind, all_hubs=all_hubs, out=out)
+        _audit_export(hub, since=since, until=until, kind=kind, all_hubs=all_hubs, out=out, limit=export_limit)
         return
     rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
     if as_json:
@@ -2651,7 +2662,8 @@ def audit(
     console.print(f"[dim]{len(rows)} entr{'y' if len(rows) == 1 else 'ies'} shown[/dim]")
 
 
-def _audit_export(hub: Path, *, since, until, kind: str, all_hubs: bool, out: Path | None) -> None:
+def _audit_export(hub: Path, *, since, until, kind: str, all_hubs: bool, out: Path | None,
+                  limit: int = 1000000) -> None:
     from . import audit_log
     from .access.identity import normalize
 
@@ -2666,7 +2678,7 @@ def _audit_export(hub: Path, *, since, until, kind: str, all_hubs: bool, out: Pa
         raise typer.Exit(2)
     try:
         records = audit_log.export(hub, kinds=kinds, since=since, until=until,
-                                   hubs=None if all_hubs else [normalize(hub.name)])
+                                   hubs=None if all_hubs else [normalize(hub.name)], limit=max(1, limit))
         first = next(records, None)
     except ValueError as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")

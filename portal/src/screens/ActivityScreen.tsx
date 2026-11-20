@@ -127,7 +127,8 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
       : {
           ...commonParams,
           kind: feed === "calls" ? "tool" : feed === "signins" ? "auth" : undefined,
-          outcome: outcome || undefined,
+          // Allowed or denied means nothing for sign-in events: never sent there.
+          outcome: feed === "signins" ? undefined : outcome || undefined,
           result: feed === "calls" ? result || undefined : undefined,
           tool: feed === "signins" ? undefined : tool,
           surface: feed === "signins" ? undefined : channel,

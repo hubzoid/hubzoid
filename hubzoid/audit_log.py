@@ -31,6 +31,8 @@ import queue
 import re
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +72,7 @@ def retention_days(env=None) -> int:
 _IDENTIFIER_NAMES = frozenset({"path", "file", "filename", "file_path", "filepath", "dir", "directory",
                                "folder", "id", "url", "uri", "link", "repo", "repository", "branch",
                                "table", "collection", "channel", "sheet", "page", "workflow", "name",
-                               "slug", "key", "ref", "issue", "ticket", "project"})
+                               "slug", "ref", "issue", "ticket", "project"})
 _KEEP = 200
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
@@ -99,7 +101,7 @@ def _mask_personal(text: str) -> str:
 
 def summarize_args(arguments: Any, env=None) -> Any:
     """What a record keeps of a tool call's arguments (``HUBZOID_AUDIT_ARGS``)."""
-    from .redaction import redact
+    from .redaction import is_secret_key, redact
 
     env = os.environ if env is None else env
     if isinstance(arguments, str):
@@ -115,8 +117,10 @@ def summarize_args(arguments: Any, env=None) -> Any:
         return _clip(_mask_personal(json.dumps(redact(arguments), default=str, ensure_ascii=False)), 1000)
     out: dict[str, Any] = {}
     for name, value in arguments.items():
-        if _identifier(str(name)) and isinstance(value, (str, int, float)):
-            out[str(name)] = _clip(_without_query(str(value)))
+        if _identifier(str(name)) and not is_secret_key(name) and isinstance(value, (str, int, float)):
+            # The whole value is scrubbed first, so clipping can't cut a
+            # credential's end off and hide it from the scrub.
+            out[str(name)] = _clip(_without_query(redact(str(value))))
         else:
             out[str(name)] = "…"
     return redact(out)
@@ -138,6 +142,11 @@ class _Writer:
     def put(self, hub_dir: Path, row: dict) -> None:
         with self.lock:
             if self.thread is None or not self.thread.is_alive():
+                if self.thread is None:
+                    import atexit
+
+                    # A graceful stop (ECS sends SIGTERM) writes what is still queued.
+                    atexit.register(self.flush)
                 self.thread = threading.Thread(target=self._run, name="hubzoid-audit", daemon=True)
                 self.thread.start()
         try:
@@ -249,9 +258,48 @@ def emit(kind: str, event: str, *, hub_dir=None, store: bool = True, **fields: A
         log.error("audit: could not record %s", event, exc_info=True)
 
 
+# The outermost tool wrapper on a call path records the call; wrappers inside
+# it (an approval step wraps the tool and checks it again) only note a refusal
+# for it. A dict shared by reference, so a copied context still reaches it.
+_CALL: ContextVar["dict | None"] = ContextVar("hubzoid_audit_call", default=None)
+
+
+@contextmanager
+def call_scope():
+    """``(state, outermost)`` for one tool call: record only when outermost."""
+    state = _CALL.get()
+    if state is not None:
+        yield state, False
+        return
+    state = {}
+    token = _CALL.set(state)
+    try:
+        yield state, True
+    finally:
+        _CALL.reset(token)
+
+
+def finished(where: dict, result: Any, *, started: float, arguments: Any, state: dict,
+             failed: bool = False) -> None:
+    """Record a call that returned: refused by a wrapper inside, refused in
+    the tool's own words, failed (an error the tool runtime turned into text),
+    or done."""
+    from .tool_events import failed_output
+
+    took = (time.monotonic() - started) * 1000
+    if state.get("deny"):
+        tool_call(**where, decision="deny", reason=state["deny"], arguments=arguments)
+    elif refused_text(result):
+        tool_call(**where, decision="deny", reason="permission", arguments=arguments)
+    elif failed or failed_output(result):
+        tool_call(**where, outcome="error", error="tool_error", duration_ms=took, result=result, arguments=arguments)
+    else:
+        tool_call(**where, outcome="ok", duration_ms=took, result=result, arguments=arguments)
+
+
 def tool_call(*, tool: str, hub_dir=None, server: str | None = None, connector: str | None = None,
               decision: str = "allow", reason: str | None = None, outcome: str | None = None,
-              error: str | None = None, duration_ms: float | None = None, result_bytes: int | None = None,
+              error: str | None = None, duration_ms: float | None = None, result: Any = None,
               arguments: Any = None, call_id: str | None = None) -> None:
     """One tool call: who called which tool, from where, allowed or refused,
     how it ended, how long it took. Also an OpenTelemetry ``execute_tool``
@@ -268,8 +316,47 @@ def tool_call(*, tool: str, hub_dir=None, server: str | None = None, connector: 
         args = None
     emit("tool", "tool.call", hub_dir=hub_dir, tool=tool, server=server or (f"connector:{connector}"
          if connector else None), decision=decision, reason=reason, outcome=outcome, error=error,
-         duration_ms=None if duration_ms is None else round(duration_ms), result_bytes=result_bytes,
-         args=args, call_id=call_id)
+         duration_ms=None if duration_ms is None else round(duration_ms),
+         result_bytes=None if outcome is None else size_of(result), args=args, call_id=call_id)
+
+
+_PENDING: "weakref.WeakKeyDictionary" = None  # type: ignore[assignment]
+
+
+def after_commit(conn, fn) -> None:
+    """Run ``fn`` once ``conn``'s transaction commits, and drop it on a
+    rollback, so a log line never describes a change that did not happen."""
+    global _PENDING
+    import weakref
+
+    try:
+        from sqlalchemy import event
+        from sqlalchemy.engine import Connection
+    except ImportError:  # pragma: no cover
+        fn()
+        return
+    if not isinstance(conn, Connection) or not conn.in_transaction():
+        fn()
+        return
+    if _PENDING is None:
+        _PENDING = weakref.WeakKeyDictionary()
+    pending = _PENDING.get(conn)
+    if pending is None:
+        pending = _PENDING[conn] = []
+
+        def on_commit(c) -> None:
+            for f in (_PENDING.pop(c, None) or []):
+                try:
+                    f()
+                except Exception:  # noqa: BLE001
+                    log.error("audit: could not record a committed change", exc_info=True)
+
+        def on_rollback(c) -> None:
+            _PENDING.pop(c, None)
+
+        event.listen(conn, "commit", on_commit)
+        event.listen(conn, "rollback", on_rollback)
+    pending.append(fn)
 
 
 # Actions in the shared admin audit that are about signing in, not changing
@@ -278,7 +365,7 @@ _AUTH_ACTIONS = ("signed_", "api_key_", "mfa_", "password_", "session", "sign_in
 
 
 def admin_event(actor: str | None, action: str, *, subject: str | None = None, target_hub: str | None = None,
-                detail: str | None = None, via: str | None = None) -> None:
+                detail: str | None = None, via: str | None = None, conn=None) -> None:
     """A row the deployment's admin audit (``hz_access_audit``) just got, as
     an event: ``auth.*`` for sign-in and API key actions, ``admin.*`` for the
     rest (grants, secrets, run controls). Never a secret value: the rows hold
@@ -286,9 +373,19 @@ def admin_event(actor: str | None, action: str, *, subject: str | None = None, t
     if not modes():
         return
     kind = "auth" if str(action).startswith(_AUTH_ACTIONS) else "admin"
-    # The row is already stored (hz_access_audit): a log line only.
-    emit(kind, f"{kind}.{action}", actor=actor, target=subject, target_hub=target_hub, detail=detail, via=via,
-         store=False)
+    from .logs import context
+
+    ctx = context()  # captured now: the commit may run after this request's context ends
+
+    def send() -> None:
+        # The row is already stored (hz_access_audit): a log line only.
+        emit(kind, f"{kind}.{action}", actor=actor, target=subject, target_hub=target_hub, detail=detail,
+             via=via, store=False, **{k: v for k, v in ctx.items() if k in ("client", "chat_id", "run_id")})
+
+    if conn is None:
+        send()
+    else:
+        after_commit(conn, send)
 
 
 _KEY_ADDRESSES: set[tuple[str, str]] = set()
@@ -305,7 +402,7 @@ def api_key_used(key_id: str, email: str | None) -> None:
     if (key_id, client) in _KEY_ADDRESSES or len(_KEY_ADDRESSES) > 50000:
         return
     _KEY_ADDRESSES.add((key_id, client))
-    emit("auth", "auth.api_key_used", key=str(key_id)[:16], actor=email)
+    emit("auth", "auth.api_key_used", key=str(key_id)[:16], actor=email, subject=email)
 
 
 def sign_in_failed(*, email: str | None, client: str | None, locked_seconds: int) -> None:
@@ -313,9 +410,11 @@ def sign_in_failed(*, email: str | None, client: str | None, locked_seconds: int
     reached the limit."""
     if not modes():
         return
-    emit("auth", "auth.sign_in_failed", actor=email, client=client)
+    # The account tried is the event's subject, so the Activity filter by person finds it.
+    emit("auth", "auth.sign_in_failed", actor=email, subject=email, client=client)
     if locked_seconds:
-        emit("auth", "auth.locked_out", actor=email, client=client, locked_seconds=int(locked_seconds))
+        emit("auth", "auth.locked_out", actor=email, subject=email, client=client,
+             locked_seconds=int(locked_seconds))
 
 
 def _tracer():
@@ -467,6 +566,11 @@ def read_events(hub_dir, *, kinds=("tool", "auth"), limit: int = 200, user: str 
         return [_event_row(r) for r in c.execute(text(q), params)]
 
 
+def _auth_action_sql() -> str:
+    """SQL for "this hz_access_audit action is a sign-in action"."""
+    return "(" + " OR ".join(f"action LIKE '{p}%'" for p in _AUTH_ACTIONS) + ")"
+
+
 def export(hub_dir, *, kinds=KINDS, since=None, until=None, hubs: list[str] | None = None,
            limit: int = 100000):
     """Every stored audit record in the window, oldest first, as the same JSON
@@ -474,7 +578,9 @@ def export(hub_dir, *, kinds=KINDS, since=None, until=None, hubs: list[str] | No
     (``hz_audit_events``), restricted-tool decisions (``hz_access_decisions``)
     and admin changes (``hz_access_audit``). ``hubs`` limits it to those hubs
     (admin changes for the whole organization count as hub ``*``). Yields
-    dicts, at most ``limit`` in all."""
+    dicts, at most ``limit`` in all. When more remain, a last record
+    ``{"kind": "export", "event": "export.truncated", "next_since": ...}``
+    says where to continue (records at that instant may repeat)."""
     from sqlalchemy import text
 
     since, until = _when(since), _when(until)
@@ -487,12 +593,12 @@ def export(hub_dir, *, kinds=KINDS, since=None, until=None, hubs: list[str] | No
             clauses = ["kind IN (" + ",".join(f":k{i}" for i, _ in enumerate(want)) + ")"]
             params: dict[str, Any] = {f"k{i}": k for i, k in enumerate(want)}
             _where(clauses, params, hubs=hubs, since=since, until=until)
-            params["n"] = limit
+            params["n"] = limit + 1
             streams.append([_event_row(r) for r in c.execute(text(
                 "SELECT * FROM hz_audit_events WHERE " + " AND ".join(clauses) + " ORDER BY ts, id LIMIT :n"),
                 params)])
         if "access" in kinds:
-            clauses, params = [], {"n": limit}
+            clauses, params = [], {"n": limit + 1}
             _where(clauses, params, hubs=hubs, since=since, until=until)
             rows = c.execute(text(
                 "SELECT ts, hub, subject, surface, tool, decision, reason FROM hz_access_decisions"
@@ -501,8 +607,12 @@ def export(hub_dir, *, kinds=KINDS, since=None, until=None, hubs: list[str] | No
                              "subject": r[2], "surface": r[3], "tool": r[4], "decision": r[5],
                              "reason": r[6]} for r in rows])
         if {"admin", "auth"} & set(kinds):
-            clauses, params = [], {"n": limit}
+            clauses, params = [], {"n": limit + 1}
             _where(clauses, params, hubs=None if hubs is None else [*hubs, "*"], since=since, until=until)
+            if "admin" not in kinds:
+                clauses.append(_auth_action_sql())
+            elif "auth" not in kinds:
+                clauses.append("NOT " + _auth_action_sql())
             rows = c.execute(text(
                 "SELECT ts, actor, action, subject, hub, permission, surface, request_id FROM hz_access_audit"
                 + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY ts LIMIT :n"), params)
@@ -521,5 +631,6 @@ def export(hub_dir, *, kinds=KINDS, since=None, until=None, hubs: list[str] | No
     merged = heapq.merge(*streams, key=lambda rec: rec["ts"])
     for n, record in enumerate(merged):
         if n >= limit:
+            yield {"kind": "export", "event": "export.truncated", "limit": limit, "next_since": record["ts"]}
             return
         yield record

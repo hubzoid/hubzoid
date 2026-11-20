@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
+import queue
 import sys
 import time
 from typing import Any
@@ -154,6 +156,59 @@ class RedactMessages(logging.Filter):
         return True
 
 
+class _DropWhenFull(logging.handlers.QueueHandler):
+    """Hands audit records to a background writer. A full queue (a blocked
+    log driver) drops the record instead of stopping the tool call; the drop
+    is counted and said once in a while."""
+
+    dropped = 0
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            type(self).dropped += 1
+            if self.dropped in (1, 100) or self.dropped % 1000 == 0:
+                sys.stderr.write(f"hubzoid: {self.dropped} audit line(s) dropped, the log output is blocked\n")
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        return record  # formatted by the writer, with its hz_audit fields intact
+
+
+def _audit_writer(fmt: str) -> None:
+    """The audit logger's own handler: a bounded queue drained by one thread
+    that writes to standard output."""
+    audit = logging.getLogger("hubzoid.audit")
+    for h in list(audit.handlers):
+        if getattr(h, "hubzoid", False):
+            audit.removeHandler(h)
+    old = _CONFIGURED.pop("listener", None)
+    if old is not None:
+        old.stop()
+    out = logging.StreamHandler(sys.stdout)
+    out.setFormatter(JsonFormatter() if fmt == "json" else AuditLineFormatter())
+    q: "queue.Queue[logging.LogRecord]" = queue.Queue(maxsize=10000)
+    handler = _DropWhenFull(q)
+    handler.hubzoid = True  # type: ignore[attr-defined]
+    listener = logging.handlers.QueueListener(q, out, respect_handler_level=False)
+    listener.start()
+    if "atexit" not in _CONFIGURED:
+        import atexit
+
+        atexit.register(flush)  # a graceful stop writes the queued lines
+        _CONFIGURED["atexit"] = True
+    _CONFIGURED["listener"] = listener
+    audit.addHandler(handler)
+    audit.propagate = False  # one line per event, never through a slow handler up the tree
+
+
+def flush() -> None:
+    """Write the audit lines still queued (at shutdown)."""
+    listener = _CONFIGURED.pop("listener", None)
+    if listener is not None:
+        listener.stop()
+
+
 def configure(env=None) -> str:
     """Set up this process's log output once. Returns the format in use."""
     env = os.environ if env is None else env
@@ -178,16 +233,6 @@ def configure(env=None) -> str:
         for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
             for h in logging.getLogger(name).handlers:
                 h.setFormatter(JsonFormatter())
-        audit.propagate = True
-        for h in list(audit.handlers):
-            if getattr(h, "hubzoid", False):
-                audit.removeHandler(h)
-    else:
-        if not any(getattr(h, "hubzoid", False) for h in audit.handlers):
-            handler = logging.StreamHandler(sys.stdout)
-            handler.setFormatter(AuditLineFormatter())
-            handler.hubzoid = True  # type: ignore[attr-defined]
-            audit.addHandler(handler)
-        audit.propagate = False  # one line per event, not one per handler up the tree
+    _audit_writer(fmt)
     _CONFIGURED["format"] = fmt
     return fmt

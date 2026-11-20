@@ -314,6 +314,9 @@ def test_require_secret_key_refuses_to_make_a_key_file(tmp_path, monkeypatch):
     with pytest.raises(secretbox.SecretKeyError, match="HUBZOID_SECRET_KEY"):
         secretbox.keys(tmp_path, env)
     assert not secretbox.key_path(tmp_path, env).exists()
+    secretbox.keys(tmp_path, {})            # a key file from before the setting
+    with pytest.raises(secretbox.SecretKeyError):
+        secretbox.keys(tmp_path, env)       # is not used in its place
     from cryptography.fernet import Fernet
 
     key = Fernet.generate_key().decode()

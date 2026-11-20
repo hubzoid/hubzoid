@@ -62,8 +62,9 @@ and are part of the export.
 Console, Activity: four tabs. **Access changes** and **Tool decisions** are as
 before. **Tool calls** and **Sign-in events** list what `HUBZOID_AUDIT=db` (or
 `both`) stored, with filters for agent, time, person, allowed or denied,
-finished or failed, tool and channel. **Export** downloads what the current
-tab holds for the chosen agent and time.
+finished or failed, tool and channel. Sign-in events are for organization
+administrators. **Export** downloads what the current tab holds for the chosen
+agent and time.
 
 ## Export
 
@@ -82,7 +83,15 @@ GET /portal/api/audit/export?since=2026-11-01T00:00:00Z&kind=tool,access,admin,a
 ```
 
 `kind` is any of `tool`, `access`, `admin`, `auth`. Admin and sign-in events
-for the whole organization need an organization administrator.
+need an organization administrator. An export holds at most `limit` records
+(default 100,000 over the API, 1,000,000 from the command). When more remain,
+the last line is `{"kind": "export", "event": "export.truncated", "next_since":
+...}`: export again from that time (records at that instant may repeat).
+
+Audit lines go through a bounded queue to standard output, so a slow log driver
+never holds up a tool call. If the queue fills, lines are dropped and the drop
+is reported on standard error. Queued lines and rows are written when the
+process stops gracefully.
 
 ## What a security team can alert on
 

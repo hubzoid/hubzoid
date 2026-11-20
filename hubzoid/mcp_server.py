@@ -133,8 +133,10 @@ def build_registry(
     # Read-only admin tools, for agent administrators only (MCP surface only).
     from .admin import mcp_tools as admin_tools
 
+    from .access.guard import run_checked
+
     for ft in admin_tools.make(hub_dir):
-        registry.setdefault(ft.name, ft)
+        registry.setdefault(ft.name, run_checked(ft, hub_dir))  # the account check and audit, as every tool
 
     permissions = {
         ft.name: permission

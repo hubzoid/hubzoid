@@ -121,47 +121,60 @@ def _hub(tmp_path, env: str = "") -> Path:
     return hub
 
 
-_GOOD = {"HUBZOID_AUTH": "true", "HUBZOID_BRIDGE_HOST": "0.0.0.0", "HUBZOID_TRUSTED_PROXIES": "10.0.0.0/16",
-         "DATABASE_URL": "postgresql://db/hub", "HUBZOID_SECRET_KEY": "k"}
+def _good(tmp_path, hub) -> dict:
+    """A hub service's environment that works: the edge's manifest on a
+    shared folder, a random bridge key, the deployment key and database."""
+    import json as _json
+
+    manifest = tmp_path / "edge-data" / "deployment.json"
+    manifest.parent.mkdir()
+    manifest.write_text(_json.dumps({"version": 1, "hubs": [
+        {"key": "support", "path": str(hub), "slug": "support", "name": "Support"}]}))
+    return {"HUBZOID_AUTH": "true", "HUBZOID_BRIDGE_HOST": "0.0.0.0", "HUBZOID_TRUSTED_PROXIES": "10.0.0.0/16",
+            "DATABASE_URL": "postgresql://db/hub", "HUBZOID_SECRET_KEY": "k",
+            "HUBZOID_DEPLOYMENT": str(manifest), "BRIDGE_API_KEYS": "hzb_random-and-long"}
+
+
+def _set(monkeypatch, env):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
 
 
 def test_behind_tells_the_bridge_what_the_gateway_would(tmp_path, monkeypatch):
     hub = _hub(tmp_path, "MCP_SERVER=true\n")
-    for k, v in _GOOD.items():
-        monkeypatch.setenv(k, v)
-    env, problems = cli._behind_plan(hub, "https://hub.example.com/", dict(_GOOD))
+    good = _good(tmp_path, hub)
+    _set(monkeypatch, good)
+    env, problems = cli._behind_plan(hub, "https://hub.example.com/", good)
     assert problems == []
     assert env["HUBZOID_PUBLIC_URL"] == "https://hub.example.com/b/support"
     assert env["MCP_PUBLIC_URL"] == "https://hub.example.com/b/support/mcp"
     assert env["HUBZOID_GATEWAY"] == "1" and env["HUBZOID_AUTH"] == "true"
     assert env["HUBZOID_HOST"] == env["HUBZOID_INBOUND_HOST"] == "0.0.0.0"
     assert env["HUBZOID_OPERATIONAL_DB"] == "postgresql://db/hub"
-    assert cli._forwarded_args("0.0.0.0", _GOOD) == ["--forwarded-allow-ips", "10.0.0.0/16"]
-    assert cli._forwarded_args("127.0.0.1", _GOOD) == []
+    assert cli._forwarded_args("0.0.0.0", good) == ["--forwarded-allow-ips", "10.0.0.0/16"]
+    assert cli._forwarded_args("127.0.0.1", good) == []
 
 
-@pytest.mark.parametrize("drop, says", [
-    ("HUBZOID_TRUSTED_PROXIES", "HUBZOID_TRUSTED_PROXIES"),
-    ("DATABASE_URL", "DATABASE_URL"),
-    ("HUBZOID_SECRET_KEY", "HUBZOID_SECRET_KEY"),
+@pytest.mark.parametrize("change, says", [
+    ({"HUBZOID_TRUSTED_PROXIES": None}, "HUBZOID_TRUSTED_PROXIES"),
+    ({"DATABASE_URL": None}, "DATABASE_URL"),
+    ({"HUBZOID_SECRET_KEY": None}, "HUBZOID_SECRET_KEY"),
+    ({"HUBZOID_DEPLOYMENT": None}, "manifest"),
+    ({"BRIDGE_API_KEYS": "dev"}, "public 'dev'"),
+    ({"HUBZOID_AUTH": "false"}, "Sign-in is off"),
 ])
-def test_behind_refuses_a_setup_that_would_break(tmp_path, monkeypatch, drop, says):
+def test_behind_refuses_a_setup_that_would_break(tmp_path, monkeypatch, change, says):
     hub = _hub(tmp_path)
-    env = {k: v for k, v in _GOOD.items() if k != drop}
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    monkeypatch.delenv(drop, raising=False)
+    env = _good(tmp_path, hub)
+    for k, v in change.items():
+        if v is None:
+            env.pop(k)
+            monkeypatch.delenv(k, raising=False)
+        else:
+            env[k] = v
+    _set(monkeypatch, env)
     _, problems = cli._behind_plan(hub, "https://hub.example.com", env)
-    assert any(says in p for p in problems)
-
-
-def test_behind_on_the_network_with_sign_in_off_is_refused(tmp_path, monkeypatch):
-    hub = _hub(tmp_path)
-    env = {**_GOOD, "HUBZOID_AUTH": "false"}
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    _, problems = cli._behind_plan(hub, "https://hub.example.com", env)
-    assert any("Sign-in is off" in p for p in problems)
+    assert any(says in p for p in problems), problems
     _, problems = cli._behind_plan(hub, "not a url", env)
     assert any("--behind" in p for p in problems)
 
