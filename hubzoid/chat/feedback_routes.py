@@ -49,6 +49,11 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
             log.warning("chat: could not record the notice for run %s", kw.get("run_id"), exc_info=True)
 
     engine.on_terminal = on_terminal
+    try:
+        if svc.delivery_needed():
+            deliverer.start()  # retries and request.created survive a restart
+    except Exception:  # noqa: BLE001 - the next run's end or target change starts it
+        log.warning("chat: could not check for pending webhook deliveries", exc_info=True)
 
     async def actor_of(request: Request, mutation: bool = False):
         user = await (ctx.mutation(request) if mutation else ctx.user(request))
@@ -219,8 +224,11 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
         key = await scope_key(request, user, actor)
         body = await er.read_json(request)
         owner = actor.id if key.startswith("user:") else None
-        return await call(svc.put_target, key, target_id, body, owner_id=owner,
-                          expected_revision=body.get("expected_revision", "absent"))
+        out = await call(svc.put_target, key, target_id, body, owner_id=owner,
+                         expected_revision=body.get("expected_revision", "absent"))
+        if out.get("enabled"):
+            deliverer.kick()  # an enabled target may want request.created
+        return out
 
     @app.delete("/api/chat/notification-targets/{target_id}", status_code=204)
     async def delete_target(target_id: str, request: Request):
@@ -246,32 +254,46 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
 
 
 class _Deliverer:
-    """Sends due webhook deliveries in the background while there are any."""
+    """Sends webhook deliveries in the background: right away when a run ends
+    (``kick``), at their retry time, and for new approvals and questions
+    (``request.created``, read from the HITL event log). It sleeps until the
+    next due delivery, at most ``POLL`` seconds, and runs for the life of the
+    process once started (``start`` at boot)."""
+
+    POLL = 5.0
 
     def __init__(self, svc: FeedbackService):
         self.svc = svc
         self._lock = threading.Lock()
+        self._wake = threading.Event()
         self._running = False
 
     def kick(self) -> None:
+        self._wake.set()
         with self._lock:
             if self._running:
                 return
             self._running = True
         threading.Thread(target=self._loop, name="hz-notify", daemon=True).start()
 
+    start = kick
+
     def _loop(self) -> None:
-        idle = 0
         try:
-            while idle < 3:
+            while True:
+                self._wake.clear()
                 try:
-                    sent = self.svc.deliver_due()
+                    self.svc.ingest_requests()
+                except Exception:  # noqa: BLE001
+                    log.warning("chat: reading new requests for webhooks failed", exc_info=True)
+                try:
+                    self.svc.deliver_due()
+                    due = self.svc.next_due()
                 except Exception:  # noqa: BLE001
                     log.warning("chat: delivery pass failed", exc_info=True)
-                    sent = 0
-                idle = 0 if sent else idle + 1
-                time.sleep(2)
+                    due = None
+                wait = self.POLL if due is None else max(0.05, min(self.POLL, due - time.time()))
+                self._wake.wait(wait)
         finally:
             with self._lock:
                 self._running = False
-
