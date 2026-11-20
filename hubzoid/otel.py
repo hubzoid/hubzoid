@@ -39,8 +39,8 @@ def claude_otel_env(*, endpoint, user, hub, surface) -> dict[str, str]:
         # content). Token + cost already ride the trace spans. An operator with a
         # metrics/log backend opts in by setting these in the env (their value
         # wins).
-        "OTEL_METRICS_EXPORTER": os.environ.get("OTEL_METRICS_EXPORTER") or "none",
-        "OTEL_LOGS_EXPORTER": os.environ.get("OTEL_LOGS_EXPORTER") or "none",
+        "OTEL_METRICS_EXPORTER": os.environ.get("OTEL_METRICS_EXPORTER") or _signal("metrics"),
+        "OTEL_LOGS_EXPORTER": os.environ.get("OTEL_LOGS_EXPORTER") or _signal("logs"),
         # OTLP/HTTP (what Langfuse and standard collectors accept on :4318).
         # Without an explicit protocol the exporter defaults to gRPC and silently
         # sends nothing to an HTTP endpoint. An operator-set value (a gRPC-only
@@ -58,7 +58,43 @@ def claude_otel_env(*, endpoint, user, hub, surface) -> dict[str, str]:
             f"hubzoid.surface={_attr(surface)},"
             f"user.id={_attr(user)}"
         ),
+        **content_env(),
     }
+
+
+def signals(env=None) -> frozenset[str]:
+    """HUBZOID_OTEL_SIGNALS: which of traces, metrics and logs the agent
+    runtime exports (default traces). An operator's own OTEL_*_EXPORTER wins."""
+    env = os.environ if env is None else env
+    raw = (env.get("HUBZOID_OTEL_SIGNALS") or "traces").lower()
+    return frozenset(x.strip() for x in raw.split(",") if x.strip() in ("traces", "metrics", "logs"))
+
+
+def _signal(name: str) -> str:
+    return "otlp" if name in signals() else "none"
+
+
+# HUBZOID_OTEL_CONTENT: the most prompt and tool content telemetry may carry,
+# whatever else is set. Claude Code's own switches (checked in the bundled CLI).
+_CONTENT_SWITCHES = ("OTEL_LOG_USER_PROMPTS", "OTEL_LOG_ASSISTANT_RESPONSES", "OTEL_LOG_TOOL_DETAILS",
+                     "OTEL_LOG_TOOL_CONTENT", "OTEL_LOG_RAW_API_BODIES")
+_CONTENT_LEVELS = {
+    "none": (),                                  # names, counts and timings only
+    "tools": ("OTEL_LOG_TOOL_DETAILS",),         # plus which tools and servers, with their parameters
+    "full": ("OTEL_LOG_USER_PROMPTS", "OTEL_LOG_ASSISTANT_RESPONSES", "OTEL_LOG_TOOL_DETAILS",
+             "OTEL_LOG_TOOL_CONTENT"),           # plus prompts, answers and tool results
+}
+
+
+def content_env(env=None) -> dict[str, str]:
+    """The content switches for HUBZOID_OTEL_CONTENT (``none``, ``tools`` or
+    ``full``). Unset leaves them as the environment has them."""
+    env = os.environ if env is None else env
+    level = (env.get("HUBZOID_OTEL_CONTENT") or "").strip().lower()
+    if level not in _CONTENT_LEVELS:
+        return {}
+    on = _CONTENT_LEVELS[level]
+    return {name: ("1" if name in on else "0") for name in _CONTENT_SWITCHES}
 
 
 def _merge_resource_attr(existing: str | None, extra: dict[str, str]) -> str:

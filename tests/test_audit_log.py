@@ -130,8 +130,8 @@ def test_export_merges_every_kind_oldest_first(tmp_path, monkeypatch):
     audit_log.tool_call(tool="read_file", hub_dir=tmp_path, outcome="ok", duration_ms=3)
     audit_log.sign_in_failed(email="p", client="198.51.100.1", locked_seconds=0)
     audit_log.flush()
-    records = list(audit_log.export(tmp_path))
-    assert [r["kind"] for r in records] == ["access", "admin", "tool", "auth"]
+    records = list(audit_log.export(tmp_path, hubs=[tmp_path.name.lower()]))
+    assert {r["kind"] for r in records} == {"access", "admin", "tool", "auth"}
     assert [r["ts"] for r in records] == sorted(r["ts"] for r in records)
     assert [r["kind"] for r in audit_log.export(tmp_path, kinds=("tool",))] == ["tool"]
     assert list(audit_log.export(tmp_path, since="2999-01-01")) == []
@@ -158,3 +158,30 @@ def test_json_log_lines_carry_the_request_context(monkeypatch):
     assert "abcdefghijklmnopqrstu" not in line["message"]
     assert logs.log_format({"HUBZOID_LOG_FORMAT": "JSON"}) == "json"
     assert logs.log_format({}) == "text"
+
+
+def test_a_tool_call_makes_an_execute_tool_span_when_tracing_is_set_up(monkeypatch):
+    spans = []
+
+    class Span:
+        def __init__(self, name, attributes):
+            self.name, self.attributes, self.status = name, attributes, None
+
+        def set_status(self, status):
+            self.status = status
+
+        def end(self, end_time=None):
+            spans.append(self)
+
+    class Tracer:
+        def start_span(self, name, start_time=None, attributes=None):
+            return Span(name, attributes)
+
+    monkeypatch.delenv("HUBZOID_AUDIT", raising=False)
+    monkeypatch.setattr(audit_log, "_tracer", lambda: Tracer())
+    audit_log.tool_call(tool="read_file", outcome="ok", duration_ms=12, call_id="c1", arguments={"path": "x"})
+    (span,) = spans
+    assert span.name == "execute_tool read_file"
+    assert span.attributes["gen_ai.operation.name"] == "execute_tool"
+    assert span.attributes["gen_ai.tool.call.id"] == "c1"
+    assert "path" not in json.dumps(span.attributes)   # never arguments

@@ -302,3 +302,19 @@ def test_a_channel_secret_can_be_stored_from_the_cli(hub):
     other = CliRunner().invoke(secrets_app, ["set", str(hub), "--ref", "secret:channel/elsewhere/x/token",
                                              "--stdin", "--json"], input=VALUE)
     assert other.exit_code != 0 and "another hub" in other.output
+
+
+def test_require_secret_key_refuses_to_make_a_key_file(tmp_path, monkeypatch):
+    """HUBZOID_REQUIRE_SECRET_KEY: a hosted deployment of several services must
+    share one key, so none is made on local disk."""
+    from hubzoid import secretbox
+
+    monkeypatch.delenv("HUBZOID_SECRET_KEY", raising=False)
+    env = {"HUBZOID_REQUIRE_SECRET_KEY": "true"}
+    with pytest.raises(secretbox.SecretKeyError, match="HUBZOID_SECRET_KEY"):
+        secretbox.keys(tmp_path, env)
+    assert not secretbox.key_path(tmp_path, env).exists()
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    assert secretbox.keys(tmp_path, {**env, "HUBZOID_SECRET_KEY": key}) == [key.encode()]

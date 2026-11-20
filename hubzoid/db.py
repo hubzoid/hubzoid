@@ -6,6 +6,7 @@ Only Hubzoid tables are owned here; DBOS owns its execution schema.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from . import datadir
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+
+log = logging.getLogger(__name__)
 
 # Engines are meant to be singletons per URL (they hold the connection pool).
 _engines: "dict[str, Engine]" = {}
@@ -172,6 +175,34 @@ def _engine_for_url(url: str) -> Engine:
             # A gateway's bridges share one file. Wait for a writer's lock
             # rather than failing a request after SQLite's default 5 s.
             connect_args["timeout"] = SQLITE_LOCK_WAIT_SECONDS
-        eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+        eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args,
+                            **({} if url.startswith("sqlite") else pool_options(os.environ, connect_args)))
         _engines[url] = eng
     return eng
+
+
+#: Pool settings for a server database (RDS and other managed Postgres).
+#: Unset keeps SQLAlchemy's defaults (5 connections, 10 more under load, no recycling).
+_POOL_SETTINGS = {"HUBZOID_DB_POOL_SIZE": "pool_size", "HUBZOID_DB_MAX_OVERFLOW": "max_overflow",
+                  "HUBZOID_DB_POOL_TIMEOUT": "pool_timeout", "HUBZOID_DB_POOL_RECYCLE": "pool_recycle"}
+
+
+def pool_options(env, connect_args: dict) -> dict:
+    """The engine's pool options from HUBZOID_DB_POOL_SIZE, _MAX_OVERFLOW,
+    _POOL_TIMEOUT (seconds to wait for a free connection) and _POOL_RECYCLE
+    (seconds before a connection is replaced, below the server's or a proxy's
+    idle timeout), and HUBZOID_DB_CONNECT_TIMEOUT (seconds to open one).
+    Each process of a deployment holds its own pool: size them so every
+    service together stays under the database's connection limit."""
+    out: dict = {}
+    for key, option in _POOL_SETTINGS.items():
+        raw = (env.get(key) or "").strip()
+        if raw:
+            try:
+                out[option] = int(raw)
+            except ValueError:
+                log.warning("%s=%r is not a whole number; ignored", key, raw)
+    raw = (env.get("HUBZOID_DB_CONNECT_TIMEOUT") or "").strip()
+    if raw.isdigit():
+        connect_args["connect_timeout"] = int(raw)
+    return out

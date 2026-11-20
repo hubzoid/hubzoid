@@ -290,6 +290,11 @@ def request(state_dir: Path, payload: dict, *, timeout: float = 600.0) -> dict:
     except (OSError, ValueError):
         raise ConnectionError(f"No running deployment found in {state_dir}. Is `hubzoid run` running?")
     path = info.get("socket") or ""
+    host = info.get("host")
+    if host and host != socket.gethostname():
+        # The state folder is shared (a network volume): the control socket is
+        # on the machine or container that runs the deployment.
+        raise ConnectionError(f"The deployment in {state_dir} runs on {host}, not here. Run the command there.")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         try:
@@ -639,7 +644,8 @@ class Supervisor:
         os.chmod(path, 0o600)
         srv.listen(8)
         self._server = srv
-        info = json.dumps({"socket": str(path), "pid": os.getpid(), "generation": self.generation})
+        info = json.dumps({"socket": str(path), "pid": os.getpid(), "generation": self.generation,
+                           "host": socket.gethostname()})
         for folder in [self.state_dir, *self.pointers]:
             try:
                 Path(folder).mkdir(parents=True, exist_ok=True)

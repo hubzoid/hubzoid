@@ -331,6 +331,51 @@ def _sqlite(hub: Path) -> Check | None:
     return None
 
 
+_NETWORK_FS = ("nfs", "nfs4", "efs", "cifs", "smbfs", "smb3", "9p", "fuse.sshfs")
+
+
+def network_filesystem(path: Path, mounts: str | None = None) -> str | None:
+    """The network filesystem type ``path`` sits on (Linux mount table), or None."""
+    if mounts is None:
+        try:
+            mounts = Path("/proc/mounts").read_text()
+        except OSError:
+            return None
+    target = str(Path(path).resolve())
+    best, kind = "", None
+    for line in mounts.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        point = parts[1].replace("\\040", " ")
+        if (target == point or target.startswith(point.rstrip("/") + "/")) and len(point) > len(best):
+            best, kind = point, parts[2]
+    return kind if kind in _NETWORK_FS else None
+
+
+def _sqlite_on_network(hub: Path) -> Check | None:
+    """SQLite's locking is unsafe on NFS (EFS): its database files must sit on
+    local disk, or the deployment must use Postgres (docs/DEPLOYING.md)."""
+    from . import db
+
+    for label, getter in (("operational", db.operational_url), ("workflow", db.dbos_url)):
+        try:
+            url = getter(hub)
+        except Exception:  # noqa: BLE001 — reported by the db checks
+            continue
+        if not url.startswith("sqlite:///"):
+            continue
+        path = Path(url[len("sqlite:///"):]).parent
+        kind = network_filesystem(path)
+        if kind:
+            return Check("db.network_fs", "fail",
+                         f"The {label} database is SQLite on a network filesystem ({kind}, {path}). SQLite's "
+                         "locks are not safe there: data can be lost.",
+                         {"recovery": "Use Postgres (DATABASE_URL) for a hosted deployment, or keep the SQLite "
+                                      "files on local disk."})
+    return None
+
+
 def _schema(hub: Path) -> list[Check]:
     from sqlalchemy import create_engine
 
@@ -954,6 +999,9 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         sqlite_check = _sqlite(hub)
         if sqlite_check:
             checks.append(sqlite_check)
+        network = _sqlite_on_network(hub)
+        if network:
+            checks.append(network)
         checks += _schema(hub)
         checks += _eval_checks(hub)
         checks += _auth(hub)

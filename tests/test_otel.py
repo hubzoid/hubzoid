@@ -154,3 +154,18 @@ def test_openai_otel_setup_registers_litellm_callback(monkeypatch):
 
     assert otel.openai_otel_setup(endpoint="http://c:4318", hub="sales-hub") is True
     assert "otel" in fake.callbacks
+
+
+def test_signals_and_content_ceiling(monkeypatch):
+    for key in ("OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER", "HUBZOID_OTEL_CONTENT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_OTEL_SIGNALS", "traces,metrics")
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="web")
+    assert env["OTEL_METRICS_EXPORTER"] == "otlp" and env["OTEL_LOGS_EXPORTER"] == "none"
+    assert "OTEL_LOG_USER_PROMPTS" not in env   # unset: the environment decides, as before
+    monkeypatch.setenv("HUBZOID_OTEL_CONTENT", "tools")
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="web")
+    assert env["OTEL_LOG_TOOL_DETAILS"] == "1" and env["OTEL_LOG_USER_PROMPTS"] == "0"
+    assert env["OTEL_LOG_TOOL_CONTENT"] == "0"
+    assert otel.content_env({"HUBZOID_OTEL_CONTENT": "full"})["OTEL_LOG_USER_PROMPTS"] == "1"
+    assert otel.content_env({"HUBZOID_OTEL_CONTENT": "none"})["OTEL_LOG_TOOL_DETAILS"] == "0"
