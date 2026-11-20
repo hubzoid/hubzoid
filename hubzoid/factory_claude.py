@@ -1235,11 +1235,23 @@ def _identity_checked(options, hub_dir, ident):
                 failed = isinstance(response, dict) and bool(response.get("is_error") or response.get("isError"))
                 audit_log.tool_call(**_audit_where(where), hub_dir=hub_dir, outcome="error" if failed else "ok",
                                     duration_ms=(time.monotonic() - at) * 1000,
-                                    result_bytes=audit_log.size_of(response), arguments=arguments,
+                                    result=response, arguments=arguments, call_id=str(tool_use_id))
+            return {}
+
+        async def audited_failure(hook_input, tool_use_id, _context):
+            # A tool that failed or was interrupted (Stop): no PostToolUse comes.
+            begun = started.pop(str(tool_use_id or ""), None)
+            if begun is not None:
+                at, where, arguments = begun
+                interrupted = bool((hook_input or {}).get("is_interrupt"))
+                audit_log.tool_call(**_audit_where(where), hub_dir=hub_dir, outcome="error",
+                                    error="interrupted" if interrupted else "tool_error",
+                                    duration_ms=(time.monotonic() - at) * 1000, arguments=arguments,
                                     call_id=str(tool_use_id))
             return {}
 
         hooks["PostToolUse"] = [HookMatcher(hooks=[audited]), *hooks.get("PostToolUse", [])]
+        hooks["PostToolUseFailure"] = [HookMatcher(hooks=[audited_failure]), *hooks.get("PostToolUseFailure", [])]
     token = app_scope.live_token()
     if token:
         async def scrubbed(hook_input, _tool_use_id, _context):

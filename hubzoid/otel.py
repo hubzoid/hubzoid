@@ -59,7 +59,23 @@ def claude_otel_env(*, endpoint, user, hub, surface) -> dict[str, str]:
             f"user.id={_attr(user)}"
         ),
         **content_env(),
+        **_direct_signal_endpoints(endpoint),
     }
+
+
+def _direct_signal_endpoints(endpoint: str) -> dict[str, str]:
+    """With the in-bridge normalizer (HUBZOID_OTEL_NORMALIZE), only traces go
+    through the bridge, which serves ``/otel/v1/traces`` alone. Metrics and
+    logs, when on, go straight to the collector."""
+    real = (os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip().rstrip("/")
+    if not real or not endpoint.startswith("http://127.0.0.1:") or not endpoint.endswith("/otel"):
+        return {}
+    out = {}
+    for signal, key in (("metrics", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
+                        ("logs", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")):
+        if signal in signals() and not os.environ.get(key):
+            out[key] = f"{real}/v1/{signal}"
+    return out
 
 
 def signals(env=None) -> frozenset[str]:
@@ -270,6 +286,11 @@ def openai_otel_setup(*, endpoint, hub) -> bool:
     os.environ["OTEL_RESOURCE_ATTRIBUTES"] = _merge_resource_attr(
         os.environ.get("OTEL_RESOURCE_ATTRIBUTES"), {"hubzoid.hub": _attr(hub)}
     )
+    level = (os.environ.get("HUBZOID_OTEL_CONTENT") or "").strip().lower()
+    if level in ("none", "tools"):
+        # The content ceiling on this path: LiteLLM sends no prompts or
+        # answers in its spans, whatever else is set.
+        litellm.turn_off_message_logging = True
     callbacks = list(getattr(litellm, "callbacks", None) or [])
     if "otel" not in callbacks:
         callbacks.append("otel")

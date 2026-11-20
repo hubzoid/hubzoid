@@ -1156,6 +1156,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         from . import audit_log
         from .access import audit as auditlib
 
+        if kind == "auth" and not admin.is_org_admin:
+            raise HTTPException(403, "Sign-in events need an organization administrator.")
         decision = outcome if outcome in ("allow", "deny") else ("deny" if denied else None)
         # Filters are applied inside read() before the tail cut, so paging is over
         # the filtered set. `selected()` keeps every hub within the admin's scope.
@@ -1167,7 +1169,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                                                 decision=decision, tool=tool, surface=surface,
                                                 since=since, until=until)]
             if kind != "access":
-                kinds = ("tool", "auth") if kind == "all" else (kind,)
+                kinds = ((("tool", "auth") if admin.is_org_admin else ("tool",)) if kind == "all"
+                         else (kind,))
                 try:
                     events = audit_log.read_events(Path(h["path"]), kinds=kinds, limit=limit + offset,
                                                    user=user, decision=decision, outcome=result, tool=tool,

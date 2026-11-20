@@ -911,14 +911,19 @@ secrets, restarts and deploys.
   | `HUBZOID_AUTH=true` | A hub on the network refuses to start with sign-in off |
   | `DATABASE_URL` | The same database as the edge: accounts, sessions and conversations are shared |
   | `HUBZOID_SECRET_KEY` | The same deployment key as the edge, so the hub can check who is asking and read stored secrets |
+  | `HUBZOID_DEPLOYMENT` | The edge's `deployment.json` on the shared volume, so the hub knows the deployment (its slug, the other agents, sign-in) |
+  | `BRIDGE_API_KEYS` (in the hub's `.env`) | A random key, not the public `dev`: the bridge listens on the network |
 
   `--behind` tells the hub what the edge would tell a hub it starts: its
   public address (`/b/<hub>`), its MCP address, the web app mode and sign-in.
   Missing settings stop the start with a message that names them.
 
-Hub folders can be baked into each image or shared on EFS (read-only for the
-edge). The edge reads each hub's `AGENTS.md`, `.env` flags, branding and
-webhook routes.
+Share two things between the edge and every hub service, at the same paths in
+each: the hub folders, and the edge's data folder (`--data-dir`, which holds
+`deployment.json`). EFS works for both, with the databases in Postgres. The
+edge writes `deployment.json` and a pointer in each hub's `.hubzoid/` folder at
+start, so it needs write access. The edge reads each hub's `AGENTS.md`, `.env`
+flags, branding and webhook routes.
 
 ### Settings for a hosted deployment
 
