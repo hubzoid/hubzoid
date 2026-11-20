@@ -21,6 +21,15 @@ from fastapi import HTTPException, Request
 
 LOCAL_OWNER_EMAIL = "admin@localhost"
 
+#: Credentials a program holds, never a person at a browser: a personal API key
+#: and a machine JWT from a registered API app. They never count as a person
+#: present and never pass the checks reserved for a person (``via_key``).
+AUTOMATED = ("api_key", "app_jwt")
+
+
+def automated(credential: str | None) -> bool:
+    return credential in AUTOMATED
+
 
 @dataclass(frozen=True)
 class AuthUser:
@@ -29,7 +38,7 @@ class AuthUser:
     name: str = ""
     role: str = "user"  # 'admin' | 'user'
     method: str = ""    # how this session signed in: password | google | oidc | link | local
-    # The credential behind this request: "session", "api_key" or "local".
+    # The credential behind this request: "session", "api_key", "app_jwt" or "local".
     credential: str = "session"
     credential_id: str = ""
     # A personal API key's limits (None: not a key). ``hubs`` None: every agent.
@@ -42,7 +51,8 @@ class AuthUser:
 
     @property
     def via_key(self) -> bool:
-        return self.credential == "api_key"
+        """Automation (an API key or a machine JWT), not a person at a browser."""
+        return automated(self.credential)
 
     def may_use_hub(self, hub: str | None) -> bool:
         """A key limited to some agents can't reach the others."""

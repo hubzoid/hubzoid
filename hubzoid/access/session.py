@@ -20,6 +20,27 @@ from .identity import normalize
 log = logging.getLogger("hubzoid.portal")
 
 
+def credential(request: Request, hub_dir: Path | None) -> tuple[str, str]:
+    """``(Actor.via, credential id)`` for this request's verified caller:
+    ``("api-key", "<key id>")`` for a personal key, ``("app-jwt", "app:<id>")``
+    for a machine JWT, else ``("session", "")``. Reads the request's cached
+    resolution, so it costs nothing after the identity check."""
+    if hub_dir is None:
+        return ("session", "")
+    from .. import auth
+
+    try:
+        user = auth.current_user(request, Path(hub_dir))
+    except Exception:  # noqa: BLE001 - the identity check already ran and decided
+        return ("session", "")
+    kind = getattr(user, "credential", "") if user is not None else ""
+    if kind == "api_key":
+        return ("api-key", user.credential_id)
+    if kind == "app_jwt":
+        return ("app-jwt", user.credential_id)
+    return ("session", "")
+
+
 def _key_only(request: Request) -> bool:
     from ..auth.sessions import SESSION_COOKIE, bearer_token
 

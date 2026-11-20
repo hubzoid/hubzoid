@@ -236,6 +236,14 @@ function Devices({ devices, reload }: { devices: Device[]; reload: () => void })
   );
 }
 
+const OPERATIONS: Record<string, string[]> = { chat: ["chat"], read: ["read"], all: ["chat", "read", "manage"] };
+
+/** The preset a key's operations match, ignoring "approve" (shown on its own). */
+function presetOf(ops: string[]): string {
+  const base = ops.filter((o) => o !== "approve").sort().join(",");
+  return Object.keys(OPERATIONS).find((id) => [...OPERATIONS[id]].sort().join(",") === base) ?? ops[0];
+}
+
 const PRESETS = [
   { id: "chat", label: S.presetChat, help: S.presetChatHelp },
   { id: "read", label: S.presetRead, help: S.presetReadHelp },
@@ -247,6 +255,7 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("chat");
+  const [approve, setApprove] = useState(false);
   const [scope, setScope] = useState<"all" | "some">("all");
   const [picked, setPicked] = useState<string[]>([]);
   const [days, setDays] = useState(90);
@@ -280,7 +289,11 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
     if (!name.trim()) return setError(S.keyNameMissing);
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { name: name.trim(), preset, expires_in_days: days };
+      const body: Record<string, unknown> = { name: name.trim(), expires_in_days: days };
+      const ops = OPERATIONS[preset] ?? ["chat"];
+      // "approve" is in no preset: it is added only when asked for.
+      if (approve && !(preset === "chat" && scope === "some")) body.operations = [...ops, "approve"];
+      else body.preset = preset;
       if (preset === "chat" && scope === "some") body.hubs = picked;
       const res = await run(() => post<{ key: string; api_key: { id: string } }>("/api/me/api-keys", body));
       setMade({ id: res.api_key.id, key: res.key });
@@ -335,7 +348,8 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
                 </div>
                 <div className="text-[12.5px] text-mute">
                   {[
-                    PRESETS.find((p) => p.id === (k.operations.length === 3 ? "all" : k.operations[0]))?.label,
+                    PRESETS.find((p) => p.id === presetOf(k.operations))?.label,
+                    k.operations.includes("approve") ? S.keyApproves : null,
                     k.hubs ? k.hubs.join(", ") : null,
                     k.state === "active" ? (k.last_used_at ? S.lastUsed(formatRelative(k.last_used_at)) : S.neverUsed)
                       : k.state === "expired" ? S.expired : S.revoked,
@@ -367,6 +381,16 @@ function Keys({ keys, reload, run }: { keys: Key[]; reload: () => void; run: Run
                 </span>
               </label>
             ))}
+            {!(preset === "chat" && scope === "some") && (
+              <label className="flex items-start gap-2 pt-1">
+                <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} className="mt-1"
+                  data-testid="key-approve" />
+                <span>
+                  <span className="text-ink">{S.keyApprove}</span>
+                  <span className="block text-[12.5px] text-mute">{S.keyApproveHelp}</span>
+                </span>
+              </label>
+            )}
           </fieldset>
           {preset === "chat" && agents.length > 1 && (
             <fieldset className="m-0 space-y-2 border-0 p-0">

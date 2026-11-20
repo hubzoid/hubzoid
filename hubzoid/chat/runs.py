@@ -98,7 +98,9 @@ def _admit(hub_dir, run) -> dict | None:
             requested_by=run.email, requested_by_kind="app", started_from="app",
             origin_id=run.conversation_id, person_present=True,
             credential_kind="app", credential_id=run.credential_id)
-    via_key = run.credential == "api_key"
+    from ..auth import automated
+
+    via_key = automated(run.credential)
     return run_identity.admit_or_refuse(
         hub_dir, run_kind="api" if via_key else "chat", run_id=run.message_id,
         acts_as_id=run.owner_id, acts_as_email=run.email, started_from="api" if via_key else "chat",

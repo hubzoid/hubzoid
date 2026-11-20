@@ -81,13 +81,19 @@ async def _call(fn: Callable, *args, **kwargs):
         _raise(exc)
 
 
+def _credential(actor) -> str | None:
+    """``api-key:<id>`` when a key made this decision (recorded with it)."""
+    via = getattr(actor, "via", "session")
+    return None if via == "session" else f"{via}:{getattr(actor, 'credential_id', '')}"
+
+
 def _writer(require_person: Callable) -> Callable:
     """`require_person` for a change: a session caller carries an ambient
     cookie, so its write must come from this site's own pages. An API-key
     caller sends its credential explicitly."""
 
     def writer(request: Request, actor=Depends(require_person)):
-        if getattr(actor, "via", None) != "api-key":
+        if getattr(actor, "via", None) not in ("api-key", "app-jwt"):
             from ..access.session import require_same_origin
             require_same_origin(request)
         return actor
@@ -188,20 +194,23 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
     @router.post("/hubs/{hub}/operations/{op_id}/approve")
     async def approve(hub: str, op_id: str, body: ApproveBody, actor=Depends(writer)):
         return await _call(service.approve, hub_for(actor, hub), op_id, actor.subject, digest=body.digest,
-                           expected_revision=body.expected_revision, surface=actor.surface)
+                           expected_revision=body.expected_revision, surface=actor.surface,
+                           credential=_credential(actor))
 
     @router.post("/hubs/{hub}/operations/{op_id}/deny")
     async def deny(hub: str, op_id: str, body: DenyBody = Body(default_factory=DenyBody),
                    actor=Depends(writer)):
         return await _call(service.deny, hub_for(actor, hub), op_id, actor.subject, reason=body.reason,
-                           expected_revision=body.expected_revision, surface=actor.surface)
+                           expected_revision=body.expected_revision, surface=actor.surface,
+                           credential=_credential(actor))
 
     @router.post("/hubs/{hub}/operations/{op_id}/resolve")
     async def resolve(hub: str, op_id: str, body: ResolveBody, actor=Depends(writer)):
         return await _call(service.resolve, hub_for(actor, hub), op_id, actor.subject,
                            decision=body.decision, evidence=body.evidence,
                            acknowledge_duplicate_risk=body.acknowledge_duplicate_risk,
-                           expected_revision=body.expected_revision, surface=actor.surface)
+                           expected_revision=body.expected_revision, surface=actor.surface,
+                           credential=_credential(actor))
 
 
 def register_stations(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:

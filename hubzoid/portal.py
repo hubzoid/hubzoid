@@ -99,14 +99,16 @@ class PortalAdmin:
     is_org_admin: bool
     manageable: list[str]
     # How the identity was verified: "session" (the Hubzoid session, or the
-    # local dev override).
+    # local dev override), "api-key" or "app-jwt", with the key or app id.
     via: str = "session"
+    credential_id: str = ""
 
     def actor(self) -> Actor:
         return Actor(
             subject=normalize(self.subject),
-            surface="console",
+            surface="console" if self.via == "session" else "api",
             via=self.via,
+            credential_id=self.credential_id,
         )
 
 
@@ -292,8 +294,11 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
             raise HTTPException(exc.status, exc.message)
         if not scope.any:
             return None
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir)
         return PortalAdmin(subject=subject, is_org_admin=scope.org_admin,
-                           manageable=sorted(scope.hubs))
+                           manageable=sorted(scope.hubs), via=via, credential_id=credential_id)
 
     return resolve
 
@@ -400,7 +405,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         subject = subject or _verify_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
-        return Actor(normalize(subject), "console", "session")
+        from .access.session import credential
+
+        via, credential_id = credential(request, hub_dir) if not dev else ("session", "")
+        return Actor(normalize(subject), "console" if via == "session" else "api", via, credential_id)
 
     def allowed_hubs(admin):
         return [

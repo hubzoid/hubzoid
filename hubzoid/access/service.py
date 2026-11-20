@@ -125,7 +125,8 @@ class Actor:
 
     subject: str  # normalized
     surface: str  # console|owui|web|api|mcp|whatsapp|telegram
-    via: str  # "session" | "api-key" | "bridge"
+    via: str  # "session" | "api-key" | "app-jwt" | "bridge"
+    credential_id: str = ""  # the API key id or "app:<id>", for the record
 
 
 @dataclass(frozen=True)
