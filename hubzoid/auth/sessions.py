@@ -369,6 +369,9 @@ def _app_user(request: Request, hub_dir: Path, token: str) -> AuthUser:
         raise HTTPException(status_code=403, detail={
             "code": "key_not_allowed",
             "message": "This app's tokens can't do this. An administrator can add operations to its api block."})
+    from .. import audit_log
+
+    audit_log.app_token_used(app.id, account["email"])
     return AuthUser(id=account["id"], email=account["email"], name=account["name"], role=account["role"],
                     method="app_jwt", credential="app_jwt", credential_id=f"app:{app.id}",
                     operations=app.api.operations, hubs=None)

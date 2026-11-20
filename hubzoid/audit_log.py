@@ -405,6 +405,21 @@ def api_key_used(key_id: str, email: str | None) -> None:
     emit("auth", "auth.api_key_used", key=str(key_id)[:16], actor=email, subject=email)
 
 
+def app_token_used(app_id: str, email: str | None) -> None:
+    """A machine JWT from a registered API app (``apps:`` with ``api:``) used
+    from an address for the first time since this process started."""
+    if not modes():
+        return
+    from . import _request_ctx
+
+    client = _request_ctx.get_client() or ""
+    key = (f"app:{app_id}", client)
+    if key in _KEY_ADDRESSES or len(_KEY_ADDRESSES) > 50000:
+        return
+    _KEY_ADDRESSES.add(key)
+    emit("auth", "auth.app_token_used", key=f"app:{app_id}"[:44], actor=email, subject=email)
+
+
 def sign_in_failed(*, email: str | None, client: str | None, locked_seconds: int) -> None:
     """A failed sign-in step (password, code, re-check), and a lockout when it
     reached the limit."""

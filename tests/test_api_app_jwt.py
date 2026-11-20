@@ -158,3 +158,18 @@ def test_an_unknown_jwt_is_never_the_local_owner_or_the_cookie(hub, monkeypatch)
                           RSAKey.generate_key(2048))
     assert c.get("/api/chat/ping").status_code == 200  # sign-in off: this machine is the owner
     assert c.get("/api/chat/ping", headers={"authorization": "Bearer " + stranger}).status_code == 401
+
+
+def test_machine_token_use_is_audited(hub, monkeypatch):
+    from hubzoid import audit_log
+
+    seen = []
+    monkeypatch.setattr(audit_log, "modes", lambda: {"log"})
+    monkeypatch.setattr(audit_log, "emit", lambda kind, event, **f: seen.append((event, f.get("key"), f.get("actor"))))
+    audit_log._KEY_ADDRESSES.clear()
+    key = RSAKey.generate_key(2048)
+    _apps(hub, key)
+    person(hub, email="robot@example.com")
+    c = _client(hub)
+    assert c.get("/api/chat/ping", headers={"authorization": "Bearer " + _token(key)}).status_code == 200
+    assert ("auth.app_token_used", "app:ci", "robot@example.com") in seen
