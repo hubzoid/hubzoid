@@ -216,3 +216,24 @@ def test_claude_env_follows_operator_traces_endpoint(monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4318/v1/traces")
     env = otel.claude_otel_env(endpoint=LF, user="u", hub="h", surface="s")
     assert "OTEL_EXPORTER_OTLP_HEADERS" not in env
+
+
+# --- second review: empty LiteLLM vars, Claude trace-specific operator value ----
+@pytest.mark.parametrize("empty_var", ["OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS"])
+def test_litellm_empty_var_keeps_traces_headers_auth(monkeypatch, empty_var):
+    import os
+    _fake_litellm(monkeypatch)
+    _clear_litellm_env(monkeypatch)
+    monkeypatch.setenv(empty_var, "")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=Basic abc=")
+    otel.openai_otel_setup(endpoint=LF, hub="h")
+    assert os.environ[empty_var] == ""  # still empty, so the exporter falls back
+    assert os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] == f"Authorization=Basic abc=,{H}=4"
+
+
+def test_claude_env_respects_operator_version_in_traces_headers(monkeypatch):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Basic abc=")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", f"{H}=5")
+    env = otel.claude_otel_env(endpoint=LF, user="u", hub="h", surface="s")
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in env

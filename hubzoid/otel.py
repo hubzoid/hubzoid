@@ -68,8 +68,13 @@ def _langfuse_headers_env(endpoint: str) -> dict[str, str]:
     """OTEL_EXPORTER_OTLP_HEADERS with the Langfuse v4 ingestion header added,
     when the subprocess's traces go straight to Langfuse. Through the bridge's
     normalize relay the endpoint is loopback and the relay adds it instead.
-    An operator's OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is where traces really go."""
+    An operator's OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is where traces really go.
+    Claude Code passes the generic headers as explicit exporter headers, which
+    beat OTEL_EXPORTER_OTLP_TRACES_HEADERS per key, so a version the operator
+    set there is left alone."""
     target = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or endpoint
+    if _has_ingestion_header(os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS")):
+        return {}
     raw = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
     merged = langfuse_otlp_headers(raw, target)
     return {"OTEL_EXPORTER_OTLP_HEADERS": merged} if merged != (raw or "") else {}
@@ -276,6 +281,10 @@ def with_langfuse_headers(headers: dict[str, str] | None, endpoint: str | None) 
     return out
 
 
+def _has_ingestion_header(raw: str | None) -> bool:
+    return any(k.lower() == LANGFUSE_INGESTION_HEADER for k in parse_otlp_headers(raw))
+
+
 def langfuse_otlp_headers(raw: str | None, endpoint: str | None) -> str:
     """An OTEL_EXPORTER_OTLP_HEADERS string with the Langfuse v4 ingestion
     header appended when `endpoint` is Langfuse and the header is not already
@@ -283,7 +292,7 @@ def langfuse_otlp_headers(raw: str | None, endpoint: str | None) -> str:
     raw = raw or ""
     if not is_langfuse_endpoint(endpoint):
         return raw
-    if any(k.lower() == LANGFUSE_INGESTION_HEADER for k in parse_otlp_headers(raw)):
+    if _has_ingestion_header(raw):
         return raw
     pair = f"{LANGFUSE_INGESTION_HEADER}={LANGFUSE_INGESTION_VERSION}"
     return f"{raw.rstrip().rstrip(',')},{pair}" if raw.strip() else pair
@@ -327,14 +336,20 @@ def _litellm_langfuse_headers(endpoint: str) -> None:
     read it. LiteLLM sends to OTEL_EXPORTER_OTLP_ENDPOINT, else OTEL_ENDPOINT,
     with headers from OTEL_EXPORTER_OTLP_HEADERS, else OTEL_HEADERS. With
     neither, the OTLP exporter reads OTEL_EXPORTER_OTLP_TRACES_HEADERS. Extend
-    the variable that is in use, so the auth it holds is never hidden."""
+    the variable that is in use, so the auth it holds is never hidden. An
+    empty LiteLLM value counts as none: the exporter then falls back too."""
     env = os.environ
     target = env["OTEL_EXPORTER_OTLP_ENDPOINT"] if "OTEL_EXPORTER_OTLP_ENDPOINT" in env else endpoint
     if not is_langfuse_endpoint(target):
         return
-    key = next((k for k in ("OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS",
-                            "OTEL_EXPORTER_OTLP_TRACES_HEADERS") if k in env),
-               "OTEL_EXPORTER_OTLP_HEADERS")
+    # The variable LiteLLM reads (os.getenv with a default: present wins, even empty).
+    lite = next((k for k in ("OTEL_EXPORTER_OTLP_HEADERS", "OTEL_HEADERS") if k in env), None)
+    if lite and env[lite].strip():
+        key = lite
+    elif (env.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") or "").strip():
+        key = "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
+    else:
+        key = lite or "OTEL_EXPORTER_OTLP_HEADERS"
     env[key] = langfuse_otlp_headers(env.get(key), target)
 
 
