@@ -133,6 +133,9 @@ doctor, evals and the channel list say what used to fail silently.
   period. Monthly limit bars still count the calendar month and say so.
   Settings › Agents always shows 30 days, as its columns say, even when the
   address carries another period.
+- The usage cost of a resumed Claude chat counted the session's earlier turns
+  again on every turn, so costs read several times too high. Each turn now
+  records its own cost (migration op_0082).
 
 ### Docs
 - One section on the two ways to connect Slack and WhatsApp, with a before and
