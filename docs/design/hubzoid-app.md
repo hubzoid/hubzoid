@@ -316,7 +316,7 @@ may use (Use this agent on a Console-managed hub). `GET /api/branding` returns
 | `DELETE /api/connections/{connector_id}` | each person | 204 |
 
 The capability `connector_<id>` gates use on Console-managed hubs. See
-[MCP connectors](../mcp.md#personal-connections-default-ui-mode).
+[MCP connectors](../mcp.md#connect-your-account).
 
 ### 6.7 Groups
 
