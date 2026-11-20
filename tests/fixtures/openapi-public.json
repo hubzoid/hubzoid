@@ -1,0 +1,2713 @@
+{
+ "DELETE /api/agui/threads/{thread_id}": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "thread_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "stable"
+ },
+ "DELETE /api/chat/files/{file_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "DELETE /api/chat/files/{file_id}/references/{ref_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ],
+   [
+    "path",
+    "ref_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "beta"
+ },
+ "DELETE /api/chat/notification-targets/{target_id}": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "target_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "beta"
+ },
+ "DELETE /api/conversations/{cid}/messages/{mid}/feedback": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ],
+   [
+    "path",
+    "mid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "beta"
+ },
+ "DELETE /api/conversations/{conv_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "stable"
+ },
+ "DELETE /api/conversations/{conv_id}/share": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "stable"
+ },
+ "DELETE /api/memory": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "DELETE /api/shares/{share_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "share_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "204": {}
+  },
+  "stability": "stable"
+ },
+ "GET /api/agui/threads": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/agui/threads/{thread_id}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "thread_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/agui/threads/{thread_id}/run": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "thread_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "text/event-stream": {
+     "type": "string"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/auth/session": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/artifacts": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/artifacts/{artifact_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "artifact_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/artifacts/{artifact_id}/versions/{version_id}/content": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "artifact_id",
+    true
+   ],
+   [
+    "path",
+    "version_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/files": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/files/{file_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/files/{file_id}/content": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/files/{file_id}/preview": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/files/{file_id}/references": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/chat/models": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/notification-deliveries": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/chat/notification-targets": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/chat/operations/{op_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "op_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/chat/runs/{run_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "run_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {
+     "properties": {
+      "status": {
+       "anyOf": [
+        {
+         "enum": [
+          "queued",
+          "running",
+          "waiting",
+          "complete",
+          "stopped",
+          "interrupted",
+          "failed"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "string"
+        }
+       ]
+      }
+     },
+     "required": [
+      "status"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/search": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/chat/search/status": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/conversations": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/conversations/{cid}/branches": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/conversations/{cid}/collaborators": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/conversations/{cid}/events": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "text/event-stream": {
+     "properties": {
+      "type": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/conversations/{cid}/feedback": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/conversations/{cid}/messages/{mid}/feedback": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ],
+   [
+    "path",
+    "mid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/conversations/{cid}/queue": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/conversations/{conv_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/conversations/{conv_id}/files/{file_id}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ],
+   [
+    "path",
+    "file_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/conversations/{conv_id}/share": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/hub-changes": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "query",
+    "status",
+    false
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/hub-changes/{cid}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/me/access": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/memory": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/requests": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {
+     "properties": {
+      "items": {
+       "items": {
+        "properties": {
+         "allowed_actions": null,
+         "digest": null,
+         "id": null,
+         "kind": null,
+         "revision": null,
+         "status": null,
+         "title": null
+        },
+        "required": [
+         "id",
+         "kind",
+         "status",
+         "title",
+         "revision",
+         "digest"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "pending_count": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "items",
+      "pending_count"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/requests/events": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {
+     "properties": {
+      "items": {
+       "items": {
+        "properties": {
+         "payload": null,
+         "request_id": null,
+         "revision": null,
+         "sequence": null,
+         "type": null
+        },
+        "required": [
+         "sequence",
+         "request_id",
+         "type",
+         "revision",
+         "payload"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "items"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/requests/{rid}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "rid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/runs/{message_id}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "message_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /api/shares": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/shares/{token}": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "token",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "GET /api/shares/{token}/export": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "token",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/hubs/{hub}/operations": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "hub",
+    true
+   ],
+   [
+    "query",
+    "limit",
+    false
+   ],
+   [
+    "query",
+    "state",
+    false
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/hubs/{hub}/operations/{op_id}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "hub",
+    true
+   ],
+   [
+    "path",
+    "op_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/my": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/my/runs": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "query",
+    "hub",
+    true
+   ],
+   [
+    "query",
+    "run_id",
+    false
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/my/schedules/{schedule_id}": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "schedule_id",
+    true
+   ],
+   [
+    "query",
+    "hub",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/my/schedules/{schedule_id}/runs": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "schedule_id",
+    true
+   ],
+   [
+    "query",
+    "hub",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/runs": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "query",
+    "hub",
+    false
+   ],
+   [
+    "query",
+    "limit",
+    false
+   ],
+   [
+    "query",
+    "offset",
+    false
+   ],
+   [
+    "query",
+    "run_id",
+    false
+   ],
+   [
+    "query",
+    "since",
+    false
+   ],
+   [
+    "query",
+    "status",
+    false
+   ],
+   [
+    "query",
+    "until",
+    false
+   ],
+   [
+    "query",
+    "workflow",
+    false
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /portal/api/workflows": {
+  "key_operations": [
+   "read",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "query",
+    "hub",
+    false
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "GET /v1/models": {
+  "key_operations": [
+   "chat",
+   "read",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "PATCH /api/conversations/{cid}/organization": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PATCH /api/conversations/{cid}/queue/{item_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ],
+   [
+    "path",
+    "item_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PATCH /api/conversations/{cid}/title": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "PATCH /api/conversations/{conv_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "PATCH /api/shares/{share_id}": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "share_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/agui": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "context": {
+      "items": {
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "messages": {
+      "items": {
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "runId": {
+      "type": "string"
+     },
+     "state": {},
+     "threadId": {
+      "type": "string"
+     },
+     "tools": {
+      "items": {
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "threadId",
+     "runId",
+     "messages"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "text/event-stream": {
+     "type": "string"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/agui/threads/{thread_id}/stop": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "thread_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "202": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/chat": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/chat/artifacts/{artifact_id}/versions": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "artifact_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/chat/files": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "multipart/form-data": {
+    "properties": {
+     "file": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "file"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "201": {
+    "application/json": {
+     "properties": {
+      "file_id": {
+       "type": "string"
+      },
+      "mime": {
+       "type": "string"
+      },
+      "name": {
+       "type": "string"
+      },
+      "size": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "file_id",
+      "name",
+      "mime",
+      "size"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/chat/notification-targets/{target_id}/verify": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "target_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "agent": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "temporary": {
+      "type": "boolean"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object"
+   }
+  },
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/conversations/{cid}/branches": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/conversations/{cid}/deletion-preview": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations/{cid}/files/reuse": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations/{cid}/operations": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "branch_id": {
+      "type": "string"
+     },
+     "content": {
+      "anyOf": [
+       {
+        "items": null,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kind": {
+      "enum": [
+       "send",
+       "respond",
+       "revise",
+       "regenerate",
+       "continue",
+       "delete",
+       "fork",
+       "synthesize",
+       "compare"
+      ],
+      "type": "string"
+     },
+     "parent_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "kind",
+     "branch_id"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "202": {
+    "application/json": {
+     "properties": {
+      "run_id": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/conversations/{cid}/queue": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations/{cid}/queue-control": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations/{cid}/save": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/conversations/{conv_id}/files": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "conv_id",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/hub-changes": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "edits": {
+      "items": {
+       "properties": {
+        "append": null,
+        "content": null,
+        "new_text": null,
+        "old_text": null,
+        "path": null
+       },
+       "required": [
+        "path"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "title",
+     "edits"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/hub-changes/{cid}/decision": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "decision": {
+      "enum": [
+       "approve",
+       "reject"
+      ],
+      "type": "string"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "decision"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/hub-changes/{cid}/undo": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/requests/{rid}/cancel": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "rid",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/requests/{rid}/decisions": {
+  "key_operations": [
+   "approve"
+  ],
+  "parameters": [
+   [
+    "path",
+    "rid",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "answer": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "decision": {
+      "enum": [
+       "approve",
+       "approve_chat",
+       "approve_always",
+       "reject",
+       "request_changes",
+       "answer"
+      ],
+      "type": "string"
+     },
+     "digest": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "decision"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/runs/{run_ref}/cancel": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "run_ref",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "202": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/shares": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "POST /api/shares/previews": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/shares/{token}/copies": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "token",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "201": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /api/shares/{token}/copies/previews": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "token",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/hubs/{hub}/operations/{op_id}/approve": {
+  "key_operations": [
+   "approve"
+  ],
+  "parameters": [
+   [
+    "path",
+    "hub",
+    true
+   ],
+   [
+    "path",
+    "op_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "digest": {
+      "type": "string"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "digest"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/hubs/{hub}/operations/{op_id}/deny": {
+  "key_operations": [
+   "approve"
+  ],
+  "parameters": [
+   [
+    "path",
+    "hub",
+    true
+   ],
+   [
+    "path",
+    "op_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "reason": {
+      "type": "string"
+     }
+    },
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/hubs/{hub}/operations/{op_id}/resolve": {
+  "key_operations": [
+   "approve"
+  ],
+  "parameters": [
+   [
+    "path",
+    "hub",
+    true
+   ],
+   [
+    "path",
+    "op_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "acknowledge_duplicate_risk": {
+      "type": "boolean"
+     },
+     "decision": {
+      "type": "string"
+     },
+     "evidence": {},
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "decision"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/my/runs": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "confirm": {
+      "type": "boolean"
+     },
+     "hub": {
+      "type": "string"
+     },
+     "inputs": {
+      "type": "object"
+     },
+     "workflow": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "hub",
+     "workflow"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "202": {
+    "application/json": {
+     "properties": {
+      "created": {
+       "type": "boolean"
+      },
+      "hub": {
+       "type": "string"
+      },
+      "result": {
+       "type": "string"
+      },
+      "run_id": {
+       "type": "string"
+      },
+      "status": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "run_id",
+      "status",
+      "created",
+      "hub",
+      "result"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/my/schedules/{schedule_id}/{action}": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "action",
+    true
+   ],
+   [
+    "path",
+    "schedule_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "hub": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "hub"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /portal/api/workflows/run": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "hub": {
+      "type": "string"
+     },
+     "inputs": {
+      "type": "object"
+     },
+     "workflow": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "hub",
+     "workflow"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "POST /v1/chat/completions": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "messages": {
+      "items": {
+       "properties": {
+        "content": null,
+        "role": null
+       },
+       "required": [
+        "role",
+        "content"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "stream": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "messages"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {
+     "properties": {
+      "choices": {
+       "items": {
+        "properties": {
+         "finish_reason": null,
+         "index": null,
+         "message": null
+        },
+        "required": [
+         "index",
+         "message"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "created": {
+       "type": "integer"
+      },
+      "id": {
+       "type": "string"
+      },
+      "model": {
+       "type": "string"
+      },
+      "object": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "id",
+      "created",
+      "model",
+      "choices"
+     ],
+     "type": "object"
+    }
+   }
+  },
+  "stability": "stable"
+ },
+ "PUT /api/chat/notification-targets/{target_id}": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "target_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "connection_ref": {
+      "type": "string"
+     },
+     "enabled": {
+      "type": "boolean"
+     },
+     "events": {
+      "items": {
+       "enum": [
+        "run.completed",
+        "run.failed",
+        "run.interrupted",
+        "request.created"
+       ],
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "recipient_ref": {
+      "type": "string"
+     },
+     "type": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "recipient_ref",
+     "connection_ref",
+     "events"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PUT /api/conversations/{cid}/collaborators": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PUT /api/conversations/{cid}/messages/{mid}/feedback": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ],
+   [
+    "path",
+    "mid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PUT /api/conversations/{cid}/view": {
+  "key_operations": [
+   "chat",
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "cid",
+    true
+   ]
+  ],
+  "request": {},
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "stable"
+ },
+ "PUT /api/memory": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [],
+  "request": {
+   "application/json": {
+    "properties": {
+     "expected_revision": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "text": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "text"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ },
+ "PUT /portal/api/my/schedules/{schedule_id}": {
+  "key_operations": [
+   "manage"
+  ],
+  "parameters": [
+   [
+    "path",
+    "schedule_id",
+    true
+   ]
+  ],
+  "request": {
+   "application/json": {
+    "properties": {
+     "cadence": {
+      "type": "string"
+     },
+     "hub": {
+      "type": "string"
+     },
+     "inputs": {
+      "type": "object"
+     },
+     "revision": {
+      "type": "number"
+     },
+     "timezone": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "hub",
+     "cadence",
+     "timezone",
+     "revision"
+    ],
+    "type": "object"
+   }
+  },
+  "responses": {
+   "200": {
+    "application/json": {}
+   }
+  },
+  "stability": "beta"
+ }
+}
