@@ -599,3 +599,255 @@ def test_swap_connection_state_consumes_once(hub_dir, fake):
 
     assert store.swap_connection_state(hub_dir, "desk", conn.id, take) is True
     assert store.swap_connection_state(hub_dir, "desk", conn.id, take) is False
+
+
+# -- a reply in the thread answers the question the work waits on ----------------------------
+
+def _waiting_work(hub_dir, fake, monkeypatch):
+    """A person's work item from the fake channel, with its run id set."""
+    (hub_dir / "workflows" / "intake").mkdir(parents=True)
+    (hub_dir / "workflows" / "intake" / "main.py").write_text(textwrap.dedent('''
+        from hubzoid import hub, workflow
+
+        @workflow(work_items=True)
+        def intake():
+            return {"reply": "ok"}
+    '''))
+    from hubzoid.access import store_for
+    from hubzoid.channels import links
+    from hubzoid.work_items import service as wi
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(wi, "start", lambda hub_dir, item: item)
+    conn = applied(hub_dir, agent=None, workflow="intake")
+    _user(hub_dir, "ana@example.org")
+    store_for(hub_dir).grant("ana@example.org", "desk", "use_hub", actor="test")
+    store_for(hub_dir).grant("ana@example.org", "desk", "workflows_manage", actor="test")
+    links.link(conn, external_id="U1", account="ana@example.org", actor="admin")
+    send(conn, ev())
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    row0 = store.list_deliveries(hub_dir, "desk", conn.id)["items"][0]
+    assert row0["status"] == "routed", (row0["status"], row0["reason"], row0["route_json"])
+    item_id = row0["route_json"]["work_item_id"]
+    item = wstore.get_item(hub_dir, item_id)
+    wstore.update_item(hub_dir, item_id, expected_revision=item["revision"], workflow_id="run-1", state="running")
+    return conn, item_id
+
+
+def _ask(hub_dir, kind="question", workflow_id="run-1"):
+    from hubzoid.auth import users
+    from hubzoid.hitl import service
+
+    ana = users.find_by_email(hub_dir, "ana@example.org")
+    return service.create(hub_dir, "desk", service.Caller(account_id=ana["id"], email="ana@example.org",
+                                                         origin="workflow"),
+                          kind=kind, title="Which colour?", question="Which colour?" if kind == "question" else None,
+                          options=[{"label": "Red"}, {"label": "Blue"}] if kind == "question" else None,
+                          workflow_id=workflow_id)
+
+
+def test_reply_answers_the_one_waiting_question(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="2", trigger=False), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    settled = service.get(hub_dir, "desk", req["id"])
+    assert settled["status"] == "answered" and settled["answer"] == "Blue" and settled["decided_via"] == "fake"
+    row = [r for r in store.list_deliveries(hub_dir, "desk", conn.id)["items"] if r["delivery_id"] == "d2"][0]
+    assert row["route_json"]["replied"] == "answered" and row["route_json"]["answers"] == req["id"]
+    assert not [m for m in wstore.get_item(hub_dir, item_id).get("inbox_json") or [] if not m.get("consumed")]
+
+
+def test_reply_never_decides_an_approval_and_no_question_means_follow_up(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    approval = _ask(hub_dir, kind="approval")
+    send(conn, ev(eid="e2", text="1", trigger=False), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", approval["id"])["status"] == "pending"
+    inbox = wstore.get_item(hub_dir, item_id).get("inbox_json") or []
+    assert [m["text"] for m in inbox] == ["1"]
+
+
+def test_a_retry_answers_the_question_it_chose_not_the_next(hub_dir, fake, monkeypatch):
+    """The chosen question is recorded on the delivery before it is answered."""
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    first = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False), delivery_id="d2")
+    row = store.open_deliveries(hub_dir, "desk")[0]
+    router._route_one(hub_dir, row, None)
+    # A crash after answering, before the delivery finished: put it back and add the next question.
+    store.update_delivery(hub_dir, row["id"], status="accepted")
+    second = service.create(hub_dir, "desk", service.Caller(account_id=service.get(hub_dir, "desk", first["id"])
+                                                             ["requester_id"], email="ana@example.org",
+                                                             origin="workflow"),
+                            kind="question", title="Size?", question="Size?", workflow_id="run-1")
+    router._route_one(hub_dir, store.get_delivery(hub_dir, row["id"]), None)
+    assert service.get(hub_dir, "desk", first["id"])["answer"] == "Red"
+    assert service.get(hub_dir, "desk", second["id"])["status"] == "pending"
+
+
+def test_without_answer_kinds_a_reply_stays_a_follow_up(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+
+
+def test_a_pinned_answer_is_never_new_work_after_its_work_finished(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False), delivery_id="d2")
+    row = store.open_deliveries(hub_dir, "desk")[0]
+    router._route_one(hub_dir, row, None)
+    # Crash before the delivery finished; meanwhile the work used the answer and finished.
+    store.update_delivery(hub_dir, row["id"], status="accepted")
+    item = wstore.get_item(hub_dir, item_id)
+    wstore.update_item(hub_dir, item_id, expected_revision=item["revision"], state="completed")
+    before = len(wstore.list_items(hub_dir, "desk"))
+    router._route_one(hub_dir, store.get_delivery(hub_dir, row["id"]), None)
+    again = store.get_delivery(hub_dir, row["id"])
+    assert again["status"] == "routed" and again["route_json"]["replied"] == "answered"
+    assert service.get(hub_dir, "desk", req["id"])["answer"] == "Red"
+    assert len(wstore.list_items(hub_dir, "desk")) == before
+
+
+def test_a_reply_written_before_the_question_is_a_follow_up(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": "1000"}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+    row = [r for r in store.list_deliveries(hub_dir, "desk", conn.id)["items"] if r["delivery_id"] == "d2"][0]
+    assert row["status"] == "routed" and row["route_json"].get("replied") != "answered"     # a follow-up, routed
+
+
+def test_a_reply_written_after_the_question_answers_it(hub_dir, fake, monkeypatch):
+    """ClickUp gives each comment its time in milliseconds (event.data["at"])."""
+    import time as _time
+
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    later = str(int((_time.time() + 5) * 1000))
+    send(conn, ev(eid="e2", text="Blue", trigger=False, data={"at": later}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["answer"] == "Blue"
+
+
+def test_a_reply_written_half_a_second_before_the_question_is_a_follow_up(hub_dir, fake, monkeypatch):
+    """The question's time is compared to the millisecond, not the second."""
+    from hubzoid.hitl import channels as hitl_channels
+    from hubzoid.hitl import service
+
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    conn, _ = _waiting_work(hub_dir, fake, monkeypatch)
+    req = _ask(hub_dir)
+    created = hitl_channels.pending_questions_for_run(hub_dir, "run-1", "ana@example.org")[0]["created_epoch"]
+    send(conn, ev(eid="e2", text="Red", trigger=False, data={"at": str(int(created * 1000) - 500)}), delivery_id="d2")
+    router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
+    assert service.get(hub_dir, "desk", req["id"])["status"] == "pending"
+
+
+# -- plan approvals settled in the thread (a provider that verifies who wrote) -----------------
+
+def _ask_plan(hub_dir, workflow_id="run-1"):
+    from hubzoid.auth import users
+    from hubzoid.hitl import service
+
+    ana = users.find_by_email(hub_dir, "ana@example.org")
+    return service.create(hub_dir, "desk", service.Caller(account_id=ana["id"], email="ana@example.org",
+                                                         origin="workflow"),
+                          kind="approval", title="Plan v1",
+                          subject={"name": "Plan v1", "url": "https://hub.example/plan", "digest": "sha256:ab",
+                                   "plan": True}, workflow_id=workflow_id)
+
+
+def _thread_approvals(fake, monkeypatch, on=True):
+    monkeypatch.setattr(fake, "answer_kinds", ("message",), raising=False)
+    monkeypatch.setattr(type(fake), "approvals_in_thread", lambda self, conn: on, raising=False)
+
+
+def _reply(hub_dir, conn, text, eid, sender=None):
+    send(conn, ev(eid=eid, text=text, trigger=False, **({"sender": sender} if sender else {})), delivery_id=eid)
+    router._route_one(hub_dir, [r for r in store.open_deliveries(hub_dir, "desk")][0], None)
+
+
+def test_the_requester_approves_the_plan_in_the_thread_when_the_channel_allows(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "Approve.", "d2")
+    settled = service.get(hub_dir, "desk", plan["id"])
+    assert settled["status"] == "approved" and settled["decided_via"] == "fake"
+    assert settled["decided_by_email"] == "ana@example.org"
+
+
+def test_change_sends_the_plan_back_with_the_note_and_looks_good_never_approves(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+    from hubzoid.work_items import store as wstore
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "looks good to me", "d2")            # not a decision: a follow-up
+    assert service.get(hub_dir, "desk", plan["id"])["status"] == "pending"
+    assert [m["text"] for m in wstore.get_item(hub_dir, item_id).get("inbox_json") or []] == ["looks good to me"]
+    _reply(hub_dir, conn, "Change: keep the old error code for the API", "d3")
+    settled = service.get(hub_dir, "desk", plan["id"])
+    assert settled["status"] == "rejected" and settled["decision"] == "request_changes"
+    assert settled["note"] == "keep the old error code for the API"
+
+
+def test_without_the_channel_setting_approve_in_the_thread_decides_nothing(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch, on=False)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    plan = _ask_plan(hub_dir)
+    _reply(hub_dir, conn, "approve", "d2")
+    assert service.get(hub_dir, "desk", plan["id"])["status"] == "pending"
+
+
+def test_only_plan_approvals_settle_in_the_thread_never_a_tool_approval(hub_dir, fake, monkeypatch):
+    from hubzoid.hitl import service
+
+    _thread_approvals(fake, monkeypatch)
+    conn, item_id = _waiting_work(hub_dir, fake, monkeypatch)
+    tool = _ask(hub_dir, kind="approval")
+    _reply(hub_dir, conn, "approve", "d2")
+    assert service.get(hub_dir, "desk", tool["id"])["status"] == "pending"
+
+
+def test_thread_decisions_are_strict():
+    from hubzoid.hitl.channels import thread_decision
+
+    assert thread_decision(" APPROVED! ") == ("approve", None)
+    assert thread_decision("reject") == ("reject", None)
+    assert thread_decision("changes - use the v2 endpoint") == ("request_changes", "use the v2 endpoint")
+    for text in ("approve but change the name", "I approve", "ok", "yes", "change:", "1"):
+        assert thread_decision(text) is None, text

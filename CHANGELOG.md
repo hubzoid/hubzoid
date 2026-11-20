@@ -6,6 +6,17 @@ All notable changes to Hubzoid. Versions follow the package version in
 ## [Unreleased]
 
 ### Added
+- **Failed commit statuses as failed checks.** A GitHub connection's new
+  `rules.status_failures` lists status contexts and the one login allowed to
+  post each, for example Engineering Desk's `engineering-desk/review` gate. A
+  failed status from that login, on the one open pull request whose head is
+  that commit, reaches the workflow as a `ci_failure` with
+  `failure_kind: status`. `getCiFailureContext` returns those statuses as
+  jobs, with the linked comment when it is on the same pull request by the
+  same login. Off by default. New GitHub Apps ask for Commit statuses: read and
+  the Status event; an existing App needs both added (see
+  docs/channels/github.md). Doctor warns when a rule is set without them, and
+  every other read keeps working.
 - **Connected apps reach assistants over MCP.** An assistant connected to an
   agent's hosted MCP endpoint (Claude Code, Claude) now gets the apps the
   person connected in Settings, as `my_<id>__<tool>`, called as that person

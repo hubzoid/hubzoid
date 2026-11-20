@@ -47,8 +47,8 @@ Permission changes. An administrator then stores the two secrets (never in
 the chat):
 
 ```sh
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/linear-main/client-secret --stdin --apply
-hubzoid secrets set ./company-hub --ref secret:channel/company-hub/linear-main/webhook-secret --stdin --apply
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/linear-main/client-secret --stdin
+hubzoid secrets set ./company-hub --ref secret:channel/company-hub/linear-main/webhook-secret --stdin
 hubzoid channels linear connect ./company-hub linear-main --wait 300
 ```
 

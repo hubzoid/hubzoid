@@ -43,7 +43,7 @@ SKEW_MS = 60_000
 UPLOAD_HOST = "uploads.linear.app"
 UPLOAD_RE = re.compile(r"https://uploads\.linear\.app/[A-Za-z0-9/_\-.%]+")
 KINDS = {"ack": "thought", "progress": "thought", "result": "response", "notice": "response", "error": "error",
-         "question": "elicitation"}
+         "question": "elicitation", "approval": "elicitation"}
 
 
 class LinearConfig(BaseModel):
@@ -143,6 +143,8 @@ class LinearAdapter(Adapter):
     recovery = "reconcile"
     secret_keys = ("client_secret_ref", "webhook_secret_ref")
     webhook = True
+    #: a prompt in the agent session answers the question the work waits on
+    answer_kinds = ("session_prompted",)
 
     def check(self, config, settings):
         if config.run_as != "linked_requester":
@@ -222,7 +224,7 @@ class LinearAdapter(Adapter):
             data={"agent_session_id": sid, "issue": {"id": issue.get("id"), "identifier": issue.get("identifier"),
                                                      "title": issue.get("title"), "url": issue.get("url")},
                   "prompt_context": (p.get("promptContext") or "")[:16000], "signal": signal,
-                  "action": action})
+                  "action": action, "at": _millis(activity.get("createdAt")) or str(p.get("webhookTimestamp") or "")})
         if not user:
             ev.ignore_reason = "no_human_actor"
         elif team not in cfg.team_ids:
@@ -359,6 +361,18 @@ class LinearAdapter(Adapter):
 
     def link_hint(self, origin, actor) -> str:
         return f"Linear user {actor.external_id if actor else ''}"
+
+
+def _millis(iso) -> str:
+    """An ISO time as epoch milliseconds, or "" when absent or unreadable."""
+    from datetime import datetime
+
+    if not isinstance(iso, str) or not iso:
+        return ""
+    try:
+        return str(int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000))
+    except ValueError:
+        return ""
 
 
 def activity_id(conn, marker: str) -> str:
