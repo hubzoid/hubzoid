@@ -253,11 +253,19 @@ gets evaluated on what it rewrote, with no extra wiring.
 ### In CI
 
 ```yaml
-- run: hubzoid eval run ./my-hub --no-judge     # every push: 1 call per case
-- run: hubzoid eval run ./my-hub                # on main: full, judged
+- run: hubzoid eval run ./my-hub --required     # the release gate: what quality/manifest.yaml requires
+- run: hubzoid eval run ./my-hub                # everything, judged
 ```
 
 Non-zero exit fails the build. Keep `.hubzoid/evals/*.json` as an artifact.
+`--required` runs exactly the [required evals](#required-evals-in-doctor) and
+exits 2 when the gate cannot be trusted (no manifest, a name that matches no
+case, a required case that is off or checks nothing). A ready workflow file is
+in [CI for a hub](ci.md).
+
+Every results file records `hubzoid_version` and, when the hub folder is in a
+Git work tree, `git_commit` and `git_dirty` (uncommitted changes in the hub
+folder). JUnit carries them as properties.
 
 ## Langfuse (optional)
 

@@ -50,6 +50,7 @@ dependencies = [
   # otherwise).
   "openai-agents[litellm]>=0.17.3,<0.18",  # 0.18+ needs openai>=2.36 (see the openai cap below)
   "litellm>=1.102.2,<1.103",  # model routing, reviewed per bump. 1.102.2+ fixes GHSA-7hp6-4w63-5g45 (proxy server only); needs aiohttp>=3.14.2
+  "regex>=2026.5.9,<2027",  # guardrails: a hub's own patterns run with a time limit (already installed with litellm)
   "claude-agent-sdk>=0.2.162,<0.3",  # 0.2.162 bundles Claude Code 2.1.285, which the Bedrock settings need
   "fastmcp>=3.4.10,<4",   # 3.4.10 fixes GHSA-7xgj-8392-5q4r. mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.47,<2",     # edge.py reverse-proxy app

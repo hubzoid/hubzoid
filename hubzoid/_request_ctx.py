@@ -336,6 +336,29 @@ def tool_result_recorder() -> Iterator[dict]:
         _current_tool_results.reset(token)
 
 
+# Guardrail decisions made during this request, recorded ONLY when the eval
+# runner listens (`guard_recorder`). A list mutated in place.
+_current_guards: ContextVar[list | None] = ContextVar("hubzoid_guards", default=None)
+
+
+def note_guard(decision: dict) -> None:
+    """Record one guardrail decision, if a recorder is active. No-op otherwise."""
+    holder = _current_guards.get()
+    if holder is not None:
+        holder.append(dict(decision))
+
+
+@contextmanager
+def guard_recorder() -> Iterator[list]:
+    """Record the guardrail decisions made inside the block (`hubzoid.guardrails`)."""
+    items: list = []
+    token = _current_guards.set(items)
+    try:
+        yield items
+    finally:
+        _current_guards.reset(token)
+
+
 @contextmanager
 def tool_call_recorder() -> Iterator[list]:
     """Record every tool call made inside the block into the yielded list.
@@ -384,6 +407,9 @@ class SessionSlot:
                  images: list[str] | None = None, delta_images: list[str] | None = None):
         self.resume_id = resume_id
         self.delta_prompt = delta_prompt
+        #: the person's new text this turn (their message and any refinement),
+        #: what the guardrails check (``hubzoid.guardrails``). None: the prompt.
+        self.new_input: str | None = None
         #: the branch's images (``delta_images``: the new turn's only), see ``turn_images``.
         self.images = images
         self.delta_images = delta_images or []

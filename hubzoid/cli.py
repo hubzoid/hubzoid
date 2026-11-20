@@ -3955,6 +3955,7 @@ def eval_run(
     run_as: str = typer.Option(None, "--run-as", help="Run cases as this account (an email), with the workflow identity rules. A case's own run_as wins. Grants nothing."),
     junit: Path = typer.Option(None, "--junit", help="Also write a JUnit XML report to this file, for CI."),
     as_json: bool = typer.Option(False, "--json", help="Print the results as JSON (the same record as the results file) and nothing else."),
+    required: bool = typer.Option(False, "--required", help="Run exactly the cases quality/manifest.yaml requires, on the hub's own model: the CI release gate. Exit 2 when the manifest is missing, requires nothing, names no case, or a required case is off or checks nothing."),
 ) -> None:
     """Run the hub's eval cases. Exits non-zero if any fail — that is the CI gate.
 
@@ -3963,6 +3964,10 @@ def eval_run(
     (substrings, tool calls and their arguments) run first; a case with a
     `## Criteria` section is then graded by a model, but only if the free
     checks passed.
+
+    With `--required`, the run is exactly what `quality/manifest.yaml` asks for,
+    chosen as `hubzoid doctor` chooses it: exit 0 all passed, 1 a case failed,
+    2 the gate cannot be trusted (nothing ran).
     """
     import os
 
@@ -3976,8 +3981,22 @@ def eval_run(
         run_as = suite_lib.check_run_as(run_as)
     except EvalCaseError as exc:
         _eval_fail(f"--run-as: {exc}", 2, as_json)
-    selected = _load_cases(hub, tag, case, as_json=as_json)
+    if required:
+        from .evals import quality as quality_lib
+
+        if tag or case or no_judge or model:
+            _eval_fail("--required runs exactly what quality/manifest.yaml requires, with its judge, "
+                       "on the hub's own model, as doctor counts it: leave out --tag, --case, --no-judge "
+                       "and --model.", 2, as_json)
+        try:
+            selected = quality_lib.gate_cases(hub)
+        except quality_lib.QualityError as exc:
+            _eval_fail(str(exc), 2, as_json, "invalid_manifest")
+    else:
+        selected = _load_cases(hub, tag, case, as_json=as_json)
     out = _JsonQuiet(console) if as_json else console
+    if required:
+        out.print(f"[dim]required by quality/manifest.yaml: {len(selected)} case(s)[/dim]")
 
     judged = [c for c in selected if c.is_judged]
     out.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")

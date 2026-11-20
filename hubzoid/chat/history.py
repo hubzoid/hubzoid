@@ -74,4 +74,7 @@ def build_prompt(hub_dir: Path, key: str, branch: list[dict]) -> str:
                           "content": user_text(hub_dir, key, message.get("content"))})
         elif role == "assistant":
             turns.append({"role": "assistant", "content": assistant_text(message.get("content"))})
-    return server._flatten_messages(turns)
+    # A message the guardrails blocked never reaches the model in a later turn.
+    from ..guardrails import drop_blocked
+
+    return server._flatten_messages(drop_blocked(turns))

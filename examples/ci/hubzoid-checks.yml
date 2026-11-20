@@ -1,0 +1,54 @@
+# Hubzoid checks for a hub repository. Copy to .github/workflows/hubzoid-checks.yml
+# and set HUB_DIR. See docs/ci.md in the Hubzoid repository.
+name: hubzoid-checks
+
+on:
+  pull_request:          # no paths filter, so a required check never waits forever
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  HUB_DIR: .             # the hub folder (the one holding AGENTS.md)
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install hubzoid; fi
+
+      - name: Unit tests for the hub's own code
+        if: hashFiles('tests/**/*.py') != ''
+        run: python -m pytest -q tests
+
+      - name: Required evals (the release gate)
+        # Pull requests from forks get no secrets: the gate cannot call a model there.
+        if: github.event.pull_request.head.repo.fork != true
+        env:
+          CI: "true"
+          # One of these, stored as a repository secret, never in the hub:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: hubzoid eval run "$HUB_DIR" --required --junit eval-results.xml
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hubzoid-evals
+          path: |
+            eval-results.xml
+            ${{ env.HUB_DIR }}/.hubzoid/evals/*.json
+          if-no-files-found: ignore

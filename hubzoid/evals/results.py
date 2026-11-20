@@ -121,6 +121,7 @@ class CaseResult:
     run_as: str | None = None     # the account the case ran as
     prompt: str | None = None     # recorded input; never read from a later definition
     case_digest: str | None = None  # sha256 of the case file that ran (freshness for doctor)
+    guards: list = field(default_factory=list)  # guardrail decisions in this case (hubzoid.guardrails)
 
     @property
     def free_passed(self) -> bool:
@@ -165,6 +166,7 @@ class CaseResult:
             "run_as": self.run_as,
             "prompt": self.prompt,
             "case_digest": self.case_digest,
+            **({"guards": list(self.guards)} if self.guards else {}),
         }
 
     @classmethod
@@ -192,6 +194,7 @@ class CaseResult:
             run_as=d.get("run_as"),
             prompt=d.get("prompt"),
             case_digest=d.get("case_digest"),
+            guards=[g for g in (d.get("guards") or []) if isinstance(g, dict)],
         )
 
 
@@ -207,6 +210,9 @@ class SuiteResult:
     trigger: str | None = "cli"   # cli | schedule | console | ci (None: schema 1 file)
     run_as: str | None = None     # the suite default account, if one was given
     hub_digest: str | None = None  # what the hub's answers depended on (evals.quality)
+    hubzoid_version: str | None = None  # the Hubzoid release that ran it
+    git_commit: str | None = None   # the hub's commit, when its folder is in a Git work tree
+    git_dirty: bool | None = None   # the hub folder had uncommitted changes
 
     @property
     def passed(self) -> int:
@@ -232,6 +238,9 @@ class SuiteResult:
             "trigger": self.trigger,
             "run_as": self.run_as,
             "hub_digest": self.hub_digest,
+            "hubzoid_version": self.hubzoid_version,
+            "git_commit": self.git_commit,
+            "git_dirty": self.git_dirty,
             "passed": self.passed,
             "failed": self.failed,
             "cases": [c.to_dict() for c in self.cases],
@@ -252,6 +261,9 @@ class SuiteResult:
             trigger=d.get("trigger"),
             run_as=d.get("run_as"),
             hub_digest=d.get("hub_digest"),
+            hubzoid_version=d.get("hubzoid_version"),
+            git_commit=d.get("git_commit"),
+            git_dirty=d.get("git_dirty") if isinstance(d.get("git_dirty"), bool) else None,
         )
 
 
