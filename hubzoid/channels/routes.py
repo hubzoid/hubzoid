@@ -40,7 +40,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .. import hub_routes
 from ..control import authz
-from . import admission, doctor, links, replies, router as router_lib, store
+from . import admission, doctor, links, open_mode, replies, router as router_lib, store
 from . import config as config_lib
 from .errors import ChannelError
 from .models import Challenge
@@ -113,7 +113,19 @@ def summary(hub_dir: Path, row: dict) -> dict:
             "threads": counts["threads"], "last_delivery_at": counts["last_delivery_at"],
             "backlog": deliveries.get("accepted", 0) + deliveries.get("waiting", 0) + deliveries.get("routing", 0),
             "quarantined": deliveries.get("quarantined", 0), "denied": deliveries.get("denied", 0),
-            "uncertain_replies": uncertain, "updated": row["updated"]}
+            "uncertain_replies": uncertain, "updated": row["updated"], "open": _open(hub_dir, row)}
+
+
+def _open(hub_dir: Path, row: dict) -> dict | None:
+    """Open mode for the Access tab and the list: {"workspace", "daily_cap"} when on."""
+    if row["provider"] != "slack" or not row["config_json"].get("agent"):
+        return None
+    try:
+        conn = config_lib.active(hub_dir, row["id"])
+        v = open_mode.view(conn)
+    except Exception:  # noqa: BLE001 - information only
+        return None
+    return {"workspace": v["workspace"], "daily_cap": v["daily_cap"]} if v["enabled"] else None
 
 
 def list_all(hub_dir: Path) -> dict:
@@ -328,6 +340,34 @@ def mount(app, hub_dir: Path, **_ctx) -> None:
                          subscribed=1 if body["subscribed"] else 0)
         config_lib.audit(hub_dir, p.email, "channel_subscribe" if body["subscribed"] else "channel_unsubscribe", tid)
         return thread_view(row)
+
+    @router.get("/channels/{cid}/open")
+    async def get_open(hub_id: str, cid: str, request: Request):
+        p = await person(request, "channels.inspect")
+        conn = await conn_of(cid)
+        out = await call(open_mode.view, conn)
+        return JSONResponse({**out, "can_change": bool(p.org_admin)}, headers=_NO_STORE)
+
+    @router.put("/channels/{cid}/open")
+    async def put_open(hub_id: str, cid: str, request: Request):
+        """Turn "Anyone in this Slack workspace" on or off, and set the guests'
+        daily cap. Organization administrators only: it opens the agent to a
+        whole workspace."""
+        p = await person(request, "channels.manage", mutation=True)
+        if not p.org_admin:
+            raise ChannelError("forbidden", "Only an organization administrator can open a channel to everyone in "
+                               "its workspace.", status=403).http()
+        body = await _json(request)
+        if not isinstance(body.get("enabled"), bool):
+            raise ChannelError("validation_failed", "Send enabled: true or false (and daily_cap, 1 to 500).",
+                               status=422).http()
+        cap = body.get("daily_cap")
+        if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int)):
+            raise ChannelError("validation_failed", "daily_cap is a whole number, 1 to 500.", status=422).http()
+        conn = await conn_of(cid)
+        out = await call(open_mode.set_open, conn, enabled=body["enabled"], daily_cap=cap, actor=p.email)
+        router_lib.kick(hub_dir)
+        return {**out, "can_change": True}
 
     @router.get("/channels/{cid}/links")
     async def get_links(hub_id: str, cid: str, request: Request):

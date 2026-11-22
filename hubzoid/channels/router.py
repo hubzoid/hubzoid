@@ -40,7 +40,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import text
 
-from . import admission, replies, store
+from . import admission, open_mode, replies, store
 from . import config as config_lib
 from .errors import ChannelError
 from .models import InboundEvent
@@ -53,8 +53,10 @@ STALE_ROUTING_SECONDS = 120
 TICK_SECONDS = 5.0
 
 NOTICES = {
-    "identity_unmapped": "I can't act for you here yet. Ask an administrator to link your {provider} account.",
+    "identity_unmapped": ("I can't act for you here yet. Ask an administrator to link your {provider} account"
+                          "{who}."),
     "account_inactive": "I can't act for you: your account is not active. Ask an administrator.",
+    "blocked": "Your access to this agent is blocked. Ask an administrator.",
     "hub_access_denied": "I can't act for you: your account does not have access to this hub.",
     "group_not_allowed": ("I can't act for you here yet. An administrator gives you \"Start work from\" this "
                           "channel in Settings, under the agent's Access."),
@@ -62,7 +64,21 @@ NOTICES = {
     "empty_request": "Tell me what you want done, or attach a file.",
     "queue_full": "There are too many requests waiting in this thread. Try again once they finish.",
     "workflow_denied": "I can't start this work for you: you do not have permission to run it.",
+    "files_off": "Files are turned off for me here. Tell me in words what you want done.",
+    "channel_not_allowed": "I don't answer in this channel. Message me directly, or ask an administrator to add "
+                           "this channel.",
+    "channel_not_allowed_no_dm": "I don't answer in this channel. Ask an administrator to add this channel.",
+    "direct_messages_off": "Direct messages to me are turned off. Mention me in a channel where I answer.",
+    "backlog_full": "I have too many requests waiting right now. Try again later.",
+    "guest_cap": ("You've reached today's limit for guests ({cap} requests). Ask an administrator for an "
+                  "account to ask more."),
+    "guest_workflow": "Guests can ask questions here, but can't start work. Ask an administrator for an account.",
 }
+
+#: how long a refusal notice is still worth posting (a late "no" is worse than none)
+NOTICE_WINDOW_SECONDS = 3600
+#: how often the loop checks that each enabled connection's transport runs
+TRANSPORT_CHECK_SECONDS = 30.0
 
 
 # -- the loop -------------------------------------------------------------------------
@@ -77,6 +93,11 @@ class _Loop:
         self.transports: dict[str, object] = {}
         self.results: list[dict] = []
         self.lock = threading.Lock()
+        #: transport name -> (next attempt, current delay) after a failed start
+        self.backoff: dict[str, tuple[float, float]] = {}
+        #: transport name -> when it was first seen disconnected
+        self.unhealthy: dict[str, float] = {}
+        self.reload_lock: asyncio.Lock | None = None
 
 
 _state = _Loop()
@@ -131,12 +152,50 @@ async def stop() -> None:
         except Exception:  # noqa: BLE001
             log.warning("channels: could not stop %s cleanly", name, exc_info=True)
     _state.transports.clear()
+    _state.backoff.clear()
+    _state.unhealthy.clear()
+    _state.reload_lock = None
     _state.loop = _state.event = None
+
+
+#: the first wait after a failed transport start, doubled up to the maximum
+BACKOFF_MIN, BACKOFF_MAX = 30.0, 300.0
+
+
+def _fingerprint(conn) -> str:
+    """A short digest of the connection's resolved secrets, so a new token
+    value (same reference) restarts its transport."""
+    import hashlib
+
+    values = []
+    for key in getattr(conn.adapter, "secret_keys", ()):
+        if not getattr(conn.settings, key, None):
+            continue
+        try:
+            values.append(conn.secret(key))
+        except Exception:  # noqa: BLE001 - a missing secret is part of the state
+            values.append("missing")
+    return hashlib.sha256("\0".join(values).encode()).hexdigest()[:12]
+
+
+async def _stop_handle(name: str, handle) -> None:
+    try:
+        await asyncio.to_thread(handle.stop)
+    except Exception:  # noqa: BLE001
+        log.warning("channels: could not stop %s", name, exc_info=True)
 
 
 async def reload_transports() -> None:
     """Start transports for enabled connections and stop those no longer
-    enabled (after an apply)."""
+    enabled (after an apply). One pass at a time: the loop and an apply can
+    both call it, and two passes must never start the same transport twice."""
+    if _state.reload_lock is None:
+        _state.reload_lock = asyncio.Lock()
+    async with _state.reload_lock:
+        await _reload_transports()
+
+
+async def _reload_transports() -> None:
     hub_dir = _state.hub_dir
     if hub_dir is None:
         return
@@ -145,27 +204,54 @@ async def reload_transports() -> None:
     except Exception:  # noqa: BLE001
         log.warning("channels: could not read connections", exc_info=True)
         return
-    want = {f"{c.id}@{c.revision}": c for c in conns if c.enabled}
+    want = {}
+    for c in conns:
+        if c.enabled:
+            fp = await asyncio.to_thread(_fingerprint, c)
+            want[f"{c.id}@{c.revision}@{fp}"] = c
+    now = time.monotonic()
     for name in list(_state.transports):
-        if name not in want:
-            handle = _state.transports.pop(name)
+        handle = _state.transports[name]
+        healthy = True
+        check = getattr(handle, "healthy", None)
+        if name in want and check is not None:
             try:
-                await asyncio.to_thread(handle.stop)
+                healthy = bool(await asyncio.to_thread(check))
             except Exception:  # noqa: BLE001
-                log.warning("channels: could not stop %s", name, exc_info=True)
+                healthy = False
+        if healthy:
+            _state.unhealthy.pop(name, None)
+        elif now - _state.unhealthy.setdefault(name, now) < BACKOFF_MIN:
+            continue          # give its own reconnect a moment
+        if name not in want or not healthy:
+            if not healthy:
+                log.warning("channels: %s is disconnected; starting it again", name)
+            _state.transports.pop(name)
+            _state.unhealthy.pop(name, None)
+            await _stop_handle(name, handle)
+    for name in list(_state.backoff):
+        if name not in want:
+            _state.backoff.pop(name)
     for name, conn in want.items():
         if name in _state.transports:
+            continue
+        next_try, delay = _state.backoff.get(name, (0.0, 0.0))
+        if now < next_try:
             continue
         try:
             handle = await asyncio.to_thread(conn.adapter.start, conn, hub_dir)
         except Exception:  # noqa: BLE001 - one broken transport never stops the rest
-            log.exception("channels: could not start %s", name)
+            delay = min(BACKOFF_MAX, delay * 2) if delay else BACKOFF_MIN
+            _state.backoff[name] = (now + delay, delay)
+            log.exception("channels: could not start %s; trying again in %.0f s", name, delay)
             continue
+        _state.backoff.pop(name, None)
         if handle is not None:
             _state.transports[name] = handle
 
 
 async def _run() -> None:
+    last_transports = time.monotonic()
     while True:
         try:
             await asyncio.wait_for(_state.event.wait(), timeout=TICK_SECONDS)
@@ -173,8 +259,14 @@ async def _run() -> None:
             pass
         _state.event.clear()
         try:
+            if time.monotonic() - last_transports >= TRANSPORT_CHECK_SECONDS:
+                # A connection enabled from the CLI, a start that failed, a
+                # new token or a dropped socket: picked up without a restart.
+                last_transports = time.monotonic()
+                await reload_transports()
             await asyncio.to_thread(_recover_stale, _state.hub_dir)
             await route_pending(_state.hub_dir, _state.app)
+            await asyncio.to_thread(post_owed_notices, _state.hub_dir)
             if await deliver_results(_state.hub_dir, _state.app):
                 kick()    # a finished request may free a waiting thread
         except asyncio.CancelledError:
@@ -243,8 +335,8 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
                 return taken
             event.kind = "message"                 # not about one of our replies: an ordinary message
         if event.trigger and not event.text.strip() and not event.files:
-            _notice(conn, thread, event, "empty_request")
-            _finish(hub_dir, row["id"], "ignored", "empty_request")
+            reason = "files_off" if event.data.get("files_dropped") else "empty_request"
+            _refuse(hub_dir, conn, row, thread, event, "ignored", reason)
             return "ignored", None
         taken = conn.adapter.route(hub_dir, conn, row, thread, event)
         if taken is not NotImplemented:
@@ -283,25 +375,44 @@ def person_for(conn: config_lib.Connection, event: InboundEvent):
     if link is None:
         return None, "identity_unmapped"
     user = users.get(conn.hub_dir, link["account_id"])
+    return _account_person(conn, user, link["account_email"])
+
+
+def _account_person(conn: config_lib.Connection, user: dict | None, fallback_email: str = ""):
+    """(person, None) for an active, unblocked account, else (None, reason)."""
     if user is None or (user.get("status") or "active") != "active":
         return None, "account_inactive"
-    return SimpleNamespace(id=user["id"], email=(user.get("email") or link["account_email"]).lower(),
-                           name=user.get("name") or ""), None
+    email = (user.get("email") or fallback_email).lower()
+    if _blocked(conn.hub_dir, email):
+        return None, "blocked"
+    return SimpleNamespace(id=user["id"], email=email, name=user.get("name") or ""), None
 
 
-def _groups_ok(conn: config_lib.Connection, email: str) -> bool:
+def _blocked(hub_dir: Path, email: str) -> bool:
+    from ..access import store_for
+
+    try:
+        return bool(email) and store_for(hub_dir).is_suspended(email)
+    except Exception:  # noqa: BLE001 - the agent check that follows fails closed on its own
+        return False
+
+
+def _groups_ok(conn: config_lib.Connection, email: str) -> bool | None:
     """Whether this person may start work from this connection: a grant in
     Settings (``channel_<id>``), checked with access to the agent. Access
     lives in the database, never in a file; a connection with nobody granted
-    lets nobody start work, as an empty ``allowed_groups`` did."""
+    lets nobody start work, as an empty ``allowed_groups`` did. None when the
+    access store could not answer: the delivery waits and is tried again
+    (never refused over a hiccup, never allowed either)."""
     from ..access import store_for
     from ..capabilities import channel_permission
 
     try:
         return bool(email) and store_for(conn.hub_dir).can(email, conn.hub_dir.name,
                                                            channel_permission(conn.id))
-    except Exception:  # noqa: BLE001 - fail closed
-        return False
+    except Exception:  # noqa: BLE001 - fail closed: wait
+        log.warning("channel %s: the access store could not check the channel grant", conn.id, exc_info=True)
+        return None
 
 
 def _hub_access(hub_dir: Path, email: str) -> str | None:
@@ -316,23 +427,88 @@ def _hub_access(hub_dir: Path, email: str) -> str | None:
     return None
 
 
-def _notice(conn, thread: dict, event: InboundEvent, reason: str) -> None:
+def _notice_text(conn, event: InboundEvent, reason: str, **extra) -> str | None:
+    if reason == "channel_not_allowed" and not getattr(conn.settings, "allow_direct_messages", True):
+        reason = "channel_not_allowed_no_dm"
     template = NOTICES.get(reason)
-    if not template or thread is None or conn.adapter.customer_facing:
-        return
+    if not template:
+        return None
+    actor = event.actor.external_id if event.actor else ""
+    return template.format(provider=conn.adapter.title or conn.provider,
+                           who=f" (your {conn.adapter.title or conn.provider} id is {actor})" if actor else "",
+                           **{"cap": "", **extra})
+
+
+def _notice(conn, thread: dict, event: InboundEvent, reason: str, **extra) -> str:
+    """Post the notice for ``reason`` to the person who asked: "posted",
+    "failed" (settled, never tried again) or "retry" (a rate limit or another
+    refusal before sending; tried again on a later pass). Once per person,
+    reason and thread: the key stays the same across retries. Slack sends it
+    to that person only (``Outbound.private_to``)."""
+    text_out = _notice_text(conn, event, reason, **extra)
+    if not text_out or thread is None or conn.adapter.customer_facing:
+        return "failed"
     who = event.actor.external_id if event.actor else "unknown"
+    private = conn.adapter.private_notices and event.actor is not None and bool(event.actor.external_id)
     try:
-        replies.post(conn, thread, kind="notice", text=template.format(provider=conn.adapter.title or conn.provider),
-                     key=f"notice:{reason}:{who}")
+        results = replies.post(conn, thread, kind="notice", text=text_out, key=f"notice:{reason}:{who}",
+                               private_to=who if private else None,
+                               private_thread=bool(event.data.get("in_thread")))
     except Exception:  # noqa: BLE001 - a notice that cannot be posted is only logged
         log.warning("channel %s: could not post a %s notice", conn.id, reason, exc_info=True)
+        return "retry"
+    outcome = _outcome(results)
+    if outcome is None:
+        return "retry"
+    return "posted" if outcome == "posted" else "failed"
 
 
-def _deny(hub_dir, conn, row, thread, event, reason: str) -> tuple[str, None]:
-    if event.trigger:     # someone asked directly: tell them, once. A passing remark gets nothing.
-        _notice(conn, thread, event, reason)
-    _finish(hub_dir, row["id"], "denied", reason)
+def _refuse(hub_dir, conn, row, thread, event, status: str, reason: str, **extra) -> None:
+    """Finish a delivery as refused and, when the person asked directly,
+    tell them. A notice that meets a rate limit stays owed for
+    ``post_owed_notices``. A passing remark gets nothing."""
+    owed = bool(event.trigger) and bool(_notice_text(conn, event, reason, **extra)) \
+        and not conn.adapter.customer_facing
+    route = {"notice": reason, **({"notice_args": extra} if extra else {})} if owed else {}
+    _finish(hub_dir, row["id"], status, reason, **route)
+    if owed:
+        outcome = _notice(conn, thread, event, reason, **extra)
+        if outcome != "retry":
+            _finish(hub_dir, row["id"], status, reason, noticed=outcome)
+
+
+def _deny(hub_dir, conn, row, thread, event, reason: str, **extra) -> tuple[str, None]:
+    _refuse(hub_dir, conn, row, thread, event, "denied", reason, **extra)
     return "denied", None
+
+
+def post_owed_notices(hub_dir) -> int:
+    """Post refusal notices still owed: refusals decided at intake (which
+    never calls the provider) and notices a rate limit held back. Each is
+    posted once; a notice older than an hour is dropped."""
+    hub_dir = Path(hub_dir)
+    rows = store.owed_notices(hub_dir, config_lib.hub_of(hub_dir), since=time.time() - NOTICE_WINDOW_SECONDS)
+    done = 0
+    for row in rows:
+        route = row.get("route_json") or {}
+        try:
+            conn = config_lib.active(hub_dir, row["connection_id"])
+            thread = store.get_thread(hub_dir, row["thread_id"]) if row.get("thread_id") else None
+            if not conn.enabled or thread is None or not row.get("event_enc"):
+                outcome = "failed"
+            else:
+                event = admission.event_of(hub_dir, row)
+                outcome = _notice(conn, thread, event, route["notice"], **(route.get("notice_args") or {}))
+        except ChannelError:
+            outcome = "failed"
+        except Exception:  # noqa: BLE001 - tried again on the next pass
+            log.warning("channels: owed notice for delivery %s failed", row["id"], exc_info=True)
+            continue
+        if outcome == "retry":
+            continue
+        store.update_delivery(hub_dir, row["id"], route_json={**route, "noticed": outcome})
+        done += 1
+    return done
 
 
 # -- stopping --------------------------------------------------------------------------------
@@ -381,9 +557,20 @@ def _stop(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEvent, app
 
 def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEvent, app):
     person, reason = person_for(conn, event)
+    if person is None and reason == "identity_unmapped":
+        person, reason = open_mode.resolve(conn, event, row)
     if person is None:
+        if reason == "wait":
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
         return _deny(hub_dir, conn, row, thread, event, reason)
-    if not _groups_ok(conn, person.email):
+    if getattr(person, "guest", False):
+        return _route_guest(hub_dir, conn, row, thread, event, person, app)
+    grant = True if getattr(person, "open", False) else _groups_ok(conn, person.email)
+    if grant is None:
+        store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+        return "waiting", None
+    if not grant:
         return _deny(hub_dir, conn, row, thread, event, "group_not_allowed")
     denied = _hub_access(hub_dir, person.email)
     if denied == "hub_access_denied":
@@ -394,14 +581,26 @@ def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEven
         return "waiting", None
     chat = app.state.chat
     engine = chat.engine
+    # The run carries where it came from (usage "By channel") and which surface
+    # the access gate uses: an administrator's link keeps today's ``web``; an
+    # account recognised by open mode never had a link, so it gets
+    # ``slack-channel`` or ``slack-dm`` (restricted tools stay off by default).
+    person.credential = CHANNEL_CREDENTIAL
+    person.credential_id = channel_credential_id(conn, getattr(person, "gate", None) or "web")
     actor = engine.actor(person)
     try:
         if engine.admission is not None:
             engine.admission(actor)
     except Exception as exc:  # noqa: BLE001 - GraphError from the engine's own check
+        status = getattr(exc, "status", None) or getattr(exc, "status_code", None) or 403
+        if int(status) >= 500:
+            # The access store could not answer: wait and try again, never refuse over a hiccup.
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
         code = getattr(exc, "code", "hub_access_denied")
         return _deny(hub_dir, conn, row, thread, event,
-                     "terms_required" if code == "terms_required" else "hub_access_denied")
+                     "terms_required" if code == "terms_required" else
+                     "blocked" if code == "suspended" else "hub_access_denied")
     convs = dict(thread.get("conversations_json") or {})
     mine = convs.get(person.id)
     others_busy = any(account != person.id and conversation_busy(engine, cid) for account, cid in convs.items())
@@ -421,6 +620,65 @@ def _route_chat(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEven
             queue_item=(body.get("item") or {}).get("id"))
     if event.trigger and conn.config.subscriptions == "on_accept" and not thread.get("subscribed"):
         store.update_thread(hub_dir, thread["id"], subscribed=1, requester=thread.get("requester") or person.email)
+    if not out.replayed:
+        _acknowledge(conn, thread, event, row)
+    return "routed", (plan if not out.replayed else None)
+
+
+#: the credential kind of a run a channel delivery started (``chat.runs``)
+CHANNEL_CREDENTIAL = "channel"
+
+
+def channel_credential_id(conn, gate: str) -> str:
+    """``<provider>|<gate surface>|<connection id>``: what ``chat.runs`` reads
+    to record the run under its channel and to pick the access gate's surface."""
+    return f"{conn.provider}|{gate}|{conn.id}"[:64]
+
+
+def parse_channel_credential(value: str) -> tuple[str, str, str]:
+    """(provider, gate surface, connection id) from ``channel_credential_id``."""
+    provider, _, rest = (value or "").partition("|")
+    gate, _, cid = rest.partition("|")
+    return provider, gate or "web", cid
+
+
+def _route_guest(hub_dir: Path, conn, row: dict, thread: dict, event: InboundEvent, guest, app):
+    """A Slack guest under open mode (``open_mode``): no account, the guest
+    scope, today's cap. Their own conversation in the thread, like anyone."""
+    if app is None or getattr(app.state, "chat", None) is None:
+        store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+        return "waiting", None
+    if not open_mode.reserve(conn, guest.id, row["id"], guest.cap):
+        return _deny(hub_dir, conn, row, thread, event, "guest_cap", cap=guest.cap)
+    chat = app.state.chat
+    engine = chat.engine
+    from ..chat.engine import Actor
+
+    actor = Actor(id=guest.id, email=guest.id, name=guest.name, credential=open_mode.GUEST_CREDENTIAL,
+                  credential_id=conn.id)
+    convs = dict(thread.get("conversations_json") or {})
+    mine = convs.get(guest.id)
+    others_busy = any(account != guest.id and conversation_busy(engine, cid) for account, cid in convs.items())
+    if others_busy or not store.claim_thread(hub_dir, thread["id"], guest.id):
+        store.update_delivery(hub_dir, row["id"], expect_status="routing", status="waiting", reason="thread_busy")
+        return "waiting", None
+    first = mine is None
+    if first:
+        mine = _open_conversation(hub_dir, conn, thread, actor, chat)
+    if event.files:
+        # A guest's files are not taken in: storing them is a write a guest may not make.
+        event.text = (event.text + "\n\n(Files from guests are not added.)").strip()
+        event.files = []
+    content = _content(conn, event, guest, chat, mine, first=first)
+    branch = thread_branch(engine, mine, actor.id)
+    out, plan = engine.enqueue(mine, actor, {"content": content, "lane": "queue", "branch_id": branch},
+                               key=f"channel:{row['id']}")
+    body = out.body if isinstance(out.body, dict) else {}
+    _finish(hub_dir, row["id"], "routed", None, target="chat", conversation_id=mine, account=guest.id,
+            guest=guest.id, dispatched=bool(body.get("dispatched")), run_id=body.get("run_id"),
+            queue_item=(body.get("item") or {}).get("id"))
+    if event.trigger and conn.config.subscriptions == "on_accept" and not thread.get("subscribed"):
+        store.update_thread(hub_dir, thread["id"], subscribed=1, requester=thread.get("requester") or guest.id)
     if not out.replayed:
         _acknowledge(conn, thread, event, row)
     return "routed", (plan if not out.replayed else None)
@@ -541,6 +799,13 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
     from ..work_items.errors import WorkItemError
 
     person, reason = person_for(conn, event)
+    if person is None and reason == "identity_unmapped" and not event.data.get("unattended"):
+        person, reason = open_mode.resolve(conn, event, row)
+        if person is None and reason == "wait":
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
+        if getattr(person, "guest", False):
+            return _deny(hub_dir, conn, row, thread, event, "guest_workflow")
     # An unattended trigger (a label by a verified collaborator, a new PR) or a
     # direct request by an actor the provider itself vouches for (a repository
     # member's mention) runs under the workflow's own identity, with the
@@ -549,8 +814,13 @@ def _route_workflow(hub_dir: Path, conn, row: dict, thread: dict, event: Inbound
         person is None and event.trigger and bool(event.data.get("provider_trusted")))
     if person is None and not unattended:
         return _deny(hub_dir, conn, row, thread, event, reason)
-    if person is not None and not unattended and not _groups_ok(conn, person.email):
-        return _deny(hub_dir, conn, row, thread, event, "group_not_allowed")
+    if person is not None and not unattended and not getattr(person, "open", False):
+        grant = _groups_ok(conn, person.email)
+        if grant is None:
+            store.update_delivery(hub_dir, row["id"], expect_status="routing", status="accepted")
+            return "waiting", None
+        if not grant:
+            return _deny(hub_dir, conn, row, thread, event, "group_not_allowed")
     if person is not None and not unattended:
         denied = _hub_access(hub_dir, person.email)
         if denied == "hub_access_denied":
@@ -798,7 +1068,7 @@ def _chat_reply(hub_dir: Path, app, conn, thread: dict, row: dict) -> bool:
     outcome = _outcome(results)
     if outcome is None:
         return False
-    if outcome == "posted" and state == "complete" and text_out:
+    if outcome == "posted" and state == "complete" and text_out and not (row.get("route_json") or {}).get("guest"):
         from . import feedback
 
         feedback.post_slack_prompt(conn, thread, run["id"])   # rating buttons under a finished answer only

@@ -65,7 +65,7 @@ LATER_TABLES = ("hz_directory_providers", "hz_directory_accounts", "hz_scim_toke
                 "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
                 "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans", "hz_hitl_requests", "hz_hitl_grants", "hz_hitl_events", "hz_workflow_access", "hz_workflow_access_revisions", "hz_hub_changes", "hz_personal_memory",
                 "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles",
-                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes", "hz_audit_events", "hz_runner_calls",
+                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes", "hz_audit_events", "hz_runner_calls", "hz_channel_open_mode",
                 "hz_mcp_signing_keys")
 
 

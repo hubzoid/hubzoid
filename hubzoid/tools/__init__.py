@@ -24,5 +24,8 @@ def make_all(ctx) -> dict[str, object]:
             if tool.name in out:   # a workflow named like a core tool never replaces it
                 logging.getLogger(__name__).warning("tool %r is defined twice; keeping the first", tool.name)
                 continue
+            # Marks the pre-shipped tool itself (``copy_tool`` keeps it): a
+            # hub-local tool that reuses the name is not this tool.
+            tool.hubzoid_builtin = True
             out[tool.name] = tool
     return out

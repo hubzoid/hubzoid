@@ -66,12 +66,28 @@ def split(text: str, limit: int, max_parts: int) -> list[str]:
     parts = _balance_fences([p.strip("\n") for p in parts if p.strip()])
     if len(parts) > max_parts:
         kept = parts[:max_parts]
-        kept[-1] = kept[-1][: max(0, room - len(OVERFLOW_NOTE))] + OVERFLOW_NOTE
+        kept[-1] = _cut(kept[-1], max(0, room - len(OVERFLOW_NOTE))) + OVERFLOW_NOTE
         parts = kept
     total = len(parts)
     if total > 1:
         parts = [f"({n}/{total})\n{p}" for n, p in enumerate(parts, 1)]
     return parts
+
+
+def _cut(part: str, budget: int) -> str:
+    """``part`` cut to ``budget`` characters without leaving a code block
+    open: room is kept for a closing fence, a fence cut in half is dropped,
+    and an open block is closed (as Agno does when a Slack message rolls over,
+    ``os/interfaces/slack/stream.py``)."""
+    if len(part) <= budget:
+        return part
+    cut = part[: max(0, budget - len(FENCE_CLOSE))].rstrip("`")
+    if cut.count("```") % 2 == 1:
+        cut = cut.rstrip("\n") + FENCE_CLOSE
+    return cut
+
+
+FENCE_CLOSE = "\n```"
 
 
 def _balance_fences(parts: list[str]) -> list[str]:
@@ -91,7 +107,8 @@ def _balance_fences(parts: list[str]) -> list[str]:
 
 
 def post(conn: Connection, thread: dict, *, kind: str, text: str, key: str,
-         blocks=None, ref: str | None = None, actions=None, draft=None, files=()) -> list[dict]:
+         blocks=None, ref: str | None = None, actions=None, draft=None, files=(),
+         private_to: str | None = None, private_thread: bool = False) -> list[dict]:
     """Post `text` to the thread's origin under `key`. Returns one result per
     part: `{"state": "succeeded" | "ambiguous" | "failed" | "waiting", ...}`.
     Repeating the same key and text is safe: parts already sent are not sent
@@ -102,7 +119,11 @@ def post(conn: Connection, thread: dict, *, kind: str, text: str, key: str,
     that run's work item: `actions` name what it does (default
     ``channel.reply``; a customer-visible reply names ``customer_reply.send`` or
     ``email.send``), the hub's write modes apply, and a post that must wait for
-    a person parks the work item instead of returning."""
+    a person parks the work item instead of returning.
+
+    `private_to` (a notice for one person) is part of the recorded operation,
+    so a retry, a recovery check or a manual retry from the Console sends it
+    privately again, never to the whole thread."""
     adapter = conn.adapter
     origin = Origin.from_json(thread["origin_json"])
     pieces = split(adapter.render(text), adapter.part_chars, adapter.max_parts)
@@ -111,7 +132,8 @@ def post(conn: Connection, thread: dict, *, kind: str, text: str, key: str,
         mark = marker(thread["id"], key, n)
         last = n == len(pieces)
         out = Outbound(kind=kind, text=piece, part=n, parts=len(pieces), marker=mark,
-                       blocks=blocks if last else None, files=tuple(files) if last else ())
+                       blocks=blocks if last else None, files=tuple(files) if last else (),
+                       private_to=private_to or None, private_thread=bool(private_to and private_thread))
         results.append(_post_part(conn, thread, origin, out, key, ref, actions, draft))
         if results[-1]["state"] != "succeeded":
             break   # later parts wait: a gap in the middle would mislead
@@ -157,7 +179,8 @@ def _post_part(conn: Connection, thread: dict, origin: Origin, out: Outbound, ke
     recovery = "reconcile" if adapter.recovery == "reconcile" else "escalate"
     arguments = {"kind": out.kind, "text": out.text, "part": out.part, "parts": out.parts,
                  "marker": out.marker, "op_key": f"{key}:{out.part}",
-                 **({"files": list(out.files)} if out.files else {})}
+                 **({"files": list(out.files)} if out.files else {}),
+                 **({"private_to": out.private_to, "private_thread": out.private_thread} if out.private_to else {})}
     target = {"channel": conn.id, "thread": thread["id"], **({"ref": ref} if ref else {})}
     inside = _in_workflow()
     kwargs = dict(name=f"channel.{out.kind}", target=target, arguments=arguments, recovery=recovery,
@@ -289,7 +312,8 @@ def resolve(conn: Connection, op_id: str, *, decision: str, actor: str, evidence
         return {"id": op_id, "state": (out.get("operation") or {}).get("state")}
     # Send it again as the same recorded operation: same name, target and key.
     part = Outbound(kind=args["kind"], text=args["text"], part=int(args["part"]), parts=int(args["parts"]),
-                    marker=args["marker"], files=tuple(args.get("files") or ()))
+                    marker=args["marker"], files=tuple(args.get("files") or ()),
+                    private_to=args.get("private_to") or None, private_thread=bool(args.get("private_thread")))
 
     def dispatch(a: dict) -> dict:
         receipt = conn.adapter.reply(conn, origin, part)

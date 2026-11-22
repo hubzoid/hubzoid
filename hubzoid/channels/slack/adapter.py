@@ -153,6 +153,9 @@ class SlackAdapter(Adapter):
     secret_keys = ("bot_token_ref", "signing_secret_ref", "app_token_ref")
     webhook = True
     feedback_target = "agent"
+    notice_reasons = frozenset({"channel_not_allowed", "direct_messages_off"})
+    open_mode = True
+    private_notices = True
 
     def receives_webhooks(self, conn) -> bool:
         """Socket Mode connects out to Slack, so only `transport: http` needs
@@ -287,10 +290,23 @@ class SlackAdapter(Adapter):
         user = event.get("user") or ""
         bot_user = (conn.state or {}).get("bot_user_id")
         is_bot = bool(event.get("bot_id")) or subtype == "bot_message" or (bot_user and user == bot_user)
-        actor = ExternalActor(user, "", bool(is_bot), {"team": event.get("user_team") or cfg.installation_team_id})
+        # The sender's teams as Slack sent them, never filled in with the
+        # configured workspace: open mode judges membership on this evidence.
+        teams = {k: str(event[k]) for k in ("user_team", "source_team", "team") if event.get(k)}
+        actor = ExternalActor(user, "", bool(is_bot), {"team": teams.get("user_team") or cfg.installation_team_id,
+                                                       "teams": teams})
         channel_type = event.get("channel_type") or ("im" if channel.startswith("D") else "")
+        # On Enterprise Grid, sibling workspaces of one organization carry their
+        # own team ids, so a differing team there is not Slack Connect: only the
+        # shared flag decides (open mode still checks the member's team).
+        grid = bool(payload.get("enterprise_id") or payload.get("is_enterprise_install")
+                    or (payload.get("enterprise") or {}).get("id"))
+        foreign = not grid and any(teams.get(k) and teams[k] != cfg.installation_team_id
+                                   for k in ("user_team", "source_team"))
         ignore = None
-        if payload.get("is_ext_shared_channel") or event.get("is_ext_shared_channel"):
+        if payload.get("is_ext_shared_channel") or event.get("is_ext_shared_channel") or foreign:
+            # Slack Connect: a shared channel, or a sender from another
+            # workspace (an external DM may come without the shared flag).
             ignore = "shared_channel_denied"
         elif subtype and subtype not in ("file_share", "thread_broadcast"):
             ignore = f"subtype_{subtype}"     # edits, deletions, joins: never new work
@@ -306,15 +322,17 @@ class SlackAdapter(Adapter):
         text = MENTION_RE.sub(lambda m: "" if m.group(1) == bot_user or etype == "app_mention" and m.start() == 0
                               else m.group(0), event.get("text") or "").strip()
         files = []
+        sent_files = (event.get("files") or [])[:10]
         if cfg.files_enabled:
-            for f in (event.get("files") or [])[:10]:
+            for f in sent_files:
                 files.append({"id": f.get("id"), "name": f.get("name") or f.get("title") or "file",
                               "mimetype": f.get("mimetype") or "application/octet-stream", "size": f.get("size")})
+        data = {"channel": channel, "ts": ts, "thread_ts": root, "channel_type": channel_type, "in_thread": root != ts}
+        if sent_files and not cfg.files_enabled:
+            data["files_dropped"] = len(sent_files)
         return InboundEvent(
             semantic_key=f"msg:{cfg.installation_team_id}:{channel}:{ts}", kind=etype, origin=origin, actor=actor,
-            text=text, trigger=trigger, message_id=ts, files=files,
-            data={"channel": channel, "ts": ts, "thread_ts": root, "channel_type": channel_type,
-                  "in_thread": root != ts}, ignore_reason=ignore)
+            text=text, trigger=trigger, message_id=ts, files=files, data=data, ignore_reason=ignore)
 
     # -- replies -----------------------------------------------------------------
     def render(self, text: str) -> str:
@@ -341,6 +359,15 @@ class SlackAdapter(Adapter):
                 if info.get("is_ext_shared") or info.get("is_pending_ext_shared"):
                     raise Rejected("blocked_destination: the channel is now shared outside the workspace, so the "
                                    "answer was not posted.")
+            if outbound.private_to and not channel.startswith("D"):
+                # A notice for one person: only they see it. Slack shows a
+                # threaded ephemeral only in a thread that already exists, so
+                # a fresh mention gets it in the channel itself.
+                eph = dict(channel=channel, user=outbound.private_to, text=outbound.text)
+                if outbound.private_thread:
+                    eph["thread_ts"] = origin.coordinates["thread_ts"]
+                resp = web.chat_postEphemeral(**eph)
+                return Receipt(_ts(resp.get("message_ts")), {"channel": channel, "ephemeral": True})
             post = dict(channel=channel, thread_ts=origin.coordinates["thread_ts"], text=outbound.text,
                         reply_broadcast=False, unfurl_links=False, unfurl_media=False,
                         metadata={"event_type": "hubzoid_reply", "event_payload": {"marker": outbound.marker}})
@@ -504,6 +531,9 @@ class SlackAdapter(Adapter):
             except SlackApiError as exc:
                 out.append(Check(f"slack:channel:{channel}", "fail", f"{channel}: {exc.response.get('error')}",
                                  "channel_not_joined", "Invite the bot, or remove the channel from the file."))
+        out.extend(self._open_mode_checks(conn, granted))
+        if cfg.transport == "socket_mode":
+            out.append(_socket_check(conn))
         if inputs.get("channel_id") and inputs["channel_id"] not in cfg.allowed_channel_ids:
             out.append(Check("slack:channel_allowed", "fail", f"{inputs['channel_id']} is not in allowed_channel_ids.",
                              "channel_not_allowed", "Add it to allowed_channel_ids and apply."))
@@ -514,6 +544,33 @@ class SlackAdapter(Adapter):
             from .. import store
 
             store.set_connection_state(conn.hub_dir, conn.hub, conn.id, bot_user_id=bot_user)
+        return out
+
+    def _open_mode_checks(self, conn, granted: set) -> list[Check]:
+        """Doctor warns while "Anyone in this Slack workspace" is on, and says
+        when it no longer applies or cannot match emails."""
+        from .. import open_mode
+
+        try:
+            v = open_mode.view(conn)
+        except Exception:  # noqa: BLE001 - no database: nothing to report
+            return []
+        if v["stale"]:
+            return [Check("slack:open_mode", "fail", f"Open mode was approved for workspace {v['approved_team']}, "
+                          f"but this connection now serves {v['workspace']}, so it is off.", "open_mode_stale",
+                          "An organization administrator turns it on again for this workspace (Console, the "
+                          "channel's Access card, or hubzoid channels open --on).")]
+        if not v["enabled"]:
+            return []
+        out = [Check("slack:open_mode", "warn", f"Anyone in Slack workspace {v['workspace']} can ask this agent. "
+                     f"People without a matching account are Slack guests ({v['daily_cap']} requests a day "
+                     "each, read-only).", "open_mode_on",
+                     "Turn it off when it is no longer needed: hubzoid channels open --off.")]
+        if granted and "users:read.email" not in granted:
+            out.append(Check("slack:email_scope", "warn", "The app cannot read profile emails, so nobody is "
+                             "matched to an account: everyone without a link is a guest.", "missing_scope",
+                             "Regenerate the manifest (it adds users:read.email while open mode is on), "
+                             "update the app in Slack and reinstall it."))
         return out
 
     def start(self, conn, hub_dir):
@@ -529,6 +586,30 @@ class SlackAdapter(Adapter):
         from .routes import mount
 
         mount(router, hub_dir)
+
+
+def _socket_check(conn) -> Check:
+    """The app-level token still opens a Socket Mode connection (a revoked
+    token otherwise shows only in the bridge log). Opens nothing more than a
+    one-time URL."""
+    from slack_sdk import WebClient
+    from slack_sdk.errors import SlackApiError
+
+    try:
+        kwargs: dict[str, Any] = {"token": conn.secret("app_token_ref"), "timeout": 15}
+        if api_base():
+            kwargs["base_url"] = api_base().rstrip("/") + "/"
+        WebClient(**kwargs).apps_connections_open()
+    except ChannelError as exc:
+        return Check("slack:socket", "fail", exc.message, exc.code, "Set the app-level token with hubzoid secrets set.")
+    except SlackApiError as exc:
+        return Check("slack:socket", "fail", f"Slack refused the app-level token ({exc.response.get('error')}).",
+                     "credential_rejected", "Generate a new app-level token with connections:write and set it "
+                     "again.")
+    except Exception as exc:  # noqa: BLE001
+        return Check("slack:socket", "fail", f"Could not reach Slack ({type(exc).__name__}).",
+                     "provider_unavailable", "Check the network, then run doctor again.")
+    return Check("slack:socket", "ok", "The app-level token opens a Socket Mode connection.")
 
 
 def _decode(raw: bytes, content_type: str) -> dict:

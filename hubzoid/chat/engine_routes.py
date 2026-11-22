@@ -349,8 +349,11 @@ class Orchestrator:
         if request.get("origin") != "chat" or not request.get("conversation_id") \
                 or request.get("status") not in ("approved", "rejected", "answered"):
             return False
+        from ..channels.open_mode import is_guest_subject
         from ..embed.caller import is_app_subject
 
+        if is_guest_subject(request.get("requester_id")):
+            return False      # a Slack guest never continues a request (they can't make or answer one)
         if is_app_subject(request.get("requester_id")):
             if app_caller is None or app_caller.subject != request.get("requester_id"):
                 return False
@@ -479,9 +482,17 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         work leaves the queue."""
         from fastapi import HTTPException
 
+        from ..channels import open_mode
         from .common import check_use_hub
         from .routes import terms_required
 
+        if actor.credential == open_mode.GUEST_CREDENTIAL or open_mode.is_guest_subject(actor.id):
+            # A Slack guest has no account: open mode on their connection is
+            # their only way in, checked again when queued work leaves the queue.
+            if not (open_mode.is_guest_subject(actor.id) and actor.credential == open_mode.GUEST_CREDENTIAL
+                    and open_mode.guest_access(ctx.hub_dir, actor.credential_id) is not None):
+                raise g.GraphError(403, "no_access", "Open mode is off for this channel.")
+            return
         try:
             check_use_hub(ctx.hub_dir, actor.email)
             needs_terms = terms_required(ctx.hub_dir, actor.id)
