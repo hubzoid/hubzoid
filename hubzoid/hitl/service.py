@@ -275,12 +275,21 @@ def get_for(hub_dir: Path, hub_id: str, request_id: str, account_id: str, email:
     req = get(hub_dir, hub_id, request_id)
     if req is None or not visible_to(req, account_id, email):
         raise RequestError(404, "not_found", "No such request, or it is not yours to see.")
-    return with_actions(req, account_id, email)
+    return with_actions(req, account_id, email, hub_dir=hub_dir)
 
 
-def with_actions(req: dict, account_id: str, email: str) -> dict:
+def with_actions(req: dict, account_id: str, email: str, *, hub_dir: Path | None = None) -> dict:
+    """The request with what this person may do now. With ``hub_dir``, someone
+    eligible who can't use this agent is offered only Reject, the one decision
+    ``decide`` still takes from them (``decider_refusal``)."""
     out = dict(req)
     can = req["status"] == "pending" and eligible(req, account_id, email)
+    if can and hub_dir is not None:
+        refused = decider_refusal(hub_dir, account_id, email, "approve")
+        if refused is not None and refused.code == "no_access":
+            out["allowed_actions"] = [] if req["kind"] == "question" else ["reject"]
+            out["can_cancel"] = _same_person(account_id, email, req)
+            return out
     if not can:
         out["allowed_actions"] = []
     elif req["kind"] == "question":
@@ -309,10 +318,47 @@ def list_for(hub_dir: Path, hub_id: str, account_id: str, email: str, *, status:
     for row in rows:
         req = st.row_dict(row)
         if visible_to(req, account_id, email):
-            out.append(with_actions(req, account_id, email))
+            out.append(with_actions(req, account_id, email, hub_dir=hub_dir))
         if len(out) >= limit:
             break
     return out
+
+
+#: Decisions that only stop work: open to anyone eligible, even after their access ended.
+STOPS_ONLY = frozenset({"reject"})
+
+
+def decider_refusal(hub_dir: Path, account_id: str, email: str, decision: str) -> RequestError | None:
+    """Why this person may not make this decision now, or None.
+
+    Being the requester or a named approver is not enough: an approval, an
+    answer or requested changes let work go on (a note is passed on as what to
+    change), so the person must still be able to use this agent, decided by the
+    one access check (``access.evaluator.authorize``: account active, not
+    blocked, ``use_hub``). A plain rejection only stops work, so it stays open.
+    Every way to decide (the web page, a key, MCP, a channel reply, the CLI)
+    comes through ``decide`` and so through here."""
+    if decision in STOPS_ONLY:
+        return None
+    from ..embed.caller import is_app_subject
+
+    if is_app_subject(account_id):
+        # A person an embedding app vouches for has no grants: their route
+        # checks the app's fresh token and its agents on every request
+        # (``embed.agui``), this decision included.
+        return None
+    from ..access.evaluator import authorize
+    from ..access.store import USE_HUB
+
+    account = account_id if account_id and "@" not in account_id else None
+    verdict = authorize(Path(hub_dir), email or account_id, USE_HUB, hub=Path(hub_dir).name,
+                        account_id=account)
+    if verdict.allowed:
+        return None
+    if verdict.reason == "store_error":
+        return RequestError(503, "access_unavailable", "Access could not be checked. Try again shortly.")
+    return RequestError(403, "no_access", "You can't approve or answer this, because you don't have access to "
+                                          "this agent. Ask an administrator for access, or reject it.")
 
 
 def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, email: str, decision: str,
@@ -321,6 +367,12 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
     """Settle a pending request once. Raises RequestError for a stale card, a
     second decision or someone who may not decide. ``credential_id`` names the
     API key when ``via`` is ``"api_key"``; it goes into the settle event."""
+    from ..channels.open_mode import is_guest_subject
+
+    if is_guest_subject(account_id) or is_guest_subject(email):
+        # A Slack guest (channel open mode) has no account and never decides
+        # an approval or a question, whatever else would allow it.
+        raise RequestError(403, "permission_denied", "Slack guests can't decide requests.")
     if decision not in DECISIONS:
         raise RequestError(422, "validation_failed", f"decision is one of: {', '.join(DECISIONS)}.")
     note = (note or "").strip() or None
@@ -360,6 +412,9 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
                 answer = re.sub(r"\s*\(recommended\)\s*$", "", answer, flags=re.I) or answer
         if decision == "request_changes" and not note:
             raise RequestError(422, "validation_failed", "Say what should change.")
+        refused = decider_refusal(hub_dir, account_id, email, decision)
+        if refused is not None:
+            raise refused
         status = {"reject": "rejected", "answer": "answered", "request_changes": "rejected"}.get(decision, "approved")
         done = conn.execute(st.requests.update().where(
             r.id == request_id, r.status == "pending", r.revision == req["revision"]).values(

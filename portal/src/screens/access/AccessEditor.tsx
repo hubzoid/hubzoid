@@ -14,6 +14,7 @@ import {
 } from "antd";
 import { Plus, Search } from "lucide-react";
 import {
+  hubRequest,
   request,
   query,
   type Access,
@@ -29,7 +30,7 @@ import {
   PersonCell,
 } from "../../components/common";
 import { ROW_OPENS, openRowName } from "../../lib/rows";
-import { personHref, useHashQuery } from "../../hooks/useRoute";
+import { href, personHref, useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, pickDraft, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
@@ -58,6 +59,17 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
   );
   // Whether this viewer may create accounts, and how new accounts can sign in.
   const me = useData<Me>("/me");
+  // Slack connections open to their whole workspace (open mode), shown read-only.
+  const [openChannels, setOpenChannels] = useState<{ id: string; open: { workspace: string; daily_cap: number } }[]>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    hubRequest<{ items: { id: string; open?: { workspace: string; daily_cap: number } | null }[] }>(
+      `/api/hubs/${encodeURIComponent(hub.key)}/channels`, "GET", undefined, controller.signal)
+      .then((d) => !controller.signal.aborted && setOpenChannels(
+        d.items.filter((c) => c.open).map((c) => ({ id: c.id, open: c.open! }))))
+      .catch(() => undefined);   // the channel list is information here; Access works without it
+    return () => controller.abort();
+  }, [hub.key]);
   const [draft, setDraft] = useState<Draft | null>(null);
   // Each result is a new alert (keyed), so a repeated "Access updated" is announced again.
   // `back` is the person a ?edit= deep link came from, to return to after saving.
@@ -245,6 +257,16 @@ export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: b
           description={`This was carried over from before named grants were required and can’t be granted again. To replace it, add the people who need ${hub.name} by name, then remove “Everyone signed in” below.`}
         />
       )}
+
+      {openChannels.map((c) => (
+        <Alert
+          key={c.id}
+          type="warning"
+          showIcon
+          title={`Anyone in Slack workspace ${c.open.workspace} can ask through ${c.id}`}
+          description={<>People without a matching account ask as Slack guests: agent knowledge and read-only tools, {c.open.daily_cap} requests a day each. Manage it under <a href={href(`/agents/${encodeURIComponent(hub.key)}/channels/${encodeURIComponent(c.id)}/links`)}>{c.id}, Who can ask</a>.</>}
+        />
+      ))}
 
       <div className="toolbar">
         <Input

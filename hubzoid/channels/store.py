@@ -340,6 +340,18 @@ def unreplied(hub_dir, hub: str, *, since: float, limit: int = 200) -> list[dict
     return [_row(r, _DELIVERY_JSON) for r in rows]
 
 
+def owed_notices(hub_dir, hub: str, *, since: float, limit: int = 100) -> list[dict]:
+    """Refused deliveries whose notice is not posted yet (``route_json.notice``
+    without ``noticed``), oldest first. Refusals decided at admission, which
+    must not call the provider, are told here (``router.post_owed_notices``)."""
+    with engine(hub_dir).connect() as c:
+        rows = c.execute(text("SELECT * FROM hz_channel_deliveries WHERE hub=:h AND status IN ('ignored','denied') "
+                              "AND updated > :s AND route_json LIKE '%\"notice\":%' "
+                              "AND route_json NOT LIKE '%\"noticed\":%' ORDER BY created LIMIT :n"),
+                         {"h": hub, "s": since, "n": limit}).mappings().all()
+    return [_row(r, _DELIVERY_JSON) for r in rows]
+
+
 def open_deliveries(hub_dir, hub: str, *, cid: str | None = None, thread: str | None = None,
                     limit: int = 200) -> list[dict]:
     """Accepted or waiting deliveries, oldest first: what routing still owes."""

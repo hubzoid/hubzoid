@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAgentEditing } from "../app/lib/editing";
 import {
-  Alert, Button, Descriptions, Empty, Form, Input, Popconfirm, Select, Space, Switch, Table, Tabs, Tag,
+  Alert, Button, Card, Descriptions, Empty, Form, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tabs, Tag,
   Tooltip, Typography,
 } from "antd";
 import { RefreshCw } from "lucide-react";
@@ -40,6 +40,10 @@ type Thread = {
   id: string; thread_key: string; origin: { provider: string; url: string; coordinates: Record<string, unknown> };
   subscribed: boolean; conversations: Record<string, string>; work_item_id: string | null; requester: string;
   revision: number; updated: number;
+};
+type OpenMode = {
+  supported: boolean; enabled: boolean; stale: boolean; approved_team: string | null; daily_cap: number;
+  workspace: string; updated_by: string | null; updated: number | null; can_change: boolean;
 };
 type ThreadDetail = Thread & { deliveries: Delivery[]; replies: Reply[]; work_item?: { id: string; state: string; workflow: string } };
 type Link = { id: string; workspace_id: string; external_id: string; account: string; display: string; created: number };
@@ -89,6 +93,15 @@ const REASONS: Record<string, string> = {
   same_event: "Same message already received",
   bot_author: "Sent by a bot",
   thread_busy: "Someone else's request is running",
+  blocked: "Agent access blocked",
+  channel_not_allowed: "Channel not in the allowed list",
+  direct_messages_off: "Direct messages are off",
+  files_off: "Only a file, and files are off",
+  shared_channel_denied: "Slack Connect (another organization)",
+  terms_required: "Terms of use not accepted",
+  workflow_denied: "Not allowed to start this work",
+  guest_cap: "Slack guest reached today's limit",
+  guest_workflow: "Slack guests can't start work",
 };
 
 function tag(map: Record<string, { label: string; color: string }>, key: string) {
@@ -345,7 +358,7 @@ function ConnectionView({ hub, cid, tab }: { hub: Hub; cid: string; tab?: string
           { key: "threads", label: "Threads", children: <Threads hub={hub} url={url} cid={cid} /> },
           { key: "deliveries", label: "Deliveries", children: <Deliveries url={url} /> },
           { key: "replies", label: "Replies", children: <Replies url={url} /> },
-          { key: "links", label: "Account links", children: <Links url={url} /> },
+          { key: "links", label: "Who can ask", children: <><OpenModeCard url={url} /><Links url={url} /></> },
           {
             key: "settings", label: "File",
             children: <ConfigEditor hub={hub} cid={cid} revision={c.revision} onApplied={exp.reload}
@@ -530,6 +543,66 @@ function Replies({ url }: { url: string }) {
         />
       )}
     </>
+  );
+}
+
+// "Anyone in this Slack workspace" (hubzoid.channels.open_mode): off by default,
+// organization administrators only.
+function OpenModeCard({ url }: { url: string }) {
+  const data = useLoad<OpenMode>(`${url}/open`);
+  const [cap, setCap] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
+  const d = data.data;
+  if (!d.supported) return null;
+  const save = async (enabled: boolean) => {
+    setSaving(true);
+    try {
+      const out = await hubRequest<OpenMode>(`${url}/open`, "PUT", { enabled, daily_cap: cap ?? d.daily_cap });
+      setNotice({ type: "success", text: out.enabled
+        ? `Anyone in workspace ${out.workspace} can ask now. Guests get ${out.daily_cap} requests a day each.`
+        : "Open mode is off. People without an account link get the not-linked notice again." });
+      setCap(null);
+      data.reload();
+    } catch (e) {
+      setNotice({ type: "error", text: errorText(e) });
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card size="small" style={{ marginBottom: 16 }} title={<Space>
+      Anyone in this Slack workspace {d.enabled ? <Tag color="gold">On</Tag> : <Tag>Off</Tag>}
+    </Space>}>
+      <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+        Off by default. When on, anyone in Slack workspace <Text code>{d.workspace}</Text> can ask without an account
+        link. People whose confirmed Slack email matches an active account ask as themselves. Everyone else is a Slack
+        guest: unrestricted agent knowledge and read-only tools, no approvals, no workflows, a daily limit. People from
+        other organizations (Slack Connect) stay blocked.
+      </Paragraph>
+      {d.stale && <Alert style={{ marginBottom: 8 }} type="warning" showIcon
+        title={`It was turned on for workspace ${d.approved_team}, so it is off for ${d.workspace}.`}
+        description="Turn it on again to allow this workspace." />}
+      {notice && <Alert style={{ marginBottom: 8 }} type={notice.type} showIcon closable title={notice.text} onClose={() => setNotice(null)} />}
+      <Space wrap>
+        <Text>Guest requests a day, each:</Text>
+        <InputNumber min={1} max={500} value={cap ?? d.daily_cap} onChange={(v) => setCap(typeof v === "number" ? v : null)}
+          disabled={!d.can_change} aria-label="Guest requests a day" />
+        {d.can_change ? (d.enabled ? <>
+          <Button loading={saving} disabled={cap === null || cap === d.daily_cap} onClick={() => save(true)}>Save limit</Button>
+          <Popconfirm title="Turn open mode off?" description="New people without an account link are refused again. Guest work that is waiting stops."
+            onConfirm={() => save(false)}><Button danger loading={saving}>Turn off</Button></Popconfirm>
+        </> : (
+          <Popconfirm title={`Let anyone in workspace ${d.workspace} ask?`}
+            description="People without a Hubzoid account get guest access: knowledge and read-only tools, a daily limit. Accounts are recognised by confirmed Slack email (needs the users:read.email scope). Doctor warns while it is on."
+            onConfirm={() => save(true)}><Button type="primary" loading={saving}>Turn on</Button></Popconfirm>
+        )) : <Text type="secondary">Only an organization administrator can change this.</Text>}
+      </Space>
+      {d.updated_by && <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+        Last changed by {d.updated_by}{d.updated ? `, ${when(d.updated)}` : ""}.
+      </Paragraph>}
+    </Card>
   );
 }
 
