@@ -116,7 +116,18 @@ jobs:
         working-directory: portal
         env:
           HZ_PYTHON: python
+          APP_REAL_DIR: ${{ runner.temp }}/app-real
         run: npm run test:app && npm run test:app:settings
+      - name: Keep the journey's screenshots, page and server logs when it fails
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: console-journey-failure
+          path: |
+            ${{ runner.temp }}/app-real/shots/failure*
+            ${{ runner.temp }}/app-real/**/server.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   package:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')

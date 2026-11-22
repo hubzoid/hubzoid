@@ -537,12 +537,15 @@ journey("chat", "New chat: suggestions, streaming markdown, a URL and a generate
   assert.equal(await c.composer().inputValue(), "When is support open?");
   await page.getByTestId("send").click();
   await page.waitForURL(/\/c\/[^/]+$/);
+  // The Send button is still showing until the new chat's send is under way,
+  // so idle alone can pass early: wait for the message, then the whole reply
+  // (the same budget as idle), then idle.
+  await page.getByTestId("user-text").getByText("When is support open?").waitFor();
+  await c.lastAssistant().getByText("You said: “When is support open?”").waitFor({ timeout: 60_000 });
   await c.idle();
   const id = c.conversationId();
   assert.match(id, ID);
-  await c.lastAssistant().getByText("You said: “When is support open?”").waitFor();
   await c.lastAssistant().getByText("This is a scripted reply from the Hubzoid test runtime.").waitFor();
-  await page.getByTestId("user-text").getByText("When is support open?").waitFor();
 
   step("The generated title replaces the first words, in the sidebar and the header");
   await c.sidebar().getByRole("link", { name: "About when is support open" }).waitFor({ timeout: 20_000 });
