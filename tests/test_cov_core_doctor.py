@@ -1,6 +1,7 @@
 """Doctor names unavailable stores and settings without network or secret disclosure."""
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -76,7 +77,10 @@ def test_schema_misconfiguration_and_unreachable_store_are_distinct(hub, tmp_pat
 
 
 def test_network_filesystem_prefers_longest_mount_and_skips_failed_db_url(hub, monkeypatch):
-    assert doctor.network_filesystem(hub, "invalid\nroot / nfs rw\nroot /private apfs rw\n") is None
+    # Fixed paths, not the temporary hub: they resolve the same on macOS and Linux.
+    table = "invalid\nroot / nfs rw\nroot /private apfs rw\nshare /mnt/share nfs4 rw\n"
+    assert doctor.network_filesystem(Path("/private/data/hub"), table) is None       # the longest mount wins
+    assert doctor.network_filesystem(Path("/mnt/share/hub"), table) == "nfs4"
     monkeypatch.setattr(db, "operational_url", Mock(side_effect=ValueError("conflict")))
     monkeypatch.setattr(db, "dbos_url", lambda hub: "sqlite:////mount/workflows.db")
     monkeypatch.setattr(doctor, "network_filesystem", lambda path: "nfs4")
