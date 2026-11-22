@@ -72,8 +72,9 @@ def test_missing_changelog_prevents_new_release(tmp_path):
 
 def test_release_candidates_can_validate_without_publishing():
     workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
-    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/secrets.yml",
-                         ROOT / ".github/workflows/tests.yml", ROOT / ".github/workflows/windows.yml"]
+    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/nightly.yml",
+                         ROOT / ".github/workflows/secrets.yml", ROOT / ".github/workflows/tests.yml",
+                         ROOT / ".github/workflows/windows.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
     config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert config["on"] == {
@@ -86,6 +87,16 @@ def test_release_candidates_can_validate_without_publishing():
             "github.event_name != 'pull_request' || "
             "contains(github.event.pull_request.labels.*.name, 'release-candidate')"
         )
+
+
+def test_nightly_runs_on_a_schedule_with_no_secrets():
+    """Coverage and the large property search run once a day, read-only, with
+    no secrets (so no real model) and never on pull requests."""
+    text = (ROOT / ".github/workflows/nightly.yml").read_text()
+    config = yaml.load(text, Loader=yaml.BaseLoader)
+    assert set(config["on"]) == {"schedule", "workflow_dispatch"}
+    assert config["permissions"] == {"contents": "read"}
+    assert "secrets." not in text
 
 
 def test_windows_runs_on_main_and_release_candidates_not_every_pull_request():
@@ -122,11 +133,12 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
     assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
     assert "npm run lint" in runs
-    # Only the fast default, spread over two machines, parallel on each: no -m override.
+    # Only the fast default, spread over three machines, parallel on each: no -m override.
     unit = config["jobs"]["unit"]
-    assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
+    assert unit["strategy"]["matrix"]["group"] == ["1", "2", "3"]
     pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
-    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}"]
+    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 3 --group ${{ matrix.group }} "
+                           "--splitting-algorithm least_duration --durations=25"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
@@ -135,7 +147,9 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
     jobs = WORKFLOW["jobs"]
     suite = next(s["run"] for s in jobs["tests"]["steps"] if "--splits" in s.get("run", ""))
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
-    assert ".[dev,postgres]" in install and "openwebui" not in install
+    assert ".[dev,postgres,saml]" in install and "openwebui" not in install
+    # SAML and SCIM tests skip without pysaml2 and xmlsec1: install both.
+    assert "xmlsec1" in install
     # Every test, heavy ones included: an excluded critical check is not a pass.
     assert '-m ""' in suite and "-n auto --dist loadfile" in suite and "--splits 2" in suite
     # Live-process checks run alone (not in the parallel shards), never skipped.
