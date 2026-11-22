@@ -50,12 +50,15 @@ def send(client, cid, branch, text, parent=None):
                           "parent_id": parent, "content": [{"type": "text", "text": text}]})
     assert r.status_code == 202, r.text
     out = r.json()
-    end = time.time() + 20
+    end, run = time.time() + 20, {}
     while time.time() < end:
-        if client.get(f"/api/chat/runs/{out['run_id']}", headers=ORIGIN).json()["status"] == "complete":
-            return out
+        run = client.get(f"/api/chat/runs/{out['run_id']}", headers=ORIGIN).json()
+        if run["status"] in ("complete", "stopped", "interrupted", "failed"):
+            break
         time.sleep(0.05)
-    raise AssertionError("the reply did not finish")
+    # The run's own state in the message, so a failure says why, not only that it waited.
+    assert run.get("status") == "complete", f"the reply did not finish: {run}"
+    return out
 
 
 def test_conversation_lifecycle(hub, client):
