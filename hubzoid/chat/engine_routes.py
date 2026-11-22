@@ -188,7 +188,8 @@ class Orchestrator:
             from .. import _request_ctx
             from .history import branch_images, message_images, user_text
 
-            resume, resume_cost = await db(self.engine.bound_session, plan, self.config_digest(plan.actor_id))
+            digest = self.config_digest(plan.actor_id)
+            resume, resume_cost = await db(self.engine.bound_session, plan, digest)
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, resume_cost=resume_cost,
                 delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
@@ -196,6 +197,9 @@ class Orchestrator:
                 images=await db(branch_images, self.ctx.hub_dir, key, path),
                 delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
                 if path else [])
+            # The session is recorded under the configuration it started with,
+            # not one read again at the end (settings may change or recover meanwhile).
+            slot.config_digest = digest
             # What the guardrails check: the person's new message and any
             # regenerate refinement, not the stored history before it.
             new_parts = [await db(user_text, self.ctx.hub_dir, key, path[-1].get("content"))] \
@@ -308,7 +312,7 @@ class Orchestrator:
                 raise RuntimeError("the run lost its branch lease")
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
-                     head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
+                     head_message_id=run.message_id, config_digest=getattr(slot, "config_digest", ""),
                      ok=status == "complete", session_cost=getattr(slot, "session_cost", None))
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)

@@ -1035,10 +1035,14 @@ class ChatEngine:
             if r.status not in g.ACTIVE_RUN:
                 return {"run_id": run_id, "status": r.status, "already_terminal": True}
             t = _now()
+            # Only while still active: SQLite ignores FOR UPDATE, so the reply
+            # may have finished (and released its lease) since the read above.
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                            .values(cancel_requested=1, status="stopping", updated_at=t)).rowcount != 1:
+                now = conn.execute(sa.select(g.runs.c.status).where(g.runs.c.id == run_id)).scalar()
+                return {"run_id": run_id, "status": now, "already_terminal": True}
             if park_queue:
                 self._park(conn, r.conversation_id, r.branch_id, "stopped", t)
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id)
-                         .values(cancel_requested=1, status="stopping", updated_at=t))
             g.emit(conn, r.conversation_id, "run.changed", run_id, {"status": "stopping", "message_id": r.message_id,
                                                                    "branch_id": r.branch_id})
             out = {"run_id": run_id, "status": "stopping", "message_id": r.message_id,
@@ -1111,8 +1115,12 @@ class ChatEngine:
             if r is None or r.status in g.TERMINAL_RUN:
                 return None
             t = _now()
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id)
-                         .values(status=status, error=(error or "")[:2000] or None, updated_at=t))
+            # Only while still active: the sweep may have recorded it interrupted
+            # since the read above, and that end stands.
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                            .values(status=status, error=(error or "")[:2000] or None,
+                                    updated_at=t)).rowcount != 1:
+                return None
             g.release_lease(conn, r.branch_id, run_id)
             m = conn.execute(sa.select(messages).where(messages.c.id == r.message_id)).first()
             payload = {"status": status, "message_id": r.message_id, "branch_id": r.branch_id}
@@ -1623,13 +1631,18 @@ class ChatEngine:
             live = {(r.branch_id, r.run_id) for r in conn.execute(
                 sa.select(g.leases.c.branch_id, g.leases.c.run_id, g.leases.c.owner).where(g.leases.c.expires_at > t))
                 if not _owner_gone(r.owner)}
-            stale = [r for r in conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
-                                                                     g.runs.c.status.in_(g.ACTIVE_RUN))).all()
-                     if (r.branch_id, r.id) not in live]
-            for r in stale:
-                conn.execute(g.runs.update().where(g.runs.c.id == r.id)
-                             .values(status="interrupted", error="The server restarted during this reply.",
-                                     updated_at=t))
+            candidates = [r for r in conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
+                                                                          g.runs.c.status.in_(g.ACTIVE_RUN))).all()
+                          if (r.branch_id, r.id) not in live]
+            stale = []
+            for r in candidates:
+                # Only while still active: a reply that finished since the read
+                # above keeps its end and its queue.
+                if conn.execute(g.runs.update().where(g.runs.c.id == r.id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                                .values(status="interrupted", error="The server restarted during this reply.",
+                                        updated_at=t)).rowcount != 1:
+                    continue
+                stale.append(r)
                 conn.execute(g.leases.delete().where(g.leases.c.branch_id == r.branch_id, g.leases.c.run_id == r.id))
                 self._park(conn, r.conversation_id, r.branch_id, "interrupted", t)
                 g.emit(conn, r.conversation_id, "run.changed", r.id, {"status": "interrupted",
