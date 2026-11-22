@@ -65,3 +65,27 @@ export function forgetSentDrafts(
     if (mine && storage.getItem(key)?.trim() === sent) storage.removeItem(key);
   }
 }
+
+/** Runs sends one at a time, in the order they were made. A refused send
+ *  doesn't hold up the next, and its caller still sees the error. */
+export function sendQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return <T>(task: () => Promise<T>) => {
+    const run = chain.then(task);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
+
+/** Waits for a send still on its way (Stop pressed right after Send), but no
+ *  longer than `ms`: a request that never answers can't hold Stop forever. */
+export function settleWithin(
+  pending: Promise<unknown>,
+  ms: number,
+  sleep: (ms: number) => Promise<unknown> = (n) => new Promise((r) => setTimeout(r, n)),
+): Promise<void> {
+  return Promise.race([pending.then(() => undefined, () => undefined), sleep(ms).then(() => undefined)]);
+}

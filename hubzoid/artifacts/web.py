@@ -21,10 +21,12 @@ Console privilege is involved: owners manage their own artifacts here.
 Isolation. The viewer page and the web app share an origin behind the
 edge. Artifact HTML is served with CSP `sandbox` (no `allow-same-origin`) and
 framed with the `sandbox` attribute, so it runs in an opaque origin: it cannot
-read the session cookie, call the app's APIs with it, or reach the toolbar. By
-default it cannot make network requests either (`HUBZOID_ARTIFACT_ALLOW_ORIGINS`
-opens named origins). Types the viewer does not preview are served only as
-downloads, never rendered in the application origin.
+read the session cookie, call the app's APIs with it, or reach the toolbar.
+It makes no fetch, XHR or form requests. Scripts and styles may also come from
+a few public CDNs (`artifacts.csp`; `HUBZOID_ARTIFACT_ALLOW_ORIGINS` replaces
+them). As a top-level page with popups allowed it can still navigate away.
+Types the viewer does not preview are served only as downloads, never
+rendered in the application origin.
 """
 from __future__ import annotations
 
@@ -40,14 +42,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import artifacts as arts
-from . import pages
+from . import csp, pages
 from . import series as series_lib
 
 log = logging.getLogger("hubzoid.artifacts")
 
 _UNAVAILABLE = "This artifact is not available, or you do not have access to it."
 _LINK_BAD = "This link does not work. It may have expired or been turned off."
-_ORIGIN = re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$")
 _REF = re.compile(r"^[0-9a-f]{12}$")
 _TOKEN = re.compile(r"^[A-Za-z0-9_-]{12,64}$")
 
@@ -83,19 +84,11 @@ class CompanyLinkRequest(BaseModel):
 _REPORT_GONE = "This report isn't available"
 
 
-def _extra_origins() -> str:
-    raw = os.environ.get("HUBZOID_ARTIFACT_ALLOW_ORIGINS", "")
-    good = [o.strip() for o in raw.split(",") if _ORIGIN.match(o.strip())]
-    return (" " + " ".join(good)) if good else ""
-
-
 def html_csp() -> str:
-    extra = _extra_origins()
+    """A published HTML artifact's policy: the shared artifact policy
+    (``artifacts.csp``) inside an opaque-origin sandbox."""
     return ("sandbox allow-scripts allow-popups allow-modals allow-downloads; "
-            f"default-src 'none'; script-src 'unsafe-inline'{extra}; "
-            f"style-src 'unsafe-inline'{extra}; img-src data: blob:{extra}; "
-            f"font-src data:{extra}; media-src data: blob:; connect-src 'none'; "
-            "form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
+            f"{csp.policy()}; frame-ancestors 'self'")
 
 
 _PAGE_CSP = ("default-src 'none'; script-src 'nonce-{n}'; style-src 'nonce-{n}'; "

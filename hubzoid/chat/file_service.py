@@ -646,6 +646,28 @@ class FileService:
             self.notify(conversation_id)
         return out
 
+    @staticmethod
+    def _check_base(art, provenance: str, base_version_id, expected_revision) -> None:
+        """An edit must start from the newest version (both tabs saving, or two people)."""
+        if art is None:
+            return
+        if expected_revision is not None and expected_revision != art.revision:
+            raise Err(409, "artifact_conflict", "Someone saved a newer version. Reload, then edit that one.",
+                      current_revision=art.revision)
+        if provenance == "edited" and base_version_id != art.current_version_id:
+            raise Err(409, "artifact_conflict", "Edit the newest version (reload first).",
+                      current_version_id=art.current_version_id)
+
+    def _discard(self, f: dict) -> None:
+        """Remove a file stored for a version that was then refused."""
+        with self.engine.begin() as conn:
+            row = self._row(conn, f["file_id"])
+            conn.execute(files.delete().where(files.c.file_id == f["file_id"]))
+        try:
+            self._store(row.storage_config_id)[1].delete(row.object_key)
+        except st.StorageError:
+            log.warning("files: bytes of refused version %s stay for a later cleanup", f["file_id"], exc_info=True)
+
     def _version(self, *, conversation_id, branch_id, actor_id, title, mime, data, run_id, message_id, provenance,
                  base_version_id, expected_revision) -> dict | None:
         digest = sha256(data)
@@ -658,37 +680,44 @@ class FileService:
                     artifact_versions.c.version_id == art.current_version_id)).scalar()
                 if cur == digest:
                     return None
+            # Refuse a stale edit before storing anything.
+            self._check_base(art, provenance, base_version_id, expected_revision)
         f = self.register_bytes(actor_id, title, mime, data, origin="generated", check_type=False)
         t = _now()
-        with self.engine.begin() as conn:
-            art = conn.execute(sa.select(artifacts).where(artifacts.c.conversation_id == conversation_id,
-                                                          artifacts.c.title == title)).first()
-            if art is None:
-                aid = str(uuid.uuid4())
-                conn.execute(artifacts.insert().values(
-                    artifact_id=aid, hub_id=self.hub, owner_principal_id=actor_id, conversation_id=conversation_id,
-                    branch_id=branch_id, title=title, kind=artifact_kind(title, mime), current_version_id=None,
-                    revision=0, created_at=t, updated_at=t))
-                art = conn.execute(sa.select(artifacts).where(artifacts.c.artifact_id == aid)).first()
-            if expected_revision is not None and expected_revision != art.revision:
-                raise Err(409, "artifact_conflict", "Someone saved a newer version. Reload, then edit that one.",
-                          current_revision=art.revision)
-            if provenance == "edited" and base_version_id != art.current_version_id:
-                raise Err(409, "artifact_conflict", "Edit the newest version (reload first).",
-                          current_version_id=art.current_version_id)
-            n = (conn.execute(sa.select(sa.func.max(artifact_versions.c.ordinal)).where(
-                artifact_versions.c.artifact_id == art.artifact_id)).scalar() or 0) + 1
-            vid = str(uuid.uuid4())
-            conn.execute(artifact_versions.insert().values(
-                version_id=vid, artifact_id=art.artifact_id, file_id=f["file_id"], ordinal=n,
-                base_version_id=base_version_id or art.current_version_id, author_id=actor_id, run_id=run_id,
-                message_id=message_id, provenance=provenance, created_at=t))
-            conn.execute(artifacts.update().where(artifacts.c.artifact_id == art.artifact_id).values(
-                current_version_id=vid, revision=art.revision + 1, updated_at=t))
-            self._add_ref(conn, f["file_id"], "artifact", art.artifact_id, conversation_id, actor_id, None)
-            g.emit(conn, conversation_id, "artifact_version.created", art.artifact_id,
-                   {"version_id": vid, "ordinal": n, "provenance": provenance, "run_id": run_id})
-            return self._artifact_json(conn, art.artifact_id)
+        try:
+            with self.engine.begin() as conn:
+                # Checked again on the locked row: two saves on the same base
+                # can't both pass (SQLite serializes writers already).
+                art = conn.execute(sa.select(artifacts).where(artifacts.c.conversation_id == conversation_id,
+                                                              artifacts.c.title == title).with_for_update()).first()
+                if art is None:
+                    aid = str(uuid.uuid4())
+                    conn.execute(artifacts.insert().values(
+                        artifact_id=aid, hub_id=self.hub, owner_principal_id=actor_id, conversation_id=conversation_id,
+                        branch_id=branch_id, title=title, kind=artifact_kind(title, mime), current_version_id=None,
+                        revision=0, created_at=t, updated_at=t))
+                    art = conn.execute(sa.select(artifacts).where(artifacts.c.artifact_id == aid)).first()
+                self._check_base(art, provenance, base_version_id, expected_revision)
+                n = (conn.execute(sa.select(sa.func.max(artifact_versions.c.ordinal)).where(
+                    artifact_versions.c.artifact_id == art.artifact_id)).scalar() or 0) + 1
+                vid = str(uuid.uuid4())
+                conn.execute(artifact_versions.insert().values(
+                    version_id=vid, artifact_id=art.artifact_id, file_id=f["file_id"], ordinal=n,
+                    base_version_id=base_version_id or art.current_version_id, author_id=actor_id, run_id=run_id,
+                    message_id=message_id, provenance=provenance, created_at=t))
+                conn.execute(artifacts.update().where(artifacts.c.artifact_id == art.artifact_id).values(
+                    current_version_id=vid, revision=art.revision + 1, updated_at=t))
+                self._add_ref(conn, f["file_id"], "artifact", art.artifact_id, conversation_id, actor_id, None)
+                g.emit(conn, conversation_id, "artifact_version.created", art.artifact_id,
+                       {"version_id": vid, "ordinal": n, "provenance": provenance, "run_id": run_id})
+                return self._artifact_json(conn, art.artifact_id)
+        except sa.exc.IntegrityError:
+            # Another save took this title's first version or the same ordinal.
+            self._discard(f)
+            raise Err(409, "artifact_conflict", "Someone saved a newer version. Reload, then edit that one.")
+        except Err:
+            self._discard(f)
+            raise
 
     def _artifact_json(self, conn, artifact_id: str) -> dict:
         a = conn.execute(sa.select(artifacts).where(artifacts.c.artifact_id == artifact_id)).first()

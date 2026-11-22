@@ -4,7 +4,7 @@
 // for files the agent wrote (/artifacts/<conversation>/<file>), and images: this
 // site's own at once, any other only when the person asks (images.ts). Every
 // renderer is bundled here; nothing is fetched from another site.
-import { memo, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { memo, useContext, useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import {
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeComponents,
@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { Check, ChevronDown, Copy, Download, FileText, ImageIcon } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, FileText, ImageIcon, PanelRight } from "lucide-react";
 import { t } from "../i18n/en";
 import { fileNameFromUrl } from "../lib/format";
 import { isAppPath } from "../lib/router";
@@ -23,6 +23,7 @@ import { copyText } from "../components/ShareDialog";
 import { highlight, resolveLanguage } from "./highlight";
 import { CitationLink, remarkCitations } from "./citations";
 import { imageSource } from "./images";
+import { DocumentsContext, documentOf } from "./documents-context";
 
 const ARTIFACT = /^(?:\/b\/[^/]+)?\/artifacts\/[^?#]+/;
 
@@ -159,6 +160,7 @@ function Highlighted({ code, language }: SyntaxHighlighterProps) {
 
 function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   delete (rest as { node?: unknown }).node;
+  const documents = useContext(DocumentsContext);
   if (href?.startsWith("#cite-")) return <CitationLink id={href.slice(6)} label={String(children)} />;
   if (isArtifactHref(href)) {
     const name = fileNameFromUrl(href!);
@@ -166,7 +168,7 @@ function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { nod
     // download (its icon and its accessible name), so it shows the file alone.
     const text = typeof children === "string" ? children.trim().replace(/^download\s+/i, "") : "";
     const label = text || name;
-    return (
+    const chip = (
       <a
         href={href}
         target="_blank"
@@ -179,6 +181,24 @@ function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { nod
         <span className="truncate">{label}</span>
         <Download size={14} aria-hidden className="flex-none text-mute" />
       </a>
+    );
+    // One of this conversation's documents: it can also be opened beside the chat.
+    const doc = documentOf(href!, documents, location.origin);
+    if (!doc || !documents) return chip;
+    return (
+      <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
+        {chip}
+        <button
+          type="button"
+          className="inline-flex h-[34px] flex-none items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 text-[13px] font-medium text-ink hover:border-accent/50 hover:bg-hover"
+          onClick={() => documents.open(doc)}
+          aria-label={t.artifacts.openBeside(doc)}
+          data-testid="open-document"
+        >
+          <PanelRight size={14} aria-hidden className="flex-none text-mute" />
+          {t.artifacts.openShort}
+        </button>
+      </span>
     );
   }
   let external = true;

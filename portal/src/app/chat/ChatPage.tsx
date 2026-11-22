@@ -27,6 +27,7 @@ import { ShareDialog } from "../components/ShareDialog";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
 import { FilesContext } from "./parts";
+import { DocumentsContext } from "./documents-context";
 import { CardsContext, cardsConfig } from "./cards/cards";
 import { useTheme } from "../lib/theme";
 import { ChatSession } from "./session";
@@ -304,7 +305,12 @@ function ChatView({
         (detail as unknown as Snapshot | null) ?? null,
       ),
   );
-  useEffect(() => () => feed.close(), [feed]);
+  // Opened and closed in one effect: React's development cycle (StrictMode)
+  // closes it once and opens it again; leaving the page closes it for good.
+  useEffect(() => {
+    feed.open();
+    return () => feed.close();
+  }, [feed]);
   const ensureFeed = useCallback(async () => {
     if (feed.conversationId) return feed;
     const id = await session.ensureConversation();
@@ -348,9 +354,20 @@ function ChatView({
   // Member features (B037): voice and the rest only with a grant.
   const [features, setFeatures] = useState<Features>({});
   useEffect(() => {
-    get<{ features?: Features }>("/api/chat/capabilities", { quiet401: true })
-      .then((c) => setFeatures(c.features ?? {}))
+    type Caps = { features?: Features; uploads?: { max_file_bytes?: number } };
+    const useLimit = (c: Caps) => {
+      const limit = c.uploads?.max_file_bytes;
+      if (typeof limit === "number" && limit > 0) session.maxUploadBytes = limit;
+    };
+    get<Caps>("/api/chat/capabilities", { quiet401: true })
+      .then((c) => {
+        setFeatures(c.features ?? {});
+        if (!session.apiBase) useLimit(c);
+      })
       .catch(() => setFeatures({}));
+    // Files go to this agent's own server: its limit applies.
+    if (session.apiBase)
+      get<Caps>(hubUrl(session.apiBase, "/api/chat/capabilities"), { quiet401: true }).then(useLimit).catch(() => {});
     // Leaving the page stops anything being read aloud.
     return () => {
       try {
@@ -367,7 +384,16 @@ function ChatView({
     return out;
   }, [features]);
   const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError, ...speechAdapters });
+  // A send the server refused puts its text back in the box (the composer
+  // empties itself on send).
+  const composerRef = useRef<{ getState(): { isEmpty: boolean }; setText(text: string): void } | null>(null);
+  const restoreDraft = useCallback((text: string) => {
+    const composer = composerRef.current;
+    if (composer && composer.getState().isEmpty) composer.setText(text);
+  }, []);
+  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError,
+    restoreDraft, ...speechAdapters });
+  composerRef.current = runtime.thread.composer;
 
   const unreadHere = useNotices()
     .filter((n) => n.state === "unread" && n.conversation_id === conversation?.id)
@@ -413,21 +439,26 @@ function ChatView({
     };
   }, [feed]);
 
-  // Documents the agent made here, beside the conversation. A new or changed
-  // document opens the panel once when a reply finishes (wide screens only).
+  // Documents the agent made here, beside the conversation. The list follows
+  // new versions as they are made (here, in another tab, by a teammate). A
+  // version this tab hasn't announced yet opens the panel once when a reply
+  // ends (wide screens only): "prime" marks everything as announced (the
+  // page's first list, a person's own edit), "event" only refreshes the list,
+  // "settle" opens what's new.
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [panel, setPanel] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
-  const known = useRef<Map<string, string>>(new Map());
+  const announced = useRef<Map<string, string>>(new Map());
   const refreshArtifacts = useCallback(
-    async (autoOpen: boolean) => {
+    async (mode: "prime" | "event" | "settle") => {
       const cid = feed.conversationId ?? conversationRef.current?.id;
       if (!cid) return;
       try {
         const list = await loadArtifacts(session.apiBase, cid);
-        const fresh = list.find((a) => known.current.get(a.artifact_id) !== a.current_version_id);
-        known.current = new Map(list.map((a) => [a.artifact_id, a.current_version_id]));
         setArtifacts(list);
-        if (autoOpen && fresh && window.innerWidth >= 1024) setPanel({ open: true, id: fresh.artifact_id });
+        if (mode === "event") return;
+        const fresh = list.find((a) => announced.current.get(a.artifact_id) !== a.current_version_id);
+        announced.current = new Map(list.map((a) => [a.artifact_id, a.current_version_id]));
+        if (mode === "settle" && fresh && window.innerWidth >= 1024) setPanel({ open: true, id: fresh.artifact_id });
       } catch {
         /* the conversation still works without its documents list */
       }
@@ -435,21 +466,41 @@ function ChatView({
     [feed, session],
   );
   useEffect(() => {
-    void refreshArtifacts(false);
+    void refreshArtifacts("prime");
   }, [refreshArtifacts, conversation?.id]);
+  const documentsCid = feed.conversationId ?? conversation?.id ?? null;
+  const documents = useMemo(
+    () =>
+      documentsCid
+        ? {
+            conversationId: documentsCid,
+            titles: new Set(artifacts.map((a) => a.title)),
+            open: (name: string) => {
+              const found = artifacts.find((a) => a.title === name);
+              if (found) setPanel({ open: true, id: found.artifact_id });
+            },
+          }
+        : null,
+    [artifacts, documentsCid],
+  );
 
   // The server's title and run endings flow back to the page and the list.
   const wasRunning = useRef(false);
+  const documentsSeq = useRef(feed.documentsSeq);
   useEffect(
     () =>
       feed.subscribe(() => {
+        if (feed.documentsSeq !== documentsSeq.current) {
+          documentsSeq.current = feed.documentsSeq;
+          void refreshArtifacts("event");
+        }
         const serverTitle = feed.snapshot?.conversation.title;
         if (serverTitle && serverTitle !== title && feed.conversationId) session.events.onTitle(feed.conversationId, serverTitle);
         const running = !!feed.activeRun;
         if (wasRunning.current && !running && feed.conversationId) {
           session.events.onRunSettled(feed.conversationId);
           announce(t.chat.responseDone);
-          void refreshArtifacts(true);
+          void refreshArtifacts("settle");
         }
         wasRunning.current = running;
       }),
@@ -474,6 +525,7 @@ function ChatView({
     <AssistantRuntimeProvider runtime={runtime} config={cards}>
      <CardsContext.Provider value={{ hub: cardsHub, apiBase: session.apiBase, live: true }}>
       <FilesContext.Provider value={{ conversationId: conversation?.id ?? null, apiBase: session.apiBase }}>
+      <DocumentsContext.Provider value={documents}>
        <div className="flex min-h-0 min-w-0 flex-1">
        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ChatHeader
@@ -513,11 +565,12 @@ function ChatView({
             selectedId={panel.id}
             onSelect={(id) => setPanel({ open: true, id })}
             onClose={() => setPanel((p) => ({ open: false, id: p.id }))}
-            onChanged={() => void refreshArtifacts(false)}
+            onChanged={() => void refreshArtifacts("prime")}
             canEdit={feed.snapshot?.permissions?.write ?? true}
           />
         )}
        </div>
+      </DocumentsContext.Provider>
       </FilesContext.Provider>
      </CardsContext.Provider>
     </AssistantRuntimeProvider>

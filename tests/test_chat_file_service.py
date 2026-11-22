@@ -160,13 +160,84 @@ def test_artifacts_capture_versions_and_conflicting_edit(client):
     assert [v["provenance"] for v in vers] == ["generated", "edited"] and vers[1]["base_version_id"] == v1
 
 
-def test_artifact_frame_is_locked_down(client):
-    r = client.get("/api/chat/artifact-frame")
-    csp = r.headers["content-security-policy"]
-    assert "frame-src blob:" in csp and "default-src 'none'" in csp
-    from hubzoid.chat.file_routes import CHILD_CSP
+def _file_rows(chat) -> int:
+    import sqlalchemy as sa
 
-    assert json.dumps(CHILD_CSP) in r.text  # the child's policy is a JSON string inside the script and "connect-src 'none'" in r.text and 'sandbox="allow-scripts"' in r.text
+    from hubzoid.chat.file_service import files
+
+    with chat.files.engine.connect() as conn:
+        return conn.execute(sa.select(sa.func.count()).select_from(files)).scalar()
+
+
+def test_artifact_edit_race_is_a_conflict_and_stores_nothing(client, monkeypatch):
+    from hubzoid import memory as memlib
+    from hubzoid.chat.store import chat_key
+
+    cid, b = new_conv(client)
+    chat = client.app.state.chat
+    conv = chat.store.get_conversation(cid)
+    (memlib.chat_artifact_dir(chat.hub_dir, chat_key(conv)) / "plan.md").write_text("# Plan")
+    art = chat.files.capture_artifacts(conversation_id=cid, branch_id=b["id"], actor_id=conv["owner_id"],
+                                       run_id="r1", message_id="m1", since=time.time() - 5)[0]
+    v1, url = art["current_version_id"], f"/api/chat/artifacts/{art['artifact_id']}/versions"
+    before = _file_rows(chat)
+    # A stale save is refused before any bytes are stored.
+    stale = client.post(url, headers=ORIGIN, json={"content": "# Old", "base_version_id": v1, "expected_revision": 0})
+    assert stale.status_code == 409 and _file_rows(chat) == before
+    # Two saves on the same base: the other one lands while this one stores its bytes.
+    real = chat.files.register_bytes
+    raced = []
+
+    def racing(*args, **kwargs):
+        if not raced:
+            raced.append(True)
+            chat.files._version(conversation_id=cid, branch_id=b["id"], actor_id=conv["owner_id"], title="plan.md",
+                                mime="text/markdown", data=b"# Theirs", run_id=None, message_id=None,
+                                provenance="edited", base_version_id=v1, expected_revision=1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(chat.files, "register_bytes", racing)
+    mine = client.post(url, headers=ORIGIN, json={"content": "# Mine", "base_version_id": v1, "expected_revision": 1})
+    assert raced and mine.status_code == 409
+    assert _file_rows(chat) == before + 1   # only the saved version's file remains
+    latest = client.get(f"/api/chat/artifacts/{art['artifact_id']}").json()
+    assert latest["revision"] == 2 and len(latest["versions"]) == 2
+
+
+def _directive(policy: str, name: str) -> str:
+    return next(d.strip() for d in policy.split(";") if d.strip().split(" ")[0] == name)
+
+
+def test_artifact_frame_is_locked_down(client, monkeypatch):
+    monkeypatch.delenv("HUBZOID_ARTIFACT_ALLOW_ORIGINS", raising=False)
+    r = client.get("/api/chat/artifact-frame")
+    frame = r.headers["content-security-policy"]
+    from hubzoid.chat.file_routes import child_csp
+
+    child = child_csp()
+    assert json.dumps(child) in r.text  # the child's policy is a JSON string inside the script
+    assert 'sandbox="allow-scripts"' in r.text
+    assert _directive(frame, "frame-src") == "frame-src blob:" and _directive(child, "frame-src") == "frame-src 'none'"
+    # The blob: child inherits the frame's policy and both apply: each one
+    # lets a chart library load from a CDN, and neither allows a request.
+    for policy in (frame, child):
+        assert "default-src 'none'" in policy
+        assert "https://cdn.jsdelivr.net" in _directive(policy, "script-src")
+        assert _directive(policy, "connect-src") == "connect-src 'none'"
+        assert _directive(policy, "form-action") == "form-action 'none'"
+        assert _directive(policy, "font-src") == "font-src data:"
+        assert "unsafe-eval" not in policy
+
+
+def test_artifact_origins_setting(monkeypatch):
+    from hubzoid.artifacts import csp
+
+    monkeypatch.setenv("HUBZOID_ARTIFACT_ALLOW_ORIGINS", "none")
+    assert "https://" not in csp.policy()
+    monkeypatch.setenv("HUBZOID_ARTIFACT_ALLOW_ORIGINS", "https://charts.example.com, http://plain.example, x")
+    policy = csp.policy()
+    assert "https://charts.example.com" in _directive(policy, "img-src")
+    assert "cdn.jsdelivr.net" not in policy and "plain.example" not in policy
 
 
 def test_storage_is_local_and_s3_files_fail_one_by_one(client, tmp_path):
@@ -329,3 +400,11 @@ def test_files_uploaded_at_once_all_succeed(client):
 
     with ThreadPoolExecutor(6) as pool:
         assert list(pool.map(one, range(6))) == [201] * 6
+
+
+def test_capabilities_name_the_upload_limit(hub, monkeypatch):
+    """The browser checks attachments against the deployment's limit, not a fixed 25 MiB."""
+    monkeypatch.setenv("HUBZOID_MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))
+    with TestClient(build_app()) as c:
+        caps = c.get("/api/chat/capabilities", headers=who("ana")).json()
+    assert caps["uploads"] == {"max_file_bytes": 5 * 1024 * 1024}

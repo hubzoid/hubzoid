@@ -350,12 +350,17 @@ class ChatEngine:
 
     # -- snapshot ---------------------------------------------------------------------
     def snapshot(self, conversation_id: str, actor: Actor, *, live=None) -> dict:
-        """Everything a viewer needs, read in one transaction so no event falls
-        between the snapshot and its cursor. ``live(message_id)`` returns the
-        current content of a reply being written in this process."""
+        """Everything a viewer needs, read in one transaction. The cursor is read
+        first: under PostgreSQL's Read Committed each query sees the latest
+        commits, so a cursor read last could be newer than the state and a
+        client following events from it would miss those. Read first, it can
+        only be older, and an event the snapshot already shows only causes one
+        more reload. ``live(message_id)`` returns the current content of a
+        reply being written in this process."""
         with self.engine.begin() as conn:
             conv, role = self._readable(conn, conversation_id, actor)
             g.ensure_initial_branch(conn, conv, actor.id)
+            cursor = g.cursor(conn, conversation_id)
             msgs = [_message(r) for r in conn.execute(
                 sa.select(messages).where(messages.c.conversation_id == conversation_id)
                 .order_by(messages.c.created_at, messages.c.id))]
@@ -370,7 +375,6 @@ class ChatEngine:
                 sa.select(g.queue).where(g.queue.c.conversation_id == conversation_id,
                                          g.queue.c.state.in_(g.QUEUE_LIVE + ("dispatching",)))
                 .order_by(g.queue.c.lane, g.queue.c.rank))]
-            cursor = g.cursor(conn, conversation_id)
             graph_revision = conv.get("graph_revision") or 0
             members_rev = conn.execute(sa.select(g.member_sets.c.revision).where(
                 g.member_sets.c.conversation_id == conversation_id)).scalar() or 0
