@@ -160,3 +160,51 @@ def test_reinit_rebuilds_agent_steps_and_hubs_can_share_a_dbos_db(tmp_path):
     line = [ln for ln in proc.stdout.splitlines() if ln.startswith("COUNTS")]
     assert line, proc.stderr[-2000:]
     assert line[-1] == "COUNTS 3 1"
+
+
+_STEP_WORKFLOW = textwrap.dedent('''
+    from hubzoid import workflow, step
+
+
+    @step(max_attempts=2)
+    def fetch():
+        raise TimeoutError("the reporting API timed out")
+
+
+    @workflow()
+    def report():
+        try:
+            fetch()
+        except TimeoutError:
+            return "caught"
+        return "not caught"
+''')
+
+
+@pytest.mark.slow
+def test_a_retried_step_that_runs_out_raises_its_own_error(tmp_path):
+    """`@step(max_attempts=N)` out of attempts raises the step's last error
+    (TimeoutError), not DBOS's DBOSMaxStepRetriesExceeded."""
+    wf = tmp_path / "retry-hub" / "workflows" / "report"
+    wf.mkdir(parents=True)
+    (wf / "main.py").write_text(_STEP_WORKFLOW)
+    script = _SCRIPT.replace('runtime.run_now("flaky")', 'runtime.run_now("report")')
+    proc = subprocess.run([sys.executable, "-c", script, str(tmp_path / "retry-hub")],
+                          capture_output=True, text=True, timeout=180)
+    line = [ln for ln in proc.stdout.splitlines() if ln.startswith("OUTCOME=")]
+    assert line, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr[-2000:]}"
+    assert line[-1].startswith("OUTCOME=ok:caught"), line[-1]
+
+
+def test_an_async_retried_step_unwraps_to_its_own_error():
+    import asyncio
+
+    from dbos._error import DBOSMaxStepRetriesExceeded
+
+    from hubzoid.workflows.runtime import _last_error
+
+    async def exhausted():
+        raise DBOSMaxStepRetriesExceeded("fetch", 2, [TimeoutError("first"), TimeoutError("last")])
+
+    with pytest.raises(TimeoutError, match="last"):
+        asyncio.run(_last_error(exhausted)())

@@ -211,6 +211,15 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
             f"{what} runs as {email} ({where}), and that account is blocked or was "
             "replaced. Reactivate it in Settings, or change the configured account. "
             "Hubzoid never falls back to another person.")
+    from ..access.service import directory_disabled
+
+    if directory_disabled(gs.engine, email):
+        # Checked here, so a run stops before its first model turn, not only
+        # when a tool call is refused.
+        raise IdentityError(
+            f"{what} runs as {email} ({where}), and the company directory turned that "
+            "account off. Turn it back on in the directory, or change the configured "
+            "account. Hubzoid never falls back to another person.")
     local = email == LOCAL_OWNER and local_quickstart(hub_dir)
     if not ident.get("owui_id"):
         if local:

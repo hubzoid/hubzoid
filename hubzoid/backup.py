@@ -454,6 +454,37 @@ def _drop_hold(url: str) -> None:
         store.engine.dispose()
 
 
+def clear_stale_hold(hub_dir: Path) -> bool:
+    """Lift a backup's schedule hold when no backup of the deployment is
+    running. A bridge or `hubzoid backup` stopped mid-backup leaves its hold,
+    which then lasts its margin (hours) and silently stops every scheduled
+    run. A running backup holds the deployment's backup lock for its whole
+    length, and the lock goes with its process, so a free lock means the hold
+    is stale. Returns whether a hold was lifted."""
+    from . import _file_lock
+    from .access import store_for
+    from .control import deploy
+
+    gs = store_for(hub_dir)
+    hold = gs.schedule_hold()
+    if not hold or hold.get("reason") != "backup":
+        return False
+    path = deploy.state_root(Path(hub_dir)) / datadir.STATE / "backup.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as fh:
+        try:
+            _file_lock.lock(fh, blocking=False)
+        except OSError:   # BlockingIOError: a backup is running; its hold stands
+            return False
+        try:
+            gs.clear_schedule_hold()
+        finally:
+            _file_lock.unlock(fh)
+    log.warning("backup: lifted a schedule hold left by a backup that is no longer running "
+                "(set by %s); scheduled runs resume", hold.get("by") or "unknown")
+    return True
+
+
 def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: float = 600,
            actor: str = "cli", poll: float = 2.0, settle: float = _SETTLE, say=log.info) -> dict:
     """Write one archive of the deployment containing `hub_dir` to `out`.
@@ -1155,7 +1186,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, postgres_url: s
     with tempfile.TemporaryDirectory(prefix=".hubzoid-restore-", dir=first_parent) as tmp:
         with tarfile.open(archive, "r:gz") as tar:
             safe = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-            tar.extractall(tmp, members=list(_safe_members(tar)), **safe)
+            tar.extractall(tmp, members=list(_safe_members(tar)), **safe)  # noqa: S202 - members checked by _safe_members, data filter where available
         for root in index["roots"]:
             src, target = Path(tmp) / root["id"], targets[root["id"]]
             if root["kind"] == "file":
