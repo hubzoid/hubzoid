@@ -592,7 +592,7 @@ def my_requests_tool(hub_dir: Path):
         except Exception:  # noqa: BLE001
             log.warning("mcp: my_requests could not read the requests", exc_info=True)
             return "[my_requests: the requests can't be read right now. Try again shortly.]"
-        waiting = [service.with_actions(r, account, email) for r in items]
+        waiting = [service.with_actions(r, account, email, hub_dir=hub_dir) for r in items]
         mine = [r for r in waiting if r.get("allowed_actions")]
         link = service.requests_url()
         if not mine:

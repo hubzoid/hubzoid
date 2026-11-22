@@ -227,3 +227,22 @@ def test_account_proposal_for_existing_person_is_refused(dep):
         dep.svc.propose(actor(ROOT, surface="owui", via="bridge"), dict(
             kind="account", hub="finance", email="ann@x.org", name="Ann"))
     assert e.value.code == "account_exists"
+
+
+def test_an_interrupted_confirmation_shows_as_failed(dep):
+    """A confirmation whose process stopped mid-apply is not left "applying"
+    for good: once well past its expiry it reads as failed, with what to do."""
+    rid = _propose_access(dep)["id"]
+    with dep.gs.engine.begin() as c:
+        c.execute(text("UPDATE hz_change_requests SET status='applying', expires=:e WHERE id=:id"),
+                  {"e": time.time() - 3600, "id": rid})
+    view = dep.svc.get_request(actor(DELEGATE), rid)
+    assert view["status"] == "failed" and "interrupted" in view["result"]
+    actions = [r["action"] for r in dep.gs.read_access_audit(20, request_id=rid)]
+    assert "change_failed" in actions
+    # One still inside its grace period is left alone.
+    other = _propose_access(dep)["id"]
+    with dep.gs.engine.begin() as c:
+        c.execute(text("UPDATE hz_change_requests SET status='applying', expires=:e WHERE id=:id"),
+                  {"e": time.time() - 10, "id": other})
+    assert dep.svc.get_request(actor(DELEGATE), other)["status"] == "applying"

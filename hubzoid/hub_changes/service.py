@@ -160,6 +160,12 @@ def _disk(hub_dir: Path, rel: str) -> Path:
     resolved = target.resolve()
     if not str(resolved).startswith(str(Path(hub_dir).resolve()) + os.sep):
         raise ChangeError(f"{rel} is not inside this hub.")
+    # The same wall as every other reader (knowledge, skills, the file tools):
+    # never restricted/, secrets or state, also through a link to them.
+    from .._fs import agent_read_refusal
+
+    if agent_read_refusal(Path(hub_dir), target):
+        raise ChangeError(f"{rel} can't be read or changed this way.", code="reserved_path")
     return target
 
 

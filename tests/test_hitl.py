@@ -142,6 +142,101 @@ def test_only_the_requester_or_a_named_approver_decides(hub):
                           decision="approve")["status"] == "approved"
 
 
+def test_only_someone_who_can_still_use_the_agent_lets_work_go_on(hub):
+    """An approver whose access ended can no longer approve, answer or ask for
+    changes (a note steers the work). A plain rejection stays open to them."""
+    from hubzoid.access import store_for
+    from hubzoid.hitl import store as st
+
+    (hub / "hitl.yaml").write_text(RULES + "approvers: [ben@example.org]\n")
+    v = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"n": 3})
+    store_for(hub).revoke("ben@example.org", hub.name, "use_hub", actor="test")
+    with pytest.raises(service.RequestError) as refused:
+        service.decide(hub, hub.name, v.request["id"], account_id="u_ben", email="ben@example.org",
+                       decision="approve")
+    assert (refused.value.status, refused.value.code) == (403, "no_access")
+    with service.engine(hub).connect() as conn:
+        assert conn.execute(st.grants.select()).first() is None        # nothing was written
+    assert service.get_for(hub, hub.name, v.request["id"], "u_ben", "ben@example.org")["allowed_actions"] == ["reject"]
+    assert service.decide(hub, hub.name, v.request["id"], account_id="u_ben", email="ben@example.org",
+                          decision="reject")["status"] == "rejected"
+
+    question = service.create(hub, hub.name, caller(), kind="question", title="Which warehouse?",
+                              question="Which warehouse?", approvers=["ben@example.org"])
+    with pytest.raises(service.RequestError) as answered:
+        service.decide(hub, hub.name, question["id"], account_id="u_ben", email="ben@example.org",
+                       decision="answer", answer="North")
+    assert answered.value.code == "no_access"
+    assert service.get_for(hub, hub.name, question["id"], "u_ben", "ben@example.org")["allowed_actions"] == []
+
+    plan = service.create(hub, hub.name, caller(), kind="approval", title="Q3 plan",
+                          subject={"name": "Q3 plan", "digest": "d1", "plan": True},
+                          approvers=["ben@example.org"])
+    with pytest.raises(service.RequestError) as steer:
+        service.decide(hub, hub.name, plan["id"], account_id="u_ben", email="ben@example.org",
+                       decision="request_changes", note="Spend it all on ads")
+    assert steer.value.code == "no_access"
+
+    # The requester's own approval needs access too.
+    (hub / "hitl.yaml").write_text(RULES)
+    own = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"n": 4})
+    store_for(hub).suspend("ana@example.org", actor="test")
+    with pytest.raises(service.RequestError) as blocked:
+        service.decide(hub, hub.name, own.request["id"], account_id="u_ana", email="ana@example.org",
+                       decision="approve")
+    assert blocked.value.code == "no_access"
+
+
+from hypothesis import HealthCheck, example, given, settings  # noqa: E402
+from hypothesis import strategies as hs  # noqa: E402
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(steps=hs.lists(hs.tuples(hs.sampled_from(("grant", "revoke", "approve", "reject", "call")),
+                                hs.sampled_from(("ana", "ben"))), min_size=1, max_size=8))
+@example(steps=[("call", "ana"), ("revoke", "ben"), ("approve", "ben"), ("call", "ana")])
+@example(steps=[("call", "ana"), ("revoke", "ana"), ("approve", "ana"), ("call", "ana")])
+def test_no_approval_no_run(hub, steps):
+    """Whatever happens to people's access in between, a call that asks always
+    runs only after an approval of exactly that call, given by someone who could
+    use the agent at that moment, and each approval admits it once."""
+    import uuid
+
+    from hubzoid.access import store_for
+    from hubzoid.access.evaluator import authorize
+
+    gs = store_for(hub)
+    (hub / "hitl.yaml").write_text("version: 1\ntools:\n  reserve_stock: {ask: always}\n"
+                                   "approvers: [requester, ben@example.org]\n")
+    args = {"run": uuid.uuid4().hex}  # a call of its own for each example
+    waiting, approvals, runs = None, 0, 0
+    for step, name in steps:
+        email, account = f"{name}@example.org", f"u_{name}"
+        if step == "grant":
+            gs.grant(email, hub.name, "use_hub", actor="test")
+        elif step == "revoke":
+            gs.revoke(email, hub.name, "use_hub", actor="test")
+        elif step == "call":
+            verdict = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments=args)
+            if verdict.action == "allow":
+                runs += 1
+            else:
+                waiting = verdict.request
+        elif waiting is not None:
+            could = authorize(hub, email, "use_hub", hub=hub.name, account_id=account).allowed
+            try:
+                out = service.decide(hub, hub.name, waiting["id"], account_id=account, email=email,
+                                     decision=step)
+            except service.RequestError:
+                continue
+            if step == "approve":
+                assert could, "approved by someone who could not use the agent"
+                approvals += 1
+            assert out["status"] in ("approved", "rejected")
+            waiting = None
+        assert runs <= approvals
+
+
 def test_a_new_account_reusing_an_email_never_sees_the_old_accounts_requests(hub):
     # Deleting a person releases their email; whoever gets it next is someone else.
     (hub / "hitl.yaml").write_text(RULES)
@@ -328,6 +423,32 @@ def test_a_slack_card_never_offers_approve_for_arguments_it_cannot_show(hub):
     v = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"note": "x" * 5000})
     blocks = channels.slack_blocks(v.request)
     assert not any(b["type"] == "actions" for b in blocks) and "Hubzoid" in blocks[-1]["text"]["text"]
+
+
+def test_a_waiting_workflow_stops_when_its_own_account_lost_access(hub, monkeypatch):
+    """A named approver who may still decide does not release a run whose own
+    account lost the agent while it waited."""
+    from hubzoid.access import store_for
+    from hubzoid.auth import users
+    from hubzoid.db import operational_engine
+    from hubzoid.workflows import context as wfctx
+    from hubzoid.workflows.identity import IdentityError, RunIdentity
+
+    users.sync_identity(hub, users.get(hub, "u_ana"))
+    ident = RunIdentity("ana@example.org", "u_ana", "run_as", "ana@example.org").to_dict()
+
+    def decided_after_revoke(_hub_dir, _hub, rid):
+        store_for(hub).revoke("ana@example.org", hub.name, "use_hub", actor="test")
+        return {"id": rid, "status": "approved", "decided_by_email": "ben@example.org"}
+
+    monkeypatch.setattr(wfctx, "_HITL_CREATE_STEP", lambda payload: {"id": "r1", "status": "pending"})
+    monkeypatch.setattr(wfctx, "_HITL_READ_STEP", decided_after_revoke)
+    monkeypatch.setattr(wfctx, "_hitl_receive", lambda _rid: True)
+    monkeypatch.setattr("hubzoid.workflows.chat_link.post_request", lambda *a, **k: None)
+    with wfctx.run_scope(hub=hub.name, workflow="restock", hub_dir=hub, engine=operational_engine(hub),
+                         identity=ident):
+        with pytest.raises(IdentityError):
+            wfctx.hub.approve("Restock 40 units", approvers=["ben@example.org"])
 
 
 def test_a_replayed_workflow_request_is_found_not_asked_twice(hub):

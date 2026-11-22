@@ -183,14 +183,19 @@ def _mcp_identity(hub_dir: Path) -> "access.Identity":
                                 account_id=getattr(token, "subject", None) or None)
 
 
-def _mcp_grant_id() -> str:
+def _mcp_grant() -> str:
+    """The MCP connection (OAuth grant) behind this request, or ""."""
     from fastmcp.server.dependencies import get_access_token
 
     try:
         token = get_access_token()
     except Exception:  # noqa: BLE001
         return ""
-    return str((token.claims or {}).get("grant_id") or "")[:16] if token is not None else ""
+    return str((token.claims or {}).get("grant_id") or "") if token is not None else ""
+
+
+def _mcp_grant_id() -> str:
+    return _mcp_grant()[:16]
 
 
 def _admitted(hub_dir: Path, run_id: str) -> tuple["access.Identity", str | None]:
@@ -216,6 +221,16 @@ def _admitted(hub_dir: Path, run_id: str) -> tuple["access.Identity", str | None
         except run_identity.NotAdmitted as exc:
             return ident, f"[{exc}]"
         ident = run_identity.identity(record, MCP_SURFACE, ident.groups)
+        grant = _mcp_grant()
+        if grant:
+            import dataclasses
+
+            from .mcp_oauth_store import digest
+
+            # The connection is checked on every tool call of this call too
+            # (``evaluator.credential_live``), so revoking it stops a call that is
+            # still running, such as a sub-agent's. Only its hash is kept.
+            ident = dataclasses.replace(ident, credential=("mcp_grant", digest(grant)))
     if drain_lib.active():
         return ident, f"[{drain_lib.MESSAGE}]"
     return ident, None

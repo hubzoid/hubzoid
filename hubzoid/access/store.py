@@ -386,7 +386,7 @@ class GrantStore:
         if not subject or subject == EVERYONE or "@" not in subject:
             raise ValueError("a person is required")
         with self._engine.begin() as conn:
-            self._meta_set(conn, "reader_only:" + subject, "1" if reader else "0")
+            self._flag(conn, "reader_only:" + subject, reader)
 
     def everyone_can_use(self, hub: str) -> bool:
         """Whether an "everyone signed in" grant (from before 1.1) opens `hub`."""
@@ -843,6 +843,17 @@ class GrantStore:
     def _bump_revision(self, conn) -> None:
         conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
 
+    def _flag(self, conn, key: str, on: bool) -> bool:
+        """Set a marker an access decision reads (``reader_only:``,
+        ``account_unavailable:``). A change moves the revision, so a decision
+        cached before it (``access.evaluator``) is not used again. Returns
+        whether it changed; an absent marker counts as off."""
+        if (self._meta_get(conn, key) == "1") == bool(on):
+            return False
+        self._meta_set(conn, key, "1" if on else "0")
+        self._bump_revision(conn)
+        return True
+
     # ---- identities (subject rows) ------------------------------------------
 
     def upsert_identity(
@@ -894,9 +905,7 @@ class GrantStore:
                     )
                     self._bump_revision(conn)
                 if owui_id:
-                    self._meta_set(
-                        conn, "account_unavailable:" + subject, "1" if pending else "0"
-                    )
+                    self._flag(conn, "account_unavailable:" + subject, pending)
                 if row:
                     conn.execute(
                         text(
@@ -1185,8 +1194,7 @@ class GrantStore:
             for (subject,) in rows:
                 if subject not in observed:
                     key = "account_unavailable:" + subject
-                    if self._meta_get(conn, key) != "1":
-                        self._meta_set(conn, key, "1")
+                    if self._flag(conn, key, True):
                         self._audit(
                             conn,
                             "owui-identity",
@@ -1216,12 +1224,29 @@ class GrantStore:
         return json.loads(raw) if raw else {}
 
     def set_runtime_health(self, hub: str, **values) -> None:
+        self.update_runtime_health(hub, lambda health: health.update(values))
+
+    def update_runtime_health(self, hub: str, change) -> dict:
+        """Read the hub's runtime health, apply `change(health)` in place and
+        write it back, as one serialized transaction. The dispatcher, the
+        ownership heartbeat and a bridge waiting for ownership all write this
+        record, so a plain read then write lost updates."""
         import json
 
-        old = self.runtime_health(hub)
-        old.update(values)
-        with self._engine.begin() as c:
-            self._meta_set(c, "workflow_health:" + normalize(hub), json.dumps(old))
+        key = "workflow_health:" + normalize(hub)
+        with self._engine.connect() as c:
+            if c.engine.dialect.name == "sqlite":
+                c.exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                c.execute(text("INSERT INTO hz_meta(k, v) VALUES(:k, '{}') "
+                               "ON CONFLICT (k) DO NOTHING"), {"k": key})
+                c.execute(text("SELECT v FROM hz_meta WHERE k=:k FOR UPDATE"), {"k": key})
+            raw = self._meta_get(c, key)
+            health = json.loads(raw) if raw else {}
+            change(health)
+            self._meta_set(c, key, json.dumps(health))
+            c.commit()
+        return health
 
     def paused_workflows(self, hub: str) -> set[str]:
         """Scheduled work the operator paused in `hub` (`md:<task>` for markdown

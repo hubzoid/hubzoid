@@ -632,6 +632,11 @@ class Hub:
                 time.sleep(1.0)
             req = read(str(ctx.hub_dir), ctx.hub, req["id"])
         _wait_out_hold(ctx.hub_dir, ctx.run_id or "")
+        # Whoever decided, the run carries on only while its own account may
+        # still use the hub: access may have ended while it waited.
+        from .identity import recheck
+
+        recheck(ctx.hub_dir, ctx.hub, _identity(ctx), what="Continuing after a person's decision")
         return req
 
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:

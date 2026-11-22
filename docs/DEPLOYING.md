@@ -76,6 +76,11 @@ environment, or a hub's `.env` for that hub only.
 | `HUBZOID_CACHE_TTL` | `1h` | How long the provider keeps the prompt cache. `5m` is cheaper per write. |
 | `HUBZOID_PASSWORD_HASH_CONCURRENCY` | `4` | How many password checks run at once. Lower it on a small machine. |
 | `HUBZOID_FORWARDED_PROTO_HEADER` | unset | A header your front door sets to the scheme people used, trusted over `X-Forwarded-Proto` (`CloudFront-Forwarded-Proto` behind CloudFront and a plain-HTTP load balancer). Set it only when nothing else can reach the port. |
+| `HUBZOID_START_CONCURRENCY` | `3` | How many hubs `hubzoid run` starts at once in a deployment of several hubs. Lower it on a small machine. |
+| `HUBZOID_GATEWAY_BRANDING` | the first hub's `branding/` | Which logo and colours the shared web app uses when several hubs run together: a hub's slug, or a folder that holds a `branding/` folder. |
+| `HUBZOID_IN_CONTAINER` | unset | Any value: treat this process as running in a container. With sign-in off and `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK`, the web app then keeps warning that anyone who reaches the port acts as the owner, even when it listens on loopback inside the container. |
+| `HUBZOID_VISION_MAX_EDGE`, `HUBZOID_VISION_MAX_IMAGES` | `1568`, `4` | Images shown to the model (`HUBZOID_VISION`, on by default): the longest side in pixels after resizing, and how many per message. |
+| `HUBZOID_DISABLE_EDGE` | | No longer read. The start says it is ignored: the edge serves the web app. Remove it. |
 
 Agent turns on Amazon Bedrock AgentCore ([AWS](deploy/aws.md)). `hubzoid deploy init aws` sets all of these:
 
@@ -84,6 +89,7 @@ Agent turns on Amazon Bedrock AgentCore ([AWS](deploy/aws.md)). `hubzoid deploy 
 | `HUBZOID_RUNNER` | `local` | `agentcore` runs each agent turn and its tools on an AgentCore runtime, one microVM per chat. The hub service keeps chats, sign-in, channels, workflows, schedules and approvals. |
 | `HUBZOID_AGENTCORE_RUNTIME_ARN` | unset | The runner's runtime. |
 | `HUBZOID_AGENTCORE_QUALIFIER`, `HUBZOID_AGENTCORE_REGION` | `DEFAULT`, the ARN's region | The runtime's endpoint and region. |
+| `HUBZOID_AGENTCORE_ENDPOINT` | unset | A runner's own address to call instead of the runtime ARN: it receives `POST <address>/invocations` directly, for a runner you host yourself. |
 | `HUBZOID_MCP_HOST` | `local` | `agentcore`: the hub's MCP server also runs as an AgentCore MCP runtime, with this hub's sign-in. |
 | `HUBZOID_MCP_AGENTCORE_URL`, `HUBZOID_MCP_RUNTIME_NAME` | unset | That runtime's address, or its name to look the address up. Sign-in issues tokens for it. |
 | `HUBZOID_ROLE` | unset | Set inside the runtimes only: `runner` or `mcp` (`hubzoid runner start`). Such a process never migrates the database, schedules or answers channels. |

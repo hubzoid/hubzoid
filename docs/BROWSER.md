@@ -71,6 +71,7 @@ compose file supplies it. In dev/direct mode HubZoid runs the sidecar on
 | `HUBZOID_BROWSER_MCP_URL` | — | Point at an externally-run sidecar; HubZoid then spawns nothing. |
 | `HUBZOID_BROWSER_CDP_URL` | — | Attach the sidecar to a browser pool for hard limits. **Must be** `ws://host:3000?token=…` (the `http://` form drops the token). |
 | `HUBZOID_BROWSER_CHANNEL` | `chromium` | Browser build. Keep `chromium` in containers (no system Chrome there). |
+| `HUBZOID_BROWSER_MCP_VERSION` | `0.0.81` | The pinned `@playwright/mcp` version the sidecar runs. `latest` floats deliberately. |
 | `HUBZOID_BROWSER_CONCURRENT` | `2` | Parallel browser slots. **This is the memory dial** — ~300–430 MB per live slot. |
 | `HUBZOID_BROWSER_QUEUED` | `5` | Waiters before new requests are rejected. |
 | `HUBZOID_BROWSER_TIMEOUT` | `60` | Seconds; reaps stuck sessions. |
