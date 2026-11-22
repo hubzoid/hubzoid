@@ -956,7 +956,7 @@ _MARKUP_RE = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(```+|~~~+)", re.MULTILINE)
-_ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
+_ATTR_RE = re.compile(r'(?<![\w-])([\w-]+)="([^"]*)"')   # a name starts a word: linear time
 _KV_RE = re.compile(r"(?:^|(?<=\s))([A-Za-z_][A-Za-z0-9_]*)=")
 
 
@@ -1287,7 +1287,7 @@ class Attachments:
                 with source_path.open("rb") as fh:
                     digest = hashlib.file_digest(fh, "sha256").hexdigest()
 
-            def matches(path: Path) -> bool:
+            def matches(path: Path, digest=digest, source_size=source_size) -> bool:
                 if not path.is_file():
                     return False
                 # Older bridges kept only the chat-local bytes. With no source

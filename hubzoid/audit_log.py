@@ -31,6 +31,7 @@ import queue
 import re
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -74,7 +75,10 @@ _IDENTIFIER_NAMES = frozenset({"path", "file", "filename", "file_path", "filepat
                                "table", "collection", "channel", "sheet", "page", "workflow", "name",
                                "slug", "ref", "issue", "ticket", "project"})
 _KEEP = 200
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Starts where no address character comes before it and takes the local part
+# possessively, so a long word is scanned once, not once per position (a 1 MiB
+# tool argument would take hours). Any local-part length.
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]++@[\w-]+\.[\w.-]+")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _PHONE = re.compile(r"(?<![\w])\+?\d[\d ()-]{7,}\d")
 
@@ -339,7 +343,6 @@ def after_commit(conn, fn) -> None:
     """Run ``fn`` once ``conn``'s transaction commits, and drop it on a
     rollback, so a log line never describes a change that did not happen."""
     global _PENDING
-    import weakref
 
     try:
         from sqlalchemy import event
