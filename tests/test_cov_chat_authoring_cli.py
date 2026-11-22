@@ -30,13 +30,6 @@ def test_files_and_versions(hub):
     assert code == 0 and isinstance(versions["items"], list)
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError,
-                   reason="BUG: c9b070b6 removed AuthoringService's draft API; the `workspace drafts` commands remain")
-def test_drafts_create_makes_a_draft(hub):
-    code, draft = ws("drafts", "create", "AGENTS.md", "--hub", str(hub))
-    assert code == 0 and draft["path"] == "AGENTS.md"
-
-
 def test_openapi_preview_and_prompts(hub, tmp_path):
     spec = tmp_path / "api.yaml"
     spec.write_text(

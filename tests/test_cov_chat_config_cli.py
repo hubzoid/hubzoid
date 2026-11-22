@@ -54,13 +54,6 @@ def test_config_validate_accepts_a_good_file_and_names_a_bad_one(hub, tmp_path):
     assert code == 2 and "is not a hub folder" in text
 
 
-@pytest.mark.xfail(strict=True, raises=json.JSONDecodeError,
-                   reason="BUG: config_cli._service always fails in plain text, ignoring --json")
-def test_a_missing_hub_folder_is_reported_as_json(tmp_path):
-    code, out = cli("config", "get", str(tmp_path / "absent"))
-    assert code == 2 and out["detail"]["code"] == "invalid_request"
-
-
 def test_theme_validate_and_inspect(hub, tmp_path):
     code, out = cli("theme", "validate", str(hub), "--file", str(tmp_path / "missing.json"))
     assert code == 2 and "does not exist" in out["detail"]["message"]

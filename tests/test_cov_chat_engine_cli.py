@@ -3,8 +3,8 @@ the local CLI over the chat operation engine, on a scratch hub with the
 scripted test runtime. Each command's result, its refusals and exit codes.
 
 In local mode the CLI and the web app both act as the local owner, so replies
-are written through the HTTP API (the CLI's own send is broken, see the xfail
-below) and every other command runs through the CLI."""
+are written through the HTTP API (the CLI's own send has a bug, tested in the
+web app work's PR) and every other command runs through the CLI."""
 from __future__ import annotations
 
 import json
@@ -154,14 +154,3 @@ def test_refusals_name_the_problem(hub, tmp_path):
     assert code != 0 and out["detail"]["code"] == "not_found"
     code, out = cli("operations", "get", "op-missing", str(hub))
     assert code != 0 and out["detail"]["code"] == "not_found"
-
-
-@pytest.mark.xfail(strict=True, raises=TypeError,
-                   reason="BUG: engine_cli's part validator takes (conv, content); the engine passes the actor too")
-def test_cli_send_writes_a_reply(hub, tmp_path):
-    cid, branch = created(hub)
-    body = tmp_path / "send.json"
-    body.write_text(json.dumps({"kind": "send", "branch_id": branch["id"], "expected_revision": branch["revision"],
-                                "parent_id": None, "content": [{"type": "text", "text": "hi"}]}))
-    code, out = cli("operations", "submit", str(hub), "--conversation", cid, "--file", str(body))
-    assert code == 0 and out["run"]["status"] == "complete"

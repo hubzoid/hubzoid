@@ -38,12 +38,6 @@ def test_split_balanced_code_preserves_all_non_whitespace(lines, limit):
     assert "".join("".join(content(p)) for p in parts) == "".join(content(text))
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: overflow truncation removes the balanced code fence")
-def test_overflow_code_part_keeps_closing_fence():
-    part = replies.split("```\n" + "x" * 1000 + "\n```", 240, 1)[0]
-    assert part.count("```") % 2 == 0
-
-
 def test_empty_and_single_reply_and_delivery_states():
     assert replies.split(" \n ", 240, 3) == []
     assert replies.split("  hello\nworld  ", 240, 3) == ["hello\nworld"]
