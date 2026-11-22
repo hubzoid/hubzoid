@@ -72,8 +72,9 @@ def test_missing_changelog_prevents_new_release(tmp_path):
 
 def test_release_candidates_can_validate_without_publishing():
     workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
-    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/secrets.yml",
-                         ROOT / ".github/workflows/tests.yml", ROOT / ".github/workflows/windows.yml"]
+    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/nightly.yml",
+                         ROOT / ".github/workflows/secrets.yml", ROOT / ".github/workflows/tests.yml",
+                         ROOT / ".github/workflows/windows.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
     config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert config["on"] == {
@@ -86,6 +87,16 @@ def test_release_candidates_can_validate_without_publishing():
             "github.event_name != 'pull_request' || "
             "contains(github.event.pull_request.labels.*.name, 'release-candidate')"
         )
+
+
+def test_nightly_runs_on_a_schedule_with_no_secrets():
+    """Coverage and the large property search run once a day, read-only, with
+    no secrets (so no real model) and never on pull requests."""
+    text = (ROOT / ".github/workflows/nightly.yml").read_text()
+    config = yaml.load(text, Loader=yaml.BaseLoader)
+    assert set(config["on"]) == {"schedule", "workflow_dispatch"}
+    assert config["permissions"] == {"contents": "read"}
+    assert "secrets." not in text
 
 
 def test_windows_runs_on_main_and_release_candidates_not_every_pull_request():

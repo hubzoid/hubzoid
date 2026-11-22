@@ -46,10 +46,13 @@ def test_request_created_reaches_the_people_who_may_act(client, hub, monkeypatch
     assert len(seen) == 1
     p = seen[0]
     assert p["type"] == "request.created" and p["request_id"] == mine["id"] and p["kind"] == "approval"
-    # Never the request's content. Ids are random, so they are left out of the
-    # text check (a request id once held "900" and failed this by chance).
+    # Never the request's content. Ids and the event time are random, so they
+    # are left out of the text check (a request id once held "900", and so did
+    # an occurred_at of ...712.8900657, each failing this by chance).
     assert "title" not in p and "arguments" not in p
-    content = str({k: v for k, v in p.items() if k != "id" and not k.endswith("_id")})
+    assert isinstance(p["occurred_at"], float)
+    content = str({k: v for k, v in p.items()
+                   if k not in ("id", "occurred_at") and not k.endswith("_id")})
     assert "ACME" not in content and "900" not in content
 
 

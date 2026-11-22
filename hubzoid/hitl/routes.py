@@ -192,8 +192,6 @@ RECOVERY_SECONDS = 5.0
 async def recovery_loop(ctx) -> None:
     """Continue chats whose request was decided elsewhere (the CLI, a
     channel, another bridge) or whose continuation a restart interrupted."""
-    import asyncio
-
     import sqlalchemy as sa
 
     from . import store

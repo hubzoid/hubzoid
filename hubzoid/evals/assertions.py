@@ -121,10 +121,10 @@ def check_tool_names(case, inventory) -> list[Check]:
     out: list[Check] = []
     fields = (("expect_tools", case.expect_tools), ("forbid_tools", case.forbid_tools),
               ("expect_tool_args", list((getattr(case, "expect_tool_args", None) or {}).keys())))
-    for field, names in fields:
+    for key, names in fields:
         for name in names or []:
             if not _tool_known(name, inventory):
-                out.append(Check("tool_name", False, f"{field}: no tool named {name} in this agent"))
+                out.append(Check("tool_name", False, f"{key}: no tool named {name} in this agent"))
     return out
 
 

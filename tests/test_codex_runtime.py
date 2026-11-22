@@ -138,7 +138,7 @@ async def test_real_codex_has_only_hub_tools(tmp_path, monkeypatch, code_mode):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from hubzoid import factory_codex
     try:
-        binary = factory_codex.codex_binary()
+        factory_codex.codex_binary()
     except RuntimeError:
         pytest.skip("audited Codex CLI not installed")
     requests = []

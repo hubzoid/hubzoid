@@ -31,6 +31,7 @@ import queue
 import re
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -339,7 +340,6 @@ def after_commit(conn, fn) -> None:
     """Run ``fn`` once ``conn``'s transaction commits, and drop it on a
     rollback, so a log line never describes a change that did not happen."""
     global _PENDING
-    import weakref
 
     try:
         from sqlalchemy import event

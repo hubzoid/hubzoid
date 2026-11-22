@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 
 # How long an argument JSON we will inline alongside the tool name. Keep
 # this short — the goal is to identify the call, not to dump payloads.
@@ -80,20 +81,38 @@ def format_artifact_footer(artifacts: list, shown_text: str = "") -> str:
     """
     if not artifacts:
         return ""
-    lines = []
-    seen: set[str] = set()
+    # One link per file. A file written twice this turn gets two URLs when
+    # links expire: the signed query carries ``e=<now + ttl>``, so a rewrite a
+    # second later differs. Key on the URL without its query (the file's path)
+    # and link the last URL recorded (the latest write), in the order files
+    # first appeared.
+    latest: dict[str, tuple[str, str]] = {}
+    issued: dict[str, list[str]] = {}
     for art in artifacts:
         url = (art or {}).get("url")
-        name = (art or {}).get("name") or "file"
-        # Skip blanks, links the model already echoed, and repeats — the same
-        # file written more than once this turn shares one URL.
-        if not url or url in shown_text or url in seen:
+        if not url:
             continue
-        seen.add(url)
+        name = (art or {}).get("name") or "file"
+        key = url.split("?", 1)[0]
+        latest[key] = (name, url)  # an existing key keeps its place
+        issued.setdefault(key, []).append(url)
+    lines = []
+    for key, (name, url) in latest.items():
+        # The model already echoed one of the links issued for this file. A
+        # mention of the path with any other token, or an issued link with
+        # characters run on, does not count: that link may not open.
+        if any(_echoed(shown_text, u) for u in issued[key]):
+            continue
         lines.append(f"[Download {name}]({url})")
     if not lines:
         return ""
     return "\n\n" + "\n".join(lines) + "\n"
+
+
+def _echoed(text: str, url: str) -> bool:
+    """True when ``text`` holds ``url`` whole, not as the start of a longer
+    URL (an issued link with more query characters run on)."""
+    return re.search(re.escape(url) + r"(?![\w%&=+/#?~-])", text) is not None
 
 
 def format_error(name: str, message: str | None = None) -> str:
