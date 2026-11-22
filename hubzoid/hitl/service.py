@@ -331,6 +331,13 @@ def decider_refusal(hub_dir: Path, account_id: str, email: str, decision: str) -
     comes through ``decide`` and so through here."""
     if decision in STOPS_ONLY:
         return None
+    from ..embed.caller import is_app_subject
+
+    if is_app_subject(account_id):
+        # A person an embedding app vouches for has no grants: their route
+        # checks the app's fresh token and its agents on every request
+        # (``embed.agui``), this decision included.
+        return None
     from ..access.evaluator import authorize
     from ..access.store import USE_HUB
 
