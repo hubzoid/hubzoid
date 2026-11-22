@@ -137,7 +137,7 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     unit = config["jobs"]["unit"]
     assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
     pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
-    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}"]
+    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }} --durations=25"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
