@@ -28,6 +28,7 @@ import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
 import { FilesContext } from "./parts";
 import { DocumentsContext } from "./documents-context";
+import { DocumentAnnouncer, type ListMode } from "./doc-announcer";
 import { CardsContext, cardsConfig } from "./cards/cards";
 import { useTheme } from "../lib/theme";
 import { ChatSession, MAX_UPLOAD_BYTES } from "./session";
@@ -450,23 +451,17 @@ function ChatView({
   // "settle" opens what's new.
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [panel, setPanel] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
-  const announced = useRef<Map<string, string>>(new Map());
-  const listAsked = useRef(0);
-  const listShown = useRef(0);
+  const announcer = useRef(new DocumentAnnouncer());
   const refreshArtifacts = useCallback(
-    async (mode: "prime" | "event" | "settle") => {
+    async (mode: ListMode) => {
       const cid = feed.conversationId ?? conversationRef.current?.id;
       if (!cid) return;
-      const asked = ++listAsked.current;
+      const ticket = announcer.current.ask();
       try {
         const list = await loadArtifacts(session.apiBase, cid);
-        if (asked < listShown.current) return; // a newer list is already on screen
-        listShown.current = asked;
-        setArtifacts(list);
-        if (mode === "event") return;
-        const fresh = list.find((a) => announced.current.get(a.artifact_id) !== a.current_version_id);
-        announced.current = new Map(list.map((a) => [a.artifact_id, a.current_version_id]));
-        if (mode === "settle" && fresh && window.innerWidth >= 1024) setPanel({ open: true, id: fresh.artifact_id });
+        const { show, open } = announcer.current.answer(ticket, mode, list);
+        if (show) setArtifacts(list);
+        if (open && window.innerWidth >= 1024) setPanel({ open: true, id: open });
       } catch {
         /* the conversation still works without its documents list */
       }
@@ -474,8 +469,10 @@ function ChatView({
     [feed, session],
   );
   useEffect(() => {
-    void refreshArtifacts("prime");
-  }, [refreshArtifacts, conversation?.id]);
+    // A conversation that gets its id from this tab's first send may already
+    // hold that reply's documents: those are still to be announced.
+    void refreshArtifacts(feed.activeRun || feed.pending ? "event" : "prime");
+  }, [refreshArtifacts, feed, conversation?.id]);
   const documentsCid = feed.conversationId ?? conversation?.id ?? null;
   const documents = useMemo(
     () =>
@@ -504,7 +501,9 @@ function ChatView({
         }
         const serverTitle = feed.snapshot?.conversation.title;
         if (serverTitle && serverTitle !== title && feed.conversationId) session.events.onTitle(feed.conversationId, serverTitle);
-        const running = !!feed.activeRun;
+        // A send still on its way counts: a quick reply can end before this
+        // tab ever sees it running.
+        const running = !!feed.activeRun || !!feed.pending;
         if (wasRunning.current && !running && feed.conversationId) {
           session.events.onRunSettled(feed.conversationId);
           announce(t.chat.responseDone);
