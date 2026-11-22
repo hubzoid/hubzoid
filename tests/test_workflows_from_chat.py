@@ -594,7 +594,6 @@ def test_stopping_during_run_leaves_report_stopped(hub, engine, tmp_path):
     from hubzoid.artifacts import series
     proposal, out = _save(hub)
     sid = out['schedule'].id
-    run_id = out['run_id']
     found = series.for_owner(hub, 'reports', MEERA)[0]
     personal.owner_stop(hub, 'reports', MEERA, sid)
     assert series.state(hub, series.get(hub, found.id))['state'] == 'stopped'

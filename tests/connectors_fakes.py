@@ -141,7 +141,7 @@ def change(hub: Path, connector_id: str, changes: dict, *, actor: str = "test"):
     old = path.read_text()
     path.unlink()
     try:
-        c = define(hub, body)
+        define(hub, body)
     except Exception:
         path.write_text(old)
         raise
