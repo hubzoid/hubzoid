@@ -386,7 +386,7 @@ class GrantStore:
         if not subject or subject == EVERYONE or "@" not in subject:
             raise ValueError("a person is required")
         with self._engine.begin() as conn:
-            self._meta_set(conn, "reader_only:" + subject, "1" if reader else "0")
+            self._flag(conn, "reader_only:" + subject, reader)
 
     def everyone_can_use(self, hub: str) -> bool:
         """Whether an "everyone signed in" grant (from before 1.1) opens `hub`."""
@@ -843,6 +843,17 @@ class GrantStore:
     def _bump_revision(self, conn) -> None:
         conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
 
+    def _flag(self, conn, key: str, on: bool) -> bool:
+        """Set a marker an access decision reads (``reader_only:``,
+        ``account_unavailable:``). A change moves the revision, so a decision
+        cached before it (``access.evaluator``) is not used again. Returns
+        whether it changed; an absent marker counts as off."""
+        if (self._meta_get(conn, key) == "1") == bool(on):
+            return False
+        self._meta_set(conn, key, "1" if on else "0")
+        self._bump_revision(conn)
+        return True
+
     # ---- identities (subject rows) ------------------------------------------
 
     def upsert_identity(
@@ -894,9 +905,7 @@ class GrantStore:
                     )
                     self._bump_revision(conn)
                 if owui_id:
-                    self._meta_set(
-                        conn, "account_unavailable:" + subject, "1" if pending else "0"
-                    )
+                    self._flag(conn, "account_unavailable:" + subject, pending)
                 if row:
                     conn.execute(
                         text(
@@ -1185,8 +1194,7 @@ class GrantStore:
             for (subject,) in rows:
                 if subject not in observed:
                     key = "account_unavailable:" + subject
-                    if self._meta_get(conn, key) != "1":
-                        self._meta_set(conn, key, "1")
+                    if self._flag(conn, key, True):
                         self._audit(
                             conn,
                             "owui-identity",

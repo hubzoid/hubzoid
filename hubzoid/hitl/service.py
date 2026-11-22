@@ -315,6 +315,36 @@ def list_for(hub_dir: Path, hub_id: str, account_id: str, email: str, *, status:
     return out
 
 
+#: Decisions that only stop work: open to anyone eligible, even after their access ended.
+STOPS_ONLY = frozenset({"reject"})
+
+
+def decider_refusal(hub_dir: Path, account_id: str, email: str, decision: str) -> RequestError | None:
+    """Why this person may not make this decision now, or None.
+
+    Being the requester or a named approver is not enough: an approval, an
+    answer or requested changes let work go on (a note is passed on as what to
+    change), so the person must still be able to use this agent, decided by the
+    one access check (``access.evaluator.authorize``: account active, not
+    blocked, ``use_hub``). A plain rejection only stops work, so it stays open.
+    Every way to decide (the web page, a key, MCP, a channel reply, the CLI)
+    comes through ``decide`` and so through here."""
+    if decision in STOPS_ONLY:
+        return None
+    from ..access.evaluator import authorize
+    from ..access.store import USE_HUB
+
+    account = account_id if account_id and "@" not in account_id else None
+    verdict = authorize(Path(hub_dir), email or account_id, USE_HUB, hub=Path(hub_dir).name,
+                        account_id=account)
+    if verdict.allowed:
+        return None
+    if verdict.reason == "store_error":
+        return RequestError(503, "access_unavailable", "Access could not be checked. Try again shortly.")
+    return RequestError(403, "no_access", "You no longer have access to this agent, so you can't approve or "
+                                          "answer this. Ask an administrator for access, or reject it.")
+
+
 def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, email: str, decision: str,
            expected_revision: int | None = None, digest: str | None = None, answer: str | None = None,
            note: str | None = None, via: str = "web", credential_id: str = "") -> dict:
@@ -360,6 +390,9 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
                 answer = re.sub(r"\s*\(recommended\)\s*$", "", answer, flags=re.I) or answer
         if decision == "request_changes" and not note:
             raise RequestError(422, "validation_failed", "Say what should change.")
+        refused = decider_refusal(hub_dir, account_id, email, decision)
+        if refused is not None:
+            raise refused
         status = {"reject": "rejected", "answer": "answered", "request_changes": "rejected"}.get(decision, "approved")
         done = conn.execute(st.requests.update().where(
             r.id == request_id, r.status == "pending", r.revision == req["revision"]).values(

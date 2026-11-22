@@ -167,6 +167,42 @@ def test_folder_names_are_canonical_and_prompts_are_in_scope(hub):
     assert hc.check_path("prompts/tone.md") == "prompts/tone.md"
     with pytest.raises(hc.ChangeError):
         hc.check_path("tools_local/x.md")
+    # A shared prompt reads, proposes and applies like knowledge.
+    (hub / "prompts").mkdir()
+    (hub / "prompts" / "tone.md").write_text("---\nname: Tone\n---\nBe brief.\n")
+    assert "Be brief." in hc.read_text(hub, "prompts/tone.md")
+    ch = hc.propose(hub, title="Tone", actor=ANA, via="chat",
+                    edits=[{"path": "prompts/tone.md", "old_text": "Be brief.", "new_text": "Be kind."}])
+    assert hc.decide(hub, ch["id"], actor=OWNER, decision="approve")["status"] == "applied"
+    assert "Be kind." in (hub / "prompts" / "tone.md").read_text()
+
+
+def test_restricted_files_stay_out_of_reach_through_links(hub):
+    """read_hub_file and proposals obey the same wall as every other reader:
+    a link into restricted/ is refused for reading, proposing and applying."""
+    import os
+
+    (hub / "restricted").mkdir(exist_ok=True)
+    (hub / "restricted" / "secret.md").write_text("TOP SECRET\n")
+    os.symlink(hub / "restricted" / "secret.md", hub / "knowledge" / "notes.md")
+    os.symlink(hub / "restricted", hub / "knowledge" / "vault")
+    for path in ("knowledge/notes.md", "knowledge/vault/secret.md"):
+        with pytest.raises(hc.ChangeError) as refused:
+            hc.read_text(hub, path)
+        assert refused.value.code == "reserved_path"
+    with pytest.raises(hc.ChangeError):
+        hc.propose(hub, title="x", actor=OWNER, via="chat",
+                   edits=[{"path": "knowledge/vault/new.md", "content": "planted"}])
+    # A folder that becomes a link after the proposal is refused when applied.
+    (hub / "knowledge" / "later").mkdir()
+    ch = hc.propose(hub, title="y", actor=ANA, via="chat",
+                    edits=[{"path": "knowledge/later/new.md", "content": "hello"}])
+    (hub / "knowledge" / "later").rmdir()
+    os.symlink(hub / "restricted", hub / "knowledge" / "later")
+    with pytest.raises(hc.ChangeError):
+        hc.decide(hub, ch["id"], actor=OWNER, decision="approve")
+    assert sorted(x.name for x in (hub / "restricted").iterdir()) == ["secret.md"]
+    assert "Orders over" in hc.read_text(hub, "knowledge/pricing.md")   # ordinary files still read
 
 
 def test_deleted_notes_keep_their_revision_so_a_stale_editor_fails(hub):

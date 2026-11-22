@@ -198,3 +198,65 @@ def test_legacy_runs_say_so(hub):
     record = run_identity.admit(hub, run_kind="workflow", run_id="old", acts_as_email=None,
                                 requested_by="workflow:nightly", legacy=True)
     assert record["legacy"] and "Older run" in run_identity.describe(record)
+
+
+def test_a_reader_marker_ends_access_from_everyone_signed_in(hub):
+    """Someone a report link brought in counts only grants made to them by
+    name, even when "everyone signed in" opened the agent a moment before."""
+    person(hub)
+    gs = access.store_for(hub)
+    gs.grant("*", hub.name, "use_hub", actor="test", carry_over_public=True)
+    assert evaluator.authorize(hub, "ana@example.com", "use_hub", hub=hub.name)
+    gs.set_reader("ana@example.com")
+    assert evaluator.authorize(hub, "ana@example.com", "use_hub", hub=hub.name).reason == "missing_grant"
+
+
+# -- property: the decision cache never changes a decision -----------------------
+from hypothesis import HealthCheck, given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+_OPS = ("grant", "revoke", "block", "reactivate", "reader", "not_reader", "pending", "active",
+        "unavailable", "available", "revoke_credentials", "everyone")
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(ops=st.lists(st.tuples(st.sampled_from(_OPS), st.integers(0, 1)), min_size=1, max_size=8))
+def test_the_cache_never_changes_a_decision(hub, ops):
+    """After any sequence of access changes, a check answered from the cache is
+    the same as one worked out afresh."""
+    import uuid
+
+    gs = access.store_for(hub)
+    tag = uuid.uuid4().hex[:8]
+    people = [users.create(hub, email=f"p{i}-{tag}@example.com", name="P") for i in range(2)]
+    for p in people:
+        users.sync_identity(hub, p)
+
+    def decide(p):
+        return evaluator.authorize(hub, p["email"], "use_hub", hub=hub.name, account_id=p["id"])
+
+    for op, i in ops:
+        p = people[i]
+        for q in people:
+            decide(q)  # warm the cache with the state before the change
+        if op == "grant":
+            gs.grant(p["email"], hub.name, "use_hub", actor="test")
+        elif op == "revoke":
+            gs.revoke(p["email"], hub.name, "use_hub", actor="test")
+        elif op in ("block", "reactivate"):
+            gs.suspend(p["email"], actor="test", suspended=op == "block")
+        elif op in ("reader", "not_reader"):
+            gs.set_reader(p["email"], op == "reader")
+        elif op in ("pending", "active"):
+            users.set_status(hub, p["id"], op)
+        elif op in ("unavailable", "available"):
+            gs.upsert_identity(email=p["email"], owui_id=p["id"], pending=op == "unavailable")
+        elif op == "revoke_credentials":
+            users.revoke_credentials(hub, p["id"])
+        elif op == "everyone" and not gs.everyone_can_use(hub.name):
+            gs.grant("*", hub.name, "use_hub", actor="test", carry_over_public=True)
+        for q in people:
+            cached = decide(q)
+            evaluator.clear_cache()
+            fresh = decide(q)
+            assert (cached.allowed, cached.reason) == (fresh.allowed, fresh.reason), (op, q["email"])

@@ -94,6 +94,11 @@ SURFACES = frozenset({"console", "owui", "web", "api", "mcp", "whatsapp", "teleg
 #: Anonymous, `workflow`, `system` and every Slack surface are refused.
 TOOL_SURFACES = frozenset({"owui", "web", "api", "mcp", "whatsapp", "telegram"})
 MAX_PENDING_REQUESTS = 20
+# Seconds past its expiry after which a confirmation still marked "applying"
+# was interrupted (applying takes seconds), and what the person is told.
+APPLYING_GRACE_SECONDS = 300
+INTERRUPTED = ("This change was interrupted while it was being applied. Check the person's access in "
+               "Settings, then ask again if it is not there.")
 # Refusals that happen before anything is written; a confirmation that hits one
 # leaves its request pending so the manager can correct the input.
 _RETRYABLE = frozenset({"rejected", "invalid_password"})
@@ -1461,11 +1466,29 @@ class AccessService:
                 if done:
                     gs.write_audit(conn, who, "change_expired", subject=target, hub=hub,
                                    surface=surface, request_id=rid)
+            # A confirmation whose process stopped while applying it (a crash, a
+            # restart) is left "applying". Well past its expiry nothing is still
+            # working on it: it shows as failed, so the person checks and asks again.
+            stale = where.replace("status='pending' AND expires < :now",
+                                  "status='applying' AND expires < :stale")
+            rows = conn.execute(
+                text(f"SELECT id, actor, surface, hub, target FROM hz_change_requests WHERE {stale}"),
+                {**params, "stale": now - APPLYING_GRACE_SECONDS},
+            ).fetchall()
+            for rid, who, surface, hub, target in rows:
+                done = conn.execute(
+                    text("UPDATE hz_change_requests SET status='failed', decided=:now, result=:r "
+                         "WHERE id=:id AND status='applying'"),
+                    {"id": rid, "now": now, "r": INTERRUPTED},
+                ).rowcount
+                if done:
+                    gs.write_audit(conn, who, "change_failed", subject=target, hub=hub,
+                                   surface=surface, request_id=rid)
 
     def get_request(self, actor: Actor, request_id: str) -> dict:
         row = self._own_row(actor, request_id)
         now = time.time()
-        if row["status"] == "pending" and row["expires"] < now:
+        if row["status"] in ("pending", "applying") and row["expires"] < now:
             self._expire(now, request_id=row["id"])
             row = self._own_row(actor, request_id)
         plan = json.loads(row["plan"])

@@ -427,6 +427,31 @@ def test_approval_clears_the_unavailable_marker(hub, owner):
         assert gs._meta_get(conn, "account_unavailable:w2@example.com") == "0"  # noqa: SLF001
 
 
+def test_an_approved_signup_can_use_the_agent_at_once(hub, owner):
+    """A refusal cached while the account waited never outlives the approval,
+    including a check that lands between its two writes (status, then marker)."""
+    from hubzoid.access.evaluator import authorize
+
+    def decision(account):
+        return authorize(hub, account["email"], "use_hub", hub=hub.name, account_id=account["id"])
+
+    gs = store_for(hub)
+    waiting = users.create(hub, email="w3@example.com", name="W", status="pending", source="signup")
+    users.sync_identity(hub, waiting)
+    gs.grant("w3@example.com", hub.name, "use_hub", actor="test")  # granted before signup finished
+    assert decision(waiting).reason == "account_inactive"
+    AccessService(hub).approve_account(actor(), "w3@example.com")
+    assert decision(waiting).allowed
+
+    racing = users.create(hub, email="w4@example.com", name="W", status="pending", source="signup")
+    users.sync_identity(hub, racing)
+    gs.grant("w4@example.com", hub.name, "use_hub", actor="test")
+    users.set_status(hub, racing["id"], "active")           # the approval's first write
+    assert decision(racing).reason == "blocked"             # the marker is still set: cached
+    gs.upsert_identity(email="w4@example.com", owui_id=racing["id"], pending=False)
+    assert decision(racing).allowed
+
+
 def test_localhost_addresses_get_no_account_or_link(hub, owner):
     service = AccessService(hub)
     with pytest.raises(Denied) as exc:

@@ -875,3 +875,30 @@ def test_read_only_hint_on_a_later_page_reaches_the_approval_gate(connected, mon
     with access.identity_scope(ana):
         out = asyncio.run(apps.call(hub, ana, "my_mail__peek", {}))
     assert ran == ["peek"] and out.content[0].text == "peeked"
+
+
+def test_a_running_call_stops_when_its_connection_is_revoked(tmp_path, monkeypatch):
+    """Revoking an assistant's connection stops a call still running (a
+    sub-agent's tool calls), not only the next request."""
+    hub = _mk_hub(tmp_path)
+    (hub / "tools_local").mkdir()
+    (hub / "tools_local" / "probe.py").write_text(
+        "from agents import function_tool\n\n"
+        "@function_tool\n"
+        "def revoke_then_check() -> str:\n"
+        '    """Revoke this connection mid-call, then ask what the next tool call would see."""\n'
+        "    from pathlib import Path\n"
+        "    from hubzoid.access.evaluator import check_run\n"
+        "    from hubzoid.access.identity import current_identity\n"
+        "    from hubzoid.mcp_oauth_store import OAuthStore\n"
+        f"    hub = Path({str(hub)!r})\n"
+        "    store = OAuthStore(hub, 'https://hub.example/mcp')\n"
+        "    with store.engine.begin() as c:\n"
+        "        for g in store.grants(c):\n"
+        "            store.revoke(c, g['id'])\n"
+        "    return 'next call: ' + (check_run(hub, current_identity()).reason or 'allowed')\n")
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    result = _result(_call(app, _rpc("tools/call", {"name": "revoke_then_check", "arguments": {}})))
+    assert result["content"][0]["text"] == "next call: credential_ended"
