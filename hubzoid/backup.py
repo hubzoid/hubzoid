@@ -1155,7 +1155,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, postgres_url: s
     with tempfile.TemporaryDirectory(prefix=".hubzoid-restore-", dir=first_parent) as tmp:
         with tarfile.open(archive, "r:gz") as tar:
             safe = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-            tar.extractall(tmp, members=list(_safe_members(tar)), **safe)
+            tar.extractall(tmp, members=list(_safe_members(tar)), **safe)  # noqa: S202 - members checked by _safe_members, data filter where available
         for root in index["roots"]:
             src, target = Path(tmp) / root["id"], targets[root["id"]]
             if root["kind"] == "file":
