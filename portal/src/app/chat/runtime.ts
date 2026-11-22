@@ -19,7 +19,8 @@ import { ApiError, enc, get, hubUrl, patch, post, put } from "../lib/api";
 import { randomId } from "../lib/ids";
 import type { ServerMessage, ServerPart } from "../lib/types";
 import { fileRefOf, toRepository, type ConvertContext } from "./convert";
-import { deleteGate, forgetSentDrafts, laneFor } from "./runtime-rules";
+import { deleteGate, forgetSentDrafts, laneFor, sendQueue, settleWithin } from "./runtime-rules";
+import { LiveStream, type StreamLike } from "./live";
 
 /** The ExternalStoreAdapter fields Hubzoid binds (checked against the pin). */
 export { ADAPTER_FIELDS, UNBOUND_FIELDS } from "./runtime-rules";
@@ -68,6 +69,8 @@ export type Snapshot = {
 type Pending = { text: string; parts: ServerPart[]; parentId: string | null };
 
 const RUNNING = new Set(["admitted", "streaming", "waiting", "stopping"]);
+/** How long Stop waits for a send that is still on its way. */
+const STOP_WAIT_MS = 10_000;
 const LIVE_QUEUE = new Set(["queued", "paused", "blocked", "needs_review", "dispatching"]);
 
 function newKey() {
@@ -101,11 +104,22 @@ export class ConversationFeed {
   error: ApiError | null = null;
   loading = true;
   version = 0;
+  /** Bumped when this conversation's documents may have changed (a new
+   *  version, or a snapshot reloaded after the stream missed events). */
+  documentsSeq = 0;
   private listeners = new Set<() => void>();
-  private source: EventSource | null = null;
+  private stream: LiveStream;
   private refetchTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
-  private retry = 0;
+  /** When each live reply copy last changed: a snapshot asked for after that replaces it. */
+  private liveAt = new Map<string, number>();
+  private loadsStarted = 0;
+  private loadApplied = 0;
+  /** Sends go one at a time, in order (a quick second send waits for the first). */
+  private sends = sendQueue();
+  /** The queue request of the send under way, for a Stop pressed right after Send. */
+  private posting: Promise<unknown> | null = null;
+  private pageListeners: (() => void) | null = null;
 
   conversationId: string | null;
   apiBase: string;
@@ -121,6 +135,16 @@ export class ConversationFeed {
     } else if (!conversationId) {
       this.loading = false;
     }
+    this.stream = new LiveStream({
+      open: (after) =>
+        new EventSource(this.url(`/api/conversations/${enc(this.conversationId!)}/events?after=${after}`), {
+          withCredentials: true,
+        }) as unknown as StreamLike,
+      cursor: () => this.snapshot?.cursor ?? 0,
+      reload: () => this.reload(),
+      watching: () => !!this.activeRun || !!this.pending,
+      onEvent: (data) => this.onEvent(data),
+    });
   }
 
   subscribe = (fn: () => void) => {
@@ -142,20 +166,50 @@ export class ConversationFeed {
 
   async load(): Promise<void> {
     if (!this.conversationId) return;
+    // Responses can arrive out of order (a reconnect, the watchdog and a send
+    // may each reload): only the newest request's answer is applied.
+    const seq = ++this.loadsStarted;
+    const askedAt = Date.now();
     try {
       const snap = await get<Snapshot>(this.url(`/api/conversations/${enc(this.conversationId)}`), { quiet401: true });
+      if (seq < this.loadApplied) return;
+      this.loadApplied = seq;
       this.snapshot = snap;
       this.error = null;
-      // A finished reply is in the snapshot now: drop its live copy.
+      // A finished reply is in the snapshot now: drop its live copy. So is a
+      // running one's text as the server had it, newer than any live copy
+      // from before this request.
       const running = new Set(snap.messages.filter((m) => m.status === "running").map((m) => m.id));
-      for (const id of [...this.live.keys()]) if (!running.has(id)) this.live.delete(id);
+      for (const id of [...this.live.keys()]) {
+        if (!running.has(id) || (this.liveAt.get(id) ?? 0) < askedAt) {
+          this.live.delete(id);
+          this.liveAt.delete(id);
+        }
+      }
       if (this.pending && snap.messages.some((m) => m.role === "user" && this.matchesPending(m))) this.pending = null;
     } catch (error) {
+      if (seq < this.loadApplied) return;
       this.error = error instanceof ApiError ? error : new ApiError(0, "network", String(error));
     } finally {
-      this.loading = false;
-      this.emit();
+      if (seq >= this.loadApplied) {
+        this.loading = false;
+        this.emit();
+      }
     }
+  }
+
+  /** A reload after the stream failed or went quiet. True when the screen changed. */
+  private async reload(): Promise<boolean> {
+    const before = this.screenSignature();
+    await this.load();
+    this.documentsSeq++; // a missed document event is not replayed
+    this.emit();
+    return this.screenSignature() !== before;
+  }
+
+  private screenSignature() {
+    const runs = (this.snapshot?.runs ?? []).map((r) => `${r.id}:${r.status}`).join(",");
+    return `${runs}|${this.headId()}|${JSON.stringify(this.messages().filter((m) => m.status === "running"))}`;
   }
 
   private matchesPending(m: GraphMessage) {
@@ -174,65 +228,78 @@ export class ConversationFeed {
     }, 120);
   }
 
-  /** Follow the conversation's events (reconnects with Last-Event-ID). */
+  /** Follow the conversation's events (live.ts keeps the stream alive). */
   connect() {
-    if (!this.conversationId || this.closed || this.source) return;
-    const after = this.snapshot?.cursor ?? 0;
-    const es = new EventSource(this.url(`/api/conversations/${enc(this.conversationId)}/events?after=${after}`), {
-      withCredentials: true,
-    });
-    this.source = es;
-    es.onopen = () => {
-      this.retry = 0;
+    if (!this.conversationId || this.closed) return;
+    this.stream.start();
+    this.listenToPage();
+  }
+
+  private onEvent(raw: string) {
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (data.type === "message.updated" && typeof data.object_id === "string") {
+      this.live.set(data.object_id, (data.content as ServerPart[]) ?? []);
+      this.liveAt.set(data.object_id, Date.now());
+      this.emit();
+      return;
+    }
+    if (data.type === "conversation.titled" && this.snapshot) {
+      this.snapshot = { ...this.snapshot, conversation: { ...this.snapshot.conversation, title: String(data.title || "") } };
+      this.emit();
+      return;
+    }
+    if (data.type === "access.revoked" || data.type === "conversation.deleted" || data.type === "conversation.expired") {
+      this.snapshot = null;
+      this.error = new ApiError(404, "not_found", "This conversation is no longer available.");
+      this.disconnect();
+      this.emit();
+      return;
+    }
+    if (data.type === "artifact_version.created") this.documentsSeq++;
+    this.refetchSoon();
+  }
+
+  /** A hidden tab gives its connection back after a while; coming back, or
+   *  the network returning, catches up at once. */
+  private listenToPage() {
+    if (this.pageListeners || typeof document === "undefined") return;
+    const onVisibility = () => (document.hidden ? this.stream.hidden() : this.stream.shown());
+    const onBack = () => {
+      if (!document.hidden) this.stream.shown();
     };
-    es.onmessage = (event) => {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (data.type === "message.updated" && typeof data.object_id === "string") {
-        this.live.set(data.object_id, (data.content as ServerPart[]) ?? []);
-        this.emit();
-        return;
-      }
-      if (data.type === "conversation.titled" && this.snapshot) {
-        this.snapshot = { ...this.snapshot, conversation: { ...this.snapshot.conversation, title: String(data.title || "") } };
-        this.emit();
-        return;
-      }
-      if (data.type === "access.revoked" || data.type === "conversation.deleted" || data.type === "conversation.expired") {
-        this.snapshot = null;
-        this.error = new ApiError(404, "not_found", "This conversation is no longer available.");
-        this.disconnect();
-        this.emit();
-        return;
-      }
-      this.refetchSoon();
-    };
-    es.onerror = () => {
-      // Too far behind (410) or a dropped connection: reload the snapshot,
-      // then follow again from its cursor.
-      es.close();
-      this.source = null;
-      if (this.closed) return;
-      const wait = Math.min(15000, 500 * 2 ** this.retry++);
-      setTimeout(() => {
-        void this.load().then(() => this.connect());
-      }, wait);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onBack);
+    window.addEventListener("pageshow", onBack);
+    if (document.hidden) this.stream.hidden();
+    this.pageListeners = () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onBack);
+      window.removeEventListener("pageshow", onBack);
     };
   }
 
   disconnect() {
-    this.source?.close();
-    this.source = null;
+    this.stream.stop();
+    this.pageListeners?.();
+    this.pageListeners = null;
+  }
+
+  /** Allow connecting again after close() (React's development effect cycle
+   *  closes and reopens a page's feed). */
+  open() {
+    this.closed = false;
   }
 
   close() {
     this.closed = true;
     this.disconnect();
     if (this.refetchTimer) clearTimeout(this.refetchTimer);
+    this.refetchTimer = null;
   }
 
   // -- derived state -------------------------------------------------------------
@@ -308,25 +375,33 @@ export class ConversationFeed {
   webSearch = false;
   model: string | null = null;
 
-  async submit(parts: ServerPart[], text: string, lane: "queue" | "steer" = "queue") {
+  submit(parts: ServerPart[], text: string, lane: "queue" | "steer" = "queue"): Promise<void> {
+    return this.sends(() => this.submitNow(parts, text, lane));
+  }
+
+  private async submitNow(parts: ServerPart[], text: string, lane: "queue" | "steer") {
     const branch = await this.writableBranch();
-    const busy = !!this.activeRun || this.myQueue.length > 0 || branch.queue_paused;
+    const busy = !!this.activeRun || !!this.pending || this.myQueue.length > 0 || branch.queue_paused;
     if (!busy) {
       this.pending = { text, parts, parentId: branch.head_id };
       this.emit();
     }
+    const posting = post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), {
+      branch_id: branch.id, content: parts, lane,
+      ...(this.webSearch ? { web_search: true } : {}),
+      ...(this.model ? { model_selection: { mode: "model", model: this.model } } : {}),
+    }, {
+      headers: { "Idempotency-Key": newKey() },
+    });
+    this.posting = posting;
     try {
-      await post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), {
-        branch_id: branch.id, content: parts, lane,
-        ...(this.webSearch ? { web_search: true } : {}),
-        ...(this.model ? { model_selection: { mode: "model", model: this.model } } : {}),
-      }, {
-        headers: { "Idempotency-Key": newKey() },
-      });
+      await posting;
     } catch (error) {
       this.pending = null;
       this.emit();
       throw error;
+    } finally {
+      if (this.posting === posting) this.posting = null;
     }
     forgetSentDraft(text, this.conversationId!);
     await this.load();
@@ -349,7 +424,15 @@ export class ConversationFeed {
   }
 
   async cancel(parkQueue = true) {
-    const run = this.activeRun;
+    let run = this.activeRun;
+    if (!run && (this.posting || this.pending)) {
+      // Stop right after Send: the run isn't known yet. Wait for the send to be
+      // accepted (not for the snapshot after it), load our own snapshot, then
+      // stop the run it started.
+      if (this.posting) await settleWithin(this.posting, STOP_WAIT_MS);
+      await this.load();
+      run = this.activeRun;
+    }
     if (!run) return;
     await post(this.url(`/api/runs/${enc(run.id)}/cancel`), { park_queue: parkQueue });
     await this.load();
@@ -399,6 +482,7 @@ export function useHubzoidRuntime({
   onError,
   speech,
   dictation,
+  restoreDraft,
 }: {
   feed: ConversationFeed;
   ctx: ConvertContext;
@@ -411,6 +495,8 @@ export function useHubzoidRuntime({
   /** Browser speech, only when the person has the grant (HUB-77). */
   speech?: NonNullable<ExternalStoreAdapter["adapters"]>["speech"];
   dictation?: NonNullable<ExternalStoreAdapter["adapters"]>["dictation"];
+  /** A send the server refused: put its text back in the box. */
+  restoreDraft?: (text: string) => void;
 }) {
   const version = useSyncExternalStore(feed.subscribe, feed.getVersion);
   useEffect(() => {
@@ -429,14 +515,16 @@ export function useHubzoidRuntime({
 
   const send = useCallback(
     async (message: AppendMessage, lane: "queue" | "steer") => {
+      const text = message.content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n\n");
       try {
         const f = await ensureFeed();
-        await f.submit(contentOf(message), message.content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n\n"), lane);
+        await f.submit(contentOf(message), text, lane);
       } catch (error) {
+        if (text) restoreDraft?.(text);
         onError(error);
       }
     },
-    [ensureFeed, onError],
+    [ensureFeed, onError, restoreDraft],
   );
 
   const queueItems = feed.myQueue;

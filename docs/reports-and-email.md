@@ -84,9 +84,18 @@ toolbar with the title, creation time, **Share** (owner only) and
 - **HTML artifacts run apart from the app.** They load with a sandbox that
   gives them their own opaque origin. Their scripts cannot read the session,
   call the app with it, or touch the toolbar.
-- **HTML artifacts make no network requests by default.** They cannot load or
-  send anything elsewhere. To let them load a chart library from a CDN, set
-  `HUBZOID_ARTIFACT_ALLOW_ORIGINS=https://cdn.jsdelivr.net`.
+- **HTML artifacts make no network requests.** No `fetch`, XHR, WebSocket or
+  form request reaches any address. Scripts and styles may load from three
+  public CDNs (`cdn.jsdelivr.net`, `cdnjs.cloudflare.com`, `unpkg.com`) so
+  chart libraries work, in the report viewer and in the web app's Documents
+  pane alike. `HUBZOID_ARTIFACT_ALLOW_ORIGINS` replaces that list (listed
+  origins may also serve fonts and images), and
+  `HUBZOID_ARTIFACT_ALLOW_ORIGINS=none` allows no outside origin.
+- **What a CDN script can still do.** A page already runs any inline script,
+  so a CDN script adds no power inside the sandbox. The address it loads from
+  reaches the CDN, so set `none` if even that is unwanted. A report opened as
+  its own page can navigate itself elsewhere, which no page policy prevents.
+  In the Documents pane it cannot.
 - **Other types.** SVG files are shown as images, so their scripts do not run.
   Types without a preview only download.
 

@@ -47,6 +47,8 @@ const ADMIN = { email: "ada@example.com", password: "ada-admin-pass-1", name: "A
 const SAM = { email: "sam@example.com", password: "sam-member-pass-1", name: "Sam Rivera" };
 const MCP_OWNER = { email: "owner@example.com", password: "mcp-owner-pass-1", name: "Mo Owner" };
 const AGENT_NAME = "Acme Help Desk";
+// The request the scripted chart page (hubzoid/testing_runtime.py) tries and must be refused.
+const CHART_PROBE = "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/package.json";
 
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -276,7 +278,10 @@ async function main() {
       page.on("console", (m) => {
         // Non-2xx fetches log "Failed to load resource"; the negative journeys
         // provoke 401/403/404 on purpose and the app handles them in the UI.
-        if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`${page.url()}: ${m.text()}`);
+        // The documents journey's chart page tries one request out on purpose
+        // (its probe URL); the policy refusing it is the expected result.
+        if (m.type() === "error" && !/Failed to load resource/.test(m.text()) && !m.text().includes(CHART_PROBE))
+          errors.push(`${page.url()}: ${m.text()}`);
       });
       return page;
     };
@@ -876,6 +881,52 @@ journey("artifact", "A file the agent writes: a download link that works with th
   const stranger = await anon.request.get(bare);
   assert.ok([401, 403, 404].includes(stranger.status()), `a stranger got ${stranger.status()}`);
   await anon.close();
+  await context.close();
+});
+
+
+journey("documents", "An HTML document with a chart: drawn in the Documents pane, opened from the reply, still no requests out", async (ctx) => {
+  const { page, context } = await ctx.signedIn(ADMIN);
+  ctx.setDiagnostic(page);
+  // The chart library the dashboard skill loads, stubbed (no network in CI).
+  // A request the page's policy let through would be answered, so a probe
+  // that comes back "blocked" was stopped by the policy, not the network.
+  const CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/";
+  await context.route(`${CDN}**`, (route) =>
+    route.request().url().endsWith("chart.umd.min.js")
+      ? route.fulfill({ contentType: "text/javascript", body: "window.Chart = function Chart() {};" })
+      : route.fulfill({ contentType: "application/json", body: "{}" }));
+  const c = ctx.chat(page);
+  await c.settled();
+
+  step("The agent writes a chart page; the pane opens on it when the reply ends");
+  await c.send("Please draw the chart");
+  await page.waitForURL(/\/c\//);
+  await c.idle();
+  const pane = page.getByRole("complementary", { name: "Documents in this conversation" });
+  await pane.waitFor();
+  await pane.getByText("scripted-chart.html").first().waitFor();
+
+  step("The chart library loaded inside the sandboxed frame, and a request out was blocked");
+  const probe = async () => {
+    const frame = page.frames().find((f) => f.url().startsWith("blob:"));
+    if (!frame) return null;
+    const text = await frame.locator("#probe").textContent().catch(() => null);
+    return text && text !== "waiting" ? JSON.parse(text) : null;
+  };
+  let result = null;
+  for (let i = 0; i < 50 && !result; i++) {
+    result = await probe();
+    if (!result) await page.waitForTimeout(100);
+  }
+  assert.deepEqual(result, { chart: true, fetch: "blocked" });
+  await ctx.shot(page, "15-documents-chart");
+
+  step("Closed, the document opens again from the reply's Open button");
+  await pane.getByRole("button", { name: "Close documents" }).click();
+  await pane.waitFor({ state: "detached" });
+  await c.lastAssistant().getByRole("button", { name: "Open scripted-chart.html beside the chat" }).click();
+  await pane.waitFor();
   await context.close();
 });
 

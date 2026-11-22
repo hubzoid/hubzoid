@@ -2,7 +2,10 @@
 //   node --experimental-strip-types --no-warnings tests/app-runtime.test.mts
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { ADAPTER_FIELDS, UNBOUND_FIELDS, deleteGate, forgetSentDrafts, laneFor } from "../src/app/chat/runtime-rules.ts";
+import { ADAPTER_FIELDS, UNBOUND_FIELDS, deleteGate, forgetSentDrafts, laneFor, sendQueue, settleWithin } from "../src/app/chat/runtime-rules.ts";
+import { LIVE_TIMING, LiveStream, type Clock, type StreamLike } from "../src/app/chat/live.ts";
+import { documentOf } from "../src/app/chat/doc-links.ts";
+import { DocumentAnnouncer } from "../src/app/chat/doc-announcer.ts";
 
 const here = new URL(".", import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, here), "utf8");
@@ -55,5 +58,277 @@ assert.throws(() => deleteGate(confirmed, "m_1"), /Confirm/); // used once
 // no_browser_tool_result_callbacks
 const runtime = read("../src/app/chat/runtime.ts");
 for (const field of UNBOUND_FIELDS) assert.doesNotMatch(runtime, new RegExp(`\\b${field}\\s*:`), `${field} must not be bound`);
+
+
+// ---- live stream (live.ts, GitHub #127) ------------------------------------------------
+const flush = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+};
+
+class FakeClock implements Clock {
+  t = 0;
+  private seq = 0;
+  private timers = new Map<number, { at: number; fn: () => void; every?: number }>();
+  now = () => this.t;
+  setTimeout = (fn: () => void, ms: number) => {
+    this.timers.set(++this.seq, { at: this.t + ms, fn });
+    return this.seq;
+  };
+  clearTimeout = (id: unknown) => void this.timers.delete(id as number);
+  setInterval = (fn: () => void, ms: number) => {
+    this.timers.set(++this.seq, { at: this.t + ms, fn, every: ms });
+    return this.seq;
+  };
+  clearInterval = (id: unknown) => void this.timers.delete(id as number);
+  async advance(ms: number) {
+    const end = this.t + ms;
+    for (;;) {
+      const next = [...this.timers.entries()].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      const [id, timer] = next;
+      this.t = timer.at;
+      if (timer.every) timer.at += timer.every;
+      else this.timers.delete(id);
+      timer.fn();
+      await flush();
+    }
+    this.t = end;
+    await flush();
+  }
+}
+
+class FakeStream implements StreamLike {
+  readyState = 0;
+  onopen: StreamLike["onopen"] = null;
+  onmessage: StreamLike["onmessage"] = null;
+  onerror: StreamLike["onerror"] = null;
+  closed = false;
+  after: number;
+  constructor(after: number) {
+    this.after = after;
+  }
+  close() {
+    this.closed = true;
+    this.readyState = 2;
+  }
+  opened() {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+  event(data: string, id = "") {
+    this.onmessage?.({ data, lastEventId: id });
+  }
+  failed() {
+    this.readyState = 2;
+    this.onerror?.({});
+  }
+}
+
+function harness(opts: { running?: boolean; changed?: boolean; reload?: () => Promise<boolean> } = {}) {
+  const clock = new FakeClock();
+  const state = { running: opts.running ?? true, changed: opts.changed ?? false, cursor: 5, reloads: 0, events: [] as string[] };
+  const streams: FakeStream[] = [];
+  const live = new LiveStream({
+    clock,
+    open: (after) => {
+      const s = new FakeStream(after);
+      streams.push(s);
+      return s;
+    },
+    cursor: () => state.cursor,
+    reload: opts.reload ?? (async () => {
+      state.reloads++;
+      return state.changed;
+    }),
+    watching: () => state.running,
+    onEvent: (data) => state.events.push(data),
+  });
+  return { clock, state, streams, live };
+}
+
+// stopped_stream_never_reconnects
+{
+  const { clock, streams, live, state } = harness();
+  live.start();
+  streams[0].opened();
+  streams[0].failed();
+  live.stop();
+  await clock.advance(120_000);
+  assert.equal(streams.length, 1, "no stream after stop");
+  assert.equal(state.reloads, 0, "no reload after stop");
+}
+
+// a_retry_already_reloading_when_stopped_does_nothing
+{
+  let finish: (v: boolean) => void = () => {};
+  const { clock, streams, live } = harness({ reload: () => new Promise<boolean>((r) => (finish = r)) });
+  live.start();
+  streams[0].failed();
+  await clock.advance(LIVE_TIMING.backoffFirst);
+  live.stop();
+  finish(false);
+  await clock.advance(60_000);
+  assert.equal(streams.length, 1);
+}
+
+// silent_stream_during_a_reply_is_checked_then_replaced_once
+{
+  const { clock, streams, live, state } = harness({ changed: true });
+  live.start();
+  streams[0].opened();
+  await clock.advance(LIVE_TIMING.silence - 1);
+  assert.equal(state.reloads, 0, "quiet for less than the silence limit");
+  await clock.advance(LIVE_TIMING.watchdog);
+  assert.equal(state.reloads, 2, "one check, then the reload before reconnecting");
+  assert.equal(streams.length, 2);
+  assert.ok(streams[0].closed);
+  streams[1].opened();
+  await clock.advance(LIVE_TIMING.watchdog * 2);
+  assert.equal(streams.length, 2, "not replaced again right away");
+}
+
+// a_silent_stream_with_nothing_missed_stays
+{
+  const { clock, streams, live, state } = harness({ changed: false });
+  live.start();
+  streams[0].opened();
+  streams[0].event('{"type":"run.changed"}', "5");
+  await clock.advance(LIVE_TIMING.silence + LIVE_TIMING.watchdog);
+  assert.equal(state.reloads, 1);
+  assert.equal(streams.length, 1, "kept: the snapshot showed nothing new");
+  state.cursor = 9; // events the stream never delivered
+  await clock.advance(LIVE_TIMING.silence + LIVE_TIMING.watchdog);
+  assert.equal(streams.length, 2, "replaced: the snapshot is past what it delivered");
+  assert.equal(streams[1].after, 9);
+}
+
+// no_reply_running_no_checks
+{
+  const { clock, streams, live, state } = harness({ running: false });
+  live.start();
+  streams[0].opened();
+  await clock.advance(120_000);
+  assert.equal(state.reloads, 0);
+}
+
+// hidden_tab_gives_its_connection_back_and_catches_up_when_shown
+{
+  const { clock, streams, live, state } = harness();
+  live.start();
+  streams[0].opened();
+  live.hidden();
+  await clock.advance(LIVE_TIMING.hiddenRelease);
+  assert.ok(streams[0].closed && live.isSuspended);
+  await clock.advance(60_000);
+  assert.equal(streams.length, 1, "the watchdog leaves a suspended tab alone");
+  live.shown();
+  await flush();
+  assert.equal(state.reloads, 1);
+  assert.equal(streams.length, 2);
+  // Shown again before the release: nothing changes.
+  streams[1].opened();
+  live.hidden();
+  await clock.advance(1000);
+  live.shown();
+  await clock.advance(LIVE_TIMING.hiddenRelease);
+  assert.ok(!streams[1].closed);
+}
+
+// a_stream_stuck_connecting_is_replaced_after_its_deadline
+{
+  const { clock, streams, live } = harness({ running: false });
+  live.start();
+  await clock.advance(LIVE_TIMING.connectDeadline);
+  assert.ok(streams[0].closed);
+  await clock.advance(LIVE_TIMING.backoffFirst);
+  assert.equal(streams.length, 2);
+}
+
+// a_reload_that_never_answers_does_not_stop_recovery
+{
+  const { clock, streams, live } = harness({ reload: () => new Promise<boolean>(() => {}) });
+  live.start();
+  streams[0].opened();
+  await clock.advance(LIVE_TIMING.silence + LIVE_TIMING.watchdog); // a check starts and hangs
+  streams[0].failed(); // then the stream drops
+  await clock.advance(LIVE_TIMING.backoffFirst + LIVE_TIMING.reloadDeadline);
+  assert.equal(streams.length, 2, "reconnected once the hung reload was given up on");
+}
+
+// events_reach_the_feed
+{
+  const { streams, live, state } = harness();
+  live.start();
+  streams[0].opened();
+  streams[0].event('{"type":"message.updated"}');
+  assert.deepEqual(state.events, ['{"type":"message.updated"}']);
+}
+
+// ---- sends one at a time, Stop right after Send ----------------------------------------
+{
+  const order: string[] = [];
+  const queue = sendQueue();
+  let releaseFirst: () => void = () => {};
+  const first = queue(() => new Promise<void>((resolve, reject) => {
+    order.push("first starts");
+    releaseFirst = () => reject(new Error("refused"));
+  }));
+  const second = queue(async () => {
+    order.push("second starts");
+  });
+  await flush();
+  assert.deepEqual(order, ["first starts"], "the second send waits");
+  releaseFirst();
+  await assert.rejects(first, /refused/);
+  await second;
+  assert.deepEqual(order, ["first starts", "second starts"], "a refused send doesn't block the next");
+}
+{
+  let wakeSleep: () => void = () => {};
+  const waited = settleWithin(new Promise(() => {}), 10_000, () => new Promise<void>((r) => (wakeSleep = r)));
+  wakeSleep();
+  await waited; // a send that never answers can't hold Stop forever
+  await settleWithin(Promise.reject(new Error("refused")), 10_000); // nor can a refused one
+}
+
+// ---- a reply's file chip opens this conversation's document only -----------------------
+{
+  const docs = { conversationId: "c1", titles: new Set(["report.html", "q3 plan.md"]) };
+  const origin = "http://127.0.0.1:8080";
+  assert.equal(documentOf("/artifacts/web-c1/report.html?t=x", docs, origin), "report.html");
+  assert.equal(documentOf(`${origin}/b/sales/artifacts/web-c1/q3%20plan.md`, docs, origin), "q3 plan.md");
+  assert.equal(documentOf("/artifacts/web-c2/report.html", docs, origin), null, "another conversation's file");
+  assert.equal(documentOf("/artifacts/web-c1/other.html", docs, origin), null);
+  assert.equal(documentOf("https://elsewhere.example/artifacts/web-c1/report.html", docs, origin), null);
+  assert.equal(documentOf("/artifacts/web-c1/report.html", null, origin), null);
+}
+
+// ---- the Documents pane opens on a reply's new document --------------------------------
+{
+  const chart = [{ artifact_id: "a1", current_version_id: "v1" }];
+  // An existing conversation: what was there at load is not reopened.
+  const old = new DocumentAnnouncer();
+  old.answer(old.ask(), "prime", chart);
+  assert.equal(old.answer(old.ask(), "settle", chart).open, null);
+  assert.equal(old.answer(old.ask(), "settle", [{ artifact_id: "a1", current_version_id: "v2" }]).open, "a1");
+
+  // A new conversation whose first list (sent while its first reply ran) already
+  // holds that reply's chart: listed, not marked seen, so the settle opens it.
+  const fresh = new DocumentAnnouncer();
+  assert.deepEqual(fresh.answer(fresh.ask(), "event", chart), { show: true, open: null });
+  assert.deepEqual(fresh.answer(fresh.ask(), "settle", chart), { show: true, open: "a1" });
+
+  // Out of order: the settle's list arrives after a newer one. Not shown, but it still opens.
+  const late = new DocumentAnnouncer();
+  late.answer(late.ask(), "prime", []);
+  const settle = late.ask();
+  assert.deepEqual(late.answer(late.ask(), "event", chart), { show: true, open: null });
+  assert.deepEqual(late.answer(settle, "settle", chart), { show: false, open: "a1" });
+  // A late prime or event changes nothing.
+  const stale = late.ask();
+  late.answer(late.ask(), "event", chart);
+  assert.deepEqual(late.answer(stale, "prime", [{ artifact_id: "a1", current_version_id: "v9" }]), { show: false, open: null });
+  assert.equal(late.answer(late.ask(), "settle", chart).open, null);
+}
 
 console.log("app-runtime: ok");
