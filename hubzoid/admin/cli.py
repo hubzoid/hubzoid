@@ -106,6 +106,9 @@ def config_export(hub: Path = HUB, domain: str = typer.Option("admin", "--domain
 @domain_app.command("show")
 def domain_show(domain: str = typer.Argument(None), hub: Path = HUB, as_json: bool = JSON) -> None:
     """One settings domain, or all of them."""
+    if domain and Path(hub) == Path(".") and (Path(domain) / "AGENTS.md").is_file():
+        # `domain show ./hub`: the one argument is the hub folder, not a domain.
+        hub, domain = Path(domain), None
     items = admin_cfg.domains(hub, _LocalOwner())
     if domain:
         items = [d for d in items if d["domain"] == domain]

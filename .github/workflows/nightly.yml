@@ -1,0 +1,139 @@
+name: nightly
+
+# Checks too slow or too broad for every pull request, once a day:
+# - coverage of the whole suite as the release workflow runs it (slow, heavy
+#   and PostgreSQL tests included; real-model tests skip without keys), on four
+#   machines, combined into one report (an uploaded artifact plus a short table
+#   in the job summary), with a floor on the total that only this workflow
+#   enforces;
+# - the property tests with the large Hypothesis profile.
+# They hold no secrets, call no real model (tests/conftest.py blocks model
+# calls, the fast suite skips e2e tests) and publish nothing.
+on:
+  schedule:
+    - cron: "30 21 * * *"  # 03:00 IST
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Line coverage through sys.monitoring (Python 3.12): far less slowdown.
+  COVERAGE_CORE: sysmon
+  # The combined total may not fall below this. 85 is the founder's floor
+  # (22 Nov 2026), with the measured total about two points above it.
+  COVERAGE_FAIL_UNDER: "85"
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: PostgreSQL server tools, ripgrep and xmlsec1 for the tests that need them
+        run: |
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y ripgrep xmlsec1
+      # With the saml and sandbox extras the SAML, SCIM and Docker sandbox
+      # tests run instead of skipping.
+      - name: Install with test tools
+        run: pip install -e '.[dev,postgres,saml,sandbox]'
+      - name: Live process checks, one at a time, with coverage
+        if: matrix.group == 1
+        run: >-
+          pytest -q -ra --no-header -m "not xfail" -p no:xdist --cov=hubzoid --cov-report=
+          tests/test_gateway_app_live.py tests/test_workflow_concurrency.py
+      - name: Live web app smoke, with coverage
+        if: matrix.group == 2
+        timeout-minutes: 6
+        run: >-
+          pytest -q -ra --no-header -m "not xfail" --cov=hubzoid --cov-report=
+          tests/test_ui_release_smoke.py
+      # Tests marked xfail (known bugs, reported) are left out, so a failing
+      # test never adds coverage.
+      - name: Test suite with coverage, part ${{ matrix.group }} of 4 (as the release workflow runs it)
+        run: >-
+          pytest -q -ra --no-header -m "not xfail" -n auto --dist loadfile --splits 4 --group ${{ matrix.group }}
+          --cov=hubzoid --cov-report= ${{ (matrix.group == 1 || matrix.group == 2) && '--cov-append' || '' }}
+          --ignore=tests/test_ui_release_smoke.py
+          --ignore=tests/test_gateway_app_live.py
+          --ignore=tests/test_workflow_concurrency.py
+          --deselect=tests/test_codex_runtime.py::test_real_codex_has_only_hub_tools
+      # A failing test fails the run, but the coverage of what ran is still
+      # reported.
+      - name: Keep this part's coverage data
+        if: ${{ !cancelled() }}
+        run: mv .coverage .coverage.part${{ matrix.group }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-data-${{ matrix.group }}
+          path: .coverage.part${{ matrix.group }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+
+  coverage-report:
+    needs: coverage
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install coverage
+        run: pip install 'coverage>=7.10,<8'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+      - name: Combine the four parts
+        run: coverage combine .coverage.part1 .coverage.part2 .coverage.part3 .coverage.part4
+      - name: Write the reports
+        run: |
+          coverage xml -o coverage.xml
+          coverage json -o coverage.json
+          coverage html -d htmlcov
+          python .github/scripts/coverage_summary.py coverage.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            coverage.json
+            htmlcov/
+          retention-days: 14
+      - name: Total coverage is at least ${{ env.COVERAGE_FAIL_UNDER }}%
+        run: coverage report --format=total --fail-under="$COVERAGE_FAIL_UNDER"
+
+  hypothesis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      HYPOTHESIS_PROFILE: nightly
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the core package and test tools
+        run: pip install -e '.[dev]'
+      - name: Property tests, large random search (Hypothesis nightly profile)
+        # Hypothesis marks every @given test `hypothesis`.
+        run: pytest -q --no-header -ra -m hypothesis
