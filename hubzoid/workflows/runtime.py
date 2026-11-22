@@ -1154,6 +1154,9 @@ MISSED_LOG_DAYS = 31
 #: A slot waits for the previous run (docs/workflows.md), so a run longer than
 #: its interval grows this queue without a cap; the warning makes that visible.
 BACKLOG_WARN = 5
+#: A backlog reading older than this is not shown: the workflow has not been
+#: dispatched since (paused, held, schedules off), so it may have drained.
+BACKLOG_FRESH_SECONDS = 15 * 60
 
 
 def missed_log(health: dict, count: int, now: datetime, *, name: str | None = None,
@@ -1181,6 +1184,22 @@ def missed_log(health: dict, count: int, now: datetime, *, name: str | None = No
         if n:
             kept.append([now.isoformat(), int(n), wf_name])
     return kept
+
+
+def waiting_runs(health: dict, name: str, now: datetime | None = None) -> int | None:
+    """Runs of workflow `name` waiting to start at its last dispatch, when that
+    was past BACKLOG_WARN and recent; else None."""
+    entry = (health.get("backlog") or {}).get(name)
+    if not isinstance(entry, dict):
+        return None
+    try:
+        at = datetime.fromisoformat(entry["at"])
+        now = now or datetime.now(timezone.utc)
+        if (now - at).total_seconds() > BACKLOG_FRESH_SECONDS:
+            return None
+        return int(entry["waiting"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def missed_by_workflow(health: dict, now: datetime | None = None) -> dict[str, int]:
@@ -1234,7 +1253,8 @@ def _check_backlog(gs, name: str) -> None:
     def change(health: dict) -> None:
         backlog = dict(health.get("backlog") or {})
         if over:
-            backlog[name] = waiting
+            backlog[name] = {"waiting": waiting,
+                             "at": datetime.now(timezone.utc).isoformat()}
         else:
             backlog.pop(name, None)
         health["backlog"] = backlog
@@ -1243,9 +1263,14 @@ def _check_backlog(gs, name: str) -> None:
         gs.update_runtime_health(_HUB_NAME, change)
     if over:
         log.warning(
-            "workflows: %r has more than %d scheduled runs waiting to start: each run takes "
-            "longer than its schedule's interval, and every slot waits for the previous run. "
-            "Shorten the run or lengthen the schedule.", name, BACKLOG_WARN)
+            "workflows: %r has more than %d runs waiting to start: a run takes longer than "
+            "the schedule's interval, and every slot waits for the previous run. Shorten the "
+            "run or lengthen the schedule.", name, BACKLOG_WARN)
+
+
+class DispatchFailed(RuntimeError):
+    """Some scheduled workflows could not be queued in a tick. Their slots are
+    already counted as missed; the rest of the tick ran."""
 
 
 def tick(*, last: datetime, now: datetime | None = None, why: str | None = None) -> list[str] | None:
@@ -1304,9 +1329,12 @@ def tick(*, last: datetime, now: datetime | None = None, why: str | None = None)
                                 f"{last.astimezone(timezone.utc).isoformat(timespec='seconds')} and "
                                 f"{now.astimezone(timezone.utc).isoformat(timespec='seconds')} "
                                 f"({gap:.0f} s); the event loop or the machine was busy"))
-                _record_missed(gs, wf.name, missed, now, dispatched=True)
                 started.append(wf.name)
-                _check_backlog(gs, wf.name)
+                try:   # the run is queued; accounting must not report it failed
+                    _record_missed(gs, wf.name, missed, now, dispatched=True)
+                    _check_backlog(gs, wf.name)
+                except Exception:  # noqa: BLE001
+                    log.exception("workflows: could not record the dispatch of %r", wf.name)
         except Exception as exc:  # noqa: BLE001 — one bad schedule never stalls the loop
             failed.append(wf.name)
             log.exception("workflows: dispatch failed for %r", wf.name)
@@ -1328,7 +1356,7 @@ def tick(*, last: datetime, now: datetime | None = None, why: str | None = None)
             failed.append("personal schedules")
             log.exception("workflows: personal schedules could not be dispatched")
     if failed:
-        raise RuntimeError("Could not dispatch workflows: " + ", ".join(failed))
+        raise DispatchFailed("Could not dispatch workflows: " + ", ".join(failed))
     return started
 
 

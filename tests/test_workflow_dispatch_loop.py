@@ -28,6 +28,8 @@ class FakeStore:
         self.paused: set[str] = set()
 
     def schedule_hold(self):
+        if callable(self.hold):
+            return self.hold()
         return self.hold
 
     def paused_workflows(self, hub):
@@ -84,6 +86,7 @@ class Sim:
         monkeypatch.setattr(runtime, "_HUB_DIR", "hub")
         monkeypatch.setattr(runtime, "_HUB_NAME", "hub")
         monkeypatch.setattr(runtime, "_DBOS", None)    # backlog check degrades quietly
+        monkeypatch.setattr(boot, "_lift_stale_hold", lambda _d: False)
         monkeypatch.setattr(runtime, "_REGISTRY", {
             name: types.SimpleNamespace(name=name, schedule=sched, timezone="Asia/Kolkata",
                                         schedulable=False, catch_up=catch)
@@ -300,7 +303,8 @@ def test_restart_resumes_a_recent_cursor_and_treats_an_old_one_as_downtime(monke
     store.health = {"last_tick": (now - timedelta(minutes=10)).isoformat(),
                     "heartbeat": now.isoformat()}
     asyncio.run(boot._start_engine(tmp_path, "hub"))
-    assert calls["resume_from"] is None
+    # The loop starts from the downtime scan, so nothing falls between them.
+    assert abs((calls["resume_from"] - now).total_seconds()) < 60
     assert store.health["downtime"]["missed"] == 3
     assert store.health["missed_log"][-1][1:] == [3, "classify"]
 
@@ -384,4 +388,107 @@ def test_a_growing_queue_of_waiting_runs_is_reported(monkeypatch, caplog, waitin
         runtime.tick(last=T0, now=T0 + timedelta(seconds=60))
     assert sim.slots("classify")                     # the slot still waits, never dropped
     assert any("waiting to start" in r.getMessage() for r in caplog.records) is warned
-    assert (sim.store.health.get("backlog") or {}).get("classify") == (waiting if warned else None)
+    shown = runtime.waiting_runs(sim.store.health, "classify")
+    assert shown == (waiting if warned else None)
+    if warned:   # a reading from before the workflow last dispatched is not shown
+        later = datetime.now(timezone.utc) + timedelta(minutes=20)
+        assert runtime.waiting_runs(sim.store.health, "classify", later) is None
+
+
+def test_a_tick_that_runs_past_the_next_minute_still_runs_that_slot(monkeypatch):
+    """A tick (or health write) that takes 70 s: the boundary that passed
+    meanwhile is ticked right after, not skipped."""
+    slow = {"once": 3}
+
+    def hop():
+        slow["once"] -= 1
+        return 70.0 if slow["once"] == 0 else 0.01
+    sim = Sim(monkeypatch, WORKFLOWS[:1], wake=lambda d: 0.02, hop=hop)
+    sim.run(5)
+    want = _every(1, T0, datetime.fromtimestamp(sim.now, timezone.utc))
+    assert sim.slots("classify")[:4] == want[:4]
+    assert sim.store.health.get("missed", 0) == 0
+
+
+def test_a_tick_that_fails_before_looking_keeps_its_window(monkeypatch, caplog):
+    """The store is unreachable for one tick: that window is not dropped, the
+    next tick runs the latest slot and counts the other, saying why."""
+    calls = {"n": 0}
+
+    def hold():
+        calls["n"] += 1
+        if calls["n"] == 3:     # the next tick's first read (each tick reads twice)
+            raise ConnectionError("database is locked")
+        return None
+    sim = Sim(monkeypatch, WORKFLOWS[:1], wake=lambda d: 0.02, hop=lambda: 0.01)
+    sim.store.hold = hold
+    with caplog.at_level(logging.WARNING, logger="hubzoid.workflows"):
+        sim.run(4)
+    assert sim.store.health["missed"] == 1
+    assert any("dispatch at" in r.getMessage() and "failed" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_the_sleep_never_ends_early_and_survives_a_clock_step_back(monkeypatch):
+    now = {"t": 1000.0}
+    slept = []
+
+    async def sleep(d):
+        slept.append(d)
+        now["t"] += d - 0.0005 if len(slept) == 1 else d   # the first wake is early
+
+    monkeypatch.setattr(boot, "_wall", lambda: now["t"])
+    monkeypatch.setattr(boot, "asyncio", types.SimpleNamespace(sleep=sleep))
+    assert asyncio.run(boot._sleep_until(1020.0)) == 1020.0
+    assert now["t"] >= 1020.0 and len(slept) == 2       # slept the remainder
+    now["t"] = 1020.0 - 3600                            # the clock stepped back an hour
+    slept.clear()
+    reached = asyncio.run(boot._sleep_until(1080.0))
+    assert reached == boot._next_minute(1020.0 - 3600) and sum(slept) < 61
+
+
+def test_a_failed_health_change_writes_nothing(tmp_path):
+    from sqlalchemy import create_engine
+
+    from hubzoid.access.store import GrantStore
+
+    gs = GrantStore(create_engine(f"sqlite:///{tmp_path / 'op.db'}"))
+    gs.set_runtime_health("hub", missed=3)
+
+    def broken(health):
+        health["missed"] = 99
+        raise ValueError("bad record")
+    with pytest.raises(ValueError):
+        gs.update_runtime_health("hub", broken)
+    assert gs.runtime_health("hub")["missed"] == 3
+    gs.set_runtime_health("hub", missed=4)               # the store is not left locked
+    assert gs.runtime_health("hub")["missed"] == 4
+
+
+def test_a_backup_hold_is_lifted_only_when_no_backup_is_running(tmp_path, monkeypatch):
+    """A bridge stopped mid-backup left its hold, which lasted hours and
+    stopped every schedule. A free backup lock means no backup runs."""
+    from hubzoid import _file_lock, backup, datadir
+    from hubzoid.access import store_for
+    from hubzoid.control import deploy
+
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    gs = store_for(hub)
+    lock = deploy.state_root(hub) / datadir.STATE / "backup.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+
+    gs.set_schedule_hold("backup", 3 * 3600, actor="schedule")
+    with open(lock, "a+b") as fh:                       # a backup is running
+        _file_lock.lock(fh)
+        try:
+            assert backup.clear_stale_hold(hub) is False
+            assert gs.schedule_hold()
+        finally:
+            _file_lock.unlock(fh)
+    assert backup.clear_stale_hold(hub) is True          # its process is gone
+    assert gs.schedule_hold() is None
+
+    gs.set_schedule_hold("maintenance", 60, actor="admin")
+    assert backup.clear_stale_hold(hub) is False         # not a backup's hold

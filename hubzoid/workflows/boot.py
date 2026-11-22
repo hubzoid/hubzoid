@@ -87,6 +87,17 @@ async def _sleep_until(target: float) -> float:
         await asyncio.sleep(target - now)
 
 
+def _lift_stale_hold(hub_dir) -> bool:
+    """`backup.clear_stale_hold`, never raising: the hold expires on its own."""
+    try:
+        from ..backup import clear_stale_hold
+
+        return clear_stale_hold(Path(hub_dir))
+    except Exception:  # noqa: BLE001
+        log.exception("workflows: could not check for a stale backup hold")
+        return False
+
+
 class Dispatcher:
     """Owns the DBOS engine for a hub and the per-minute tick loop."""
 
@@ -175,25 +186,36 @@ class Dispatcher:
                 reached = await _sleep_until(aim)
             now = datetime.fromtimestamp(max(_wall(), reached), timezone.utc)
             error = None
-            held = False
             try:
                 started = await asyncio.to_thread(
                     runtime.tick, last=self._last, now=now, why=self._why
                 )
-                held = started is None
-                if started:
-                    log.info("workflows: fired %s", started)
-            except Exception as exc:  # noqa: BLE001 — the loop must never die
+                if started is None:
+                    # Held for a backup: slots inside the hold fire when it
+                    # ends, and the tick that finds them says why they were
+                    # folded. A hold left by a backup that died is lifted.
+                    self._held_since = self._held_since or now
+                    self._why = (f"new runs were held for a backup from "
+                                 f"{self._held_since.isoformat(timespec='seconds')}")
+                    await asyncio.to_thread(_lift_stale_hold, self.hub_dir)
+                else:
+                    if started:
+                        log.info("workflows: fired %s", started)
+                    self._last, self._why, self._held_since = now, None, None
+            except runtime.DispatchFailed as exc:
+                # Some workflows could not be queued. Their slots are already
+                # counted and warned; the others started. Move on.
                 error = f"{type(exc).__name__}: dispatch failed; check server logs"
                 log.exception("workflows: dispatcher tick failed")
-            if held:
-                # Slots inside the hold fire when it ends; the tick that
-                # finds them says why they were folded.
-                self._held_since = self._held_since or now
-                self._why = (f"new runs were held for a backup from "
-                             f"{self._held_since.isoformat(timespec='seconds')}")
-            else:
                 self._last, self._why, self._held_since = now, None, None
+            except Exception as exc:  # noqa: BLE001 — the loop must never die
+                # The tick failed before it looked at the workflows (the store
+                # was unreachable, say). Keep the cursor: the next tick covers
+                # this window too, runs its latest slot and counts the rest.
+                error = f"{type(exc).__name__}: dispatch failed; check server logs"
+                log.exception("workflows: dispatcher tick failed")
+                self._why = (f"the dispatch at {now.isoformat(timespec='seconds')} failed "
+                             f"({type(exc).__name__})")
             from ..access import store_for
 
             try:
@@ -206,7 +228,9 @@ class Dispatcher:
                 )
             except Exception:  # a transient health write must not kill dispatch
                 log.exception("workflows: could not record dispatcher health")
-            aim = _next_minute(max(_wall(), reached))
+            # The boundary after the one just ticked. If the tick itself ran
+            # past it, the next sleep returns at once and that slot still runs.
+            aim = _next_minute(now.timestamp())
 
     def start_loop(self, resume_from: datetime | None = None) -> None:
         """Start the per-minute loop. `resume_from` is the previous
@@ -382,6 +406,7 @@ async def _start_engine(hub_dir, hub_name):
         # timetables don't fire on this machine: say so, here and in Settings.
         log.warning("workflows: schedules are off on this machine, so the scheduled code workflows of %s "
                     "will not run here. Set HUBZOID_SCHEDULES=1 to run them.", Path(hub_dir).name)
+    await asyncio.to_thread(_lift_stale_hold, hub_dir)
     disp.owner = disp.owner or runtime._OWNER
     if hasattr(disp.owner, "on_lost"):
         loop = asyncio.get_running_loop()
@@ -408,6 +433,9 @@ async def _start_engine(hub_dir, hub_name):
                 resume_from = since
             else:
                 cursor_written = now.isoformat()
+                # The loop starts from this scan, so a slot between the scan
+                # and the loop's first tick is not lost either.
+                resume_from = now
                 window = await asyncio.to_thread(runtime.downtime_missed, since, now)
                 caught = []
                 if window.get("missed"):

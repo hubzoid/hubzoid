@@ -194,7 +194,7 @@ def catalog(hub_dir) -> list[dict]:
     # A scheduled workflow is 'stale' when the deployment says schedules are
     # enabled but no dispatcher heartbeat has landed recently.
     stale = enabled and _stale(health.get("heartbeat"), now)
-    from .runtime import missed_by_workflow
+    from .runtime import missed_by_workflow, waiting_runs
 
     missed_by = missed_by_workflow(health, now)
     rows = definitions(hub_dir)
@@ -234,7 +234,7 @@ def catalog(hub_dir) -> list[dict]:
         # entries, since 2.1.2), not the hub's lifetime total.
         row["missed"] = missed_by.get(row["name"], 0)
         # Scheduled runs waiting to start, when past the warning threshold.
-        row["waiting"] = (health.get("backlog") or {}).get(row["name"])
+        row["waiting"] = waiting_runs(health, row["name"], now)
         row["heartbeat"] = health.get("heartbeat")
         row["downtime"] = health.get("downtime")
     rows = rows + markdown_catalog(hub_dir)
