@@ -43,7 +43,8 @@ from .identity import Identity, normalize
 log = logging.getLogger("hubzoid.access")
 
 # Credentials checked again on every tool call (``evaluator.check_run``). An
-# MCP call is its own run and its token is checked on each request already.
+# MCP call's connection is checked too: ``mcp_server._admitted`` puts it on the
+# call's identity (never stored), so a revoked connection stops a running call.
 LIVE_CREDENTIALS = ("session", "api_key", "app_jwt")
 KINDS = ("chat", "api", "mcp", "workflow", "schedule", "webhook", "eval")
 _metadata = sa.MetaData()

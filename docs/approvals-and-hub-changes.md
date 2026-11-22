@@ -53,7 +53,9 @@ a new message instead of deciding cancels the wait. Questions work the same
 way: pick an option or type an answer.
 
 **Who decides.** Only the person who asked, or a named approver. An admin can't
-decide for them, and nor can the agent. A person may also decide through a
+decide for them, and nor can the agent. To approve, answer or ask for changes
+they must be able to use this agent (**Use this agent**): someone whose access
+was removed, or a named approver never given it, can only reject. A person may also decide through a
 personal API key they made with the `approve` operation ([API](api.md#decide-approvals-and-questions)).
 No other key, machine token or MCP token can decide.
 
