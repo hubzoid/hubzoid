@@ -5,9 +5,11 @@ synthesis, continue, events and the body cap."""
 from __future__ import annotations
 
 import time
+import types
 import uuid
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from tests.chat_helpers import ORIGIN, as_people, build_app, make_hub, who
@@ -443,6 +445,91 @@ def test_interrupted_run_is_not_rerun(client):
     assert branch_of(client, cid, b["id"])["queue_paused"]
 
 
+class _StaleRun:
+    """The chat engine's connection as one call sees it when a reply finished
+    just after that call read it: its first read of the run still sees it
+    active (the interleaving, forced; SQLite has no row locks)."""
+
+    def __init__(self, engine, row):
+        self.real, self.row = engine, row
+
+    def begin(self):
+        outer, stale = self.real.begin(), self
+
+        class Conn:
+            done = False
+
+            def __init__(self, conn):
+                self.conn = conn
+
+            def execute(self, stmt, *a, **kw):
+                from hubzoid.chat import graph
+
+                result = self.conn.execute(stmt, *a, **kw)
+                if not self.done and getattr(stmt, "is_select", False) \
+                        and graph.runs in stmt.get_final_froms() and len(stmt.selected_columns) == len(graph.runs.c):
+                    self.done = True
+                    rows = [r for r in result.all() if r.id != stale.row.id] + [stale.row]
+                    return types.SimpleNamespace(first=lambda: rows[0], all=lambda: rows)
+                return result
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+        class Ctx:
+            def __enter__(self):
+                return Conn(outer.__enter__())
+
+            def __exit__(self, *exc):
+                return outer.__exit__(*exc)
+
+        return Ctx()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+@pytest.mark.parametrize("call", ["run_streaming", "request_cancel", "run_finished", "sweep"])
+def test_a_reply_that_just_finished_keeps_its_end(client, monkeypatch, call):
+    """A fast reply can finish between another writer's read of the run and its
+    write: marking it streaming (seen in CI as a flaky channels test), a Stop,
+    a second finish or the recovery sweep. None may overwrite the finished run,
+    or it is left active with no lease and later reported interrupted ("The
+    server restarted during this reply")."""
+    from hubzoid.chat import graph
+    from hubzoid.chat.engine import Actor
+
+    cid, b = new_conv(client)
+    first = send(client, cid, "first question", b)
+    assert wait_run(client, first["run_id"])["status"] == "complete"
+    eng = client.app.state.chat.engine
+    real = eng.engine
+    with real.connect() as conn:
+        row = conn.execute(graph.runs.select().where(graph.runs.c.id == first["run_id"])).first()
+        events = conn.execute(sa.select(sa.func.count()).select_from(graph.events)).scalar()
+    seen = "admitted" if call == "run_streaming" else "streaming"   # what each call acts on
+    stale = types.SimpleNamespace(**{**row._asdict(), "status": seen})
+
+    monkeypatch.setattr(eng, "engine", _StaleRun(real, stale))
+    if call == "run_streaming":
+        eng.run_streaming(row.id)
+    elif call == "request_cancel":
+        out = eng.request_cancel(row.id, Actor(id=row.actor_id, email="someone@example.com"))
+        assert out == {"run_id": row.id, "status": "complete", "already_terminal": True}
+    elif call == "run_finished":
+        assert eng.run_finished(row.id, "error", "late") is None
+    else:
+        assert eng.sweep() == 0
+    monkeypatch.setattr(eng, "engine", real)
+
+    with real.connect() as conn:
+        after = conn.execute(graph.runs.select().where(graph.runs.c.id == row.id)).first()
+        assert conn.execute(sa.select(sa.func.count()).select_from(graph.events)).scalar() == events
+    assert (after.status, after.error, after.cancel_requested) == ("complete", row.error, row.cancel_requested)
+    assert not branch_of(client, cid, b["id"])["queue_paused"]
+    assert eng.sweep() == 0
+
+
 def test_a_failed_lease_renewal_keeps_the_heartbeat_and_an_expired_lease_fences(client, monkeypatch):
     import sqlalchemy as sa
 
@@ -623,3 +710,63 @@ def test_a_draining_hub_starts_nothing_and_a_cut_reply_is_interrupted(client):
         assert branch_of(client, cid, b["id"])["queue_paused"]
     finally:
         drain._reset_for_tests()
+
+
+def test_unreadable_chat_settings_never_resume_a_session_and_say_so(client, monkeypatch, caplog):
+    """A failed settings read used to give a random digest, silently. Now there
+    is no digest: the reply starts a fresh session, nothing is recorded to match
+    later, and the log says why."""
+    import logging
+
+    from hubzoid.chat import config as cfg
+
+    orch = client.app.state.chat.orchestrator
+    good = orch.config_digest("acct")
+    assert good and good == orch.config_digest("acct")   # stable while the settings read
+
+    def broken(_hub):
+        raise RuntimeError("settings store unavailable")
+
+    monkeypatch.setattr(cfg, "service_for", broken)
+    with caplog.at_level(logging.WARNING, logger="hubzoid.chat.engine"):
+        assert orch.config_digest("acct") == ""
+    assert "starts a fresh runtime session" in caplog.text
+
+    engine = client.app.state.chat.engine
+    cid, b = new_conv(client)
+    one = send(client, cid, "first question", b)
+    wait_run(client, one["run_id"])
+    engine.record_binding(branch_id=b["id"], conversation_id=cid, runtime="fake", session_id="sess-x",
+                          head_message_id=one["assistant_message_id"], config_digest="", ok=True)
+    import sqlalchemy as sa
+
+    from hubzoid.chat import graph as g
+
+    with engine.engine.connect() as conn:
+        assert conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == b["id"])).first() is None
+
+
+def test_a_session_is_recorded_under_the_settings_it_started_with(client, monkeypatch):
+    """The digest is read once, when the reply starts. Settings that change (or
+    recover from a failed read) while it runs do not relabel its session."""
+    from hubzoid import _request_ctx
+    from hubzoid.chat import graph as g
+
+    orch = client.app.state.chat.orchestrator
+    runtime = client.app.state.chat.runtime
+    original = runtime.stream_events
+
+    def fake(prompt):
+        slot = _request_ctx.native_session()
+        slot.runtime, slot.session_id = "fake", "sess-1"
+        return original(prompt)
+
+    digests = iter(["at-start", "at-end"])
+    monkeypatch.setattr(runtime, "stream_events", fake)
+    monkeypatch.setattr(orch, "config_digest", lambda actor_id="": next(digests))
+    cid, b = new_conv(client)
+    one = send(client, cid, "first question", b)
+    assert wait_run(client, one["run_id"])["status"] == "complete"
+    with client.app.state.chat.engine.engine.connect() as conn:
+        bound = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == b["id"])).first()
+    assert bound is not None and bound.config_digest == "at-start"

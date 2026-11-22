@@ -80,6 +80,20 @@ def active_theme(hub_dir: Path) -> tuple[str, dict]:
     return "builtin", theme_mod.resolve()
 
 
+def _upload_limit(hub_dir: Path, settings) -> int:
+    """The largest file a person can attach: the smaller of the bridge's
+    request cap (HUBZOID_MAX_UPLOAD_BYTES) and the chat file setting."""
+    from ..settings import DEFAULT_MAX_UPLOAD_BYTES
+    from .file_service import FilesSettings
+
+    cap = int(getattr(settings, "max_upload_bytes", 0) or DEFAULT_MAX_UPLOAD_BYTES)
+    try:
+        files = cfg.service_for(hub_dir).active().document["files"]
+    except Exception:  # noqa: BLE001 - the defaults are always safe
+        files = FilesSettings().model_dump()
+    return min(cap, int(files["limits"]["max_file_bytes"]))
+
+
 def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
     hub_dir = Path(hub_dir)
     hz.install_request_ids(app)
@@ -266,6 +280,7 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
 
         # The web search switch shows only when the deployment allows it and the person holds the grant.
         out["features"]["web_search"] = bool(out["features"].get("chat_web_search")) and await asyncio.to_thread(web_on)
+        out["uploads"] = {"max_file_bytes": await asyncio.to_thread(_upload_limit, hub_dir, _ctx.get("settings"))}
         return out
 
     @app.get("/api/chat/preferences")

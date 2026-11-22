@@ -36,6 +36,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .. import attachments
+from ..artifacts import csp as artifact_csp
 from ..control import authz
 from . import files as files_mod
 from . import engine_routes as er
@@ -44,15 +45,20 @@ from .file_service import FileService, service_for
 
 SAFE_INLINE = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
-#: The generated document's own policy: scripts and styles inline, media from
-#: data/blob only, no network, no frames, no forms.
-CHILD_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
-             "media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; "
-             "base-uri 'none'")
-#: The wrapper frame: its only child is a blob: document it made itself, so a
-#: generated page can't navigate itself (or anything) to a remote address.
-FRAME_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src blob:; "
-             "child-src blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+def child_csp() -> str:
+    """The generated document's own policy (``artifacts.csp``): scripts and
+    styles inline or from the chart CDNs, media from data/blob only, no
+    network requests, no frames, no forms."""
+    return artifact_csp.policy()
+
+
+def frame_csp() -> str:
+    """The wrapper frame's policy. Its only child is a blob: document it made
+    itself, so a generated page can't navigate itself (or anything) to a
+    remote address. The blob: child inherits this policy and both apply, so it
+    allows everything the child's own policy allows."""
+    return artifact_csp.policy(frames="blob:") + "; child-src blob:; frame-ancestors 'self'"
+
 
 FRAME_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Preview</title>
@@ -77,7 +83,11 @@ FRAME_PAGE = """<!doctype html>
   });
   window.parent.postMessage({ type: "hz-frame-ready" }, "*");
 })();
-</script></body></html>""".replace("__CSP__", json.dumps(CHILD_CSP))
+</script></body></html>"""
+
+
+def frame_page() -> str:
+    return FRAME_PAGE.replace("__CSP__", json.dumps(child_csp()))
 
 
 def _range(header: str | None, size: int) -> tuple[int, int | None] | None:
@@ -274,7 +284,7 @@ def mount(app: FastAPI, ctx) -> FileService:
 
     @app.get("/api/chat/artifact-frame")
     async def artifact_frame():
-        return HTMLResponse(FRAME_PAGE, headers={"Content-Security-Policy": FRAME_CSP, "X-Content-Type-Options": "nosniff",
+        return HTMLResponse(frame_page(), headers={"Content-Security-Policy": frame_csp(), "X-Content-Type-Options": "nosniff",
                                                  "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache"})
 
     return svc

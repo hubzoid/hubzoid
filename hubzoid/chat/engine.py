@@ -350,10 +350,15 @@ class ChatEngine:
 
     # -- snapshot ---------------------------------------------------------------------
     def snapshot(self, conversation_id: str, actor: Actor, *, live=None) -> dict:
-        """Everything a viewer needs, read in one transaction so no event falls
-        between the snapshot and its cursor. ``live(message_id)`` returns the
-        current content of a reply being written in this process."""
+        """Everything a viewer needs, read in one transaction. The cursor is read
+        first: under PostgreSQL's Read Committed each query sees the latest
+        commits, so a cursor read last could be newer than the state and a
+        client following events from it would miss those. Read first, it can
+        only be older, and an event the snapshot already shows only causes one
+        more reload. ``live(message_id)`` returns the current content of a
+        reply being written in this process."""
         with self.engine.begin() as conn:
+            cursor = g.cursor(conn, conversation_id)   # before any state it describes
             conv, role = self._readable(conn, conversation_id, actor)
             g.ensure_initial_branch(conn, conv, actor.id)
             msgs = [_message(r) for r in conn.execute(
@@ -370,7 +375,6 @@ class ChatEngine:
                 sa.select(g.queue).where(g.queue.c.conversation_id == conversation_id,
                                          g.queue.c.state.in_(g.QUEUE_LIVE + ("dispatching",)))
                 .order_by(g.queue.c.lane, g.queue.c.rank))]
-            cursor = g.cursor(conn, conversation_id)
             graph_revision = conv.get("graph_revision") or 0
             members_rev = conn.execute(sa.select(g.member_sets.c.revision).where(
                 g.member_sets.c.conversation_id == conversation_id)).scalar() or 0
@@ -1031,10 +1035,14 @@ class ChatEngine:
             if r.status not in g.ACTIVE_RUN:
                 return {"run_id": run_id, "status": r.status, "already_terminal": True}
             t = _now()
+            # Only while still active: SQLite ignores FOR UPDATE, so the reply
+            # may have finished (and released its lease) since the read above.
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                            .values(cancel_requested=1, status="stopping", updated_at=t)).rowcount != 1:
+                now = conn.execute(sa.select(g.runs.c.status).where(g.runs.c.id == run_id)).scalar()
+                return {"run_id": run_id, "status": now, "already_terminal": True}
             if park_queue:
                 self._park(conn, r.conversation_id, r.branch_id, "stopped", t)
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id)
-                         .values(cancel_requested=1, status="stopping", updated_at=t))
             g.emit(conn, r.conversation_id, "run.changed", run_id, {"status": "stopping", "message_id": r.message_id,
                                                                    "branch_id": r.branch_id})
             out = {"run_id": run_id, "status": "stopping", "message_id": r.message_id,
@@ -1083,7 +1091,9 @@ class ChatEngine:
             r = conn.execute(sa.select(g.runs).where(g.runs.c.id == run_id)).first()
             if r is None or r.status != "admitted":
                 return
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id).values(status="streaming", updated_at=_now()))
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status == "admitted")
+                            .values(status="streaming", updated_at=_now())).rowcount != 1:
+                return
             g.emit(conn, r.conversation_id, "run.changed", run_id, {"status": "streaming",
                                                                    "message_id": r.message_id,
                                                                    "branch_id": r.branch_id})
@@ -1105,8 +1115,12 @@ class ChatEngine:
             if r is None or r.status in g.TERMINAL_RUN:
                 return None
             t = _now()
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id)
-                         .values(status=status, error=(error or "")[:2000] or None, updated_at=t))
+            # Only while still active: the sweep may have recorded it interrupted
+            # since the read above, and that end stands.
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                            .values(status=status, error=(error or "")[:2000] or None,
+                                    updated_at=t)).rowcount != 1:
+                return None
             g.release_lease(conn, r.branch_id, run_id)
             m = conn.execute(sa.select(messages).where(messages.c.id == r.message_id)).first()
             payload = {"status": status, "message_id": r.message_id, "branch_id": r.branch_id}
@@ -1582,7 +1596,7 @@ class ChatEngine:
             return None, None
         with self.engine.connect() as conn:
             b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()
-            if b is None or b.config_digest != config_digest:
+            if b is None or not config_digest or b.config_digest != config_digest:
                 return None, None
             prompt_parent = conn.execute(sa.select(messages.c.parent_id).where(
                 messages.c.id == plan.prompt_message_id)).scalar()
@@ -1598,7 +1612,7 @@ class ChatEngine:
         ``session_cost``: the session's running cost the runtime reported."""
         with self.engine.begin() as conn:
             conn.execute(g.bindings.delete().where(g.bindings.c.branch_id == branch_id))
-            if ok and session_id and runtime:
+            if ok and session_id and runtime and config_digest:   # no digest: nothing to match later
                 conn.execute(g.bindings.insert().values(
                     branch_id=branch_id, conversation_id=conversation_id, runtime=runtime,
                     native_session_id=session_id[:255], head_message_id=head_message_id,
@@ -1617,13 +1631,18 @@ class ChatEngine:
             live = {(r.branch_id, r.run_id) for r in conn.execute(
                 sa.select(g.leases.c.branch_id, g.leases.c.run_id, g.leases.c.owner).where(g.leases.c.expires_at > t))
                 if not _owner_gone(r.owner)}
-            stale = [r for r in conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
-                                                                     g.runs.c.status.in_(g.ACTIVE_RUN))).all()
-                     if (r.branch_id, r.id) not in live]
-            for r in stale:
-                conn.execute(g.runs.update().where(g.runs.c.id == r.id)
-                             .values(status="interrupted", error="The server restarted during this reply.",
-                                     updated_at=t))
+            candidates = [r for r in conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
+                                                                          g.runs.c.status.in_(g.ACTIVE_RUN))).all()
+                          if (r.branch_id, r.id) not in live]
+            stale = []
+            for r in candidates:
+                # Only while still active: a reply that finished since the read
+                # above keeps its end and its queue.
+                if conn.execute(g.runs.update().where(g.runs.c.id == r.id, g.runs.c.status.in_(g.ACTIVE_RUN))
+                                .values(status="interrupted", error="The server restarted during this reply.",
+                                        updated_at=t)).rowcount != 1:
+                    continue
+                stale.append(r)
                 conn.execute(g.leases.delete().where(g.leases.c.branch_id == r.branch_id, g.leases.c.run_id == r.id))
                 self._park(conn, r.conversation_id, r.branch_id, "interrupted", t)
                 g.emit(conn, r.conversation_id, "run.changed", r.id, {"status": "interrupted",

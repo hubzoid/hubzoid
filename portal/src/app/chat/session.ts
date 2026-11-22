@@ -142,6 +142,8 @@ export class ChatSession {
   events: SessionEvents;
   /** How many files the composer holds now (set by the thread view). */
   countAttachments: () => number = () => 0;
+  /** The deployment's attachment limit (``/api/chat/capabilities``), 25 MiB until known. */
+  maxUploadBytes = MAX_UPLOAD_BYTES;
   /** Files accepted by add() that the composer doesn't list yet. */
   private reservedAttachments = 0;
   private creating: Promise<string> | null = null;
@@ -444,7 +446,7 @@ export class ChatSession {
     file: File,
     uploads: Map<string, FileRef & { previewUrl?: string }>,
   ): AsyncGenerator<PendingAttachment, void> {
-    if (file.size > MAX_UPLOAD_BYTES) throw new Error(t.chat.tooLarge(file.name, formatBytes(MAX_UPLOAD_BYTES)));
+    if (file.size > this.maxUploadBytes) throw new Error(t.chat.tooLarge(file.name, formatBytes(this.maxUploadBytes)));
     // Files picked together arrive here before any of them reaches the
     // composer, so count the ones already accepted but not yet listed too.
     if (this.countAttachments() + this.reservedAttachments >= MAX_FILES_PER_MESSAGE)
@@ -520,7 +522,7 @@ export class ChatSession {
       if (failure instanceof ApiError && failure.status === 401) this.events.onUnauthorized();
       throw new Error(
         failure instanceof ApiError && failure.status === 413
-          ? t.chat.tooLarge(file.name, formatBytes(MAX_UPLOAD_BYTES))
+          ? t.chat.tooLarge(file.name, formatBytes(this.maxUploadBytes))
           : describeError(failure, t.chat.uploadFailed(file.name)),
       );
     }

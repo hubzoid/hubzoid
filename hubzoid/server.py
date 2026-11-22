@@ -527,6 +527,12 @@ def build_app() -> FastAPI:
             auth = request.headers.get("authorization", "")
             if auth[7:].strip() == "dev" and auth.lower().startswith("bearer "):
                 raise HTTPException(status_code=401, detail="invalid or expired link")
+            if token and not auth:
+                # A person's browser with a link that expired (or isn't theirs):
+                # say how to get the file, not "invalid api key".
+                raise HTTPException(status_code=401, detail=(
+                    "This download link has expired. Open the conversation and download the file "
+                    "from Documents."))
             _auth(request)
         return _serve_chat_file(
             base=memlib.chat_artifact_dir(hub_dir, safe_chat),

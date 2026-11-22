@@ -61,11 +61,14 @@ class _Local:
         from .routes import _message_parts
         from .store import chat_key
 
-        def validate(conv, content):
+        def validate(conv, content, actor=None):
+            # The same contract as the web app's validator (chat/routes.py):
+            # the engine passes the acting person, who must be able to read
+            # any file the message names.
             from fastapi import HTTPException
 
             try:
-                return _message_parts(self.ctx, chat_key(conv), {"content": content}, conv["id"])
+                return _message_parts(self.ctx, chat_key(conv), {"content": content}, conv["id"], actor)
             except HTTPException as exc:
                 raise g.GraphError(exc.status_code, exc.detail["code"], exc.detail["message"])
 

@@ -14,6 +14,10 @@ message. Keywords combine; the parts run in this order:
   fail      one tool call (``grep_data``) that fails
   artifact  one ``write_artifact`` call that saves a small file in the chat's
             artifact folder and registers its link, so the download footer shows
+  chart     the same with an HTML page that draws a chart with Chart.js from
+            jsDelivr (as the dashboard skill does) and records in
+            ``#probe`` whether the library loaded and whether a request out
+            was blocked
   markdown  a reply with a table and a code block
   slow      about 40 text chunks over about 20 seconds (for cancellation);
             ``HUBZOID_TEST_SLOW_SECONDS`` changes the duration
@@ -59,7 +63,7 @@ log = logging.getLogger("hubzoid.testing_runtime")
 
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
-KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall", "reserve", "askme",
+KEYWORDS = ("think", "tool", "fail", "artifact", "chart", "markdown", "slow", "error", "recall", "reserve", "askme",
             "feedback", "apptool", "connectortool", "whatpage")
 
 _WORD = re.compile(r"[A-Za-z]+")
@@ -170,6 +174,23 @@ _MARKDOWN_REPLY = (
 )
 
 ARTIFACT_NAME = "scripted-report.md"
+CHART_NAME = "scripted-chart.html"
+CHART_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Scripted chart</title></head>
+<body><h1>Scripted chart</h1><canvas id="chart" width="400" height="200"></canvas>
+<pre id="probe">waiting</pre>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  var out = {chart: typeof Chart === "function"};
+  if (out.chart) new Chart(document.getElementById("chart"),
+    {type: "bar", data: {labels: ["A", "B"], datasets: [{label: "Units", data: [3, 5]}]}});
+  function done() { document.getElementById("probe").textContent = JSON.stringify(out); }
+  fetch("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/package.json").then(
+    function () { out.fetch = "sent"; }, function () { out.fetch = "blocked"; }).then(done);
+})();
+</script></body></html>
+"""
 
 
 class ScriptedRuntime:
@@ -252,6 +273,14 @@ class ScriptedRuntime:
                            legacy=tool_events.format_call("write_artifact", args, mode=self._tool_mode))
             self._write_artifact(request)
             yield ToolResult(id="call_artifact", name="write_artifact", ok=True)
+
+        if "chart" in words:
+            args = {"filename": CHART_NAME}
+            _request_ctx.record_tool_call("write_artifact", args)
+            yield ToolCall(id="call_chart", name="write_artifact", args=args,
+                           legacy=tool_events.format_call("write_artifact", args, mode=self._tool_mode))
+            self._write_artifact(request, CHART_NAME, CHART_PAGE)
+            yield ToolResult(id="call_chart", name="write_artifact", ok=True)
 
         if "reserve" in words and "rejected" not in words:
             from .hitl import gate
@@ -446,7 +475,7 @@ class ScriptedRuntime:
         return (f"Earlier you said: “{_quote(earlier)}”\n\n"
                 "This is a **scripted** reply from the Hubzoid test runtime.")
 
-    def _write_artifact(self, request: str) -> None:
+    def _write_artifact(self, request: str, name: str = ARTIFACT_NAME, text: str | None = None) -> None:
         """Save a small file the way ``write_artifact`` does: in this chat's
         artifact folder, with its signed link registered for the footer."""
         from . import memory as memlib
@@ -455,11 +484,13 @@ class ScriptedRuntime:
         chat_id = _request_ctx.get_chat_id()
         if not chat_id:
             return
-        target = memlib.chat_artifact_dir(self.hub_dir, chat_id) / ARTIFACT_NAME
-        target.write_text(f"# Scripted report\n\nRequest: {_quote(request)}\n", encoding="utf-8")
-        url = _artifact_url(ARTIFACT_NAME, self.hub_dir)
+        target = memlib.chat_artifact_dir(self.hub_dir, chat_id) / name
+        if text is None:
+            text = f"# Scripted report\n\nRequest: {_quote(request)}\n"
+        target.write_text(text, encoding="utf-8")
+        url = _artifact_url(name, self.hub_dir)
         if url:
-            _request_ctx.record_artifact(ARTIFACT_NAME, url)
+            _request_ctx.record_artifact(name, url)
 
 
 def _slow_seconds() -> float:

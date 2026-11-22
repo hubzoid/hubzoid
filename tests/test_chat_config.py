@@ -203,3 +203,17 @@ def test_cli_get_shows_the_file(hub):
     assert got.exit_code == 0, got.output
     out = json.loads(got.output)
     assert out["config"]["presentation"]["appearance"]["default_mode"] == "light"
+
+
+def test_a_missing_hub_folder_is_reported_as_json(tmp_path):
+    """From S0's coverage work: `hubzoid chat config|preferences|capabilities`
+    reported a missing hub folder in plain text even with --json."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    for args in (["config", "get"], ["capabilities"]):
+        r = CliRunner().invoke(app, ["chat", *args, str(tmp_path / "absent"), "--json"], catch_exceptions=False)
+        assert r.exit_code == 2 and json.loads(r.output)["detail"]["code"] == "invalid_request", args

@@ -3741,7 +3741,7 @@ from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
 from .chat.models_cli import models_app as _models_app  # noqa: E402
 from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
 
-app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
+app.add_typer(_workspace_app, name="workspace", help="Hub files and their versions, prompts, OpenAPI preview.",
               rich_help_panel="Commands")
 from .hitl.cli import hitl_app as _hitl_app, requests_app as _requests_app  # noqa: E402
 

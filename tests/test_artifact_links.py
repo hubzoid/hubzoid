@@ -105,7 +105,9 @@ def test_ttl_links_expire(hub, monkeypatch):
 
     past = int(time.time()) - 5
     token = _signing._mac("c1", "report.txt", past, hub)
-    assert client.get(_query(f"t={token}&e={past}")).status_code == 401
+    expired = client.get(_query(f"t={token}&e={past}"))
+    assert expired.status_code == 401
+    assert "download the file from Documents" in expired.json()["detail"]  # says how to get it again
 
     # extending the expiry breaks the signature
     token, exp = query.split("t=")[1].split("&e=")
