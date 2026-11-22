@@ -66,12 +66,28 @@ def split(text: str, limit: int, max_parts: int) -> list[str]:
     parts = _balance_fences([p.strip("\n") for p in parts if p.strip()])
     if len(parts) > max_parts:
         kept = parts[:max_parts]
-        kept[-1] = kept[-1][: max(0, room - len(OVERFLOW_NOTE))] + OVERFLOW_NOTE
+        kept[-1] = _cut(kept[-1], max(0, room - len(OVERFLOW_NOTE))) + OVERFLOW_NOTE
         parts = kept
     total = len(parts)
     if total > 1:
         parts = [f"({n}/{total})\n{p}" for n, p in enumerate(parts, 1)]
     return parts
+
+
+def _cut(part: str, budget: int) -> str:
+    """``part`` cut to ``budget`` characters without leaving a code block
+    open: room is kept for a closing fence, a fence cut in half is dropped,
+    and an open block is closed (as Agno does when a Slack message rolls over,
+    ``os/interfaces/slack/stream.py``)."""
+    if len(part) <= budget:
+        return part
+    cut = part[: max(0, budget - len(FENCE_CLOSE))].rstrip("`")
+    if cut.count("```") % 2 == 1:
+        cut = cut.rstrip("\n") + FENCE_CLOSE
+    return cut
+
+
+FENCE_CLOSE = "\n```"
 
 
 def _balance_fences(parts: list[str]) -> list[str]:

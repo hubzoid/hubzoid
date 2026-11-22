@@ -360,3 +360,27 @@ def test_two_reloads_at_once_start_a_transport_once(hub_dir, monkeypatch):
 
     asyncio.run(both())
     assert log == [("start", "slack-main")]
+
+
+# -- long replies --------------------------------------------------------------------------------
+
+def test_overflow_code_part_keeps_closing_fence():
+    """From S0's coverage tests (tests/test_cov_channels_replies.py): a reply
+    cut to fit the channel never leaves a code block open."""
+    from hubzoid.channels import replies
+
+    part = replies.split("```\n" + "x" * 1000 + "\n```", 240, 1)[0]
+    assert part.count("```") % 2 == 0 and part.endswith(replies.OVERFLOW_NOTE) and len(part) <= 240
+
+
+@settings(max_examples=60, deadline=None)
+@given(text=st.lists(st.sampled_from(["a", "word ", "\n", "\n\n", "`", "```", "```\n", "x" * 90]),
+                    max_size=120).map("".join).filter(lambda t: t.count("```") % 2 == 0),
+       limit=st.integers(240, 800), max_parts=st.integers(1, 4))
+def test_every_part_fits_and_closes_its_code_blocks(text, limit, max_parts):
+    """Splitting a reply whose code blocks are closed never leaves one open."""
+    from hubzoid.channels import replies
+
+    parts = replies.split(text, limit, max_parts)
+    assert len(parts) <= max_parts
+    assert all(len(p) <= limit and p.count("```") % 2 == 0 for p in parts)
