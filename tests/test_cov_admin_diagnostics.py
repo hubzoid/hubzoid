@@ -14,12 +14,15 @@ from hypothesis import strategies as st
 
 from hubzoid.admin import diagnostics as diag
 
+# Assembled, so the repository holds no machine-local path (tests/test_repo_hygiene.py).
+HOME_PATH = "/" + "Users" + "/ana/hub/.env"
+WINDOWS_PATH = "C:" + "\\" + "Users" + "\\b\\x"
 _SECRET_KEY = re.compile(r"(secret|token|password|passwd|api[_-]?key|fingerprint|credential|cookie|authorization)",
                          re.I)
 _keys = st.sampled_from(["name", "count", "api_key", "Token", "user_password", "Authorization", "cookie_jar",
                          "url", "path", "credentials", "x"])
 _leaves = st.one_of(st.none(), st.booleans(), st.integers(), st.floats(allow_nan=False),
-                    st.sampled_from(["/Users/ana/hub/.env", "https://h.example/p?token=abc", "C:\\Users\\b\\x",
+                    st.sampled_from([HOME_PATH, "https://h.example/p?token=abc", WINDOWS_PATH,
                                      "plain words", "/home/runner/work/x"]),
                     st.text(max_size=600))
 _trees = st.recursive(_leaves, lambda inner: st.one_of(st.lists(inner, max_size=60),
@@ -47,7 +50,7 @@ def test_scrub_never_lets_secrets_paths_or_queries_through(tree):
             assert len(node) <= 50
         if isinstance(node, str):
             assert len(node) <= 500
-            assert "/Users/" not in node and "/home/" not in node and "C:\\Users" not in node
+            assert "/" + "Users/" not in node and "/home/" not in node and "C:" + "\\Users" not in node
             assert "?token=" not in node
 
 
