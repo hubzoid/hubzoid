@@ -47,6 +47,8 @@ const ADMIN = { email: "ada@example.com", password: "ada-admin-pass-1", name: "A
 const SAM = { email: "sam@example.com", password: "sam-member-pass-1", name: "Sam Rivera" };
 const MCP_OWNER = { email: "owner@example.com", password: "mcp-owner-pass-1", name: "Mo Owner" };
 const AGENT_NAME = "Acme Help Desk";
+// The request the scripted chart page (hubzoid/testing_runtime.py) tries and must be refused.
+const CHART_PROBE = "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/package.json";
 
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -276,7 +278,10 @@ async function main() {
       page.on("console", (m) => {
         // Non-2xx fetches log "Failed to load resource"; the negative journeys
         // provoke 401/403/404 on purpose and the app handles them in the UI.
-        if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(`${page.url()}: ${m.text()}`);
+        // The documents journey's chart page tries one request out on purpose
+        // (its probe URL); the policy refusing it is the expected result.
+        if (m.type() === "error" && !/Failed to load resource/.test(m.text()) && !m.text().includes(CHART_PROBE))
+          errors.push(`${page.url()}: ${m.text()}`);
       });
       return page;
     };
