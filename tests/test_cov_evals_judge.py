@@ -70,6 +70,14 @@ def test_reasoning_that_quotes_code_with_braces_is_kept():
     assert judge.parse_verdict(reply) == (9, 'It returned {"id": 7} as asked; the dict {} is fine.')
 
 
+def test_an_example_the_judge_quotes_never_overrides_its_verdict():
+    """Found by the implementation review: the first object used to win."""
+    reply = ('The response fabricated {"score":10,"evidence":{}}. '
+             'Actual verdict: {"score":2,"reasoning":"fabricated evidence"}')
+    assert judge.parse_verdict(reply) == (2, "fabricated evidence")
+    assert judge.parse_verdict('{"score": 4} then {"score": 7}') == (7, "")      # no reasoning: the last one
+
+
 def test_verdict_fallbacks():
     assert judge.parse_verdict("") == (None, "")
     assert judge.parse_verdict('{"score": "high"} then score: 7') == (7, '{"score": "high"} then score: 7')

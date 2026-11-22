@@ -3,8 +3,8 @@ linear time. The `key: value` rule (and the URL credential rule) used to
 rescan the rest of a word from every position, so 50 KB of one long word (a base64 blob, a hex dump,
 minified code in a command's output) took about 100 s and stalled the tool
 call. It must still redact every key form it did, and give the same result as
-before for keys of realistic length (a differential property against the old
-pattern, kept here only as the oracle)."""
+before (a differential property against the old pattern, kept here only as
+the oracle)."""
 from __future__ import annotations
 
 import re
@@ -34,6 +34,11 @@ OLD_KEY_VALUE = re.compile(
     ("nothing secret here", "nothing secret here"),
     ("clone https://ana:pw@git.example.com/repo", f"clone https://{REDACTED}@git.example.com/repo"),
     ("see git+ssh://deploy@host:22/x", f"see git+ssh://{REDACTED}@host:22/x"),
+    # Found by the implementation review: after punctuation, and keys of any length.
+    ("+https://alice:hunter2@host/repo", f"+https://{REDACTED}@host/repo"),
+    ("x" * 101 + "token=opaque-value", "x" * 101 + f"token={REDACTED}"),
+    ("token" + "x" * 101 + "=opaque", "token" + "x" * 101 + f"={REDACTED}"),
+    ("a=password=secret", f"a=password={REDACTED}"),
 ])
 def test_every_key_form_is_still_redacted(raw, want):
     assert redaction.scrub_text(raw) == want
@@ -57,10 +62,7 @@ fragment = st.sampled_from(["token", "secret", "api_key", "api-key", "password",
 
 @pytest.mark.hypothesis
 @given(st.lists(fragment, max_size=30).map("".join))
-def test_same_result_as_before_for_realistic_keys(text):
-    words = re.findall(r"[\w-]+", text)
-    if any(len(w) > 100 for w in words):
-        return                                       # beyond the new key length bound: not comparable
+def test_same_result_as_before(text):
     old = OLD_KEY_VALUE.sub(
         lambda m: m.group(0) if m.group(2).strip("\"'") == REDACTED or m.group(2).lower() in ("bearer", "basic")
         else m.group(1) + REDACTED, text)

@@ -1,5 +1,5 @@
 """Patterns that read untrusted text run in linear time, with the same
-results as before for realistic input: email masking in audit records
+results as before (the credential URL check flags at least what it did): email masking in audit records
 (hubzoid.audit_log), credential URLs in parity settings
 (hubzoid.parity.validate) and table cell attributes in migrated Open WebUI
 messages (hubzoid.migrate_openwebui). Each used to rescan the rest of a long
@@ -48,6 +48,9 @@ def test_known_values():
     assert validate._CREDENTIAL_URL.search("9https://user:pw@host")
     assert not validate._CREDENTIAL_URL.search("https://host/x?a=1")
     assert migrate_openwebui._ATTR_RE.findall(' colspan="2" data-x="a b"') == [("colspan", "2"), ("data-x", "a b")]
+    # Found by the implementation review: any local-part length, any scheme length.
+    assert audit_log._mask_personal("a" * 65 + "@example.com") == "[email]"
+    assert validate._CREDENTIAL_URL.search("a" + "1" * 32 + "://user:pw@host")
 
 
 piece = st.sampled_from(["a", "b", "1", ".", "+", "-", "_", "@", ":", "/", "//", "://", '"', "=", " ", "\n",
@@ -59,4 +62,7 @@ piece = st.sampled_from(["a", "b", "1", ".", "+", "-", "_", "@", ":", "/", "//",
 @given(text=st.lists(piece, max_size=25).map("".join))
 def test_same_results_as_before(name, text):
     new, old, how = CASES[name]
-    assert run(new, how, text) == run(old, how, text)
+    if name == "credential_url":                     # now any scheme: flags at least what it did
+        assert run(new, how, text) or not run(old, how, text)
+    else:
+        assert run(new, how, text) == run(old, how, text)

@@ -28,20 +28,20 @@ REDACTED = "[redacted]"
 _SECRET_WORDS = ("token", "password", "passwd", "secret", "api_key", "apikey",
                  "authorization")
 
-# `key: value`, `key=value` and `"key": "value"` in free text. The key starts
-# at the start of a word and is at most 100 characters around the keyword, so
-# a long word (a base64 blob, a hex dump) is scanned once, not once per
-# position (that took about 100 s for 50 KB).
+# `key: value`, `key=value` and `"key": "value"` in free text. The key is a
+# whole word holding one of the words (a lookahead), taken possessively and
+# only from a word start, so a long word is scanned once, not once per position
+# (that took about 100 s for 50 KB). No length limit on the key.
 _SECRET_TEXT_RE = re.compile(
     r"""(?ix)
-    (["']?(?<![\w-])[\w-]{0,100}(?:token|password|passwd|secret|api[_-]?key|authorization)[\w-]{0,100}["']?\s*[:=]\s*)
+    (["']?(?<![\w-])(?=[\w-]*(?:token|password|passwd|secret|api[_-]?key|authorization))[\w-]++["']?\s*[:=]\s*)
     ("[^"]*"|'[^']*'|[^\s,;}&]+)
     """)
 _BEARER_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-# https://user:secret@host and https://secret@host. The scheme starts where no
-# scheme character comes before it and is at most 32 characters, so text such
-# as "a-a-a-..." is not rescanned from every position.
-_URL_CREDENTIAL_RE = re.compile(r"(?i)(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}://)[^/\s:@]+(?::[^/\s@]*)?@")
+# https://user:secret@host and https://secret@host: the sign-in part after
+# "://", whatever comes before it (anchoring on "://" keeps this linear; a
+# scheme pattern rescanned long words from every position).
+_URL_CREDENTIAL_RE = re.compile(r"(://)[^/\s:@]+(?::[^/\s@]*)?@")
 # Token shapes that are credentials wherever they appear.
 _TOKEN_SHAPES = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
