@@ -554,3 +554,19 @@ def test_a_guest_request_is_never_continued():
                "requester_id": open_mode.guest_subject("slack-main", "T0TEAM", "U0ANA")}
     # Returns before touching anything else (``self`` is never used).
     assert asyncio.run(Orchestrator.continue_request(None, request)) is False
+
+
+def test_the_open_mode_table_is_created_once_across_upgrades_and_restarts(tmp_path):
+    from sqlalchemy import create_engine, inspect
+
+    from hubzoid import migrations
+
+    url = f"sqlite:///{tmp_path / 'ops.db'}"
+    for _ in range(2):                         # a second upgrade, then a "restart" with a new engine
+        migrations._done.clear()
+        eng = create_engine(url)
+        migrations.upgrade(eng, "operational")
+        migrations.upgrade(eng, "operational")
+        assert migrations.current(eng, "operational") == migrations.head("operational")
+        assert "hz_channel_open_mode" in inspect(eng).get_table_names()
+        eng.dispose()
