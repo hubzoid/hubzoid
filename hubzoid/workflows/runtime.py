@@ -617,7 +617,9 @@ def step(fn: Callable | None = None, *, max_attempts: int = 1):
                 check()
                 return f(*args, **kwargs)
         if max_attempts and max_attempts > 1:
-            return _DBOS.step(retries_allowed=True, max_attempts=max_attempts)(checked)
+            # Out of attempts, the workflow sees the step's own last error
+            # (a TimeoutError stays a TimeoutError), not DBOS's wrapper.
+            return _last_error(_DBOS.step(retries_allowed=True, max_attempts=max_attempts)(checked))
         return _DBOS.step()(checked)
 
     return wrap(fn) if fn is not None else wrap
@@ -659,14 +661,27 @@ def _seam_step():
 def _last_error(step_fn: Callable) -> Callable:
     """A retried seam raises the call's own last error (ModelOutputError, a
     timeout), as `hub.call_llm` documents, not DBOS's retries-exceeded one."""
+    import inspect
     from functools import wraps
 
     from dbos._error import DBOSMaxStepRetriesExceeded
 
+    if inspect.iscoroutinefunction(step_fn):
+        @wraps(step_fn)
+        async def acall(*args, **kwargs):
+            try:
+                return await step_fn(*args, **kwargs)
+            except DBOSMaxStepRetriesExceeded as exc:
+                if exc.errors:
+                    raise exc.errors[-1] from None
+                raise
+
+        return acall
+
     @wraps(step_fn)
-    def call(*args):
+    def call(*args, **kwargs):
         try:
-            return step_fn(*args)
+            return step_fn(*args, **kwargs)
         except DBOSMaxStepRetriesExceeded as exc:
             if exc.errors:
                 raise exc.errors[-1] from None
@@ -1135,12 +1150,20 @@ def run_now(name: str, hub_name: str | None = None):
 
 
 MISSED_LOG_DAYS = 31
+#: Scheduled runs of one workflow waiting to start beyond which each tick warns.
+#: A slot waits for the previous run (docs/workflows.md), so a run longer than
+#: its interval grows this queue without a cap; the warning makes that visible.
+BACKLOG_WARN = 5
 
 
-def missed_log(health: dict, count: int, now: datetime) -> list:
+def missed_log(health: dict, count: int, now: datetime, *, name: str | None = None,
+               by: dict | None = None) -> list:
     """The hub's dated record of skipped scheduled slots, for runtime health:
-    `[utc_iso, count]` pairs from the last MISSED_LOG_DAYS days, plus one for
-    `count` slots skipped at `now` when there are any. The Console reads it."""
+    `[utc_iso, count]` or `[utc_iso, count, workflow]` entries from the last
+    MISSED_LOG_DAYS days, plus one for `count` slots skipped at `now` (named
+    `name` when given) and one per workflow in `by`. Usage reads the first two
+    elements. The workflow name, written since 2.1.2, is kept through pruning
+    so each workflow can show its own count."""
     now = now.astimezone(timezone.utc)
     cutoff = now - timedelta(days=MISSED_LOG_DAYS)
     kept = []
@@ -1148,20 +1171,92 @@ def missed_log(health: dict, count: int, now: datetime) -> list:
         try:
             at = datetime.fromisoformat(entry[0])
             if (at if at.tzinfo else at.replace(tzinfo=timezone.utc)) >= cutoff:
-                kept.append([entry[0], int(entry[1])])
+                named = [entry[2]] if len(entry) > 2 and isinstance(entry[2], str) else []
+                kept.append([entry[0], int(entry[1]), *named])
         except (TypeError, ValueError, IndexError):
             continue  # a malformed entry is dropped, never fatal
     if count:
-        kept.append([now.isoformat(), int(count)])
+        kept.append([now.isoformat(), int(count), *([name] if name else [])])
+    for wf_name, n in (by or {}).items():
+        if n:
+            kept.append([now.isoformat(), int(n), wf_name])
     return kept
 
 
-def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
+def missed_by_workflow(health: dict, now: datetime | None = None) -> dict[str, int]:
+    """Slots each code workflow skipped in the last MISSED_LOG_DAYS days, from
+    the named `missed_log` entries."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = now - timedelta(days=MISSED_LOG_DAYS)
+    out: dict[str, int] = {}
+    for entry in health.get("missed_log") or []:
+        try:
+            if len(entry) < 3 or not isinstance(entry[2], str):
+                continue
+            at = datetime.fromisoformat(entry[0])
+            if (at if at.tzinfo else at.replace(tzinfo=timezone.utc)) >= cutoff:
+                out[entry[2]] = out.get(entry[2], 0) + int(entry[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _record_missed(gs, name: str, count: int, now: datetime, *, dispatched: bool = False) -> None:
+    """Add `count` skipped slots of workflow `name` to runtime health, in one
+    locked read-modify-write (the heartbeat writes the same record)."""
+    def change(health: dict) -> None:
+        if dispatched:
+            health["last_dispatch"] = now.isoformat()
+        if count:
+            health["missed"] = int(health.get("missed", 0) or 0) + count
+        health["missed_log"] = missed_log(health, count, now, name=name)
+
+    gs.update_runtime_health(_HUB_NAME, change)
+
+
+def _waiting_runs(name: str) -> int:
+    """Runs of workflow `name` queued and not yet started (scheduled or not),
+    counted up to BACKLOG_WARN + 1."""
+    return len(_DBOS.list_workflows(name=name, status=["ENQUEUED"], limit=BACKLOG_WARN + 1,
+                                    load_input=False, load_output=False))
+
+
+def _check_backlog(gs, name: str) -> None:
+    """Warn while a workflow's queue of waiting runs is past BACKLOG_WARN, and
+    record it in runtime health (`backlog`) for the Console and the CLI."""
+    try:
+        waiting = _waiting_runs(name)
+    except Exception:  # noqa: BLE001 — a signal only, never a dispatch failure
+        log.debug("workflows: could not count waiting runs of %r", name, exc_info=True)
+        return
+    over = waiting > BACKLOG_WARN
+
+    def change(health: dict) -> None:
+        backlog = dict(health.get("backlog") or {})
+        if over:
+            backlog[name] = waiting
+        else:
+            backlog.pop(name, None)
+        health["backlog"] = backlog
+
+    if over or name in (gs.runtime_health(_HUB_NAME).get("backlog") or {}):
+        gs.update_runtime_health(_HUB_NAME, change)
+    if over:
+        log.warning(
+            "workflows: %r has more than %d scheduled runs waiting to start: each run takes "
+            "longer than its schedule's interval, and every slot waits for the previous run. "
+            "Shorten the run or lengthen the schedule.", name, BACKLOG_WARN)
+
+
+def tick(*, last: datetime, now: datetime | None = None, why: str | None = None) -> list[str] | None:
     """Dispatcher step: start every scheduled workflow due in (last, now].
     Returns the names started, or None while a backup holds new runs (the
     caller keeps `last`, so a slot inside the hold fires when it ends; runs
     already started in this tick are not repeated, their ids are per slot).
-    Missed fires are skipped (not back-filled)."""
+    When the window holds more than one slot, only the latest starts and the
+    others are counted as missed, with a warning saying why (`why`, from the
+    caller, else the gap). A workflow that cannot be queued has its slot
+    counted too, and the tick then raises."""
     from .schedule_grammar import due_between
 
     now = now or datetime.now(timezone.utc)
@@ -1176,12 +1271,14 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
     for wf in _REGISTRY.values():
         if not wf.schedule or wf.name in paused:
             continue
+        due = None
+        queued = False
         try:
             if due_between(wf.schedule, wf.timezone, last, now):
                 from .schedule_grammar import next_after
 
                 due = next_after(wf.schedule, wf.timezone, last)
-                missed = 0
+                first, missed = due, 0
                 # Keep only the latest slot when a dispatcher is delayed.
                 while True:
                     following = next_after(wf.schedule, wf.timezone, due)
@@ -1195,17 +1292,33 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
                 if wf.name in gs.paused_workflows(_HUB_NAME):
                     continue
                 start(wf.name, scheduled_at=due.astimezone(timezone.utc).isoformat())
-                health = gs.runtime_health(_HUB_NAME)
-                gs.set_runtime_health(
-                    _HUB_NAME,
-                    last_dispatch=now.isoformat(),
-                    missed=health.get("missed", 0) + missed,
-                    missed_log=missed_log(health, missed, now),
-                )
+                queued = True
+                if missed:
+                    gap = (now - last).total_seconds()
+                    log.warning(
+                        "workflows: %r skipped %d scheduled slot(s) from %s and ran the slot "
+                        "at %s: %s", wf.name, missed,
+                        first.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                        due.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                        why or (f"the dispatcher did not look between "
+                                f"{last.astimezone(timezone.utc).isoformat(timespec='seconds')} and "
+                                f"{now.astimezone(timezone.utc).isoformat(timespec='seconds')} "
+                                f"({gap:.0f} s); the event loop or the machine was busy"))
+                _record_missed(gs, wf.name, missed, now, dispatched=True)
                 started.append(wf.name)
-        except Exception:  # noqa: BLE001 — one bad schedule never stalls the loop
+                _check_backlog(gs, wf.name)
+        except Exception as exc:  # noqa: BLE001 — one bad schedule never stalls the loop
             failed.append(wf.name)
             log.exception("workflows: dispatch failed for %r", wf.name)
+            if due is not None and not queued:
+                log.warning("workflows: %r skipped the scheduled slot at %s: it could not be "
+                            "queued (%s)", wf.name,
+                            due.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                            type(exc).__name__)
+                try:
+                    _record_missed(gs, wf.name, 1, now)
+                except Exception:  # noqa: BLE001 — the store may be what failed
+                    log.exception("workflows: could not record the skipped slot of %r", wf.name)
     if any(getattr(w, "schedulable", False) for w in _REGISTRY.values()):
         try:
             from . import personal
@@ -1227,8 +1340,15 @@ def catch_up(since: datetime, now: datetime | None = None) -> list[str]:
 
     now = now or datetime.now(timezone.utc)
     started = []
+    if _HUB_DIR is not None:
+        from ..access import store_for
+
+        if store_for(_HUB_DIR).schedule_hold():
+            log.warning("workflows: no catch-up runs while a backup holds new runs")
+            return started
+    paused = _paused_now()
     for wf in _REGISTRY.values():
-        if not (getattr(wf, "catch_up", False) and wf.schedule):
+        if not (getattr(wf, "catch_up", False) and wf.schedule) or wf.name in paused:
             continue
         try:
             cursor, last = since, None
@@ -1259,8 +1379,9 @@ def downtime_missed(since: datetime, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     total = 0
     per: dict[str, int] = {}
+    paused = _paused_now()
     for wf in _REGISTRY.values():
-        if not wf.schedule:
+        if not wf.schedule or wf.name in paused:   # a paused slot is not missed
             continue
         count = 0
         cursor = since
@@ -1279,6 +1400,27 @@ def downtime_missed(since: datetime, now: datetime | None = None) -> dict:
         "missed": total,
         "by_workflow": per,
     }
+
+
+def _paused_now() -> set[str]:
+    """Paused code workflows of this hub; empty when unreadable, so a count
+    errs towards reporting a slot rather than hiding it."""
+    if _HUB_DIR is None:
+        return set()
+    try:
+        from ..access import store_for
+
+        return store_for(_HUB_DIR).paused_workflows(_HUB_NAME)
+    except Exception:  # noqa: BLE001
+        log.warning("workflows: could not read paused workflows", exc_info=True)
+        return set()
+
+
+def without_caught_up(window: dict, caught: list[str]) -> dict:
+    """`downtime_missed`'s window less the one slot each caught-up workflow ran."""
+    per = {k: v - (1 if k in caught else 0) for k, v in window.get("by_workflow", {}).items()}
+    per = {k: v for k, v in per.items() if v > 0}
+    return {**window, "by_workflow": per, "missed": sum(per.values())}
 
 
 def load_workflows(hub_dir) -> int:

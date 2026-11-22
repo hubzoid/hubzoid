@@ -1216,12 +1216,29 @@ class GrantStore:
         return json.loads(raw) if raw else {}
 
     def set_runtime_health(self, hub: str, **values) -> None:
+        self.update_runtime_health(hub, lambda health: health.update(values))
+
+    def update_runtime_health(self, hub: str, change) -> dict:
+        """Read the hub's runtime health, apply `change(health)` in place and
+        write it back, as one serialized transaction. The dispatcher, the
+        ownership heartbeat and a bridge waiting for ownership all write this
+        record, so a plain read then write lost updates."""
         import json
 
-        old = self.runtime_health(hub)
-        old.update(values)
-        with self._engine.begin() as c:
-            self._meta_set(c, "workflow_health:" + normalize(hub), json.dumps(old))
+        key = "workflow_health:" + normalize(hub)
+        with self._engine.connect() as c:
+            if c.engine.dialect.name == "sqlite":
+                c.exec_driver_sql("BEGIN IMMEDIATE")
+            else:
+                c.execute(text("INSERT INTO hz_meta(k, v) VALUES(:k, '{}') "
+                               "ON CONFLICT (k) DO NOTHING"), {"k": key})
+                c.execute(text("SELECT v FROM hz_meta WHERE k=:k FOR UPDATE"), {"k": key})
+            raw = self._meta_get(c, key)
+            health = json.loads(raw) if raw else {}
+            change(health)
+            self._meta_set(c, key, json.dumps(health))
+            c.commit()
+        return health
 
     def paused_workflows(self, hub: str) -> set[str]:
         """Scheduled work the operator paused in `hub` (`md:<task>` for markdown

@@ -170,6 +170,27 @@ def test_recheck_stops_a_run_whose_account_was_blocked_or_replaced(shared):
         idlib.recheck(shared, "sales", ident)
 
 
+def test_an_account_the_directory_turned_off_never_starts_a_run(shared):
+    """A run as an account the company directory disabled stops at its identity
+    check (run start, each markdown round, each model call), not only when a
+    tool call is refused."""
+    from hubzoid.auth import users
+
+    _account(shared, "priya@company.com")
+    _manage(shared, "priya@company.com")
+    ident = idlib.resolve(shared, run_as="priya@company.com")
+    from sqlalchemy import text
+
+    users.create(shared, email="priya@company.com")
+    with store_for(shared).engine.begin() as conn:   # what the SCIM directory does
+        conn.execute(text("UPDATE hz_users SET status='disabled' WHERE email=:e"),
+                     {"e": "priya@company.com"})
+    with pytest.raises(IdentityError, match="company directory turned that account off"):
+        idlib.resolve(shared, run_as="priya@company.com")
+    with pytest.raises(IdentityError, match="company directory"):
+        idlib.recheck(shared, "sales", ident)
+
+
 def test_identity_round_trips_as_plain_data(shared):
     _account(shared, "priya@company.com")
     _manage(shared, "priya@company.com")
