@@ -59,6 +59,26 @@ if _real_killpg is not None:
     os.killpg = _guarded_killpg
 
 
+# Property tests (Hypothesis). `ci` is the default: few examples, derandomized
+# so a pull request never fails on an unlucky draw unrelated to its change. The
+# nightly workflow sets HYPOTHESIS_PROFILE=nightly for a large random search.
+def _hypothesis_profiles() -> None:
+    try:
+        from hypothesis import HealthCheck, settings
+    except ImportError:  # the dev extra is not installed
+        return
+    settings.register_profile(
+        "ci", max_examples=50, deadline=1000, derandomize=True,
+        suppress_health_check=[HealthCheck.too_slow])
+    settings.register_profile(
+        "nightly", max_examples=1000, deadline=None, derandomize=False, print_blob=True,
+        suppress_health_check=[HealthCheck.too_slow])
+    settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
+
+
+_hypothesis_profiles()
+
+
 # Tests that took 5 s or more (.test_durations) are marked `heavy`. CI leaves
 # them out to keep checks to minutes; run them with `pytest -m heavy`.
 _HEAVY_SECONDS = 5.0

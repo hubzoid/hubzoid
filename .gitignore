@@ -49,3 +49,11 @@ secret.key
 /manual-*.png
 /*-snap.yml
 .venv/
+
+# Hypothesis example database and coverage output
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/

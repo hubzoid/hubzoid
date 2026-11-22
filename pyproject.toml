@@ -125,6 +125,9 @@ dev = [
   "build>=1.2",
   "twine>=5.0",
   "scim2-tester>=0.5.2,<0.6",  # tests/test_auth_directory.py: SCIM conformance checks
+  "hypothesis>=6.170,<7",  # property tests; profiles in tests/conftest.py (ci default, nightly large)
+  "pytest-cov>=7,<8",      # coverage in the nightly workflow only (.github/workflows/nightly.yml)
+  "ruff>=0.17.6,<0.18",    # bug rules only ([tool.ruff.lint]); one minor line, rules change between minors
 ]
 
 [project.scripts]
@@ -173,3 +176,64 @@ markers = [
   "real_logins: the Claude Code / Codex login probes and runtime.reply_check run as written (otherwise neither CLI is installed and the check answers)",
   "e2e_browser: end-to-end test that spawns the shared playwright-mcp sidecar and drives a real browser (needs Node/npx; pooled-mode cases also need Docker)",
 ]
+
+# Coverage runs nightly (.github/workflows/nightly.yml), never on pull requests.
+# No fail_under here: pytest-cov reads it, and each half of a split run would
+# fail on its own. The nightly workflow enforces the threshold on the combined
+# report.
+[tool.coverage.run]
+source = ["hubzoid"]
+relative_files = true
+omit = [
+  "hubzoid/portal_dist/*",
+  "hubzoid/core_assets/*",
+  "hubzoid/migrations/*/versions/*",
+  "hubzoid/sandbox/images/*",
+  "hubzoid/deploy/providers/*",
+]
+
+[tool.coverage.report]
+skip_empty = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+]
+
+# Bug rules only: no style or format rules, no reformat. `ruff check` runs in
+# tests.yml and takes seconds.
+[tool.ruff]
+target-version = "py311"
+extend-exclude = [
+  "portal",
+  "hubzoid/portal_dist",
+  "hubzoid/core_assets",
+  "hubzoid/migrations/*/versions",
+]
+
+[tool.ruff.lint]
+select = [
+  "F",     # Pyflakes: undefined names, functions defined twice, broken format strings
+  "E9",    # syntax and IO errors
+  "B002",  # ++x / --x, which do nothing in Python
+  "B006",  # mutable default argument
+  "B012",  # return, break or continue in finally swallows the exception
+  "B015",  # comparison whose result is thrown away (a missing assert)
+  "B016",  # raising a literal
+  "B018",  # expression whose value is thrown away
+  "B020",  # loop variable overwrites the iterable
+  "B023",  # closure reads the loop variable late
+  "B025",  # the same exception caught twice
+  "B026",  # star argument after a keyword argument
+  "B032",  # annotation where an assignment was meant (x: 1)
+  "B033",  # duplicate item in a set literal
+  "B035",  # dict comprehension with a constant key
+]
+ignore = [
+  "F401",  # unused import: style, and some are deliberate re-exports
+  "F541",  # f-string without placeholders: harmless
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A test imports a fixture and takes it as a parameter of the same name.
+"tests/**" = ["F811"]
