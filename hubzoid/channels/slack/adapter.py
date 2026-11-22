@@ -296,7 +296,13 @@ class SlackAdapter(Adapter):
         actor = ExternalActor(user, "", bool(is_bot), {"team": teams.get("user_team") or cfg.installation_team_id,
                                                        "teams": teams})
         channel_type = event.get("channel_type") or ("im" if channel.startswith("D") else "")
-        foreign = any(teams.get(k) and teams[k] != cfg.installation_team_id for k in ("user_team", "source_team"))
+        # On Enterprise Grid, sibling workspaces of one organization carry their
+        # own team ids, so a differing team there is not Slack Connect: only the
+        # shared flag decides (open mode still checks the member's team).
+        grid = bool(payload.get("enterprise_id") or payload.get("is_enterprise_install")
+                    or (payload.get("enterprise") or {}).get("id"))
+        foreign = not grid and any(teams.get(k) and teams[k] != cfg.installation_team_id
+                                   for k in ("user_team", "source_team"))
         ignore = None
         if payload.get("is_ext_shared_channel") or event.get("is_ext_shared_channel") or foreign:
             # Slack Connect: a shared channel, or a sender from another

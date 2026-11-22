@@ -595,7 +595,7 @@ function OpenModeCard({ url }: { url: string }) {
             onConfirm={() => save(false)}><Button danger loading={saving}>Turn off</Button></Popconfirm>
         </> : (
           <Popconfirm title={`Let anyone in workspace ${d.workspace} ask?`}
-            description="People without a Hubzoid account get guest access: knowledge and read-only tools, a daily limit. Doctor warns while it is on."
+            description="People without a Hubzoid account get guest access: knowledge and read-only tools, a daily limit. Accounts are recognised by confirmed Slack email (needs the users:read.email scope). Doctor warns while it is on."
             onConfirm={() => save(true)}><Button type="primary" loading={saving}>Turn on</Button></Popconfirm>
         )) : <Text type="secondary">Only an organization administrator can change this.</Text>}
       </Space>

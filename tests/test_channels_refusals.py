@@ -327,3 +327,36 @@ def test_a_channel_run_is_counted_under_its_channel(monkeypatch):
     assert seen == ["slack", "web"]
     assert router.parse_channel_credential("slack|slack-channel|slack-main") == ("slack", "slack-channel",
                                                                                 "slack-main")
+
+
+def test_unattended_work_owes_no_notice():
+    from hubzoid.channels import admission
+    from hubzoid.channels.models import ExternalActor, InboundEvent, Origin
+
+    conn = SimpleNamespace(enabled=True, adapter=SimpleNamespace(customer_facing=False, notice_reasons=frozenset()))
+    origin = Origin("github", "org", "gh:1", {})
+    asked = InboundEvent(semantic_key="k1", kind="comment", origin=origin, actor=ExternalActor("u1"), trigger=True)
+    opened = InboundEvent(semantic_key="k2", kind="pull_request", origin=origin, actor=ExternalActor("u1"),
+                          trigger=True, data={"unattended": True})
+    assert admission._notice_owed(conn, asked, "denied", "queue_full") == {"notice": "queue_full"}
+    assert admission._notice_owed(conn, opened, "denied", "queue_full") == {}
+
+
+def test_an_enterprise_grid_sibling_workspace_is_not_slack_connect(hub_dir, web):
+    conn = conn_for(hub_dir)
+    body = event(user_team="T0SIBLING")
+    body["enterprise_id"] = "E0ORG"
+    receive(conn, body)
+    assert _rows(hub_dir)[0]["status"] == "accepted"
+
+
+def test_two_reloads_at_once_start_a_transport_once(hub_dir, monkeypatch):
+    c = _conn("slack-main")
+    log, _ = _transports(monkeypatch, hub_dir, [c])
+    monkeypatch.setattr(router._state, "reload_lock", None)
+
+    async def both():
+        await asyncio.gather(router.reload_transports(), router.reload_transports())
+
+    asyncio.run(both())
+    assert log == [("start", "slack-main")]

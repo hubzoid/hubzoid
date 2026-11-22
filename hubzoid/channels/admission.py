@@ -226,8 +226,8 @@ def _notice_owed(conn: Connection, event: InboundEvent, status: str, reason: str
     is on and not customer-facing, and the reason is one people are told
     about. The router posts it later (``router.post_owed_notices``): intake
     never calls the provider before it acknowledges."""
-    if status not in ("ignored", "denied") or not reason or not event.trigger:
-        return {}
+    if status not in ("ignored", "denied") or not reason or not event.trigger or event.data.get("unattended"):
+        return {}      # unattended work (a PR opened, a label) was never a person asking
     if (event.actor is not None and event.actor.is_bot) or not conn.enabled or conn.adapter.customer_facing:
         return {}
     if reason not in (SHARED_NOTICE_REASONS | conn.adapter.notice_reasons):

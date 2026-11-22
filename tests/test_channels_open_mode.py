@@ -269,21 +269,180 @@ def test_a_local_tool_with_a_built_in_name_is_not_a_guest_tool():
         assert guard.visible_map({"read_knowledge": local}) == {"read_knowledge": False}
 
 
-def test_built_in_tools_carry_the_marker(tmp_path):
+def test_built_in_tools_carry_the_marker_through_the_real_wrappers(hub_dir):
+    from hubzoid import settings
+    from hubzoid.access import guard
+    from hubzoid.tool_classes import classify
     from hubzoid.tools import make_all
 
-    hub = tmp_path / "h"
-    (hub / "knowledge").mkdir(parents=True)
-    ctx = SimpleNamespace(hub_dir=hub, output_dir=hub / "output", knowledge=[], skills=[], settings=None,
-                          workflows=[], connections=None)
-    try:
-        tools = make_all(ctx)
-    except Exception as exc:  # noqa: BLE001 - a context field this stub lacks
-        pytest.skip(f"tool context stub incomplete: {exc}")
+    (hub_dir / "knowledge").mkdir(exist_ok=True)
+    ctx = SimpleNamespace(hub_dir=hub_dir, output_dir=hub_dir / "output", session_id="s",
+                          settings=settings.load(hub_dir), skills=[], knowledge=[], delegates=[], connections=None)
+    tools = guard.apply(hub_dir, make_all(ctx))          # restricted guards and run_checked, as every factory
+    assert open_mode.GUEST_TOOLS <= set(tools)
     assert all(getattr(t, "hubzoid_builtin", False) for t in tools.values())
-    from hubzoid.tool_classes import classify
+    assert {classify(tools[n]) for n in open_mode.GUEST_TOOLS} == {"read"}
 
-    assert open_mode.GUEST_TOOLS <= set(tools) and {classify(tools[n]) for n in open_mode.GUEST_TOOLS} == {"read"}
+
+def test_the_call_time_wall_refuses_a_guest_a_tool_off_the_list(hub_dir, web):
+    import asyncio
+    import dataclasses
+
+    from agents.tool import FunctionTool
+
+    from hubzoid.access import guard
+    from hubzoid.access.identity import identity_scope
+
+    async def ran(_ctx, _args):
+        return "ran"
+
+    def tool(name, builtin):
+        ft = FunctionTool(name=name, description="", params_json_schema={"type": "object", "properties": {}},
+                          on_invoke_tool=ran)
+        if builtin:
+            ft.hubzoid_builtin = True
+        return guard.run_checked(ft, hub_dir)
+
+    conn = conn_for(hub_dir)
+    _open(conn)
+    subject = open_mode.guest_subject(conn.id, "T0TEAM", "U0ANA")
+    with identity_scope(open_mode.guest_identity(hub_dir, conn.id, subject)):
+        assert asyncio.run(tool("read_knowledge", True).on_invoke_tool(None, "{}")) == "ran"
+        assert "not one of the tools" in asyncio.run(tool("read_knowledge", False).on_invoke_tool(None, "{}"))
+        assert "not one of the tools" in asyncio.run(tool("write_artifact", True).on_invoke_tool(None, "{}"))
+    del dataclasses
+
+
+def test_a_store_error_on_the_block_check_waits_not_guest(hub_dir, web, monkeypatch):
+    conn = conn_for(hub_dir)
+    _open(conn)
+    web.person("U0ANA", email="ana@example.org")
+    monkeypatch.setattr(open_mode, "_suspended", lambda hub_dir, email: None)
+    assert open_mode.resolve(conn, _event(conn), None) == (None, "wait")
+
+
+def test_a_slack_outage_is_not_asked_again_at_once(hub_dir, web):
+    conn = conn_for(hub_dir)
+    _open(conn)
+    web.users_info_error = "ratelimited"
+    for _ in range(3):
+        assert open_mode.resolve(conn, _event(conn), None) == (None, "wait")
+    assert web.lookups == 1
+
+
+def test_turning_it_on_again_for_a_new_workspace_is_an_on(hub_dir, web):
+    from sqlalchemy import text
+
+    from hubzoid.access import store_for
+
+    conn = conn_for(hub_dir)
+    _open(conn)
+    data = config.export(hub_dir, conn.id)["config"]
+    data["provider_config"]["installation_team_id"] = "T0OTHER"
+    config.apply(hub_dir, config.load_text(hub_dir, config.render({"version": 1, **data})).data,
+                 expected_revision=conn.revision, actor="hub-admin@example.org")
+    _open(config.active(hub_dir, conn.id))
+    with store_for(hub_dir).engine.connect() as c:
+        actions = [r[0] for r in c.execute(text("SELECT action FROM hz_access_audit WHERE subject=:s ORDER BY rowid"),
+                                           {"s": "channel:slack-main"})]
+    assert actions == ["channel_open_on", "channel_open_on"]
+
+
+# -- routing a guest and a recognised account --------------------------------------------------
+
+class _Engine:
+    """The chat engine calls the router makes, recorded."""
+
+    def __init__(self):
+        self.enqueued, self.convs = [], 0
+
+    def actor(self, person):
+        from hubzoid.chat.engine import Actor
+
+        return Actor(id=person.id, email=person.email, credential=getattr(person, "credential", "session"),
+                     credential_id=getattr(person, "credential_id", ""))
+
+    admission = None
+
+    def create_conversation(self, actor, **kw):
+        self.convs += 1
+        return {"conversation_id": f"c{self.convs}"}
+
+    def enqueue(self, conversation_id, actor, body, *, key):
+        self.enqueued.append((conversation_id, actor, body))
+        return SimpleNamespace(body={"dispatched": True, "run_id": "r1"}, replayed=False), None
+
+
+def _app(monkeypatch):
+    from hubzoid.channels import router
+
+    engine = _Engine()
+    monkeypatch.setattr(router, "conversation_busy", lambda engine, cid: False)
+    monkeypatch.setattr(router, "thread_branch", lambda engine, cid, actor_id: "b1")
+    monkeypatch.setattr(router, "_open_conversation", lambda hub_dir, conn, thread, actor, chat:
+                        chat.engine.create_conversation(actor)["conversation_id"])
+    monkeypatch.setattr(router, "_hub_access", lambda hub_dir, email: None)
+    return SimpleNamespace(state=SimpleNamespace(chat=SimpleNamespace(engine=engine, files=None))), engine
+
+
+def _deliver(conn, body):
+    from tests.test_channels_slack import receive
+
+    receive(conn, body)
+    return store.open_deliveries(conn.hub_dir, config.hub_of(conn.hub_dir))[-1]
+
+
+def test_a_guest_is_routed_as_a_guest_with_their_cap(hub_dir, web, monkeypatch):
+    from hubzoid.channels import router
+
+    conn = conn_for(hub_dir)
+    _open(conn, daily_cap=1)
+    web.person("U0ANA")
+    app, engine = _app(monkeypatch)
+    row = _deliver(conn, event(event_id="Ev1"))
+    assert router._route_one(hub_dir, row, app)[0] == "routed"
+    _, actor, _body = engine.enqueued[0]
+    assert actor.credential == open_mode.GUEST_CREDENTIAL and actor.credential_id == conn.id
+    assert open_mode.is_guest_subject(actor.id)
+    assert store.get_delivery(hub_dir, row["id"])["route_json"]["guest"] == actor.id
+    second = _deliver(conn, event(event_id="Ev2", ts="1700000000.000900", thread_ts="1700000000.000900"))
+    router._route_one(hub_dir, second, app)
+    assert store.get_delivery(hub_dir, second["id"])["reason"] == "guest_cap"
+
+
+def test_a_recognised_account_runs_with_the_slack_surface(hub_dir, web, monkeypatch):
+    from hubzoid.channels import router
+
+    conn = conn_for(hub_dir)
+    _open(conn)
+    _account(hub_dir, "ana@example.org")
+    web.person("U0ANA", email="ana@example.org")
+    app, engine = _app(monkeypatch)
+    row = _deliver(conn, event())
+    assert router._route_one(hub_dir, row, app)[0] == "routed"
+    actor = engine.enqueued[0][1]
+    assert actor.email == "ana@example.org"
+    assert router.parse_channel_credential(actor.credential_id) == ("slack", "slack-channel", conn.id)
+
+
+def test_run_identity_for_guests_and_channel_runs(hub_dir, web):
+    from hubzoid.chat import runs
+
+    conn = conn_for(hub_dir)
+    _open(conn)
+    subject = open_mode.guest_subject(conn.id, "T0TEAM", "U0ANA")
+    guest = SimpleNamespace(credential=open_mode.GUEST_CREDENTIAL, credential_id=conn.id, message_id="m1",
+                            email=subject, owner_id=subject, conversation_id="c1", key_hubs=None)
+    record = runs._admit(hub_dir, guest)
+    assert record["acts_as"] is None and record["started_from"] == "slack-guest"
+    _account(hub_dir, "ana@example.org")
+    from hubzoid.auth import users
+
+    acc = users.find_by_email(hub_dir, "ana@example.org")
+    linked = SimpleNamespace(credential="channel", credential_id=f"slack|web|{conn.id}", message_id="m2",
+                             email="ana@example.org", owner_id=acc["id"], conversation_id="c2", key_hubs=None)
+    record = runs._admit(hub_dir, linked)
+    assert record["acts_as"] == acc["id"] and record["started_from"] == "slack"
 
 
 # -- the daily cap ----------------------------------------------------------------------------

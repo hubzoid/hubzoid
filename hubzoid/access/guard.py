@@ -316,8 +316,13 @@ def checked_server(server, hub_dir: Path):
                 return CallToolResult(content=[TextContent(type="text", text=STOPPED)], isError=True)
             name = str(getattr(server, "name", "") or "")
             hub_server, connector = await asyncio.to_thread(server_source, hub_dir, name)
-            decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=str(tool_name),
+            ident = current_identity()
+            decision = await asyncio.to_thread(check_run, hub_dir, ident, tool=str(tool_name),
                                                server=hub_server, connector=connector)
+            if decision.allowed and str(getattr(getattr(ident, "app", None), "app_id", "")).startswith("channel:"):
+                from .evaluator import Decision
+
+                decision = Decision(False, "app_tool")   # a Slack guest never uses an MCP server's tools
             refused = refusal(decision, tool_name)
             where = dict(tool=str(tool_name), hub_dir=hub_dir, server=hub_server, connector=connector)
             if refused is not None:

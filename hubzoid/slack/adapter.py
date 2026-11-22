@@ -494,6 +494,7 @@ def build_app(
                 surface="slack-dm",   # assistant sidebar: 1:1 with the bot
             )
             final = writer.done()
+            placeholder_ts = None   # the answer is there now: a later failure must not replace it
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
@@ -537,6 +538,7 @@ def build_app(
                 surface="slack-channel",
             )
             final = writer.done()
+            placeholder_ts = None   # the answer is there now: a later failure must not replace it
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
@@ -590,6 +592,7 @@ def build_app(
                 surface="slack-dm",   # 1:1 direct message
             )
             final = writer.done()
+            placeholder_ts = None   # the answer is there now: a later failure must not replace it
             if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,

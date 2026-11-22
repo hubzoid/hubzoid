@@ -97,6 +97,7 @@ class _Loop:
         self.backoff: dict[str, tuple[float, float]] = {}
         #: transport name -> when it was first seen disconnected
         self.unhealthy: dict[str, float] = {}
+        self.reload_lock: asyncio.Lock | None = None
 
 
 _state = _Loop()
@@ -153,6 +154,7 @@ async def stop() -> None:
     _state.transports.clear()
     _state.backoff.clear()
     _state.unhealthy.clear()
+    _state.reload_lock = None
     _state.loop = _state.event = None
 
 
@@ -185,7 +187,15 @@ async def _stop_handle(name: str, handle) -> None:
 
 async def reload_transports() -> None:
     """Start transports for enabled connections and stop those no longer
-    enabled (after an apply)."""
+    enabled (after an apply). One pass at a time: the loop and an apply can
+    both call it, and two passes must never start the same transport twice."""
+    if _state.reload_lock is None:
+        _state.reload_lock = asyncio.Lock()
+    async with _state.reload_lock:
+        await _reload_transports()
+
+
+async def _reload_transports() -> None:
     hub_dir = _state.hub_dir
     if hub_dir is None:
         return

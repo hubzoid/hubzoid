@@ -63,6 +63,10 @@ DEFAULT_CAP, MIN_CAP, MAX_CAP = 20, 1, 500
 GUEST_TOOLS = frozenset({"current_time", "list_knowledge", "read_knowledge", "list_skills", "load_skill"})
 #: how long a Slack member lookup is kept (successful lookups only)
 MEMBER_TTL = 600.0
+#: after a Slack outage or rate limit, how long a member is not looked up again
+WAIT_TTL = 30.0
+#: users.info is quick; a slow answer is an outage, not a reason to stall routing
+LOOKUP_TIMEOUT = 5
 #: Slack errors that mean "try again later", not "no"
 _TRANSIENT = {"ratelimited", "internal_error", "fatal_error", "service_unavailable", "request_timeout"}
 
@@ -112,12 +116,14 @@ def set_open(conn, *, enabled: bool, daily_cap: int | None = None, actor: str) -
         raise ChannelError("validation_failed", "Open mode is only for Slack connections that answer with an "
                            "agent.", status=422)
     current = get(conn.hub_dir, conn.hub, conn.id) or {}
+    effective = view(conn)
     cap = int(daily_cap if daily_cap is not None else (current.get("daily_cap") or DEFAULT_CAP))
     if not MIN_CAP <= cap <= MAX_CAP:
         raise ChannelError("validation_failed", f"The daily cap is {MIN_CAP} to {MAX_CAP} requests a person.",
                            status=422)
     team, app = _bound(conn)
-    was = bool(current.get("enabled"))
+    # Effective state: turning it on again for another workspace is an "on".
+    was = bool(effective["enabled"])
     action = ("channel_open_on" if enabled and not was else "channel_open_off" if was and not enabled
               else "channel_open_cap")
     # The access change is recorded first: no audit row, no change.
@@ -198,21 +204,29 @@ def _lookup(conn, user_id: str) -> tuple[str, dict | None]:
     with _members_lock:
         hit = _members.get(key)
         if hit and hit[0] > now:
-            return "ok", hit[1]
+            return ("wait", None) if hit[1] is None else ("ok", hit[1])
     from slack_sdk.errors import SlackApiError
 
     from .slack.adapter import client
 
+    def _wait():
+        with _members_lock:
+            _members[key] = (now + WAIT_TTL, None)   # don't ask Slack again for a while
+        return "wait", None
+
     try:
-        info = (client(conn).users_info(user=user_id).get("user") or {})
+        web = client(conn)
+        if hasattr(web, "timeout"):
+            web.timeout = LOOKUP_TIMEOUT
+        info = (web.users_info(user=user_id).get("user") or {})
     except SlackApiError as exc:
         error = (exc.response or {}).get("error") if getattr(exc, "response", None) is not None else None
-        return ("wait", None) if error in _TRANSIENT else ("no", None)
+        return _wait() if error in _TRANSIENT else ("no", None)
     except ChannelError:
         return "no", None
     except Exception:  # noqa: BLE001 - network: try again later
         log.warning("open mode: Slack users.info failed for %s", conn.id, exc_info=True)
-        return "wait", None
+        return _wait()
     with _members_lock:
         if len(_members) > 5000:
             _members.clear()
@@ -256,7 +270,10 @@ def resolve(conn, event, row: dict | None = None):
     profile = info.get("profile") or {}
     email = (profile.get("email") or "").strip().lower() if info.get("is_email_confirmed") is True else ""
     if email:
-        if router._blocked(conn.hub_dir, email):
+        blocked = _suspended(conn.hub_dir, email)
+        if blocked is None:
+            return None, "wait"              # the access store did not answer: never a guest by default
+        if blocked:
             return None, "blocked"
         from ..auth import users
 
@@ -277,6 +294,17 @@ def resolve(conn, event, row: dict | None = None):
     return SimpleNamespace(guest=True, id=guest_subject(conn.id, team, actor.external_id),
                            email=guest_subject(conn.id, team, actor.external_id), name=str(name)[:80],
                            cap=int(setting["daily_cap"])), None
+
+
+def _suspended(hub_dir, email: str) -> bool | None:
+    """Blocked (True), not (False), or could not tell (None)."""
+    from ..access import store_for
+
+    try:
+        return bool(store_for(hub_dir).is_suspended(email))
+    except Exception:  # noqa: BLE001
+        log.warning("open mode: the access store could not check a block", exc_info=True)
+        return None
 
 
 # -- the daily cap -------------------------------------------------------------------------

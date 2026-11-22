@@ -164,7 +164,9 @@ This is the one exception to "new access for everyone signed in cannot be
 created": it creates no "Everyone signed in" grant, and it applies to that one
 connection only. Email matching needs the `users:read.email` scope; the
 manifest adds it while open mode is on. Without it, everyone without a link
-is a guest.
+is a guest, including someone whose account is blocked or removed, because
+Hubzoid cannot tell who they are: keep the scope granted while open mode is
+on (doctor warns when it is missing).
 
 **People & access** shows accounts awaiting signup, pending approval, active,
 services and blocked. **Refresh accounts** re-reads the account directory

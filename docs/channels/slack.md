@@ -129,7 +129,8 @@ ask as their account. Everyone else in the workspace asks as a Slack guest:
 the agent's knowledge and read-only tools, no approvals, no workflows, a daily
 cap. Slack Connect people and Slack's own guest accounts stay refused. While
 it is on, regenerate the manifest (it adds `users:read.email` so emails can
-match) and doctor warns. See
+match) and doctor warns. Without that scope nobody can be recognised, so a
+blocked account holder would ask as a guest too. See
 [administration](../ADMINISTRATION.md#anyone-in-a-slack-workspace-open-mode).
 
 Restricted tools: a person with an administrator's account link keeps today's
