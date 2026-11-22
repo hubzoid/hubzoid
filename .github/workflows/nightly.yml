@@ -42,22 +42,32 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: PostgreSQL server tools and ripgrep for the tests that need them
+      - name: PostgreSQL server tools, ripgrep and xmlsec1 for the tests that need them
         run: |
           echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
           sudo apt-get update
-          sudo apt-get install -y ripgrep
+          sudo apt-get install -y ripgrep xmlsec1
+      # With the saml and sandbox extras the SAML, SCIM and Docker sandbox
+      # tests run instead of skipping.
       - name: Install with test tools
-        run: pip install -e '.[dev,postgres]'
+        run: pip install -e '.[dev,postgres,saml,sandbox]'
       - name: Live process checks, one at a time, with coverage
         if: matrix.group == 1
         run: >-
-          pytest -q -ra --no-header -m "" -p no:xdist --cov=hubzoid --cov-report=
+          pytest -q -ra --no-header -m "not xfail" -p no:xdist --cov=hubzoid --cov-report=
           tests/test_gateway_app_live.py tests/test_workflow_concurrency.py
+      - name: Live web app smoke, with coverage
+        if: matrix.group == 2
+        timeout-minutes: 6
+        run: >-
+          pytest -q -ra --no-header -m "not xfail" --cov=hubzoid --cov-report=
+          tests/test_ui_release_smoke.py
+      # Tests marked xfail (known bugs, reported) are left out, so a failing
+      # test never adds coverage.
       - name: Test suite with coverage, part ${{ matrix.group }} of 4 (as the release workflow runs it)
         run: >-
-          pytest -q -ra --no-header -m "" -n auto --dist loadfile --splits 4 --group ${{ matrix.group }}
-          --cov=hubzoid --cov-report= ${{ matrix.group == 1 && '--cov-append' || '' }}
+          pytest -q -ra --no-header -m "not xfail" -n auto --dist loadfile --splits 4 --group ${{ matrix.group }}
+          --cov=hubzoid --cov-report= ${{ (matrix.group == 1 || matrix.group == 2) && '--cov-append' || '' }}
           --ignore=tests/test_ui_release_smoke.py
           --ignore=tests/test_gateway_app_live.py
           --ignore=tests/test_workflow_concurrency.py

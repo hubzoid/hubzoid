@@ -146,7 +146,9 @@ def test_release_validation_runs_the_suite_and_a_core_only_install():
     jobs = WORKFLOW["jobs"]
     suite = next(s["run"] for s in jobs["tests"]["steps"] if "--splits" in s.get("run", ""))
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
-    assert ".[dev,postgres]" in install and "openwebui" not in install
+    assert ".[dev,postgres,saml]" in install and "openwebui" not in install
+    # SAML and SCIM tests skip without pysaml2 and xmlsec1: install both.
+    assert "xmlsec1" in install
     # Every test, heavy ones included: an excluded critical check is not a pass.
     assert '-m ""' in suite and "-n auto --dist loadfile" in suite and "--splits 2" in suite
     # Live-process checks run alone (not in the parallel shards), never skipped.

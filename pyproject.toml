@@ -189,7 +189,6 @@ patch = ["subprocess"]
 omit = [
   "hubzoid/portal_dist/*",
   "hubzoid/core_assets/*",
-  "hubzoid/migrations/*/versions/*",
   "hubzoid/sandbox/images/*",
   "hubzoid/deploy/providers/*",
 ]
