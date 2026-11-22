@@ -203,7 +203,6 @@ def test_postgres_is_dumped_verified_rehearsed_and_restored(tmp_path, monkeypatc
     with admin.connect() as c:
         c.execute(text(f"CREATE DATABASE {scratch_db}"))
     admin.dispose()
-    scratch = postgres_url.rsplit("/", 1)[0] + "/" + scratch_db
 
     hub = _standalone(tmp_path)
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", postgres_url)

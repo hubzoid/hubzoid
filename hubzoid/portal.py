@@ -336,56 +336,6 @@ def _check_mutation(request: Request, admin: PortalAdmin) -> None:
 
 _UNAVAILABLE_MSG = UNAVAILABLE_MSG
 
-def _account_flags(gs, subject: str) -> dict:
-    """Read the store's two block markers separately (read-only). `blocked` is
-    the OR of both and always equals `gs.is_suspended(subject)`."""
-    subject = normalize(subject)
-    with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
-        suspended = gs._meta_get(conn, "suspended:" + subject) == "1"
-        unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"
-    from .access.service import directory_disabled
-
-    return dict(
-        suspended=suspended,
-        account_unavailable=unavailable,
-        blocked=suspended or unavailable,
-        directory_disabled=directory_disabled(gs._engine, subject),  # noqa: SLF001
-    )
-
-
-def _account_status(subject: str, identity: dict, flags: dict) -> str:
-    """One display status per subject. Precedence: an admin block beats
-    everything; then the structural kinds; then signup/approval progress; an
-    unavailable account that is *not* pending (deleted/missing) is
-    reported as `blocked` with `account_unavailable=true` alongside."""
-    if flags["suspended"]:
-        return "blocked"
-    if flags.get("directory_disabled"):
-        return "disabled"
-    if subject == "*":
-        return "everyone"
-    if subject.startswith("workflow:"):
-        return "service"
-    if not identity.get("owui_id"):
-        return "awaiting-signup"
-    if identity.get("pending"):
-        return "pending-approval"
-    if flags["account_unavailable"]:
-        return "blocked"
-    return "active"
-
-
-def _subject_kind(subject: str) -> str:
-    if subject.startswith("workflow:"):
-        return "service"
-    return "person"
-
-
-def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
-    identity = identity if identity is not None else (gs.identity(subject) or {})
-    flags = _account_flags(gs, subject)
-    return dict(flags, status=_account_status(normalize(subject), identity, flags))
-
 
 def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     hub_dir = Path(hub_dir)

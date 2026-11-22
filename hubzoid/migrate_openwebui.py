@@ -1287,7 +1287,7 @@ class Attachments:
                 with source_path.open("rb") as fh:
                     digest = hashlib.file_digest(fh, "sha256").hexdigest()
 
-            def matches(path: Path) -> bool:
+            def matches(path: Path, digest=digest, source_size=source_size) -> bool:
                 if not path.is_file():
                     return False
                 # Older bridges kept only the chat-local bytes. With no source

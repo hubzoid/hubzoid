@@ -1134,7 +1134,6 @@ class FeedbackService:
         if not isinstance(events, list) or any(e not in EVENTS for e in events):
             raise Err(422, "validation_failed", f"events are among: {', '.join(EVENTS)}.")
         enabled = bool(body.get("enabled", False))
-        t = _now()
         with self.engine.begin() as conn:
             row = conn.execute(sa.select(targets).where(targets.c.scope == scope_key, targets.c.id == target_id)
                                .with_for_update()).first()
