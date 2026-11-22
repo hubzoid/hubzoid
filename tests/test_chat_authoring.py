@@ -175,3 +175,28 @@ def test_workspace_edits_are_hub_changes_and_history_is_git(client, hub):
     assert changes.check_path("prompts/weekly.md") == "prompts/weekly.md"
     history = client.get("/api/chat/authoring/files/versions?path=AGENTS.md", headers=ORIGIN).json()["items"]
     assert history and history[0]["subject"] == "start"
+
+
+def test_workspace_drafts_commands_say_where_editing_moved(hub, monkeypatch):
+    """S0's coverage work found every `workspace drafts` command failing with
+    AttributeError since drafts became hub changes (c9b070b6). Each now says
+    where editing went, in JSON and for people, instead of crashing."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from hubzoid.cli import app
+
+    monkeypatch.setenv("HUBZOID_IN_APP_EDITING", "true")
+    calls = {"create": ["AGENTS.md"], "update": ["d1", "--content-file", "x.md", "--expected-revision", "1"],
+             "show": ["d1"], "submit": ["d1", "--expected-revision", "1"],
+             "review": ["d1", "--decision", "approve", "--digest", "sha"], "publish": ["d1", "--digest", "sha"],
+             "rollback": ["AGENTS.md", "--version", "v1"]}
+    for name, args in calls.items():
+        r = CliRunner().invoke(app, ["workspace", "drafts", name, *args, "--hub", str(hub), "--json"],
+                               catch_exceptions=False)
+        out = json.loads(r.output)
+        assert r.exit_code != 0 and out["detail"]["code"] == "moved", name
+        assert "hub-changes propose" in out["detail"]["message"]
+    r = CliRunner().invoke(app, ["workspace", "drafts", "create", "AGENTS.md"], catch_exceptions=False)
+    assert r.exit_code != 0 and "hub-changes" in r.output + (r.stderr if r.stderr_bytes else "")
