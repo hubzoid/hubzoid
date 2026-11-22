@@ -1,15 +1,15 @@
 """The web app's read-only access routes (hubzoid.access.access_routes): what
 the signed-in person can use and who to ask, a check that fails closed
-(503, never a guess at more access) and the API reference for signed-in
-people. Who a run was for needs a finished reply, which can race without the
-run status fix in #163: that test waits for it."""
+(503, never a guess at more access), who a run was for (only for that person
+or an administrator), and the API reference for signed-in people."""
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
 from hubzoid.access import access_routes
-from tests.chat_helpers import build_app, make_hub
+from tests.chat_helpers import ORIGIN, build_app, make_hub
+from tests.test_cov_chat_engine_cli import send
 
 
 @pytest.fixture
@@ -40,3 +40,19 @@ def test_a_broken_access_check_fails_closed(client, monkeypatch):
     monkeypatch.setattr(access_routes, "my_access", broken)
     r = client.get("/api/me/access")
     assert r.status_code == 503 and r.json()["detail"]["code"] == "access_unavailable"
+
+
+def test_who_a_run_was_for_and_the_api_reference(client):
+    r = client.get("/api/run-identity", params={"kind": "chat", "id": "no-such-message"})
+    assert r.status_code == 200 and r.json()["identity"] is None and r.json()["summary"]
+
+    agent = client.app.state.chat.model_label
+    made = client.post("/api/conversations", headers=ORIGIN, json={"agent": agent}).json()
+    sent = send(client, made["conversation"]["id"], made["branch"], "hello")
+    r = client.get("/api/run-identity", params={"kind": "chat", "id": sent["assistant_message_id"]})
+    ident = r.json()["identity"]                          # recorded for the reply: its owner may see it
+    assert r.status_code == 200 and ident["run_kind"] == "chat" and ident["hub"] == "chat-hub"
+    assert ident["acts_as_email"] == ident["requested_by"] == "admin@localhost" and r.json()["summary"]
+
+    ref = client.get("/api/openapi.json")
+    assert ref.status_code == 200 and ref.json()["openapi"].startswith("3.") and "/api/me/access" in ref.json()["paths"]
