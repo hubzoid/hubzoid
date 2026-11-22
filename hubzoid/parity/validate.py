@@ -166,7 +166,9 @@ def load(root: Path, manifest_path: Path | str = "parity.yaml") -> Bundle:
     return Bundle(manifest, ledger, sources, providers, deployments)
 
 
-_CREDENTIAL_URL = re.compile(r"[a-z][a-z0-9+.-]*://[^/\s@]*:[^/\s@]*@", re.I)
+# The scheme is at most 32 characters, so a long setting value is scanned in
+# linear time, not once per position.
+_CREDENTIAL_URL = re.compile(r"[a-z][a-z0-9+.-]{0,31}://[^/\s@]*:[^/\s@]*@", re.I)
 _SECRET_QUERY = re.compile(r"[?&](token|access_token|api[_-]?key|key|secret|password|sig|signature|auth)=",
                            re.I)
 _MAX_SETTING_TEXT = 500

@@ -956,7 +956,7 @@ _MARKUP_RE = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(```+|~~~+)", re.MULTILINE)
-_ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
+_ATTR_RE = re.compile(r'(?<![\w-])([\w-]+)="([^"]*)"')   # a name starts a word: linear time
 _KV_RE = re.compile(r"(?:^|(?<=\s))([A-Za-z_][A-Za-z0-9_]*)=")
 
 

@@ -75,7 +75,10 @@ _IDENTIFIER_NAMES = frozenset({"path", "file", "filename", "file_path", "filepat
                                "table", "collection", "channel", "sheet", "page", "workflow", "name",
                                "slug", "ref", "issue", "ticket", "project"})
 _KEEP = 200
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Starts where no address character comes before it, with a local part of at
+# most 64 characters (RFC 5321), so a long word is scanned once, not once per
+# position (a 1 MiB tool argument would take hours).
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]+\.[\w.-]+")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _PHONE = re.compile(r"(?<![\w])\+?\d[\d ()-]{7,}\d")
 
