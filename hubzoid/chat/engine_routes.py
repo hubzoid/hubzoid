@@ -274,7 +274,11 @@ class Orchestrator:
         try:
             policy = service_for(self.ctx.hub_dir).active().digest
         except Exception:  # noqa: BLE001 - unknown policy: never reuse a session
-            policy = str(time.time())
+            # No digest at all, rather than a random one: the engine neither
+            # resumes nor records a session under it, and the log says why.
+            log.warning("chat: the chat settings could not be read, so this reply starts a fresh "
+                        "runtime session", exc_info=True)
+            return ""
         from .. import personal_memory
 
         return canonical.digest({"actor": actor_id, "agent": self.ctx.model_label, "runtime": type(rt).__name__,

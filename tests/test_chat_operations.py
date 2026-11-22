@@ -623,3 +623,37 @@ def test_a_draining_hub_starts_nothing_and_a_cut_reply_is_interrupted(client):
         assert branch_of(client, cid, b["id"])["queue_paused"]
     finally:
         drain._reset_for_tests()
+
+
+def test_unreadable_chat_settings_never_resume_a_session_and_say_so(client, monkeypatch, caplog):
+    """A failed settings read used to give a random digest, silently. Now there
+    is no digest: the reply starts a fresh session, nothing is recorded to match
+    later, and the log says why."""
+    import logging
+
+    from hubzoid.chat import config as cfg
+
+    orch = client.app.state.chat.orchestrator
+    good = orch.config_digest("acct")
+    assert good and good == orch.config_digest("acct")   # stable while the settings read
+
+    def broken(_hub):
+        raise RuntimeError("settings store unavailable")
+
+    monkeypatch.setattr(cfg, "service_for", broken)
+    with caplog.at_level(logging.WARNING, logger="hubzoid.chat.engine"):
+        assert orch.config_digest("acct") == ""
+    assert "starts a fresh runtime session" in caplog.text
+
+    engine = client.app.state.chat.engine
+    cid, b = new_conv(client)
+    one = send(client, cid, "first question", b)
+    wait_run(client, one["run_id"])
+    engine.record_binding(branch_id=b["id"], conversation_id=cid, runtime="fake", session_id="sess-x",
+                          head_message_id=one["assistant_message_id"], config_digest="", ok=True)
+    import sqlalchemy as sa
+
+    from hubzoid.chat import graph as g
+
+    with engine.engine.connect() as conn:
+        assert conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == b["id"])).first() is None

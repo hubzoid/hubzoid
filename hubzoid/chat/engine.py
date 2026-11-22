@@ -1586,7 +1586,7 @@ class ChatEngine:
             return None, None
         with self.engine.connect() as conn:
             b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()
-            if b is None or b.config_digest != config_digest:
+            if b is None or not config_digest or b.config_digest != config_digest:
                 return None, None
             prompt_parent = conn.execute(sa.select(messages.c.parent_id).where(
                 messages.c.id == plan.prompt_message_id)).scalar()
@@ -1602,7 +1602,7 @@ class ChatEngine:
         ``session_cost``: the session's running cost the runtime reported."""
         with self.engine.begin() as conn:
             conn.execute(g.bindings.delete().where(g.bindings.c.branch_id == branch_id))
-            if ok and session_id and runtime:
+            if ok and session_id and runtime and config_digest:   # no digest: nothing to match later
                 conn.execute(g.bindings.insert().values(
                     branch_id=branch_id, conversation_id=conversation_id, runtime=runtime,
                     native_session_id=session_id[:255], head_message_id=head_message_id,
