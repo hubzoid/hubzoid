@@ -3,6 +3,66 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [2.1.2]
+
+A bug-fix and hardening release across Slack and channels, the web app,
+workflows and schedules, and access and approvals. Slack connections gain an
+opt-in open mode. The test suite gains property tests, a nightly coverage run
+and lint checks. One additive database change (`op_0092`).
+
+### Fixed
+- **Schedules (#159).** Per-minute schedules no longer skip about one slot in
+  seven: the dispatcher never ticks before the minute. Every skipped slot logs
+  a warning with its reason. A slot inside a short restart runs on resume. A
+  bridge stopped mid-backup no longer pauses every schedule for up to three
+  hours. Catch-up skips paused workflows and waits out a backup hold, and each
+  workflow's missed count is its own. A retried step that runs out raises its
+  own error.
+- **Approvals and access.** Someone who lost access to an agent can no longer
+  approve, answer or request changes, and is offered only Reject. A workflow
+  waiting on an approval stops when its own account loses access. A running
+  MCP call stops when its connection is revoked. An approved signup works at
+  once. `read_hub_file` and hub changes no longer follow a link into
+  `restricted/`. Hub changes to `prompts/` work. An interrupted access change
+  link shows as failed.
+- **Slack and channels.** Every refusal gets a clear notice instead of a raw
+  HTTP error or silence, including the 1.x Slack, Telegram and WhatsApp
+  bridges. Refusal notices in Slack channels are private to the person who
+  asked and survive rate limits. A sender from another Slack workspace is
+  refused even when Slack leaves out the shared flag. A brief access-store
+  error retries instead of refusing. Socket Mode reconnects after a CLI apply,
+  a token change or a dropped connection. Channel runs show under their
+  channel in Usage. Long replies keep code blocks closed.
+- **Web app.** Charts render in the Documents pane (#161): the pane allows
+  scripts and styles from jsDelivr, cdnjs and unpkg and still blocks every
+  request out (`HUBZOID_ARTIFACT_ALLOW_ORIGINS` replaces the list, `none` turns
+  it off). Documents get an Open button and a list that stays current. Live
+  replies recover after a restart or a background tab (#127). Sends keep their
+  order, Stop right after Send works, a refused send keeps the typed text, and
+  document edits detect conflicts. A finished reply can no longer be reported
+  as interrupted by the server. The upload limit follows
+  `HUBZOID_MAX_UPLOAD_BYTES`.
+- **CLI.** `hubzoid chat operations submit` no longer crashes. `hubzoid
+  workspace drafts` commands point to `hubzoid hub-changes`. `--json` errors
+  are JSON.
+- Four regular expressions that took quadratic time on long input, including
+  the redaction of tool output.
+
+### Added
+- **Slack open mode (off by default).** An organization administrator can let
+  anyone in a connection's own Slack workspace ask its agent. People whose
+  confirmed Slack email matches an account keep that account's access.
+  Everyone else is a Slack guest: unrestricted content and read-only built-in
+  tools only, no approvals or workflows, and a daily cap. `hubzoid channels doctor`
+  warns while it is on. See `docs/ADMINISTRATION.md`.
+- Previously undocumented operator settings are documented (#45), and a test
+  fails on any new undocumented `HUBZOID_*` setting.
+
+### Testing
+- Hypothesis property tests, ruff bug rules and a web type check in PR CI.
+- A nightly workflow with coverage (90% of statements, floor 85%) and large
+  property-test runs.
+
 ## [2.1.1]
 
 A hub's agent turns can run on Amazon Bedrock AgentCore, one microVM per chat,
