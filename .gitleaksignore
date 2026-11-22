@@ -23,3 +23,8 @@ d2bade0e2166c1645c8d1bbc136da50fe25c48cf:tests/test_auth_mfa.py:generic-api-key:
 # fake value on 23 October 2026.
 971d63808df616c70668c9452f7a78085af56722:tests/test_embed_agui.py:generic-api-key:267
 971d63808df616c70668c9452f7a78085af56722:tests/test_embed_agui.py:generic-api-key:271
+
+# A fake work-item id ("item123456789") next to the words "secret traceback" in a
+# coverage test on chore/2.1.2-coverage-90, flagged as a generic key. The secrets
+# scan reads every branch's history, so every branch needs this line.
+599384183d7441ea218c94d82e90b01dd6e407e6:tests/test_cov_channels_router.py:generic-api-key:168
