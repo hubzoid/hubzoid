@@ -165,7 +165,7 @@ def test_reply_settlement_outcomes(results, expected):
     ("failed", None, "This work could not finish (work item1234). An administrator can see why in the web app."),
 ])
 def test_terminal_text_does_not_expose_internal_errors(state, result, expected):
-    assert router._final_text(state, result, "secret traceback", "item123456789") == expected
+    assert router._final_text(state, result, "internal traceback", "item123456789") == expected
 
 
 @pytest.mark.parametrize("item,customer,result_state,expected,replied", [
