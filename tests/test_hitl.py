@@ -151,15 +151,23 @@ def test_only_someone_who_can_still_use_the_agent_lets_work_go_on(hub):
     (hub / "hitl.yaml").write_text(RULES + "approvers: [ben@example.org]\n")
     v = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={"n": 3})
     store_for(hub).revoke("ben@example.org", hub.name, "use_hub", actor="test")
-    for decision in ("approve",):
-        with pytest.raises(service.RequestError) as refused:
-            service.decide(hub, hub.name, v.request["id"], account_id="u_ben", email="ben@example.org",
-                           decision=decision)
-        assert (refused.value.status, refused.value.code) == (403, "no_access")
+    with pytest.raises(service.RequestError) as refused:
+        service.decide(hub, hub.name, v.request["id"], account_id="u_ben", email="ben@example.org",
+                       decision="approve")
+    assert (refused.value.status, refused.value.code) == (403, "no_access")
     with service.engine(hub).connect() as conn:
         assert conn.execute(st.grants.select()).first() is None        # nothing was written
+    assert service.get_for(hub, hub.name, v.request["id"], "u_ben", "ben@example.org")["allowed_actions"] == ["reject"]
     assert service.decide(hub, hub.name, v.request["id"], account_id="u_ben", email="ben@example.org",
                           decision="reject")["status"] == "rejected"
+
+    question = service.create(hub, hub.name, caller(), kind="question", title="Which warehouse?",
+                              question="Which warehouse?", approvers=["ben@example.org"])
+    with pytest.raises(service.RequestError) as answered:
+        service.decide(hub, hub.name, question["id"], account_id="u_ben", email="ben@example.org",
+                       decision="answer", answer="North")
+    assert answered.value.code == "no_access"
+    assert service.get_for(hub, hub.name, question["id"], "u_ben", "ben@example.org")["allowed_actions"] == []
 
     plan = service.create(hub, hub.name, caller(), kind="approval", title="Q3 plan",
                           subject={"name": "Q3 plan", "digest": "d1", "plan": True},

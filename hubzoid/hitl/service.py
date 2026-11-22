@@ -275,12 +275,21 @@ def get_for(hub_dir: Path, hub_id: str, request_id: str, account_id: str, email:
     req = get(hub_dir, hub_id, request_id)
     if req is None or not visible_to(req, account_id, email):
         raise RequestError(404, "not_found", "No such request, or it is not yours to see.")
-    return with_actions(req, account_id, email)
+    return with_actions(req, account_id, email, hub_dir=hub_dir)
 
 
-def with_actions(req: dict, account_id: str, email: str) -> dict:
+def with_actions(req: dict, account_id: str, email: str, *, hub_dir: Path | None = None) -> dict:
+    """The request with what this person may do now. With ``hub_dir``, someone
+    eligible who can't use this agent is offered only Reject, the one decision
+    ``decide`` still takes from them (``decider_refusal``)."""
     out = dict(req)
     can = req["status"] == "pending" and eligible(req, account_id, email)
+    if can and hub_dir is not None:
+        refused = decider_refusal(hub_dir, account_id, email, "approve")
+        if refused is not None and refused.code == "no_access":
+            out["allowed_actions"] = [] if req["kind"] == "question" else ["reject"]
+            out["can_cancel"] = _same_person(account_id, email, req)
+            return out
     if not can:
         out["allowed_actions"] = []
     elif req["kind"] == "question":
@@ -309,7 +318,7 @@ def list_for(hub_dir: Path, hub_id: str, account_id: str, email: str, *, status:
     for row in rows:
         req = st.row_dict(row)
         if visible_to(req, account_id, email):
-            out.append(with_actions(req, account_id, email))
+            out.append(with_actions(req, account_id, email, hub_dir=hub_dir))
         if len(out) >= limit:
             break
     return out
@@ -348,8 +357,8 @@ def decider_refusal(hub_dir: Path, account_id: str, email: str, decision: str) -
         return None
     if verdict.reason == "store_error":
         return RequestError(503, "access_unavailable", "Access could not be checked. Try again shortly.")
-    return RequestError(403, "no_access", "You no longer have access to this agent, so you can't approve or "
-                                          "answer this. Ask an administrator for access, or reject it.")
+    return RequestError(403, "no_access", "You can't approve or answer this, because you don't have access to "
+                                          "this agent. Ask an administrator for access, or reject it.")
 
 
 def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, email: str, decision: str,

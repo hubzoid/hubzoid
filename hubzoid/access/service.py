@@ -1471,14 +1471,15 @@ class AccessService:
             # working on it: it shows as failed, so the person checks and asks again.
             stale = where.replace("status='pending' AND expires < :now",
                                   "status='applying' AND expires < :stale")
+            assert stale != where, "the pending filter above changed: update this sweep"
             rows = conn.execute(
                 text(f"SELECT id, actor, surface, hub, target FROM hz_change_requests WHERE {stale}"),
                 {**params, "stale": now - APPLYING_GRACE_SECONDS},
             ).fetchall()
             for rid, who, surface, hub, target in rows:
                 done = conn.execute(
-                    text("UPDATE hz_change_requests SET status='failed', decided=:now, result=:r "
-                         "WHERE id=:id AND status='applying'"),
+                    text("UPDATE hz_change_requests SET status='failed', decided=:now, decided_by='system', "
+                         "result=:r WHERE id=:id AND status='applying'"),
                     {"id": rid, "now": now, "r": INTERRUPTED},
                 ).rowcount
                 if done:
