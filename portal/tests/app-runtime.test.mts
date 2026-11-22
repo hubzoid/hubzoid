@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { ADAPTER_FIELDS, UNBOUND_FIELDS, deleteGate, forgetSentDrafts, laneFor, sendQueue, settleWithin } from "../src/app/chat/runtime-rules.ts";
 import { LIVE_TIMING, LiveStream, type Clock, type StreamLike } from "../src/app/chat/live.ts";
 import { documentOf } from "../src/app/chat/doc-links.ts";
+import { DocumentAnnouncer } from "../src/app/chat/doc-announcer.ts";
 
 const here = new URL(".", import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, here), "utf8");
@@ -300,6 +301,34 @@ function harness(opts: { running?: boolean; changed?: boolean; reload?: () => Pr
   assert.equal(documentOf("/artifacts/web-c1/other.html", docs, origin), null);
   assert.equal(documentOf("https://elsewhere.example/artifacts/web-c1/report.html", docs, origin), null);
   assert.equal(documentOf("/artifacts/web-c1/report.html", null, origin), null);
+}
+
+// ---- the Documents pane opens on a reply's new document --------------------------------
+{
+  const chart = [{ artifact_id: "a1", current_version_id: "v1" }];
+  // An existing conversation: what was there at load is not reopened.
+  const old = new DocumentAnnouncer();
+  old.answer(old.ask(), "prime", chart);
+  assert.equal(old.answer(old.ask(), "settle", chart).open, null);
+  assert.equal(old.answer(old.ask(), "settle", [{ artifact_id: "a1", current_version_id: "v2" }]).open, "a1");
+
+  // A new conversation whose first list (sent while its first reply ran) already
+  // holds that reply's chart: listed, not marked seen, so the settle opens it.
+  const fresh = new DocumentAnnouncer();
+  assert.deepEqual(fresh.answer(fresh.ask(), "event", chart), { show: true, open: null });
+  assert.deepEqual(fresh.answer(fresh.ask(), "settle", chart), { show: true, open: "a1" });
+
+  // Out of order: the settle's list arrives after a newer one. Not shown, but it still opens.
+  const late = new DocumentAnnouncer();
+  late.answer(late.ask(), "prime", []);
+  const settle = late.ask();
+  assert.deepEqual(late.answer(late.ask(), "event", chart), { show: true, open: null });
+  assert.deepEqual(late.answer(settle, "settle", chart), { show: false, open: "a1" });
+  // A late prime or event changes nothing.
+  const stale = late.ask();
+  late.answer(late.ask(), "event", chart);
+  assert.deepEqual(late.answer(stale, "prime", [{ artifact_id: "a1", current_version_id: "v9" }]), { show: false, open: null });
+  assert.equal(late.answer(late.ask(), "settle", chart).open, null);
 }
 
 console.log("app-runtime: ok");
