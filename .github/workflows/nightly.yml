@@ -46,9 +46,13 @@ jobs:
         run: >-
           pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
           --cov=hubzoid --cov-report=
+      # A failing test fails the run, but the coverage of what ran is still
+      # reported.
       - name: Keep this part's coverage data
+        if: ${{ !cancelled() }}
         run: mv .coverage .coverage.part${{ matrix.group }}
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: coverage-data-${{ matrix.group }}
           path: .coverage.part${{ matrix.group }}
@@ -58,6 +62,7 @@ jobs:
 
   coverage-report:
     needs: coverage
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
