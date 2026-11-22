@@ -301,7 +301,7 @@ def build_prompt(spec: str, case, response: str,
 # --------------------------------------------------------------------------
 # Parsing the verdict
 # --------------------------------------------------------------------------
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+_MAX_VERDICT_CHARS = 20_000   # a verdict is short; never scan an unbounded reply
 _SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*(\d{1,2})')
 
 
@@ -316,10 +316,14 @@ def parse_verdict(text: str) -> tuple[int | None, str]:
     """
     if not text:
         return None, ""
-    for match in _JSON_RE.finditer(text):
+    # Decode from each "{" rather than matching braces with a pattern: the
+    # reasoning may quote code with braces of its own.
+    decoder = json.JSONDecoder()
+    head = text[:_MAX_VERDICT_CHARS]
+    for start in (i for i, ch in enumerate(head) if ch == "{"):
         try:
-            data = json.loads(match.group(0))
-        except (ValueError, json.JSONDecodeError):
+            data, _end = decoder.raw_decode(head, start)
+        except ValueError:
             continue
         if isinstance(data, dict) and "score" in data:
             try:
