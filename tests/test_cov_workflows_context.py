@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from hubzoid import access, db
 from hubzoid.structured import ModelOutputError
 from hubzoid.workflows import context
-from hubzoid.workflows.identity import RunIdentity
+from hubzoid.workflows.identity import LEGACY_SOURCE, RunIdentity
 
 
 @pytest.fixture
@@ -77,7 +77,8 @@ def test_hub_user_and_secrets_inside_a_run(hub, monkeypatch):
         monkeypatch.setenv("ORDERS_TOKEN", "tok-1")
         assert context.hub.secret("orders_token") == "tok-1"
 
-    service = RunIdentity("workflow:nightly", None, "test", "workflow:nightly").to_dict()
+    access.store_for(hub).set_attr("desk", "workflow:nightly", "center", "never-read")
+    service = RunIdentity("workflow:nightly", None, LEGACY_SOURCE).to_dict()   # not a person
     with context.run_scope(hub="desk", workflow="nightly", hub_dir=hub, engine=db.operational_engine(hub),
                            identity=service, run_id="run-2", work={}):
         assert context.hub.user.attrs == {}                        # no person, no personal attributes
