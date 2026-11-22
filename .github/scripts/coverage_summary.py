@@ -35,7 +35,7 @@ def summarize(data: dict) -> str:
 
     totals = data["totals"]
     lines = [
-        "## Coverage (fast suite)",
+        "## Coverage (whole suite, as the release workflow runs it)",
         "",
         f"**Total: {totals['percent_covered']:.1f}%** "
         f"({totals['covered_lines']:,} of {totals['num_statements']:,} statements)",
