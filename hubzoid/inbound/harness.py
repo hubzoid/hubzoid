@@ -446,12 +446,20 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
                         user_text = hitl_service.outcome_text(settled)
             turn_started = time.time() - 0.25
             prior = history.load(chat_id)
-            reply = dispatch_fn(
-                bridge_url=bridge_url, api_key=api_key, model=model,
-                messages=prior + [{"role": "user", "content": user_text}], surface="whatsapp",
-                user_email=email, groups=identity.get("groups") or [],
-                chat_id=chat_id,
-            )
+            try:
+                reply = dispatch_fn(
+                    bridge_url=bridge_url, api_key=api_key, model=model,
+                    messages=prior + [{"role": "user", "content": user_text}], surface="whatsapp",
+                    user_email=email, groups=identity.get("groups") or [],
+                    chat_id=chat_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - a refusal or outage gets plain words, never silence
+                from ..bridge_refusal import notice_for
+
+                log.warning("whatsapp: the bridge call failed for %s", m.id, exc_info=True)
+                wa.send_text(phone_number_id=wa.phone_number_id, token=wa.token, to=m.handle,
+                             text=notice_for(exc, surface="whatsapp"))
+                return
             text = wa_render_final(reply)
             if hub_dir is not None:
                 extra = _journey_after_turn(hub_dir, email=email, chat_id=chat_id,
@@ -550,8 +558,18 @@ def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url
                 )
                 if tg.stream:
                     reply = _stream_reply(tg, p.handle, dispatch_fn, dispatch_kwargs)
+                    if reply is None:
+                        return
                 else:
-                    reply = dispatch_fn(**dispatch_kwargs)
+                    try:
+                        reply = dispatch_fn(**dispatch_kwargs)
+                    except Exception as exc:  # noqa: BLE001 - plain words, never silence
+                        from ..bridge_refusal import notice_for
+
+                        log.warning("telegram: the bridge call failed", exc_info=True)
+                        tg.send_message(token=tg.bot_token, chat_id=p.handle,
+                                        text=notice_for(exc, surface="telegram"))
+                        return
                     text = tg_render_final(reply)
                     # Same acknowledgement guarantee as WhatsApp (code-review #4).
                     tg.send_message(token=tg.bot_token, chat_id=p.handle,
@@ -564,7 +582,8 @@ def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url
     def _stream_reply(tg, send_chat_id, dispatch_fn, dispatch_kwargs) -> str:
         """Send a placeholder, then edit it as tokens arrive (Telegram has no
         native token stream; editMessageText simulates character-by-character).
-        Returns the full reply so the caller can record it in history."""
+        Returns the full reply so the caller can record it in history, or None
+        when the bridge refused (the placeholder then says so)."""
         placeholder = tg.send_message(token=tg.bot_token, chat_id=send_chat_id, text="…")
         message_id = ((placeholder or {}).get("result") or {}).get("message_id")
         # Re-assert typing right after the placeholder: sending a message clears
@@ -598,7 +617,22 @@ def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url
                 except Exception:  # noqa: BLE001 — a mid-stream edit failure is non-fatal
                     log.debug("telegram: mid-stream edit failed", exc_info=True)
 
-        reply = dispatch_fn(on_delta=on_delta, **dispatch_kwargs)
+        try:
+            reply = dispatch_fn(on_delta=on_delta, **dispatch_kwargs)
+        except Exception as exc:  # noqa: BLE001 - replace the "…" placeholder, never leave it hanging
+            from ..bridge_refusal import notice_for
+
+            log.warning("telegram: the bridge call failed", exc_info=True)
+            notice = notice_for(exc, surface="telegram")
+            try:
+                if message_id is not None:
+                    tg.edit_message_text(token=tg.bot_token, chat_id=send_chat_id, message_id=message_id,
+                                         text=notice)
+                else:
+                    tg.send_message(token=tg.bot_token, chat_id=send_chat_id, text=notice)
+            except Exception:  # noqa: BLE001
+                log.warning("telegram: could not post the refusal notice", exc_info=True)
+            return None
         final = tg_render_final(reply).strip()
         if not final:
             # Nothing visible (e.g. the answer was entirely tool/think blocks).

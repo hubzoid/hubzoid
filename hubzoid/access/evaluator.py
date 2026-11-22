@@ -112,6 +112,8 @@ def app_access(hub_dir: Path, app, permission: str | None = None, *, hub: str | 
     from ..embed.caller import effective, tool_allowed
     from .store import USE_HUB
 
+    if str(app.app_id).startswith("channel:"):
+        return _guest_access(hub_dir, app, permission, hub=hub, tool=tool, server=server, connector=connector)
     try:
         reg = apps_config.service_for(Path(hub_dir)).get(app.app_id)
     except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
@@ -137,6 +139,33 @@ def app_access(hub_dir: Path, app, permission: str | None = None, *, hub: str | 
     return ALLOW if access.all_tools() or permission in access.tools else Decision(False, "missing_grant")
 
 
+def _guest_access(hub_dir: Path, app, permission: str | None, *, hub: str | None, tool: str | None,
+                  server: str | None, connector: str | None) -> Decision:
+    """A Slack guest under open mode (``channels.open_mode``): the connection
+    still has open mode on, for the workspace it was approved for; only the
+    agent and the guest tools; never an MCP server, a connector, a
+    restricted capability or a platform capability."""
+    from ..channels import open_mode
+    from .store import USE_HUB
+
+    try:
+        limit = open_mode.guest_access(hub_dir, str(app.app_id).removeprefix("channel:"))
+    except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
+        log.exception("access: open mode unavailable; denying")
+        return Decision(False, "store_error")
+    if limit is None:
+        return Decision(False, "credential_ended")
+    if normalize(hub or Path(hub_dir).name) not in limit["agents"]:
+        return Decision(False, "missing_grant")
+    if server is not None or connector is not None:
+        return Decision(False, "app_tool")
+    if tool is not None:
+        return ALLOW if tool in limit["tools"] and tool in app.tools else Decision(False, "app_tool")
+    if not permission or permission == USE_HUB:
+        return ALLOW
+    return Decision(False, "missing_grant")
+
+
 def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
               account_id: str | None = None, epoch: int | None = None,
               key_hubs: "tuple[str, ...] | None" = None) -> Decision:
@@ -156,6 +185,12 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
         key_hubs = getattr(who, "hubs", None)
     if not email:
         return Decision(False, "anonymous")
+    from ..channels.open_mode import is_guest_subject
+
+    if is_guest_subject(email):
+        # A Slack guest is judged only through their guest scope (above). Without
+        # it, nothing: a "*" grant matches any subject, so never read grants.
+        return Decision(False, "missing_grant")
     if key_hubs is not None and hub is not None and normalize(hub) not in key_hubs:
         return Decision(False, "key_scope")
     from . import store_for

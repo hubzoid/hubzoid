@@ -321,6 +321,12 @@ def decide(hub_dir: Path, hub_id: str, request_id: str, *, account_id: str, emai
     """Settle a pending request once. Raises RequestError for a stale card, a
     second decision or someone who may not decide. ``credential_id`` names the
     API key when ``via`` is ``"api_key"``; it goes into the settle event."""
+    from ..channels.open_mode import is_guest_subject
+
+    if is_guest_subject(account_id) or is_guest_subject(email):
+        # A Slack guest (channel open mode) has no account and never decides
+        # an approval or a question, whatever else would allow it.
+        raise RequestError(403, "permission_denied", "Slack guests can't decide requests.")
     if decision not in DECISIONS:
         raise RequestError(422, "validation_failed", f"decision is one of: {', '.join(DECISIONS)}.")
     note = (note or "").strip() or None

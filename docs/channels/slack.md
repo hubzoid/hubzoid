@@ -72,10 +72,11 @@ hubzoid channels link . slack-main --external-id U0123ABCD --account ana@example
 hubzoid channels doctor . slack-main --actor U0123ABCD
 ```
 
-`doctor` checks the token's workspace and app, the granted permissions and
-channel membership. It never posts. When it passes, set `enabled: true`, apply
-with `--expected-revision 1`, and restart the hub (or wait a few seconds:
-the bridge picks up the change).
+`doctor` checks the token's workspace and app, the granted permissions,
+channel membership and, for Socket Mode, the app-level token. It never posts.
+When it passes, set `enabled: true` and apply with `--expected-revision 1`.
+The bridge picks up the change within about 30 seconds, and reconnects Socket
+Mode on its own after a dropped connection or a new token.
 
 To host it, switch `transport` to `http`, set `signing_secret_ref`, set
 `HUBZOID_PUBLIC_URL`, regenerate the manifest (its request URL is
@@ -90,21 +91,68 @@ the app in Slack.
   mention (`subscriptions: on_accept`).
 - Someone else asking in the same thread gets their own conversation, under
   their own access, after the current request finishes.
-- A person who is not linked, or not in an allowed group, gets one short
-  notice and nothing else.
+- A person who is refused gets one short notice, once per thread, visible only
+  to them in a channel (a direct message is private anyway). See
+  [Notices](#notices).
 - The conversation also appears in the person's chat app, marked as a Slack
   thread. Asking something there stays in the chat app.
+
+## Notices
+
+| When | What the person sees |
+|---|---|
+| Not linked | "I can't act for you here yet. Ask an administrator to link your Slack account (your Slack id is U0123ABCD)." |
+| Account not active, blocked, no access, no "Start work from" grant, terms not accepted | A short notice that says which, and to ask an administrator. |
+| A mention in a channel not in `allowed_channel_ids` | "I don't answer in this channel. Message me directly, or ask an administrator to add this channel." |
+| A direct message while `allow_direct_messages: false` | "Direct messages to me are turned off. Mention me in a channel where I answer." |
+| Too many requests waiting in the thread or on the channel | "There are too many requests waiting …" |
+| Only a file, with `files_enabled: false` | "Files are turned off for me here. Tell me in words what you want done." |
+| A Slack guest over the daily cap (open mode) | "You've reached today's limit for guests …" |
+
+A notice that meets a Slack rate limit is tried again for up to an hour.
+Nothing is posted for Slack Connect, other bots, messages that do not mention
+the bot, or while the connection is paused. A notice in a channel is an
+ephemeral message: Slack shows it to that person only, and only while they
+have Slack open.
+
+## Anyone in this Slack workspace (open mode)
+
+Off by default. An organization administrator turns it on under the
+channel's **Who can ask** tab, or:
+
+```sh
+hubzoid channels open . slack-main --on --daily-cap 20
+```
+
+People with a link, or whose confirmed Slack email matches an active account,
+ask as their account. Everyone else in the workspace asks as a Slack guest:
+the agent's knowledge and read-only tools, no approvals, no workflows, a daily
+cap. Slack Connect people and Slack's own guest accounts stay refused. While
+it is on, regenerate the manifest (it adds `users:read.email` so emails can
+match) and doctor warns. See
+[administration](../ADMINISTRATION.md#anyone-in-a-slack-workspace-open-mode).
+
+Restricted tools: a person with an administrator's account link keeps today's
+behaviour in channel threads (their runs use the `web` surface for the access
+check). A person recognised by email under open mode uses `slack-channel` or
+`slack-dm`, where restricted tools stay off by default.
 
 ## Permissions the manifest asks for
 
 `app_mentions:read`, `channels:history`, `channels:read`, `chat:write`,
 `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`,
 `mpim:read`, `reactions:write`, `users:read`, `assistant:write`, and
-`files:read` when files are enabled. Not `chat:write.public` (the bot answers
-only where it was invited) and not `users:read.email` (people are linked by
-Slack user id).
+`files:read` when files are enabled, and `users:read.email` only while open
+mode is on. Not `chat:write.public` (the bot answers only where it was
+invited).
 
 ## Moving from `hubzoid slack run`
+
+The 1.x app (`hubzoid slack run`) sends no identity unless
+`SLACK_IDENTITY_MAPPING=true`, so on a hub with sign-in every sender is
+refused. It says so in plain words ("I can't act for you here yet …"), never
+an HTTP error, and logs a warning at start. Moving to a channel connection
+fixes it properly.
 
 ```sh
 hubzoid channels slack import-legacy . --id slack-main

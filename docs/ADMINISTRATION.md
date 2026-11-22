@@ -126,6 +126,46 @@ Limits on who can grant what:
   name, then an organization administrator selects **Remove** on that row.
   See [access management](access-management.md#everyone-signed-in-no-longer-granted).
 
+### Anyone in a Slack workspace (open mode)
+
+A Slack channel connection that answers with an agent can be opened to
+everyone in its own Slack workspace. It is off by default. An organization
+administrator turns it on in the channel's **Who can ask** tab (or with
+`hubzoid channels open <hub> <id> --on`), and sets how many requests a Slack
+guest may make a day (default 20).
+
+While it is on:
+
+- A person with an account link asks as their account, as before.
+- A person whose confirmed Slack email matches an active account asks as that
+  account, with that account's own access. Open mode stands in for the
+  channel's "Start work from" grant, nothing else: an account that is blocked,
+  pending, or has no access to the agent is refused. Because no administrator
+  linked them, their runs use the `slack-channel` or `slack-dm` surface, so
+  restricted tools stay off for them unless `slack-dm` is in
+  `HUBZOID_RESTRICTED_SURFACES`.
+- Everyone else in the workspace is a **Slack guest**: no account and no
+  grants. A guest can read the agent's knowledge and skills and use a few
+  read-only built-in tools. A guest cannot use tools that change anything,
+  connectors, MCP servers or restricted tools, cannot approve or answer
+  approval requests, cannot start workflows, and is limited to the daily cap.
+  Files from guests are not added.
+- People from other organizations (Slack Connect), Slack's own guest accounts
+  and bots are refused.
+
+The switch applies to the Slack workspace and app it was approved for. If the
+connection file later names another workspace or app, open mode is off until
+an organization administrator turns it on again. Each change is recorded under
+**Activity**, **Access changes**. `hubzoid channels doctor` warns while it is
+on. Usage shows guest runs on their own line (`slack-guest`), and the agent's
+**Access** tab says which connections are open.
+
+This is the one exception to "new access for everyone signed in cannot be
+created": it creates no "Everyone signed in" grant, and it applies to that one
+connection only. Email matching needs the `users:read.email` scope; the
+manifest adds it while open mode is on. Without it, everyone without a link
+is a guest.
+
 **People & access** shows accounts awaiting signup, pending approval, active,
 services and blocked. **Refresh accounts** re-reads the account directory
 and creates nothing.

@@ -92,6 +92,16 @@ class Adapter:
     #: whether `Outbound.files` are attached to the reply. Otherwise they are
     #: left out and the reply's text stands alone.
     attachments: ClassVar[bool] = False
+    #: refusals decided at intake (an ``ignore_reason``) that still owe the
+    #: person a notice when they asked directly: for example a mention in a
+    #: Slack channel the connection does not answer in. Posted later by the
+    #: router (``router.post_owed_notices``), never during intake.
+    notice_reasons: ClassVar[frozenset[str]] = frozenset()
+    #: whether "Anyone in this workspace" (``hubzoid.channels.open_mode``) can
+    #: be turned on for this provider's agent connections
+    open_mode: ClassVar[bool] = False
+    #: refusal notices go to the one person who asked (``Outbound.private_to``)
+    private_notices: ClassVar[bool] = False
 
     def approvals_in_thread(self, conn: "Connection") -> bool:
         """Whether the requester's reply in the thread (an `answer_kinds`

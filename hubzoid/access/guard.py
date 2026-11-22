@@ -165,6 +165,8 @@ def _app_hides(name: str, ft=None) -> bool:
     app = getattr(current_identity(), "app", None)
     if app is None:
         return False
+    if _guest_refuses(app, ft):
+        return True
     from ..embed.caller import tool_allowed
     from ..embed.config import Access
 
@@ -173,6 +175,18 @@ def _app_hides(name: str, ft=None) -> bool:
     return not tool_allowed(Access(agents=app.agents, tools=app.tools), name,
                             server=getattr(ft, "hubzoid_server", None),
                             connector=getattr(ft, "hubzoid_connector", None))
+
+
+def _guest_refuses(app, ft) -> bool:
+    """A Slack guest (``channels.open_mode``) may use only the pre-shipped
+    tool objects on their list: never a hub-local tool that reuses a built-in
+    name, an MCP tool or a connector's tool, whatever its name."""
+    if app is None or not str(getattr(app, "app_id", "")).startswith("channel:"):
+        return False
+    if ft is None:
+        return True
+    return not getattr(ft, "hubzoid_builtin", False) or bool(getattr(ft, "hubzoid_server", None)) or \
+        bool(getattr(ft, "hubzoid_connector", None))
 
 
 def visible(ft) -> bool:
@@ -359,8 +373,13 @@ def run_checked(ft: FunctionTool, hub_dir: Path, *, server: str | None = None) -
         with audit_log.call_scope() as (state, outer):
             if await _stopped():
                 return STOPPED
-            decision = await asyncio.to_thread(check_run, hub_dir, current_identity(), tool=ft.name,
+            ident = current_identity()
+            decision = await asyncio.to_thread(check_run, hub_dir, ident, tool=ft.name,
                                                server=hub_server, connector=connector)
+            if decision.allowed and _guest_refuses(getattr(ident, "app", None), out):
+                from .evaluator import Decision
+
+                decision = Decision(False, "app_tool")
             refused = refusal(decision, ft.name, guarded=guarded)
             where = dict(tool=ft.name, hub_dir=hub_dir, server=hub_server, connector=connector)
             if refused is not None:

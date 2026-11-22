@@ -67,6 +67,8 @@ def dispatch(
         with client.stream(
             "POST", f"{bridge_url}/chat/completions", headers=headers, json=body,
         ) as r:
+            if r.status_code >= 400:
+                r.read()   # so the refusal's kind can be read (never shown: bridge_refusal)
             r.raise_for_status()
             for line in r.iter_lines():
                 delta = parse_sse_delta(line)

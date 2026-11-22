@@ -164,6 +164,8 @@ def stream_reply(
             headers=headers,
             json=body,
         ) as r:
+            if r.status_code >= 400:
+                r.read()   # so the refusal's kind can be read (never shown: bridge_refusal)
             r.raise_for_status()
             for line in r.iter_lines():
                 delta = parse_sse_delta(line)
@@ -220,6 +222,25 @@ class _ThrottledWriter:
             except Exception:  # noqa: BLE001
                 log.exception("slack chat.update failed (final flush)")
         return text
+
+
+def _refused(client, channel: str, thread_ts: str, placeholder_ts: str | None, exc: BaseException,
+             *, say=None) -> None:
+    """Tell the person the bridge refused or failed, in plain words
+    (``hubzoid.bridge_refusal``): never the exception, the bridge URL or its
+    detail. Replaces the "…" placeholder when there is one."""
+    from ..bridge_refusal import notice_for
+
+    text = notice_for(exc, surface="slack")
+    try:
+        if placeholder_ts:
+            client.chat_update(channel=channel, ts=placeholder_ts, text=text)
+        elif say is not None:
+            say(text)
+        else:
+            client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
+    except Exception:  # noqa: BLE001 - nothing more can be said in Slack
+        log.warning("slack: could not post the refusal notice", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -390,11 +411,15 @@ def build_app(
             client.chat_update(channel=channel, ts=placeholder["ts"], text=text or "…")
 
         writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
-        stream_reply(bridge_url=bridge_url, api_key=api_key, model=model_label, messages=msgs,
-                     on_delta=writer.feed, chat_id=chat_id, hub_dir=hub_dir,
-                     user_email=request.get("requester_email"),
-                     # A DM channel id starts with D; anything else is a shared channel thread.
-                     surface="slack-dm" if channel.startswith("D") else "slack-channel")
+        try:
+            stream_reply(bridge_url=bridge_url, api_key=api_key, model=model_label, messages=msgs,
+                         on_delta=writer.feed, chat_id=chat_id, hub_dir=hub_dir,
+                         user_email=request.get("requester_email"),
+                         # A DM channel id starts with D; anything else is a shared channel thread.
+                         surface="slack-dm" if channel.startswith("D") else "slack-channel")
+        except Exception as exc:  # noqa: BLE001 - the decision stands; say why nothing follows
+            _refused(client, channel, thread_ts, placeholder["ts"], exc)
+            return
         writer.done()
 
     import re as _re
@@ -441,6 +466,7 @@ def build_app(
     ):
         channel = payload["channel"]
         thread_ts = payload["thread_ts"]
+        placeholder_ts = None
         try:
             set_status("Thinking...")
             turn_started = time.time() - 0.25
@@ -450,7 +476,7 @@ def build_app(
                 return
 
             placeholder = say(text="…")
-            ts = placeholder["ts"]
+            ts = placeholder_ts = placeholder["ts"]
 
             def _post(text: str) -> None:
                 client.chat_update(channel=channel, ts=ts, text=text or "…")
@@ -473,8 +499,8 @@ def build_app(
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
                             user_id=payload.get("user"), since=turn_started, private=True)
         except Exception as exc:  # noqa: BLE001
-            log.exception("assistant user_message handler failed")
-            say(f":warning: error: {type(exc).__name__}: {exc}")
+            log.warning("assistant user_message handler failed", exc_info=True)
+            _refused(client, channel, thread_ts, placeholder_ts, exc, say=say)
 
     app.assistant(assistant)
 
@@ -482,6 +508,7 @@ def build_app(
     def _on_mention(event, client, context, say):
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
+        placeholder_ts = None
         try:
             turn_started = time.time() - 0.25
             msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
@@ -490,7 +517,7 @@ def build_app(
                 return
 
             placeholder = say(text="…", thread_ts=thread_ts)
-            ts = placeholder["ts"]
+            ts = placeholder_ts = placeholder["ts"]
 
             def _post(text: str) -> None:
                 client.chat_update(channel=channel, ts=ts, text=text or "…")
@@ -515,8 +542,8 @@ def build_app(
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
                             user_id=event.get("user"), since=turn_started, private=False)
         except Exception as exc:  # noqa: BLE001
-            log.exception("app_mention handler failed")
-            say(text=f":warning: error: {type(exc).__name__}: {exc}", thread_ts=thread_ts)
+            log.warning("app_mention handler failed", exc_info=True)
+            _refused(client, channel, thread_ts, placeholder_ts, exc)
 
     # DM messages outside the AI sidebar (legacy IM path). The Assistant
     # middleware handles AI-thread DMs; this catches plain DMs that aren't
@@ -538,13 +565,14 @@ def build_app(
 
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
+        placeholder_ts = None
         try:
             turn_started = time.time() - 0.25
             msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 return
             placeholder = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="…")
-            ts = placeholder["ts"]
+            ts = placeholder_ts = placeholder["ts"]
 
             def _post(text: str) -> None:
                 client.chat_update(channel=channel, ts=ts, text=text or "…")
@@ -567,12 +595,8 @@ def build_app(
             _offer_requests(client, channel=channel, thread_ts=thread_ts, chat_id=chat_id,
                             user_id=event.get("user"), since=turn_started, private=True)
         except Exception as exc:  # noqa: BLE001
-            log.exception("im handler failed")
-            client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=f":warning: error: {type(exc).__name__}: {exc}",
-            )
+            log.warning("im handler failed", exc_info=True)
+            _refused(client, channel, thread_ts, placeholder_ts, exc)
 
     return app
 
@@ -609,6 +633,18 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
     model_label = settings.model_label or _slugify(agent_name)
     bridge_url = f"http://127.0.0.1:{settings.bridge_port}/v1"
 
+    if not settings.slack_identity_mapping:
+        try:
+            from .. import appmode
+
+            signed_in = appmode.auth_enabled(hub_dir)
+        except Exception:  # noqa: BLE001 - only the warning depends on it
+            signed_in = True
+        if signed_in:
+            log.warning(
+                "SLACK_IDENTITY_MAPPING is off, so every Slack sender reaches the bridge as nobody and is "
+                "refused (the hub requires sign-in). Turn on SLACK_IDENTITY_MAPPING, or move to a channel "
+                "connection (docs/channels/slack.md).")
     if settings.slack_identity_mapping:
         log.info(
             "SLACK_IDENTITY_MAPPING is on: resolving sender emails to OWUI "

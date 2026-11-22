@@ -193,6 +193,11 @@ class Outbound:
     marker: str = ""    # an opaque recovery marker the adapter embeds where it can
     blocks: Any = None
     files: tuple = ()   # absolute paths under the hub's output folder, on the last part
+    #: a notice meant for one person only (their provider user id). Slack sends
+    #: it as an ephemeral message in a channel; providers without one post as usual.
+    private_to: str | None = None
+    #: the person asked inside an existing thread (an ephemeral shows there)
+    private_thread: bool = False
 
 
 @dataclass(frozen=True)

@@ -383,6 +383,42 @@ def link_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"),
         f"[green]{d['provider']} {d['external_id']} now acts as {d['account']}.[/green]"))
 
 
+@channels_app.command("open")
+def open_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"),
+             on: bool = typer.Option(None, "--on/--off", help="Let anyone in the Slack workspace ask, or stop it."),
+             daily_cap: int = typer.Option(None, "--daily-cap", help="Requests a day per Slack guest (1 to 500)."),
+             as_json: bool = JSON):
+    """Show or set "Anyone in this Slack workspace" (open mode) for a connection.
+
+    People with an account link, or whose confirmed Slack email matches an
+    active account, ask as themselves. Everyone else in the workspace is a
+    Slack guest: unrestricted hub knowledge, read-only tools, a daily cap. On
+    this machine, the command runs as its operator (access changes record
+    it); in the web app only an organization administrator can change it."""
+    from . import config, open_mode
+
+    hub = _hub(hub, as_json)
+    conn = _run(config.active, as_json, hub, cid)
+    if on is None and daily_cap is None:
+        out = _run(open_mode.view, as_json, conn)
+    else:
+        enabled = on if on is not None else bool(open_mode.view(conn)["enabled"])
+        out = _run(open_mode.set_open, as_json, conn, enabled=enabled, daily_cap=daily_cap, actor=_actor())
+
+    def render(d):
+        if not d["supported"]:
+            console.print(f"{cid}: open mode is only for Slack connections that answer with an agent.")
+            return
+        state = "[yellow]on[/yellow]" if d["enabled"] else "off"
+        console.print(f"Anyone in Slack workspace {d['workspace']}: {state}. Guests: {d['daily_cap']} requests a "
+                      "day each.")
+        if d["stale"]:
+            console.print(f"[red]It was approved for workspace {d['approved_team']}, so it is off. Turn it on "
+                          "again to approve this workspace.[/red]")
+
+    _out(out, as_json, render)
+
+
 @channels_app.command("unlink")
 def unlink_cmd(hub: Path = HUB, cid: str = typer.Argument(..., metavar="ID"), link: str = typer.Argument(...),
                as_json: bool = JSON):
