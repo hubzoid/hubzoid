@@ -243,6 +243,17 @@ function harness(opts: { running?: boolean; changed?: boolean; reload?: () => Pr
   assert.equal(streams.length, 2);
 }
 
+// a_reload_that_never_answers_does_not_stop_recovery
+{
+  const { clock, streams, live } = harness({ reload: () => new Promise<boolean>(() => {}) });
+  live.start();
+  streams[0].opened();
+  await clock.advance(LIVE_TIMING.silence + LIVE_TIMING.watchdog); // a check starts and hangs
+  streams[0].failed(); // then the stream drops
+  await clock.advance(LIVE_TIMING.backoffFirst + LIVE_TIMING.reloadDeadline);
+  assert.equal(streams.length, 2, "reconnected once the hung reload was given up on");
+}
+
 // events_reach_the_feed
 {
   const { streams, live, state } = harness();

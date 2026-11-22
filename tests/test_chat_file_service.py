@@ -202,6 +202,29 @@ def test_artifact_edit_race_is_a_conflict_and_stores_nothing(client, monkeypatch
     assert _file_rows(chat) == before + 1   # only the saved version's file remains
     latest = client.get(f"/api/chat/artifacts/{art['artifact_id']}").json()
     assert latest["revision"] == 2 and len(latest["versions"]) == 2
+    monkeypatch.setattr(chat.files, "register_bytes", real)
+
+    # Later still: the other save commits after this one's checks inside its
+    # transaction (no row lock on SQLite). The conditional update refuses it.
+    check = chat.files._check_base
+    calls = []
+
+    def late(art, provenance, base, expected):
+        calls.append(1)
+        if len(calls) == 2:   # the recheck inside the transaction
+            chat.files._version(conversation_id=cid, branch_id=b["id"], actor_id=conv["owner_id"], title="plan.md",
+                                mime="text/markdown", data=b"# Theirs again", run_id=None, message_id=None,
+                                provenance="edited", base_version_id=latest["current_version_id"], expected_revision=2)
+        return check(art, provenance, base, expected)
+
+    monkeypatch.setattr(chat.files, "_check_base", late)
+    late_save = client.post(url, headers=ORIGIN, json={"content": "# Mine again",
+                                                        "base_version_id": latest["current_version_id"],
+                                                        "expected_revision": 2})
+    assert late_save.status_code == 409
+    final = client.get(f"/api/chat/artifacts/{art['artifact_id']}").json()
+    assert final["revision"] == 3 and [v["provenance"] for v in final["versions"]] == ["generated", "edited", "edited"]
+    assert _file_rows(chat) == before + 2
 
 
 def _directive(policy: str, name: str) -> str:

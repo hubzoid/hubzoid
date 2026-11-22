@@ -46,6 +46,7 @@ export const OPEN = 1;
 const CONNECTING = 0;
 export const LIVE_TIMING = {
   connectDeadline: 10_000,
+  reloadDeadline: 15_000,
   silence: 15_000,
   watchdog: 5_000,
   hiddenRelease: 60_000,
@@ -143,10 +144,35 @@ export class LiveStream {
     this.drop();
     this.retry = 0;
     const epoch = this.epoch;
-    void this.deps.reload().then(
-      () => epoch === this.epoch && this.connect(),
-      () => epoch === this.epoch && this.backoff(),
-    );
+    void this.reload().then(() => epoch === this.epoch && this.connect());
+  }
+
+  /** The snapshot reload, given up on after a while: a request that never
+   *  answers must not hold the stream (or the watchdog) forever. */
+  private reload(): Promise<boolean> {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = this.clock.setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve(false);
+        }
+      }, LIVE_TIMING.reloadDeadline);
+      this.deps.reload().then(
+        (changed) => {
+          if (done) return;
+          done = true;
+          this.clock.clearTimeout(timer);
+          resolve(changed);
+        },
+        () => {
+          if (done) return;
+          done = true;
+          this.clock.clearTimeout(timer);
+          resolve(false);
+        },
+      );
+    });
   }
 
   private connect() {
@@ -194,10 +220,7 @@ export class LiveStream {
     const epoch = this.epoch;
     this.timer = this.clock.setTimeout(() => {
       this.timer = null;
-      void this.deps.reload().then(
-        () => epoch === this.epoch && this.connect(),
-        () => epoch === this.epoch && this.backoff(),
-      );
+      void this.reload().then(() => epoch === this.epoch && this.connect());
     }, wait);
   }
 
@@ -213,18 +236,13 @@ export class LiveStream {
     this.checking = true;
     const epoch = this.epoch;
     const covered = this.lastSeq;
-    void this.deps.reload().then(
-      (changed) => {
-        this.checking = false;
-        if (epoch !== this.epoch) return;
-        this.lastEventAt = this.clock.now();
-        // The snapshot shows events or text the stream never delivered.
-        if (changed || this.deps.cursor() > covered) this.restart();
-      },
-      () => {
-        this.checking = false;
-      },
-    );
+    void this.reload().then((changed) => {
+      this.checking = false;
+      if (epoch !== this.epoch) return;
+      this.lastEventAt = this.clock.now();
+      // The snapshot shows events or text the stream never delivered.
+      if (changed || this.deps.cursor() > covered) this.restart();
+    });
   }
 
   private drop() {

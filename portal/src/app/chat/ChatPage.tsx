@@ -30,7 +30,7 @@ import { FilesContext } from "./parts";
 import { DocumentsContext } from "./documents-context";
 import { CardsContext, cardsConfig } from "./cards/cards";
 import { useTheme } from "../lib/theme";
-import { ChatSession } from "./session";
+import { ChatSession, MAX_UPLOAD_BYTES } from "./session";
 import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
 import { FeedContext, type Features } from "./feed-context";
 import { Thread } from "./Thread";
@@ -346,6 +346,20 @@ function ChatView({
   }, [agent.id, session]);
 
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
+  // The attachment limit of the selected agent's own server (files go there).
+  useEffect(() => {
+    let current = true;
+    session.maxUploadBytes = MAX_UPLOAD_BYTES;
+    get<{ uploads?: { max_file_bytes?: number } }>(hubUrl(session.apiBase, "/api/chat/capabilities"), { quiet401: true })
+      .then((c) => {
+        const limit = c.uploads?.max_file_bytes;
+        if (current && typeof limit === "number" && limit > 0) session.maxUploadBytes = limit;
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [session, agent.id]);
   // The models this person may pick or compare (HUB-78).
   const [models, setModels] = useState<ModelsInfo | undefined>(undefined);
   useEffect(() => {
@@ -354,20 +368,9 @@ function ChatView({
   // Member features (B037): voice and the rest only with a grant.
   const [features, setFeatures] = useState<Features>({});
   useEffect(() => {
-    type Caps = { features?: Features; uploads?: { max_file_bytes?: number } };
-    const useLimit = (c: Caps) => {
-      const limit = c.uploads?.max_file_bytes;
-      if (typeof limit === "number" && limit > 0) session.maxUploadBytes = limit;
-    };
-    get<Caps>("/api/chat/capabilities", { quiet401: true })
-      .then((c) => {
-        setFeatures(c.features ?? {});
-        if (!session.apiBase) useLimit(c);
-      })
+    get<{ features?: Features }>("/api/chat/capabilities", { quiet401: true })
+      .then((c) => setFeatures(c.features ?? {}))
       .catch(() => setFeatures({}));
-    // Files go to this agent's own server: its limit applies.
-    if (session.apiBase)
-      get<Caps>(hubUrl(session.apiBase, "/api/chat/capabilities"), { quiet401: true }).then(useLimit).catch(() => {});
     // Leaving the page stops anything being read aloud.
     return () => {
       try {
@@ -448,12 +451,17 @@ function ChatView({
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [panel, setPanel] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
   const announced = useRef<Map<string, string>>(new Map());
+  const listAsked = useRef(0);
+  const listShown = useRef(0);
   const refreshArtifacts = useCallback(
     async (mode: "prime" | "event" | "settle") => {
       const cid = feed.conversationId ?? conversationRef.current?.id;
       if (!cid) return;
+      const asked = ++listAsked.current;
       try {
         const list = await loadArtifacts(session.apiBase, cid);
+        if (asked < listShown.current) return; // a newer list is already on screen
+        listShown.current = asked;
         setArtifacts(list);
         if (mode === "event") return;
         const fresh = list.find((a) => announced.current.get(a.artifact_id) !== a.current_version_id);

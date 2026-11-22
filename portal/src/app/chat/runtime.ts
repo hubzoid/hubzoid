@@ -425,10 +425,11 @@ export class ConversationFeed {
 
   async cancel(parkQueue = true) {
     let run = this.activeRun;
-    if (!run && this.posting) {
+    if (!run && (this.posting || this.pending)) {
       // Stop right after Send: the run isn't known yet. Wait for the send to be
-      // accepted (not for anything after it), then stop the run it started.
-      await settleWithin(this.posting, STOP_WAIT_MS);
+      // accepted (not for the snapshot after it), load our own snapshot, then
+      // stop the run it started.
+      if (this.posting) await settleWithin(this.posting, STOP_WAIT_MS);
       await this.load();
       run = this.activeRun;
     }

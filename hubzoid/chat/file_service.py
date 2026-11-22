@@ -686,8 +686,8 @@ class FileService:
         t = _now()
         try:
             with self.engine.begin() as conn:
-                # Checked again on the locked row: two saves on the same base
-                # can't both pass (SQLite serializes writers already).
+                # Checked again on the locked row (PostgreSQL); the update below
+                # is conditional too, for SQLite, which has no row locks.
                 art = conn.execute(sa.select(artifacts).where(artifacts.c.conversation_id == conversation_id,
                                                               artifacts.c.title == title).with_for_update()).first()
                 if art is None:
@@ -705,8 +705,13 @@ class FileService:
                     version_id=vid, artifact_id=art.artifact_id, file_id=f["file_id"], ordinal=n,
                     base_version_id=base_version_id or art.current_version_id, author_id=actor_id, run_id=run_id,
                     message_id=message_id, provenance=provenance, created_at=t))
-                conn.execute(artifacts.update().where(artifacts.c.artifact_id == art.artifact_id).values(
-                    current_version_id=vid, revision=art.revision + 1, updated_at=t))
+                # Conditional on the revision read above: the lock is a no-op on
+                # SQLite, so another save committed since makes this match nothing.
+                moved = conn.execute(artifacts.update().where(
+                    artifacts.c.artifact_id == art.artifact_id, artifacts.c.revision == art.revision).values(
+                    current_version_id=vid, revision=art.revision + 1, updated_at=t)).rowcount
+                if moved != 1:
+                    raise Err(409, "artifact_conflict", "Someone saved a newer version. Reload, then edit that one.")
                 self._add_ref(conn, f["file_id"], "artifact", art.artifact_id, conversation_id, actor_id, None)
                 g.emit(conn, conversation_id, "artifact_version.created", art.artifact_id,
                        {"version_id": vid, "ordinal": n, "provenance": provenance, "run_id": run_id})

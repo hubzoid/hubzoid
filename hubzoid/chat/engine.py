@@ -358,9 +358,9 @@ class ChatEngine:
         more reload. ``live(message_id)`` returns the current content of a
         reply being written in this process."""
         with self.engine.begin() as conn:
+            cursor = g.cursor(conn, conversation_id)   # before any state it describes
             conv, role = self._readable(conn, conversation_id, actor)
             g.ensure_initial_branch(conn, conv, actor.id)
-            cursor = g.cursor(conn, conversation_id)
             msgs = [_message(r) for r in conn.execute(
                 sa.select(messages).where(messages.c.conversation_id == conversation_id)
                 .order_by(messages.c.created_at, messages.c.id))]
