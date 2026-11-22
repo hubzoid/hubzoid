@@ -4,6 +4,7 @@ send that never breaks the schedule, the words a schedule's state and last
 run show, and an access check that fails closed."""
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -58,14 +59,16 @@ def test_no_notice_when_off_unknown_or_without_a_schedule(tmp_path, sent, monkey
     assert sent == []
 
 
-def test_a_failed_send_never_breaks_the_schedule(tmp_path, sent, monkeypatch):
+def test_a_failed_send_never_breaks_the_schedule(tmp_path, sent, monkeypatch, caplog):
     from hubzoid import email_delivery
 
     def boom(hub_dir, **kw):
         raise ConnectionError("smtp down")
 
     monkeypatch.setattr(email_delivery, "send_to_owner", boom)
-    personal.notify(tmp_path, "reports", schedule(), "created")       # logged, not raised
+    with caplog.at_level(logging.ERROR):
+        personal.notify(tmp_path, "reports", schedule(), "created")   # logged, not raised
+    assert any("could not email" in r.getMessage() and r.exc_info for r in caplog.records)
 
 
 @pytest.mark.parametrize("state,reason,words", [

@@ -98,6 +98,6 @@ def test_a_diagnostic_report_runs_and_can_be_bundled(client):
     assert client.get(f"/api/admin/diagnostics/bundles/{bid}").status_code == 200
     download = client.get(f"/api/admin/diagnostics/bundles/{bid}/download")
     assert download.status_code == 200 and b"SECRET-456" not in download.content
-    assert client.delete(f"/api/admin/diagnostics/bundles/{bid}", headers=ORIGIN).status_code in (200, 204)
+    assert client.delete(f"/api/admin/diagnostics/bundles/{bid}", headers=ORIGIN).status_code == 200
     assert client.get(f"/api/admin/diagnostics/bundles/{bid}").status_code == 410  # deleted: gone
     assert client.get("/api/admin/diagnostics/bundles/no-such-bundle").status_code == 404

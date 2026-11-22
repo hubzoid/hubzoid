@@ -45,6 +45,12 @@ def api(tmp_path, monkeypatch):
 BASE = "/api/hubs/desk/channels/main"
 
 
+# What each route answers when it works: a new setup or connection is 201,
+# work accepted to run later is 202, everything else 200.
+CREATED = {("post", "/email/connect"): 201, ("post", "/github/setup"): 201, ("post", "/linear/connect"): 201,
+           ("post", "/github/intake"): 202, ("post", "/linear/disconnect"): 202}
+
+
 @pytest.mark.parametrize("provider,path,method,module,function,result,kwargs", [
     ("email", "/email/status", "get", "status", "status", {"connected": True}, {}),
     ("email", "/email/connect", "post", "oauth", "connect", {"authorization_url": "https://consent.test"},
@@ -74,7 +80,7 @@ def test_provider_admin_routes(api, monkeypatch, provider, path, method, module,
     fn = Mock(return_value=result)
     monkeypatch.setattr(import_module(f"hubzoid.channels.{provider}.{module}"), function, fn)
     r = getattr(client, method)(BASE + path, **kwargs)
-    assert r.status_code in (200, 201, 202) and r.json() == result
+    assert r.status_code == CREATED.get((method, path), 200) and r.json() == result
     assert fn.call_args.args[0] is conn
     assert permissions == [("channels.inspect" if method == "get" else "channels.manage", method != "get")]
     if function == "configure":
