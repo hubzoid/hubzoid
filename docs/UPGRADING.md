@@ -16,6 +16,17 @@ describe those releases as they were.
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
+## Upgrading to 2.1.2
+
+One additive database change, applied when Hubzoid starts. Back up the operational database first, as for any release: migrations go forward only.
+
+| What changes | What to do |
+|---|---|
+| **A new table, `hz_channel_open_mode`** (`op_0092`): the Slack open mode setting per connection. It stays empty unless an administrator turns open mode on. | Back up first. Nothing else. |
+| **Charts in the Documents pane.** Generated pages in the pane may load scripts and styles from jsDelivr, cdnjs and unpkg. Requests out stay blocked. | Nothing. To change the list set `HUBZOID_ARTIFACT_ALLOW_ORIGINS`, or set it to `none` to keep the old behaviour. |
+| **Channel refusals are now answered.** People refused in a channel get a short private notice instead of silence or an HTTP error. | Nothing. |
+| **`hubzoid workspace drafts` commands** exit with a message pointing to `hubzoid hub-changes`. | Use `hubzoid hub-changes propose/decide/undo`. |
+
 ## Upgrading to 2.1.1
 
 One additive database change, applied when Hubzoid starts. Back up the operational database first, as for any release: migrations go forward only.
