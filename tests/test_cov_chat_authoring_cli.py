@@ -47,7 +47,8 @@ def test_openapi_preview_and_prompts(hub, tmp_path):
     code, out = ws("openapi-preview", "--file", str(spec), str(hub))
     assert code == 0 and "getOrder" in json.dumps(out)
     code, out = ws("openapi-preview", "--file", str(spec), "--select", "noSuchOperation", str(hub))
-    assert code != 0 or "noSuchOperation" not in json.dumps(out.get("tools", out))
+    assert code == 2 and out["detail"] == {"code": "unknown_operation",
+                                           "message": "Not in the document: noSuchOperation."}
 
     code, prompts = ws("prompts", "list", str(hub))
     assert code == 0 and isinstance(prompts["items"], list)

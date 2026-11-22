@@ -55,9 +55,9 @@ def test_upload_attach_download_and_delete(hub, tmp_path):  # noqa: F811
     assert ref_id not in json.dumps(refs["items"])
 
     code, gone = run("files", "delete", fid, "--hub", str(hub))
-    assert code == 0, gone
+    assert code == 0 and gone == {"file_id": fid, "state": "deleted"}
     code, out = run("files", "status", fid, "--hub", str(hub))
-    assert code != 0 or out.get("state") in ("deleted", "deleting")
+    assert code == 2 and out["detail"]["code"] == "file_not_found"
 
 
 def test_attach_refusals_and_doctor(hub, tmp_path):  # noqa: F811
