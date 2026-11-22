@@ -2,6 +2,8 @@
 taken while chat keeps working, restorable in place or at a new path."""
 from __future__ import annotations
 
+import contextlib
+
 import asyncio
 import json
 import os
@@ -228,7 +230,8 @@ def test_backup_holds_new_runs_and_waits_for_running_ones(tmp_path, monkeypatch)
 
     sch.ScheduleState(hub).record_fired("daily", datetime.now() - timedelta(days=2), result="done")
     store_for(hub).set_schedule_hold("backup", 60, actor="test")
-    assert asyncio.run(s.check_once()) == []
+    with _backup_running(hub):
+        assert asyncio.run(s.check_once()) == []
     store_for(hub).clear_schedule_hold()
     assert asyncio.run(s.check_once()) == ["daily"]
 
@@ -670,3 +673,20 @@ def test_an_attachment_linked_into_a_chat_is_saved_and_restored_as_a_file(tmp_pa
     new = tmp_path / "moved"
     bk.restore(archive, [(str(tmp_path / "live"), str(new))])
     assert (new / "hub" / ".hubzoid" / "chats" / "web-c1" / "uploads" / "orders.csv").read_bytes() == b"sku,qty\nA1,4\n"
+
+
+@contextlib.contextmanager
+def _backup_running(hub):
+    """What a running backup holds for its whole length: the deployment's
+    backup lock. Without it a hold is stale and the scheduler lifts it."""
+    from hubzoid import _file_lock, datadir
+    from hubzoid.control import deploy
+
+    path = deploy.state_root(hub) / datadir.STATE / "backup.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as fh:
+        _file_lock.lock(fh)
+        try:
+            yield
+        finally:
+            _file_lock.unlock(fh)

@@ -210,10 +210,23 @@ artifacts=[...])`. See [reports-and-email.md](reports-and-email.md).
   run is still going waits for it. Different workflows run side by side. To cap
   how many run at once in a hub, set `max_concurrent_workflows: N` in
   `workflows/settings.yaml`. There is no cap by default.
+- The queue of waiting runs has no limit today. A run that takes longer than
+  its schedule's interval (an `every 1 minute` workflow that takes 5 minutes)
+  adds waiting runs faster than they finish. Once more than 5 runs of one
+  workflow are waiting, each dispatch logs a warning and the workflow's row
+  shows how many (`waiting`). Shorten the run or lengthen the schedule.
 - Markdown tasks run one at a time per hub, and wait while the hub is answering
   chat.
 - After downtime, a markdown task runs once to catch up. A code workflow does
-  not backfill: it runs at its next slot.
+  not backfill: it runs at its next slot, and `catch_up=True` runs the latest
+  missed slot once. A paused workflow does not catch up, and nothing catches
+  up while a backup holds new runs.
+- A restart of up to about two minutes is not downtime: the first dispatch
+  after it runs at once and starts the slot that fell inside the restart.
+- A slot that does not run is a missed slot. Each one logs a warning that
+  names the workflow and why (the dispatcher was late or busy, a backup held
+  new runs, the hub restarted, or the run could not be queued). A workflow's
+  `missed` count covers the last 31 days.
 - Run one now with `hubzoid schedule run <hub> <name>`. It uses the same queue,
   so it never overlaps a scheduled run.
 

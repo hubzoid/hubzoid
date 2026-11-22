@@ -3,6 +3,8 @@ with the server operator's authority, persist in the shared store so every
 bridge sees them, and are audited."""
 from __future__ import annotations
 
+import contextlib
+
 import asyncio
 import os
 import subprocess
@@ -107,7 +109,8 @@ def test_a_backup_hold_landing_mid_tick_stops_the_next_dispatch(hub):
 
     s = scheduler_lib.Scheduler(hub, dispatch_task=dispatch,
                                 dispatch_evals=lambda names, now: queued.append("evals"))
-    assert asyncio.run(s.check_once()) == ["daily"] and queued == ["daily"]
+    with _backup_running(hub):
+        assert asyncio.run(s.check_once()) == ["daily"] and queued == ["daily"]
 
 
 def test_unknown_name_is_refused(hub):
@@ -153,3 +156,20 @@ def test_cancel_a_queued_run(hub, tmp_path):
     finally:
         proc.kill()
         proc.wait(timeout=30)
+
+
+@contextlib.contextmanager
+def _backup_running(hub):
+    """What a running backup holds for its whole length: the deployment's
+    backup lock. Without it a hold is stale and the scheduler lifts it."""
+    from hubzoid import _file_lock, datadir
+    from hubzoid.control import deploy
+
+    path = deploy.state_root(hub) / datadir.STATE / "backup.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as fh:
+        _file_lock.lock(fh)
+        try:
+            yield
+        finally:
+            _file_lock.unlock(fh)

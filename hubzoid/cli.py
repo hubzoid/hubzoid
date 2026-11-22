@@ -3417,7 +3417,9 @@ def schedule_status(
                          indent=2, default=str))
         return
     for w in workflows:
-        console.print(f"workflow {w['name']} · {w['state']} · next {w['next_run']} · missed {w['missed']}")
+        waiting = f" · {w['waiting']} runs waiting" if w.get("waiting") else ""
+        console.print(f"workflow {w['name']} · {w['state']} · next {w['next_run']} · missed {w['missed']}"
+                      f"{waiting}")
         if w['error']:
             console.print(f"[red]{w['error']}[/red]")
     try:
