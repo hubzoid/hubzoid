@@ -94,3 +94,60 @@ def test_the_access_check_fails_closed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(access, "store_for", broken)
     assert personal._can(tmp_path, "ana@example.org", "reports", "workflows_run") is False
+
+
+# ---- the gate before a schedule is saved (_validated) ---------------------------------
+
+def gate(monkeypatch, *, wf=None, run=True, sched=True, mine=(), limits=None):
+    from hubzoid.workflows import access as wf_access
+
+    wf = wf if wf is not None else SimpleNamespace(as_tool=True, schedulable=True, title="Sales report",
+                                                   inputs=None, min_interval=0)
+    monkeypatch.setattr(personal, "_definition", lambda hub_dir, name: wf)
+    monkeypatch.setattr(wf_access, "authorize", lambda hub_dir, actor, workflow, what: SimpleNamespace(
+        allowed=run if what == "run" else sched))
+    monkeypatch.setattr(personal, "settings", lambda hub_dir: limits or {"min_interval": 3600, "per_person": 5})
+    monkeypatch.setattr(personal, "for_owner", lambda hub_dir, hub, actor: list(mine))
+
+
+def save(tmp_path, cadence="daily at 09:00", tz="Asia/Kolkata", values=None):
+    return personal._validated(tmp_path, "reports", "ana@example.org", "sales_report", values, cadence, tz)
+
+
+def test_a_schedule_that_fits_is_accepted(tmp_path, monkeypatch):
+    gate(monkeypatch)
+    wf, data, cron = save(tmp_path)
+    assert wf.title == "Sales report" and data == {} and cron == "0 9 * * *"
+
+
+@pytest.mark.parametrize("setup,call,message", [
+    ({"wf": SimpleNamespace(as_tool=False)}, {}, "There is no report named 'sales_report' here."),
+    ({"wf": SimpleNamespace(as_tool=True, schedulable=False, title="Sales report")}, {}, "can't be scheduled"),
+    ({"run": False}, {}, "You can't run Sales report yet."),
+    ({"sched": False}, {}, "You can run this report but not schedule it."),
+    ({}, {"cadence": "whenever you like"}, "as a schedule. Try"),
+    ({}, {"tz": "Mars/Olympus"}, "isn't a time zone I know"),
+    ({}, {"cadence": "every 5 minutes"}, "Personal schedules run at most once every hour."),
+    ({"wf": SimpleNamespace(as_tool=True, schedulable=True, title="Sales report", inputs=None, min_interval=86400)},
+     {"cadence": "every 2 hours"}, "Sales report can run at most once every day."),
+])
+def test_each_refusal_says_why(tmp_path, monkeypatch, setup, call, message):
+    from hubzoid.workflows.personal import ScheduleError
+
+    gate(monkeypatch, **setup)
+    with pytest.raises(ScheduleError) as err:
+        save(tmp_path, **call)
+    assert message in str(err.value)
+
+
+def test_limits_per_person_and_duplicates(tmp_path, monkeypatch):
+    from hubzoid.workflows.personal import ScheduleError
+
+    same = schedule(workflow="sales_report", values={}, timezone="Asia/Kolkata", cadence="daily at 09:00",
+                    name="Morning sales")
+    gate(monkeypatch, mine=[same])
+    with pytest.raises(ScheduleError, match='You already have "Morning sales"'):
+        save(tmp_path)
+    gate(monkeypatch, mine=[same] * 5)
+    with pytest.raises(ScheduleError, match="You have 5 schedules on this agent"):
+        save(tmp_path, cadence="daily at 18:00")
