@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -62,8 +63,12 @@ def test_websocket_scope_is_delegated_and_warmup_does_not_build_tools(hub, monke
 
     monkeypatch.setattr(mcp_app, "_build", lambda path: Starlette(routes=[WebSocketRoute("/ws", websocket)]))
     memory, disk = Mock(), Mock()
-    monkeypatch.setattr(server, "_warm_memory", memory)
-    monkeypatch.setattr(server, "_warm_disk", disk)
+    # The module mcp_app will import when the request arrives: another test
+    # (tests/test_agentcore_runner.py) drops hubzoid.runner.* from sys.modules,
+    # so the module imported at the top of this file may no longer be that one.
+    live = importlib.import_module("hubzoid.runner.server")
+    monkeypatch.setattr(live, "_warm_memory", memory)
+    monkeypatch.setattr(live, "_warm_disk", disk)
     runtime = mcp_app.create_app(hub)
     with TestClient(runtime) as client:
         result = client.post("/warmup")
