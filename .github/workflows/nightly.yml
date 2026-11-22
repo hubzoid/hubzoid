@@ -22,9 +22,9 @@ permissions:
 env:
   # Line coverage through sys.monitoring (Python 3.12): far less slowdown.
   COVERAGE_CORE: sysmon
-  # The combined total may not fall below this. Set a few points under the
-  # measured total (22 Nov 2026); raise it as coverage grows.
-  COVERAGE_FAIL_UNDER: "0"
+  # The combined total may not fall below this: a few points under the first
+  # measured total (78.5%, 22 Nov 2026). Raise it as coverage grows.
+  COVERAGE_FAIL_UNDER: "75"
 
 jobs:
   coverage:
