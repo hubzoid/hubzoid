@@ -29,9 +29,9 @@ HUB = typer.Argument(Path("."), help="Hub folder. Default: current folder.")
 JSON = typer.Option(False, "--json", help="Print the API's JSON object.")
 
 
-def _service(hub: Path) -> cfg.ChatConfigService:
+def _service(hub: Path, as_json: bool) -> cfg.ChatConfigService:
     if not Path(hub).is_dir():
-        cc.fail(400, "invalid_request", f"{hub} is not a hub folder.", False)
+        cc.fail(400, "invalid_request", f"{hub} is not a hub folder.", as_json)
     return cfg.ChatConfigService(Path(hub))
 
 
@@ -66,7 +66,7 @@ def config_schema(hub: Path = HUB, as_json: bool = JSON) -> None:
 def config_get(hub: Path = HUB, effective: bool = typer.Option(False, "--effective"),
                sources: bool = typer.Option(False, "--sources"), as_json: bool = JSON) -> None:
     """The active revision. --sources adds where each value comes from."""
-    svc = _service(hub)
+    svc = _service(hub, as_json)
     with _guard(as_json):
         active = svc.active()
         out = {"revision": active.revision, "digest": active.digest, "config": active.document,
@@ -148,7 +148,7 @@ def _user_id(hub: Path, email: str | None, as_json: bool) -> str:
 @prefs_app.command("get")
 def prefs_get(hub: Path = HUB, user: str = typer.Option(None, "--user"), as_json: bool = JSON) -> None:
     """A person's appearance preferences and the effective values."""
-    svc = _service(hub)
+    svc = _service(hub, as_json)
     cc.emit(svc.get_preferences(_user_id(hub, user, as_json)), as_json)
 
 
@@ -160,7 +160,7 @@ def prefs_set(hub: Path = HUB, user: str = typer.Option(None, "--user"),
               expected_revision: int = typer.Option(None, "--expected-revision"),
               as_json: bool = JSON) -> None:
     """Change a person's preferences (only the keys the deployment allows)."""
-    svc = _service(hub)
+    svc = _service(hub, as_json)
     uid = _user_id(hub, user, as_json)
     with _guard(as_json):
         current = svc.get_preferences(uid)
@@ -177,4 +177,4 @@ def prefs_set(hub: Path = HUB, user: str = typer.Option(None, "--user"),
 @chat_app.command("capabilities")
 def chat_capabilities(hub: Path = HUB, as_json: bool = JSON) -> None:
     """Which chat features this install provides."""
-    cc.emit(_service(hub).capabilities(), as_json)
+    cc.emit(_service(hub, as_json).capabilities(), as_json)
