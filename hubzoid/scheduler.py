@@ -300,6 +300,13 @@ def _held(hub_dir: Path) -> bool:
         return False
     if hold:
         log.debug("scheduler: new runs held (%s)", hold.get("reason"))
+        try:  # a hold left by a backup that died is lifted, not waited out for hours
+            from .backup import clear_stale_hold
+
+            if clear_stale_hold(Path(hub_dir)):
+                return False
+        except Exception:  # noqa: BLE001
+            log.warning("scheduler: could not check for a stale backup hold", exc_info=True)
     return bool(hold)
 
 

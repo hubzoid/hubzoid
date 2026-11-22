@@ -196,8 +196,8 @@ def test_skipped_slots_are_logged_by_date(monkeypatch, tmp_path):
     assert runtime.tick(last=now - timedelta(minutes=5), now=now) == ["minutely"]
     health = gs.runtime_health(tmp_path.name)
     assert health["missed"] == 13
-    # the 40-day-old entry is pruned, this tick's skips are added
-    assert health["missed_log"] == [[recent, 2], [now.isoformat(), 4]]
+    # the 40-day-old entry is pruned, this tick's skips are added, named
+    assert health["missed_log"] == [[recent, 2], [now.isoformat(), 4, "minutely"]]
 
 
 def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
@@ -207,7 +207,7 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
 
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
     monkeypatch.setattr(boot.Dispatcher, "prepare", lambda self: 1)
-    monkeypatch.setattr(boot.Dispatcher, "start_loop", lambda self: None)
+    monkeypatch.setattr(boot.Dispatcher, "start_loop", lambda self, resume_from=None: None)
     ready_records = []
     monkeypatch.setattr(runtime, "_OWNER", SimpleNamespace(heartbeat=ready_records.append))
     monkeypatch.setattr(runtime, "ready_record", lambda: {"version": "fixture"})
@@ -223,7 +223,7 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
     health = gs.runtime_health(tmp_path.name)
     down = health["downtime"]
     assert down["missed"] in (10, 11)  # 11 only if a minute turns during the call
-    assert health["missed_log"] == [[down["until"], down["missed"]]]
+    assert health["missed_log"] == [[down["until"], down["missed"], "minutely"]]
     assert ready_records and all(record == {"version": "fixture"} for record in ready_records)
 
 
