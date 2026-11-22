@@ -1087,7 +1087,9 @@ class ChatEngine:
             r = conn.execute(sa.select(g.runs).where(g.runs.c.id == run_id)).first()
             if r is None or r.status != "admitted":
                 return
-            conn.execute(g.runs.update().where(g.runs.c.id == run_id).values(status="streaming", updated_at=_now()))
+            if conn.execute(g.runs.update().where(g.runs.c.id == run_id, g.runs.c.status == "admitted")
+                            .values(status="streaming", updated_at=_now())).rowcount != 1:
+                return
             g.emit(conn, r.conversation_id, "run.changed", run_id, {"status": "streaming",
                                                                    "message_id": r.message_id,
                                                                    "branch_id": r.branch_id})

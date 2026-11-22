@@ -443,6 +443,65 @@ def test_interrupted_run_is_not_rerun(client):
     assert branch_of(client, cid, b["id"])["queue_paused"]
 
 
+def test_a_reply_that_finishes_before_it_is_marked_streaming_stays_finished(client, monkeypatch):
+    """A fast reply can finish between run_streaming's read of the run and its
+    write. The write must not put the finished run back to "streaming" with no
+    lease, or the next sweep reports it interrupted ("The server restarted")."""
+    import types
+
+    from hubzoid.chat import graph
+
+    cid, b = new_conv(client)
+    first = send(client, cid, "first question", b)
+    assert wait_run(client, first["run_id"])["status"] == "complete"
+    eng = client.app.state.chat.engine
+    real = eng.engine
+
+    class StaleRead:
+        """run_streaming's connection, whose first read still sees the run as
+        it was before it finished (the interleaving, forced)."""
+
+        def __init__(self, conn):
+            self.conn, self.reads = conn, 0
+
+        def execute(self, stmt, *a, **kw):
+            result = self.conn.execute(stmt, *a, **kw)
+            if self.reads == 0 and getattr(stmt, "is_select", False):
+                self.reads += 1
+                row = result.first()
+                stale = types.SimpleNamespace(**{**row._asdict(), "status": "admitted"})
+                return types.SimpleNamespace(first=lambda: stale)
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    class Engine:
+        def begin(self):
+            outer = real.begin()
+
+            class Ctx:
+                def __enter__(self):
+                    return StaleRead(outer.__enter__())
+
+                def __exit__(self, *exc):
+                    return outer.__exit__(*exc)
+
+            return Ctx()
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    monkeypatch.setattr(eng, "engine", Engine())
+    eng.run_streaming(first["run_id"])
+    monkeypatch.setattr(eng, "engine", real)
+
+    with real.connect() as conn:
+        run = conn.execute(graph.runs.select().where(graph.runs.c.id == first["run_id"])).first()
+    assert run.status == "complete"
+    assert eng.sweep() == 0
+
+
 def test_a_failed_lease_renewal_keeps_the_heartbeat_and_an_expired_lease_fences(client, monkeypatch):
     import sqlalchemy as sa
 
