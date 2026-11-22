@@ -90,7 +90,7 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
 
             manifest = svc().active_manifest()
             got = svc().active_theme()
-            from ..chat import devices  # noqa: F401 - registers the devices namespace
+            from ..chat import devices  # noqa: F401, F811 - registers the devices namespace
             from ..chat.config import service_for as config_service
 
             palettes = (got[1] if got else theme_mod.resolve())["palettes"]

@@ -310,7 +310,7 @@ def release(hub_dir, item_id: str, *, actor: str, reason: str, expected_revision
     conn = config_lib.active(hub_dir, item["channel_id"])
     try:
         out = dispatch(conn, item, released_by=actor)
-    except ChannelError as exc:
+    except ChannelError:
         current = get(hub_dir, item_id)
         if current and current["state"] == "ready":
             # No work was admitted (no access to the workflow, admission paused,

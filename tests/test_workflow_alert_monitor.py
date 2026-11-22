@@ -250,7 +250,7 @@ def test_only_consecutive_scheduled_failures_auto_pause(hub, monkeypatch):
         _run("hz_markdown_task", md.format("manual-20260101T090000"), "ERROR", now - 4.3),
         _run("scheduled", "s2", "ERROR", now - 4, "schedule"),
     ]
-    store = _reconcile_with(hub, monkeypatch, rows)
+    _reconcile_with(hub, monkeypatch, rows)
     from hubzoid.workflows import control
     paused = []
     monkeypatch.setattr(control, "set_paused",

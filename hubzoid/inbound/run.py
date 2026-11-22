@@ -21,7 +21,7 @@ from .webhook import webhook_config_from_env
 
 log = logging.getLogger("hubzoid.inbound")
 
-from .routing import DEFAULT_INBOUND_PORT, inbound_port, _slugify, hub_slug
+from .routing import DEFAULT_INBOUND_PORT, inbound_port, hub_slug
 
 
 def build_app_for_hub(hub_dir, env=None):

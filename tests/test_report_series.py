@@ -229,7 +229,7 @@ def test_unchanged_report_restricts_audience(hub, tmp_path):
 
 
 def test_unchanged_report_replaces_named_readers(hub, tmp_path):
-    first = _publish(hub, tmp_path, audience='people', share_with=[MEERA])
+    _publish(hub, tmp_path, audience='people', share_with=[MEERA])
     again = _publish(hub, tmp_path, run='new-readers', audience='people', share_with=[SAM])
     art = arts.get(hub, again['id'])
     assert arts.role(hub, art, MEERA) is None

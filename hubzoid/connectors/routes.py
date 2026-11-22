@@ -387,7 +387,6 @@ def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:
     """What the server says, for the Console. Changes nothing: no client is
     registered and no connection is touched."""
     from . import discovery
-    from . import http as net
 
     result: dict = {"connector_id": c.id, "auth_type": c.auth_type,
                     "redirect_uri": oauth_flow.redirect_uri(origin, c.id)}

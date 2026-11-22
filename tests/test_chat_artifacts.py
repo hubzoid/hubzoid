@@ -142,7 +142,7 @@ def test_write_artifact_falls_back_to_session_dir_when_no_chat(ctx):
 def test_write_artifact_strips_directory_components(ctx):
     write = _by_name(files_mod.make(ctx), "write_artifact")
     with _request_ctx.chat_scope("chat-zz"):
-        result = _call(write, filename="output/nested/file.png", content="x")
+        _call(write, filename="output/nested/file.png", content="x")
     # The dirs got stripped — file lands at the chat artifact root.
     assert (ctx.hub_dir / ".hubzoid/chats/chat-zz/artifacts/file.png").is_file()
     # And not inside any "output" or "nested" subdir.
