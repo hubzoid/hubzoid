@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 
 # How long an argument JSON we will inline alongside the tool name. Keep
 # this short — the goal is to identify the call, not to dump payloads.
@@ -98,14 +99,20 @@ def format_artifact_footer(artifacts: list, shown_text: str = "") -> str:
     lines = []
     for key, (name, url) in latest.items():
         # The model already echoed one of the links issued for this file. A
-        # mention of the path with any other token does not count: that link
-        # may not open.
-        if any(u in shown_text for u in issued[key]):
+        # mention of the path with any other token, or an issued link with
+        # characters run on, does not count: that link may not open.
+        if any(_echoed(shown_text, u) for u in issued[key]):
             continue
         lines.append(f"[Download {name}]({url})")
     if not lines:
         return ""
     return "\n\n" + "\n".join(lines) + "\n"
+
+
+def _echoed(text: str, url: str) -> bool:
+    """True when ``text`` holds ``url`` whole, not as the start of a longer
+    URL (an issued link with more query characters run on)."""
+    return re.search(re.escape(url) + r"(?![\w%&=+/#?~-])", text) is not None
 
 
 def format_error(name: str, message: str | None = None) -> str:

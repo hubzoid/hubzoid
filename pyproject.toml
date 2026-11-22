@@ -184,6 +184,8 @@ markers = [
 [tool.coverage.run]
 source = ["hubzoid"]
 relative_files = true
+# Count product code that tests run in a child Python process too.
+patch = ["subprocess"]
 omit = [
   "hubzoid/portal_dist/*",
   "hubzoid/core_assets/*",

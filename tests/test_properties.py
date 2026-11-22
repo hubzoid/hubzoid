@@ -59,10 +59,12 @@ def test_footer_has_one_latest_link_per_file(writes, echoed, mangled):
         latest[art["name"]] = art["url"]
         first.setdefault(art["name"], art["url"])
     # The model echoed the first link issued for some files (an older token),
-    # and wrote a link with a token we never issued for others.
+    # and for others wrote a link that may not open: a token we never issued,
+    # or an issued link with characters run on.
     shown = " ".join(
         [f"[Download {n}]({first[n]})" for n in sorted(echoed) if n in first]
         + [f"[Download {n}]({_url(n, 'not-issued', 1)})" for n in sorted(mangled)]
+        + [f"[Download {n}]({first[n]}9)" for n in sorted(mangled) if n in first]
     )
 
     footer = tool_events.format_artifact_footer(artifacts, shown_text=shown)
