@@ -3,7 +3,7 @@ name: tests
 # Quick checks for every pull request and every push to main, a few minutes:
 # the fast Python tests on SQLite without browsers, live models or Docker
 # (tests of 5 s or more are `heavy` and left out, see tests/conftest.py),
-# spread over two machines by .test_durations and run in parallel on each, ruff's
+# spread over three machines by .test_durations and run in parallel on each, ruff's
 # bug rules, and the web app's lint and type check.
 # They hold no secrets and publish nothing. The slow and end-to-end tests run
 # for labeled release candidates, manual checks and published releases (ci.yml).
@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2]
+        group: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -40,10 +40,14 @@ jobs:
       - name: Bug rules (ruff; no style rules, see pyproject.toml)
         if: matrix.group == 1
         run: ruff check --output-format=github
-      - name: Fast tests, part ${{ matrix.group }} of 2 (SQLite; no browsers, live models or Docker)
+      - name: Fast tests, part ${{ matrix.group }} of 3 (SQLite; no browsers, live models or Docker)
         # --dist loadfile: a file's tests share one worker, so module fixtures
         # (fixed ports, one live gateway) never run twice at once.
-        run: pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
+        # --durations lists the slowest tests, so the fast tier stays fast.
+        # least_duration: tests without a recorded time (new ones) still split evenly.
+        run: >-
+          pytest -q --no-header -n auto --dist loadfile --splits 3 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration --durations=25
 
   web-lint:
     runs-on: ubuntu-24.04

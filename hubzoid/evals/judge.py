@@ -301,7 +301,7 @@ def build_prompt(spec: str, case, response: str,
 # --------------------------------------------------------------------------
 # Parsing the verdict
 # --------------------------------------------------------------------------
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+_MAX_VERDICT_CHARS = 20_000   # a verdict is short; never scan an unbounded reply
 _SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*(\d{1,2})')
 
 
@@ -316,17 +316,32 @@ def parse_verdict(text: str) -> tuple[int | None, str]:
     """
     if not text:
         return None, ""
-    for match in _JSON_RE.finditer(text):
+    # Decode the top-level JSON objects rather than matching braces with a
+    # pattern: the reasoning may quote code with braces of its own. The verdict
+    # is the last object shaped as asked ({score, reasoning}); an example the
+    # judge quotes earlier, or an object nested inside another, never wins.
+    decoder = json.JSONDecoder()
+    head = text[:_MAX_VERDICT_CHARS]
+    found: list[tuple[bool, int, str]] = []
+    pos = head.find("{")
+    while pos != -1:
         try:
-            data = json.loads(match.group(0))
-        except (ValueError, json.JSONDecodeError):
+            data, end = decoder.raw_decode(head, pos)
+        except ValueError:
+            pos = head.find("{", pos + 1)
             continue
         if isinstance(data, dict) and "score" in data:
             try:
                 score = int(data["score"])
             except (TypeError, ValueError):
-                continue
-            return max(1, min(10, score)), str(data.get("reasoning", "")).strip()
+                score = None
+            if score is not None:
+                found.append(("reasoning" in data, max(1, min(10, score)), str(data.get("reasoning", "")).strip()))
+        pos = head.find("{", end)
+    if found:
+        shaped = [f for f in found if f[0]]
+        _shaped, score, reasoning = (shaped or found)[-1]
+        return score, reasoning
 
     fallback = _SCORE_RE.search(text)
     if fallback:

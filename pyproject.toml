@@ -189,7 +189,6 @@ patch = ["subprocess"]
 omit = [
   "hubzoid/portal_dist/*",
   "hubzoid/core_assets/*",
-  "hubzoid/migrations/*/versions/*",
   "hubzoid/sandbox/images/*",
   "hubzoid/deploy/providers/*",
 ]
@@ -230,12 +229,48 @@ select = [
   "B032",  # annotation where an assignment was meant (x: 1)
   "B033",  # duplicate item in a set literal
   "B035",  # dict comprehension with a constant key
+  "PLE",   # pylint errors: calls and syntax that fail at run time
+  "PLW",   # pylint warnings (style-only codes ignored below)
+  "ASYNC", # blocking calls inside async functions (style-only codes ignored below)
+  # Security (bandit), the codes that flag a real hazard. 22 Nov triage: the
+  # rest of S was noise here (asserts in tests, column names from code in
+  # SQL builders, subprocess without a shell).
+  "S102",  # exec
+  "S113",  # HTTP request without a timeout
+  "S202",  # tarfile extraction without member checks
+  "S301",  # pickle
+  "S307",  # eval
+  "S314",  # xml.etree on untrusted data (defusedxml instead)
+  "S324",  # weak hash for security
+  "S501",  # TLS verification off
+  "S502",  # insecure TLS protocol
+  "S503",  # insecure TLS defaults
+  "S504",  # TLS without a protocol version
+  "S506",  # unsafe YAML loader
+  "S602",  # subprocess with shell=True
+  "S604",  # a call with shell=True
+  "S605",  # os.system and friends
+  "S701",  # Jinja2 without autoescape
+  "S704",  # unsafe markup
 ]
 ignore = [
-  "F401",  # unused import: style, and some are deliberate re-exports
-  "F541",  # f-string without placeholders: harmless
+  "F401",     # unused import: style, and some are deliberate re-exports
+  "F541",     # f-string without placeholders: harmless
+  "PLW0108",  # lambda that could be the function itself: style
+  "PLW0603",  # global statement: used deliberately for module caches
+  "PLW1510",  # subprocess.run without check: callers read returncode
+  "PLW2901",  # loop variable reassigned: deliberate normalising
+  "PLW3301",  # nested min/max: style
+  "ASYNC109", # async function with a timeout parameter: style
+  "ASYNC110", # sleep in a polling loop: tests poll on purpose
+  "ASYNC240", # pathlib calls in async code: small local reads
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# A test imports a fixture and takes it as a parameter of the same name.
-"tests/**" = ["F811"]
+# A test imports a fixture and takes it as a parameter of the same name. Tests
+# also load YAML with BaseLoader (GitHub's `on` key), parse XML they wrote and
+# pickle objects to prove they pickle.
+"tests/**" = ["F811", "S301", "S314", "S506", "ASYNC230"]
+# A `global` with no assignment (harmless). The file belongs to the workflows
+# work in 2.1.2; remove the statement there, then this line.
+"hubzoid/workflows/runtime.py" = ["PLW0602"]

@@ -110,12 +110,22 @@ def _runs_dir(hub_path: Path) -> Path:
 
 
 def run_files(hub_path: Path) -> list[Path]:
-    """Result files, newest first (the stamp sorts by time)."""
+    """Result files, newest first. A stamp is `<YYYYMMDD_HHMMSS>_<random>`, so two
+    runs in the same second tie on the time and are ordered by when each file
+    was written, not by the random part."""
     d = _runs_dir(hub_path)
     if not d.is_dir():
         return []
-    return sorted((p for p in d.glob("*.json") if p.name != "index.json" and not p.is_symlink() and STAMP_RE.match(p.stem)),
-                  key=lambda p: p.name, reverse=True)
+    found = [p for p in d.glob("*.json") if p.name != "index.json" and not p.is_symlink() and STAMP_RE.match(p.stem)]
+
+    def newest(p: Path):
+        try:
+            written = p.stat().st_mtime_ns
+        except OSError:
+            written = 0
+        return p.name[:15], written, p.name
+
+    return sorted(found, key=newest, reverse=True)
 
 
 @functools.lru_cache(maxsize=256)
