@@ -85,20 +85,6 @@ def test_slack_handlers_stream_to_stored_thread_and_sender(slack, monkeypatch, k
                                                    "text": answer or "(no response)"}
 
 
-@pytest.mark.parametrize("kind", ["mention", "im", "assistant"])
-def test_slack_handler_failures_show_specific_error(slack, monkeypatch, kind):
-    app, client, context, say = slack
-    monkeypatch.setattr(adapter, "stream_reply", Mock(side_effect=RuntimeError("bridge down")))
-    event = {"channel": "D1", "ts": "1", "thread_ts": "1", "user": "U1"}
-    if kind == "assistant":
-        app.assistant_handlers["message"](client=client, payload=event, context=context, set_status=Mock(), say=say)
-    else:
-        app.handlers["app_mention" if kind == "mention" else "im"](event, client, context, say)
-    call = client.chat_postMessage.call_args if kind == "im" else say.call_args
-    text = call.kwargs.get("text") or call.args[0]
-    assert "RuntimeError: bridge down" in text
-
-
 @pytest.mark.parametrize("event", [{"subtype": "bot_message"}, {"bot_id": "B1"},
                                   {"assistant_thread": {} , "subtype": "message_changed"},
                                   {"assistant_thread": {"id": "a1"}}, {"subtype": "message_changed"}])

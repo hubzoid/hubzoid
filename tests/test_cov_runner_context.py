@@ -38,6 +38,9 @@ def test_nobody_is_anonymous_and_an_app_caller_keeps_its_scope():
 
 
 def test_what_the_service_captures_is_what_the_runner_sees():
+    # What this test runs with before it starts: another test in the same
+    # process may have left a chat id or an identity set.
+    chat_before, who_before = _request_ctx.get_chat_id(), access.current_identity()
     ident = idlib.Identity.make("ana@example.org", ("ops",), surface="slack", account_id="acc-9")
     slot = _request_ctx.SessionSlot(resume_id="sess-1", delta_prompt="next", images=None, delta_images=None,
                                     resume_cost=0.5)
@@ -60,8 +63,9 @@ def test_what_the_service_captures_is_what_the_runner_sees():
         restored.session_id, restored.runtime = "sess-2", "claude"
         _request_ctx.record_artifact("report.pdf", "http://h/artifacts/c/report.pdf?t=x")
         out = json.loads(json.dumps(rc.outputs(restored)))
-    assert _request_ctx.get_chat_id() is None and usage._RUN_TAG.get() != "run-tag-1"   # scopes are left
+    assert _request_ctx.get_chat_id() == chat_before and usage._RUN_TAG.get() != "run-tag-1"   # scopes are left
     assert out["slot"]["session_id"] == "sess-2" and out["slot"]["runtime"] == "claude"
     assert out["artifacts"] == [{"name": "report.pdf", "url": "http://h/artifacts/c/report.pdf?t=x"}]
     with rc.restore({}, None, None) as nothing:
         assert nothing is None and access.current_identity() is idlib.ANONYMOUS
+    assert access.current_identity() == who_before                          # and the identity is put back

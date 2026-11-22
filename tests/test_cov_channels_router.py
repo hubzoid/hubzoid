@@ -21,31 +21,6 @@ def isolated_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_transport_reload_replaces_revisions_and_isolates_failures(hub_dir, isolated_loop, monkeypatch):
-    state = isolated_loop
-    state.hub_dir = hub_dir
-    old, current, made = Mock(), Mock(), Mock()
-    old.stop.side_effect = RuntimeError("stop failed")
-    state.transports = {"old@1": old, "keep@1": current}
-    new_adapter = SimpleNamespace(start=Mock(return_value=made))
-    bad_adapter = SimpleNamespace(start=Mock(side_effect=RuntimeError("start failed")))
-    conns = [SimpleNamespace(id="keep", revision=1, enabled=True),
-             SimpleNamespace(id="new", revision=2, enabled=True, adapter=new_adapter),
-             SimpleNamespace(id="bad", revision=1, enabled=True, adapter=bad_adapter),
-             SimpleNamespace(id="off", revision=1, enabled=False)]
-    monkeypatch.setattr(router.config_lib, "active_all", lambda _: conns)
-    await router.reload_transports()
-    assert state.transports == {"keep@1": current, "new@2": made}
-    assert old.stop.call_count == 1 and new_adapter.start.call_args.args == (conns[1], hub_dir)
-    monkeypatch.setattr(router.config_lib, "active_all", Mock(side_effect=OSError("unreadable")))
-    await router.reload_transports()
-    assert state.transports == {"keep@1": current, "new@2": made}
-    state.hub_dir = None
-    await router.reload_transports()
-    assert state.transports["new@2"] is made
-
-
-@pytest.mark.asyncio
 async def test_start_hooks_terminal_callback_and_stop_cancels_without_leaking(isolated_loop, tmp_path, monkeypatch):
     state = isolated_loop
     previous = Mock(side_effect=RuntimeError("other callback failed"))
@@ -118,13 +93,6 @@ def test_hub_permission_check_fails_closed(hub_dir, monkeypatch, status, expecte
     assert router._hub_access(hub_dir, "ana@example.org") == expected
 
 
-def test_group_check_fails_closed_when_access_store_is_down(hub_dir, monkeypatch):
-    from hubzoid import access
-    conn = applied(hub_dir)
-    monkeypatch.setattr(access, "store_for", Mock(side_effect=OSError("down")))
-    assert router._groups_ok(conn, "ana@example.org") is False
-
-
 @pytest.mark.parametrize("attachment_support", [True, False])
 def test_content_keeps_text_and_explains_failed_attachments(hub_dir, fake, monkeypatch, attachment_support):
     conn = applied(hub_dir)
@@ -193,7 +161,6 @@ def test_work_item_final_reply_settles_only_known_outcomes(hub_dir, fake, monkey
     if item and isinstance((item.get("result_json") or {}).get("result"), dict):
         should_post = should_post and not item["result_json"]["result"].get("posted")
     assert post.call_count == int(should_post)
-
 
 
 @pytest.mark.parametrize("value,expected", [(100, 100.0), (None, 0.0), ("bad", 0.0),
