@@ -44,7 +44,10 @@ jobs:
         # --dist loadfile: a file's tests share one worker, so module fixtures
         # (fixed ports, one live gateway) never run twice at once.
         # --durations lists the slowest tests, so the fast tier stays fast.
-        run: pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }} --durations=25
+        # least_duration: tests without a recorded time (new ones) still split evenly.
+        run: >-
+          pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration --durations=25
 
   web-lint:
     runs-on: ubuntu-24.04
