@@ -104,13 +104,12 @@ def test_a_call_that_leaves_optional_arguments_out_runs(tmp_path, monkeypatch):
     import shutil
 
     from hubzoid import memory as memlib
-    from hubzoid._request_ctx import set_chat_id
+    from hubzoid._request_ctx import chat_scope
     from hubzoid.tools import files
 
     hub = tmp_path / "hub"
     shutil.copytree(MINIMAL, hub)
     monkeypatch.setenv("HUBZOID_DATA_DIR", str(tmp_path / "data"))
-    set_chat_id("schema-chat")
     folder = memlib.chat_upload_dir(hub, "schema-chat")
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "orders.csv").write_text("id,total\n1,10\n2,32\n")
@@ -119,7 +118,9 @@ def test_a_call_that_leaves_optional_arguments_out_runs(tmp_path, monkeypatch):
 
     tc = ToolContext(context=None, tool_name="read_upload", tool_call_id="c1",
                      tool_arguments=json.dumps({"filename": "orders.csv"}))
-    out = asyncio.run(read_upload.on_invoke_tool(tc, json.dumps({"filename": "orders.csv"})))
+    # Scoped, so the chat id does not stay set for later tests on this worker.
+    with chat_scope("schema-chat"):
+        out = asyncio.run(read_upload.on_invoke_tool(tc, json.dumps({"filename": "orders.csv"})))
     assert "2,32" in str(out)
 
 
