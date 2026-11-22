@@ -81,10 +81,13 @@ Environment variables explicitly supported:
                          Default: 52428800 (50 MiB).
   HUBZOID_ARTIFACT_LINK_DAYS  Default lifetime of a report's public link, in
                          days (1-90). Default: 7.
-  HUBZOID_ARTIFACT_ALLOW_ORIGINS  Comma-separated https origins published HTML
-                         reports may load scripts, styles, fonts and images
-                         from (e.g. a chart CDN). Default: none (reports are
-                         self-contained and make no network requests).
+  HUBZOID_ARTIFACT_ALLOW_ORIGINS  Comma-separated https origins agent-made
+                         HTML (the Documents pane and published reports) may
+                         load scripts, styles, fonts and images from. Unset:
+                         scripts and styles from cdn.jsdelivr.net,
+                         cdnjs.cloudflare.com and unpkg.com (chart libraries).
+                         "none": no outside origin. Pages never make fetch,
+                         XHR or form requests either way.
   HUBZOID_SMTP_HOST / _PORT / _USERNAME / _PASSWORD / _FROM  The SMTP sender
                          for hub.send_email (owner-only email). Port default
                          587. Credentials are only sent over TLS.

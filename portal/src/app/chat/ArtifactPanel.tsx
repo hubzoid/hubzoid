@@ -105,6 +105,10 @@ export function ArtifactPanel({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // An edit saves against the version it started from, never a newer one a
+  // list refresh brought in meanwhile (that one is someone else's: 409).
+  const [editBase, setEditBase] = useState<{ versionId: string; revision: number } | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const body = useRef<HTMLDivElement>(null);
 
   const current = versionId ?? artifact?.current_version_id ?? null;
@@ -113,11 +117,17 @@ export function ArtifactPanel({
   useEffect(() => {
     setVersionId(null);
     setEditing(false);
+    setEditError(null);
     setTab("preview");
   }, [artifact?.artifact_id]);
 
+  // Loaded per document version, not per list object: a list refresh (a new
+  // reply, another tab's edit) doesn't fetch the document again or redraw it.
+  const artifactId = artifact?.artifact_id;
+  const kind = artifact?.kind;
+  const mime = version?.mime_type;
   useEffect(() => {
-    if (!artifact || !current) return;
+    if (!artifactId || !kind || !current) return;
     let cancelled = false;
     setText(null);
     setFailed(null);
@@ -125,13 +135,14 @@ export function ArtifactPanel({
     let made: string | null = null;
     (async () => {
       try {
-        if (TEXT_KINDS.has(artifact.kind)) {
-          const out = await get<{ text: string }>(contentUrl(apiBase, artifact, current, "?as=text"));
+        const ref = { artifact_id: artifactId } as Artifact;
+        if (TEXT_KINDS.has(kind)) {
+          const out = await get<{ text: string }>(contentUrl(apiBase, ref, current, "?as=text"));
           if (!cancelled) setText(out.text);
-        } else if (artifact.kind === "image") {
-          const res = await fetch(contentUrl(apiBase, artifact, current), { credentials: "same-origin" });
+        } else if (kind === "image") {
+          const res = await fetch(contentUrl(apiBase, ref, current), { credentials: "same-origin" });
           if (!res.ok) throw new Error(String(res.status));
-          made = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: version?.mime_type || "image/png" }));
+          made = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: mime || "image/png" }));
           if (!cancelled) setBlobUrl(made);
         }
       } catch {
@@ -142,27 +153,31 @@ export function ArtifactPanel({
       cancelled = true;
       if (made) URL.revokeObjectURL(made);
     };
-  }, [apiBase, artifact, current, version?.mime_type]);
+  }, [apiBase, artifactId, kind, current, mime]);
 
   const save = useCallback(async () => {
-    if (!artifact || !current) return;
+    if (!artifact || !editBase) return;
     setSaving(true);
-    setFailed(null);
+    setEditError(null);
     try {
       await post(hubUrl(apiBase, `/api/chat/artifacts/${enc(artifact.artifact_id)}/versions`), {
         content: draft,
-        base_version_id: current,
-        expected_revision: artifact.revision,
+        base_version_id: editBase.versionId,
+        expected_revision: editBase.revision,
       });
       setEditing(false);
+      setEditBase(null);
       setVersionId(null);
       onChanged();
     } catch (e) {
-      setFailed(e instanceof ApiError && e.status === 409 ? t.artifacts.conflict : t.artifacts.saveFailed);
+      const conflict = e instanceof ApiError && e.status === 409;
+      setEditError(conflict ? t.artifacts.conflict : t.artifacts.saveFailed);
+      // The newer version is fetched, so Cancel shows it; the text stays here.
+      if (conflict) onChanged();
     } finally {
       setSaving(false);
     }
-  }, [apiBase, artifact, current, draft, onChanged]);
+  }, [apiBase, artifact, editBase, draft, onChanged]);
 
   if (!artifact) return null;
   const isLatest = current === artifact.current_version_id;
@@ -219,7 +234,7 @@ export function ArtifactPanel({
       </div>
       {TEXT_KINDS.has(artifact.kind) && (
         <div className="hz-artifact-tabs" role="tablist" aria-label={artifact.title}>
-          <button role="tab" type="button" aria-selected={tab === "preview" && !editing} onClick={() => { setTab("preview"); setEditing(false); }}>
+          <button role="tab" type="button" aria-selected={tab === "preview" && !editing} onClick={() => { setTab("preview"); setEditing(false); setEditError(null); }}>
             {t.artifacts.preview}
           </button>
           <button role="tab" type="button" aria-selected={tab === "source" || editing} onClick={() => setTab("source")}>
@@ -227,7 +242,12 @@ export function ArtifactPanel({
           </button>
           <span className="flex-1" />
           {canEdit && isLatest && text !== null && !editing && (
-            <button type="button" className="hz-artifact-edit" onClick={() => { setDraft(text); setEditing(true); }}>
+            <button type="button" className="hz-artifact-edit" onClick={() => {
+              setDraft(text);
+              setEditBase({ versionId: current!, revision: artifact.revision });
+              setEditError(null);
+              setEditing(true);
+            }}>
               <Pencil size={13} aria-hidden /> {t.artifacts.edit}
             </button>
           )}
@@ -243,9 +263,9 @@ export function ArtifactPanel({
               aria-label={t.artifacts.editLabel}
               spellCheck={false}
             />
-            {failed && <div className="text-[12px]" style={{ color: "var(--hz-danger)" }}>{failed}</div>}
+            {editError && <div className="text-[12px]" role="alert" style={{ color: "var(--hz-danger)" }}>{editError}</div>}
             <div className="flex justify-end gap-2">
-              <Button size="sm" onClick={() => setEditing(false)}>{t.cancel}</Button>
+              <Button size="sm" onClick={() => { setEditing(false); setEditBase(null); setEditError(null); }}>{t.cancel}</Button>
               <Button size="sm" variant="primary" loading={saving} disabled={draft === text} onClick={() => void save()}>
                 {t.artifacts.saveVersion}
               </Button>

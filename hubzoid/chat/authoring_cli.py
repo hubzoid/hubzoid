@@ -1,9 +1,11 @@
-"""``hubzoid workspace`` (local mode): draft, review and publish hub files; prompts; OpenAPI preview.
+"""``hubzoid workspace`` (local mode): hub files and their versions; prompts; OpenAPI preview.
+
+Edits to a hub's own files go through ``hubzoid hub-changes``; the old
+``workspace drafts`` commands only say so.
 
 The same service as ``/api/chat/authoring`` and ``/api/chat/prompts``, acting as
 one account (``--user EMAIL``, default the local owner). Editing the hub's files
-directly with Claude Code or Codex stays as valid as ever; this is the reviewed
-path the Workspace uses.
+directly with Claude Code or Codex stays as valid as ever.
 """
 from __future__ import annotations
 
@@ -15,10 +17,10 @@ import typer
 from ..control import cli_common as cc
 from .engine_cli import HUB, JSON, USER, _local
 
-workspace_app = typer.Typer(help="Draft, review and publish agent, skill and prompt files.", no_args_is_help=True)
-drafts_app = typer.Typer(help="Drafts of hub files.", no_args_is_help=True)
+workspace_app = typer.Typer(help="Hub files and their versions, prompts, OpenAPI preview.", no_args_is_help=True)
+drafts_app = typer.Typer(help="Removed: use `hubzoid hub-changes`.", no_args_is_help=True)
 prompts_app = typer.Typer(help="Shared and personal prompts.", no_args_is_help=True)
-workspace_app.add_typer(drafts_app, name="drafts")
+workspace_app.add_typer(drafts_app, name="drafts", hidden=True)
 workspace_app.add_typer(prompts_app, name="prompts")
 
 
@@ -42,68 +44,24 @@ def w_versions(path: str, hub: Path = typer.Option(Path("."), "--hub"), as_json:
         cc.emit({"items": _svc(loc).versions(path)}, as_json)
 
 
-@drafts_app.command("create")
-def d_create(path: str, hub: Path = typer.Option(Path("."), "--hub"),
-             content_file: Path = typer.Option(None, "--content-file", help="The new content (default: the current file)."),
-             user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).create_draft(loc.actor_obj, path, content_file.read_text() if content_file else None), as_json)
+# Workspace drafts were replaced by hub changes (c9b070b6): one reviewed path
+# for edits to a hub's own files, and a file's history is its Git log. The
+# commands stay, named, so an old script learns where they went instead of
+# meeting "No such command".
+DRAFTS_MOVED = ("Workspace drafts were replaced by hub changes. Propose an edit with "
+                "`hubzoid hub-changes propose`, approve it with `hubzoid hub-changes decide`, and undo one with "
+                "`hubzoid hub-changes undo`. A file's history is `hubzoid workspace versions <path>`.")
+_ANY_ARGS = {"allow_extra_args": True, "ignore_unknown_options": True}
 
 
-@drafts_app.command("update")
-def d_update(draft: str, content_file: Path = typer.Option(..., "--content-file"),
-             expected_revision: int = typer.Option(..., "--expected-revision"),
-             hub: Path = typer.Option(Path("."), "--hub"), user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).update_draft(loc.actor_obj, draft, content_file.read_text(), expected_revision), as_json)
+def _drafts_moved(name: str) -> None:
+    @drafts_app.command(name, context_settings=_ANY_ARGS, help=f"Removed: {DRAFTS_MOVED}")
+    def moved(ctx: typer.Context, as_json: bool = JSON) -> None:
+        cc.fail(410, "moved", DRAFTS_MOVED, as_json, use="hubzoid hub-changes")
 
 
-@drafts_app.command("show")
-def d_show(draft: str, hub: Path = typer.Option(Path("."), "--hub"), as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, None)
-    with loc.guard():
-        out = _svc(loc).get_draft(draft)
-    if as_json:
-        cc.emit(out, True)
-    else:
-        typer.echo(out["diff"] or "(no changes)")
-        for p in out["problems"]:
-            typer.echo(f"problem: {p['message']}")
-
-
-@drafts_app.command("submit")
-def d_submit(draft: str, expected_revision: int = typer.Option(..., "--expected-revision"),
-             hub: Path = typer.Option(Path("."), "--hub"), user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).submit(loc.actor_obj, draft, expected_revision), as_json)
-
-
-@drafts_app.command("review")
-def d_review(draft: str, decision: str = typer.Option(..., "--decision", help="approve or reject"),
-             digest: str = typer.Option(..., "--digest"), note: str = typer.Option(None, "--note"),
-             hub: Path = typer.Option(Path("."), "--hub"), user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).review(loc.actor_obj, draft, decision=decision, digest=digest, note=note), as_json)
-
-
-@drafts_app.command("publish")
-def d_publish(draft: str, digest: str = typer.Option(..., "--digest"), hub: Path = typer.Option(Path("."), "--hub"),
-              user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).publish(loc.actor_obj, draft, digest), as_json)
-
-
-@drafts_app.command("rollback")
-def d_rollback(path: str, version: str = typer.Option(..., "--version"), hub: Path = typer.Option(Path("."), "--hub"),
-               user: str = USER, as_json: bool = JSON) -> None:
-    loc = _local(hub, as_json, user)
-    with loc.guard():
-        cc.emit(_svc(loc).rollback_draft(loc.actor_obj, path, version), as_json)
+for _name in ("create", "update", "show", "submit", "review", "publish", "rollback"):
+    _drafts_moved(_name)
 
 
 @workspace_app.command("openapi-preview")
