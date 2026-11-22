@@ -31,6 +31,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "identity": ("identity",),
     "channels": ("channels", "channel"),
     "cards": ("cards", "card"),
+    "prompts": ("prompts", "prompt"),
 }
 
 

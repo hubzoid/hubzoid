@@ -62,6 +62,9 @@ def _key(c, **body) -> str:
 
 
 def _pending(hub, user) -> dict:
+    from tests.access_helpers import allow
+
+    allow(hub, user["email"])  # the requester, who decides with their key, may use the agent
     return hitl.create(hub, "sales", hitl.Caller(account_id=user["id"], email=user["email"], origin="api"),
                        kind="approval", title="Reserve 4 units", tool="reserve_stock",
                        arguments={"sku": "SKU-12", "quantity": 4})

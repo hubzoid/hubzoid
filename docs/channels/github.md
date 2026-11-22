@@ -132,6 +132,11 @@ turns it on, such as
 The token is not narrowed to one repository. Use a fine-grained token limited
 to the repositories the hub needs.
 
+A hub whose public address is not on this computer refuses a personal token
+(`pat_remote_forbidden`). If you reach your own laptop hub through a tunnel you
+run yourself, set `HUBZOID_GITHUB_PAT_TUNNEL=1` in its `.env` to allow it. Use
+App mode for a hosted hub.
+
 ## What starts work
 
 | Trigger | When it fires |

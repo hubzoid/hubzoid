@@ -21,7 +21,8 @@ The decision, in a fixed order:
 
 Speed. A decision is cached per process, keyed by the deployment, the person,
 the permission, the hub, the access store's revision and the account's
-counter. Each check reads two indexed values (the revision and the counter);
+status and counter. Each check reads two indexed rows (the revision, and the
+account's status and counter);
 anything that changes access moves one of them, so a revocation applies on the
 next check in every process. Checks run at requests, before every tool call and
 when a waiting run resumes, never while text streams.
@@ -165,8 +166,11 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
         gs = store_for(Path(hub_dir))
         status, current_epoch = _account_state(hub_dir, account_id, email)
         revision = gs.revision()
+        # Everything the decision below reads is in the key: the store's
+        # revision (grants, blocks, reader and availability markers), the
+        # account's status and its credential counter.
         key = (deployment_id(Path(hub_dir)), email, account_id, permission,
-               normalize(hub) if hub else None, revision, current_epoch, epoch)
+               normalize(hub) if hub else None, revision, status, current_epoch, epoch)
         hit = _cache.get(key)
         if hit is not None:
             return hit
@@ -207,6 +211,16 @@ def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
         q = sa.select(api_keys.c.id).where(
             api_keys.c.id == credential_id, api_keys.c.revoked_at.is_(None),
             sa.or_(api_keys.c.expires_at.is_(None), api_keys.c.expires_at > now))
+    elif kind == "mcp_grant":
+        # An assistant's MCP connection (its OAuth grant, by the hash the store
+        # keeps): not revoked, not expired. Each new MCP request checks it
+        # already; this stops a call still running when it is revoked.
+        from ..db import operational_engine
+
+        with operational_engine(Path(hub_dir)).connect() as conn:
+            return conn.execute(sa.text(
+                "SELECT 1 FROM hz_mcp_oauth WHERE digest=:d AND kind='grant' AND used=0 AND expires>:now "
+                "LIMIT 1"), {"d": credential_id, "now": int(time.time())}).first() is not None
     elif kind == "app_jwt":
         # A machine token from an API app (``app:<id>``): the app is still
         # registered, enabled and an API app. Removing or turning it off stops
