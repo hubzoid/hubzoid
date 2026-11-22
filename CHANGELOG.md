@@ -5,11 +5,10 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [2.1.2]
 
-A bug-fix and hardening release. About fifty confirmed bugs are fixed across
-Slack and channels, the web app, workflows and schedules, access and
-approvals. Slack connections gain an opt-in open mode. The test suite gains
-property tests, a nightly coverage run and lint checks. One additive database
-change (`op_0092`).
+A bug-fix and hardening release across Slack and channels, the web app,
+workflows and schedules, and access and approvals. Slack connections gain an
+opt-in open mode. The test suite gains property tests, a nightly coverage run
+and lint checks. One additive database change (`op_0092`).
 
 ### Fixed
 - **Schedules (#159).** Per-minute schedules no longer skip about one slot in
@@ -54,8 +53,8 @@ change (`op_0092`).
   anyone in a connection's own Slack workspace ask its agent. People whose
   confirmed Slack email matches an account keep that account's access.
   Everyone else is a Slack guest: unrestricted content and read-only built-in
-  tools only, no approvals or workflows, and a daily cap. Doctor warns while it
-  is on. See `docs/ADMINISTRATION.md`.
+  tools only, no approvals or workflows, and a daily cap. `hubzoid channels doctor`
+  warns while it is on. See `docs/ADMINISTRATION.md`.
 - Previously undocumented operator settings are documented (#45), and a test
   fails on any new undocumented `HUBZOID_*` setting.
 
