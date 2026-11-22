@@ -133,11 +133,11 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
     assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
     assert "npm run lint" in runs
-    # Only the fast default, spread over two machines, parallel on each: no -m override.
+    # Only the fast default, spread over three machines, parallel on each: no -m override.
     unit = config["jobs"]["unit"]
-    assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
+    assert unit["strategy"]["matrix"]["group"] == ["1", "2", "3"]
     pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
-    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 2 --group ${{ matrix.group }} "
+    assert pytest_runs == ["pytest -q --no-header -n auto --dist loadfile --splits 3 --group ${{ matrix.group }} "
                            "--splitting-algorithm least_duration --durations=25"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
