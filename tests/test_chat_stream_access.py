@@ -70,6 +70,10 @@ def _reply(client, cid, headers):
 
     from tests.test_chat_operations import wait_run
 
+    # A client not opened with `with` runs each request on its own event loop,
+    # which ends with the request: a reply still starting or saving then is
+    # cancelled and can be left unfinished (release CI, "run ... did not finish").
+    assert client.portal is not None, "send replies through the open test client"
     branch = client.get(f"/api/conversations/{cid}", headers=headers).json()["branches"][0]
     r = client.post(f"/api/conversations/{cid}/operations",
                     headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
@@ -107,8 +111,8 @@ def test_a_web_reply_carries_its_session_and_a_key_reply_its_key(signed_in):
 
     user = sessions.AuthUser(id=ana["id"], email=ana["email"], name="Ana", role="user")
     _, key = api_keys.create(hub, user, name="script", operations=["chat"])
-    script = TestClient(client.app)
-    _reply(script, cid, {"authorization": f"Bearer {key}"})
+    client.cookies.clear()   # the key alone, on the same open client
+    _reply(client, cid, {"authorization": f"Bearer {key}"})
     api = latest("api")
     assert api["credential_kind"] == "api_key" and not api["person_present"]
 
