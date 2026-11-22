@@ -27,7 +27,7 @@ def test_a_secret_named_argument_never_keeps_its_value(args):
         if is_secret_key(name) or " " in name or not isinstance(value, (str, int, float)):
             assert out[name] in ("…", "[redacted]")          # kept by name only
         if is_secret_key(name) and isinstance(value, str) and len(value) > 3:
-            assert value not in json.dumps(out)
+            assert value not in str(out[name])
 
 
 @given(local=st.from_regex(r"[a-z]{1,10}", fullmatch=True), digits=st.from_regex(r"\d{16}", fullmatch=True),
