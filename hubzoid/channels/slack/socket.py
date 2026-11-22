@@ -34,8 +34,23 @@ class SocketTransport:
         else:
             self.client = SocketModeClient(app_token=self.app_token, web_client=client(conn))
         self.client.socket_mode_request_listeners.append(self.on_request)
-        self.client.connect()
+        try:
+            self.client.connect()
+        except BaseException:
+            # A half-started client is closed, so a retry starts clean.
+            self.stop()
+            raise
         log.info("channel %s: Slack Socket Mode connected", self.cid)
+
+    def healthy(self) -> bool:
+        """Connected now (the router starts it again when it stays down)."""
+        check = getattr(self.client, "is_connected", None)
+        if self.client is None:
+            return False
+        try:
+            return True if check is None else bool(check())
+        except Exception:  # noqa: BLE001
+            return False
 
     def on_request(self, sm_client, req) -> None:
         """Commit first, then acknowledge. No acknowledgement on a storage

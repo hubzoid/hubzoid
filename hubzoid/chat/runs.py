@@ -98,6 +98,21 @@ def _admit(hub_dir, run) -> dict | None:
             requested_by=run.email, requested_by_kind="app", started_from="app",
             origin_id=run.conversation_id, person_present=True,
             credential_kind="app", credential_id=run.credential_id)
+    from ..channels import open_mode, router as channel_router
+
+    if run.credential == open_mode.GUEST_CREDENTIAL:
+        # A Slack guest under open mode: no account (``acts_as`` stays empty).
+        return run_identity.admit_or_refuse(
+            hub_dir, run_kind="chat", run_id=run.message_id, acts_as_email=None,
+            requested_by=run.email, requested_by_kind="slack_guest", started_from=open_mode.GUEST_SURFACE,
+            origin_id=run.conversation_id, person_present=False,
+            credential_kind=run.credential, credential_id=run.credential_id)
+    if run.credential == channel_router.CHANNEL_CREDENTIAL:
+        provider = channel_router.parse_channel_credential(run.credential_id)[0]
+        return run_identity.admit_or_refuse(
+            hub_dir, run_kind="chat", run_id=run.message_id, acts_as_id=run.owner_id, acts_as_email=run.email,
+            started_from=provider or "channel", origin_id=run.conversation_id, person_present=False,
+            credential_kind=run.credential, credential_id=run.credential_id)
     from ..auth import automated
 
     via_key = automated(run.credential)
@@ -271,8 +286,16 @@ class RunManager:
         try:
             from ..embed import scope as app_scope
 
+            from ..channels import open_mode, router as channel_router
+
             caller = None
-            if run.credential == "app":
+            if run.credential == open_mode.GUEST_CREDENTIAL:
+                # Access from open mode alone, decided now from the current
+                # setting: turned off means no agent and no tools.
+                record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
+                identity = await asyncio.to_thread(open_mode.guest_identity, ctx.hub_dir, run.credential_id,
+                                                   run.owner_id, record_id=record.get("id"))
+            elif run.credential == "app":
                 # A person an embedding app vouched for: access from the app's
                 # limit and their token, held only for this reply.
                 caller = app_scope.take(run.conversation_id, run.owner_id)
@@ -281,7 +304,10 @@ class RunManager:
             else:
                 identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
                 record = await asyncio.to_thread(_admit, ctx.hub_dir, run)
-                identity = run_identity.identity(record, "web", identity.groups)
+                gate = "web"
+                if run.credential == channel_router.CHANNEL_CREDENTIAL:
+                    gate = channel_router.parse_channel_credential(run.credential_id)[1]
+                identity = run_identity.identity(record, gate, identity.groups)
             with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity), \
                     app_scope.token_scope(ctx.hub_dir, caller), \
                     _request_ctx.native_session_scope(run.session_slot):
@@ -398,6 +424,16 @@ class RunManager:
             raw["status"] = "error"
         if identity is None:
             identity = access.Identity.make(user=run.email, surface="web")
+        from ..channels import router as channel_router
+
+        if run.credential == channel_router.CHANNEL_CREDENTIAL:
+            # Usage counts it under its channel ("By channel"); the access gate
+            # kept its own surface for the run itself.
+            import dataclasses
+
+            provider = channel_router.parse_channel_credential(run.credential_id)[0]
+            if provider:
+                identity = dataclasses.replace(identity, surface=provider)
         try:
             await server._record_turn(self.ctx.hub_dir, identity, run.conversation_id, raw, run.started)
         except Exception:  # noqa: BLE001 — usage is telemetry

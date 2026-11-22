@@ -174,7 +174,9 @@ def _admit_one(c, conn: Connection, verified: Verified, event: InboundEvent, ind
         status, reason = _disposition(conn, event, thread, backlog, c)
         upgraded = store.update_delivery(conn.hub_dir, same["id"], expect_status="ignored", conn=c,
                                          status=status, reason=reason, kind=event.kind,
-                                         event_enc=secretbox.encrypt_json(conn.hub_dir, event.to_json()))
+                                         event_enc=secretbox.encrypt_json(conn.hub_dir, event.to_json()),
+                                         **({"route_json": {**(same.get("route_json") or {}), **owed}}
+                                            if (owed := _notice_owed(conn, event, status, reason)) else {}))
         if upgraded is not None:
             store.insert_delivery(c, **base, status="duplicate", reason="same_event", thread_id=same["thread_id"],
                                   route_json={"original": same["id"], "upgraded": True})
@@ -187,7 +189,8 @@ def _admit_one(c, conn: Connection, verified: Verified, event: InboundEvent, ind
     enc = secretbox.encrypt_json(conn.hub_dir, event.to_json())
     status, reason = _disposition(conn, event, thread, backlog, c)
     row = store.insert_delivery(c, **base, semantic_key=event.semantic_key, thread_id=thread["id"],
-                                event_enc=enc, status=status, reason=reason)
+                                event_enc=enc, status=status, reason=reason,
+                                route_json=_notice_owed(conn, event, status, reason))
     if status == "accepted":
         c.execute(text("UPDATE hz_channel_threads SET last_event_at=:t, updated=:t WHERE id=:i"),
                   {"t": store.now(), "i": thread["id"]})
@@ -211,6 +214,25 @@ def _disposition(conn: Connection, event: InboundEvent, thread: dict, backlog: i
     if waiting >= conn.config.queue_limit:
         return "denied", "queue_full"
     return "accepted", None
+
+
+#: refusals at intake that every provider tells a person who asked directly
+SHARED_NOTICE_REASONS = frozenset({"queue_full", "backlog_full"})
+
+
+def _notice_owed(conn: Connection, event: InboundEvent, status: str, reason: str | None) -> dict:
+    """``{"notice": reason}`` when this refusal owes the person a notice:
+    they asked directly (a mention, a DM), they are not a bot, the connection
+    is on and not customer-facing, and the reason is one people are told
+    about. The router posts it later (``router.post_owed_notices``): intake
+    never calls the provider before it acknowledges."""
+    if status not in ("ignored", "denied") or not reason or not event.trigger or event.data.get("unattended"):
+        return {}      # unattended work (a PR opened, a label) was never a person asking
+    if (event.actor is not None and event.actor.is_bot) or not conn.enabled or conn.adapter.customer_facing:
+        return {}
+    if reason not in (SHARED_NOTICE_REASONS | conn.adapter.notice_reasons):
+        return {}
+    return {"notice": reason}
 
 
 def event_of(hub_dir, delivery: dict) -> InboundEvent:

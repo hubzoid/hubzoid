@@ -21,7 +21,8 @@ The decision, in a fixed order:
 
 Speed. A decision is cached per process, keyed by the deployment, the person,
 the permission, the hub, the access store's revision and the account's
-counter. Each check reads two indexed values (the revision and the counter);
+status and counter. Each check reads two indexed rows (the revision, and the
+account's status and counter);
 anything that changes access moves one of them, so a revocation applies on the
 next check in every process. Checks run at requests, before every tool call and
 when a waiting run resumes, never while text streams.
@@ -112,6 +113,8 @@ def app_access(hub_dir: Path, app, permission: str | None = None, *, hub: str | 
     from ..embed.caller import effective, tool_allowed
     from .store import USE_HUB
 
+    if str(app.app_id).startswith("channel:"):
+        return _guest_access(hub_dir, app, permission, hub=hub, tool=tool, server=server, connector=connector)
     try:
         reg = apps_config.service_for(Path(hub_dir)).get(app.app_id)
     except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
@@ -137,6 +140,33 @@ def app_access(hub_dir: Path, app, permission: str | None = None, *, hub: str | 
     return ALLOW if access.all_tools() or permission in access.tools else Decision(False, "missing_grant")
 
 
+def _guest_access(hub_dir: Path, app, permission: str | None, *, hub: str | None, tool: str | None,
+                  server: str | None, connector: str | None) -> Decision:
+    """A Slack guest under open mode (``channels.open_mode``): the connection
+    still has open mode on, for the workspace it was approved for; only the
+    agent and the guest tools; never an MCP server, a connector, a
+    restricted capability or a platform capability."""
+    from ..channels import open_mode
+    from .store import USE_HUB
+
+    try:
+        limit = open_mode.guest_access(hub_dir, str(app.app_id).removeprefix("channel:"))
+    except Exception:  # noqa: BLE001 - can't decide: refuse, never guess
+        log.exception("access: open mode unavailable; denying")
+        return Decision(False, "store_error")
+    if limit is None:
+        return Decision(False, "credential_ended")
+    if normalize(hub or Path(hub_dir).name) not in limit["agents"]:
+        return Decision(False, "missing_grant")
+    if server is not None or connector is not None:
+        return Decision(False, "app_tool")
+    if tool is not None:
+        return ALLOW if tool in limit["tools"] and tool in app.tools else Decision(False, "app_tool")
+    if not permission or permission == USE_HUB:
+        return ALLOW
+    return Decision(False, "missing_grant")
+
+
 def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
               account_id: str | None = None, epoch: int | None = None,
               key_hubs: "tuple[str, ...] | None" = None) -> Decision:
@@ -156,6 +186,12 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
         key_hubs = getattr(who, "hubs", None)
     if not email:
         return Decision(False, "anonymous")
+    from ..channels.open_mode import is_guest_subject
+
+    if is_guest_subject(email):
+        # A Slack guest is judged only through their guest scope (above). Without
+        # it, nothing: a "*" grant matches any subject, so never read grants.
+        return Decision(False, "missing_grant")
     if key_hubs is not None and hub is not None and normalize(hub) not in key_hubs:
         return Decision(False, "key_scope")
     from . import store_for
@@ -165,8 +201,11 @@ def authorize(hub_dir: Path, who, permission: str, *, hub: str | None = None,
         gs = store_for(Path(hub_dir))
         status, current_epoch = _account_state(hub_dir, account_id, email)
         revision = gs.revision()
+        # Everything the decision below reads is in the key: the store's
+        # revision (grants, blocks, reader and availability markers), the
+        # account's status and its credential counter.
         key = (deployment_id(Path(hub_dir)), email, account_id, permission,
-               normalize(hub) if hub else None, revision, current_epoch, epoch)
+               normalize(hub) if hub else None, revision, status, current_epoch, epoch)
         hit = _cache.get(key)
         if hit is not None:
             return hit
@@ -207,6 +246,16 @@ def credential_live(hub_dir: Path, kind: str, credential_id: str, *,
         q = sa.select(api_keys.c.id).where(
             api_keys.c.id == credential_id, api_keys.c.revoked_at.is_(None),
             sa.or_(api_keys.c.expires_at.is_(None), api_keys.c.expires_at > now))
+    elif kind == "mcp_grant":
+        # An assistant's MCP connection (its OAuth grant, by the hash the store
+        # keeps): not revoked, not expired. Each new MCP request checks it
+        # already; this stops a call still running when it is revoked.
+        from ..db import operational_engine
+
+        with operational_engine(Path(hub_dir)).connect() as conn:
+            return conn.execute(sa.text(
+                "SELECT 1 FROM hz_mcp_oauth WHERE digest=:d AND kind='grant' AND used=0 AND expires>:now "
+                "LIMIT 1"), {"d": credential_id, "now": int(time.time())}).first() is not None
     elif kind == "app_jwt":
         # A machine token from an API app (``app:<id>``): the app is still
         # registered, enabled and an API app. Removing or turning it off stops

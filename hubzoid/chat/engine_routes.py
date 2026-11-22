@@ -188,7 +188,8 @@ class Orchestrator:
             from .. import _request_ctx
             from .history import branch_images, message_images, user_text
 
-            resume, resume_cost = await db(self.engine.bound_session, plan, self.config_digest(plan.actor_id))
+            digest = self.config_digest(plan.actor_id)
+            resume, resume_cost = await db(self.engine.bound_session, plan, digest)
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, resume_cost=resume_cost,
                 delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
@@ -196,6 +197,9 @@ class Orchestrator:
                 images=await db(branch_images, self.ctx.hub_dir, key, path),
                 delta_images=await db(message_images, self.ctx.hub_dir, key, path[-1].get("content"))
                 if path else [])
+            # The session is recorded under the configuration it started with,
+            # not one read again at the end (settings may change or recover meanwhile).
+            slot.config_digest = digest
             # What the guardrails check: the person's new message and any
             # regenerate refinement, not the stored history before it.
             new_parts = [await db(user_text, self.ctx.hub_dir, key, path[-1].get("content"))] \
@@ -274,7 +278,11 @@ class Orchestrator:
         try:
             policy = service_for(self.ctx.hub_dir).active().digest
         except Exception:  # noqa: BLE001 - unknown policy: never reuse a session
-            policy = str(time.time())
+            # No digest at all, rather than a random one: the engine neither
+            # resumes nor records a session under it, and the log says why.
+            log.warning("chat: the chat settings could not be read, so this reply starts a fresh "
+                        "runtime session", exc_info=True)
+            return ""
         from .. import personal_memory
 
         return canonical.digest({"actor": actor_id, "agent": self.ctx.model_label, "runtime": type(rt).__name__,
@@ -304,7 +312,7 @@ class Orchestrator:
                 raise RuntimeError("the run lost its branch lease")
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
-                     head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
+                     head_message_id=run.message_id, config_digest=getattr(slot, "config_digest", ""),
                      ok=status == "complete", session_cost=getattr(slot, "session_cost", None))
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
@@ -341,8 +349,11 @@ class Orchestrator:
         if request.get("origin") != "chat" or not request.get("conversation_id") \
                 or request.get("status") not in ("approved", "rejected", "answered"):
             return False
+        from ..channels.open_mode import is_guest_subject
         from ..embed.caller import is_app_subject
 
+        if is_guest_subject(request.get("requester_id")):
+            return False      # a Slack guest never continues a request (they can't make or answer one)
         if is_app_subject(request.get("requester_id")):
             if app_caller is None or app_caller.subject != request.get("requester_id"):
                 return False
@@ -471,9 +482,17 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         work leaves the queue."""
         from fastapi import HTTPException
 
+        from ..channels import open_mode
         from .common import check_use_hub
         from .routes import terms_required
 
+        if actor.credential == open_mode.GUEST_CREDENTIAL or open_mode.is_guest_subject(actor.id):
+            # A Slack guest has no account: open mode on their connection is
+            # their only way in, checked again when queued work leaves the queue.
+            if not (open_mode.is_guest_subject(actor.id) and actor.credential == open_mode.GUEST_CREDENTIAL
+                    and open_mode.guest_access(ctx.hub_dir, actor.credential_id) is not None):
+                raise g.GraphError(403, "no_access", "Open mode is off for this channel.")
+            return
         try:
             check_use_hub(ctx.hub_dir, actor.email)
             needs_terms = terms_required(ctx.hub_dir, actor.id)
