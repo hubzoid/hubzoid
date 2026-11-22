@@ -493,13 +493,16 @@ class SlackAdapter(Adapter):
             web = client(conn)
             auth = web.auth_test()
         except ChannelError:
-            return out   # the secret check already failed
+            # The secret check already failed. Open mode is still worth a warning.
+            return out + self._open_mode_checks(conn, set())
         except SlackApiError as exc:
             return [Check("slack:auth", "fail", f"Slack refused the bot token ({exc.response.get('error')}).",
-                          "credential_rejected", "Install the app and set the bot token again.")]
+                          "credential_rejected", "Install the app and set the bot token again.")] + \
+                self._open_mode_checks(conn, set())
         except Exception as exc:  # noqa: BLE001
             return [Check("slack:auth", "fail", f"Could not reach Slack ({type(exc).__name__}).",
-                          "provider_unavailable", "Check the network, then run doctor again.")]
+                          "provider_unavailable", "Check the network, then run doctor again.")] + \
+                self._open_mode_checks(conn, set())
         team, bot_user = auth.get("team_id"), auth.get("user_id")
         out.append(Check("slack:workspace", "ok" if team == cfg.installation_team_id else "fail",
                          f"The bot token is for workspace {team}.", "" if team == cfg.installation_team_id else

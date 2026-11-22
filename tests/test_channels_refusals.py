@@ -384,3 +384,68 @@ def test_every_part_fits_and_closes_its_code_blocks(text, limit, max_parts):
     parts = replies.split(text, limit, max_parts)
     assert len(parts) <= max_parts
     assert all(len(p) <= limit and p.count("```") % 2 == 0 for p in parts)
+
+
+# -- versions of S0's coverage tests (test_cov_channels_router.py) for the new behaviour -------
+
+def test_group_check_waits_when_access_store_is_down(hub_dir, web, monkeypatch):
+    """A store error is neither a yes nor a no: None, and the delivery waits to be routed again."""
+    from unittest.mock import Mock
+
+    from hubzoid import access
+
+    conn = conn_for(hub_dir)
+    app = _linked_app(monkeypatch)
+    monkeypatch.setattr(access, "store_for", Mock(side_effect=OSError("down")))
+    assert router._groups_ok(conn, "ana@example.org") is None
+    receive(conn, event())
+    row = store.open_deliveries(hub_dir, config.hub_of(hub_dir))[0]
+    assert router._route_one(hub_dir, row, app) == ("waiting", None)
+    monkeypatch.setattr(access, "store_for", Mock(side_effect=OSError("still down")))
+    again = store.open_deliveries(hub_dir, config.hub_of(hub_dir))[0]
+    assert again["id"] == row["id"] and router._route_one(hub_dir, again, app) == ("waiting", None)
+
+
+def test_transport_reload_replaces_revisions_and_isolates_failures(hub_dir, monkeypatch):
+    from unittest.mock import Mock
+
+    state = router._Loop()
+    monkeypatch.setattr(router, "_state", state)
+    monkeypatch.setattr(router, "_fingerprint", lambda conn: "fp")
+    state.hub_dir = hub_dir
+    old, current, made = Mock(), Mock(), Mock()
+    old.stop.side_effect = RuntimeError("stop failed")
+    state.transports = {"old@1@fp": old, "keep@1@fp": current}
+    keep_adapter = SimpleNamespace(start=Mock())
+    new_adapter = SimpleNamespace(start=Mock(return_value=made))
+    bad_adapter = SimpleNamespace(start=Mock(side_effect=RuntimeError("start failed")))
+    off_adapter = SimpleNamespace(start=Mock())
+    conns = [SimpleNamespace(id="keep", revision=1, enabled=True, adapter=keep_adapter, settings=SimpleNamespace()),
+             SimpleNamespace(id="new", revision=2, enabled=True, adapter=new_adapter, settings=SimpleNamespace()),
+             SimpleNamespace(id="bad", revision=1, enabled=True, adapter=bad_adapter, settings=SimpleNamespace()),
+             SimpleNamespace(id="off", revision=1, enabled=False, adapter=off_adapter, settings=SimpleNamespace())]
+    monkeypatch.setattr(router.config_lib, "active_all", lambda _: conns)
+    asyncio.run(router.reload_transports())
+    assert state.transports == {"keep@1@fp": current, "new@2@fp": made}
+    assert old.stop.call_count == 1 and new_adapter.start.call_args.args == (conns[1], hub_dir)
+    assert keep_adapter.start.call_count == 0 and off_adapter.start.call_count == 0
+    assert "bad@1@fp" in state.backoff                      # tried again later, not every pass
+    asyncio.run(router.reload_transports())                 # reloads still happen, a healthy one is kept
+    assert state.transports == {"keep@1@fp": current, "new@2@fp": made} and bad_adapter.start.call_count == 1
+    monkeypatch.setattr(router.config_lib, "active_all", Mock(side_effect=OSError("unreadable")))
+    asyncio.run(router.reload_transports())
+    assert state.transports == {"keep@1@fp": current, "new@2@fp": made}
+    state.hub_dir = None
+    asyncio.run(router.reload_transports())
+    assert state.transports["new@2@fp"] is made
+
+
+def test_doctor_keeps_the_open_mode_warning_when_the_token_check_fails(hub_dir, web, monkeypatch):
+    from hubzoid.channels import open_mode
+
+    conn = conn_for(hub_dir)
+    open_mode.set_open(conn, enabled=True, actor="owner@example.org")
+    monkeypatch.setattr(web, "auth_test", lambda: (_ for _ in ()).throw(
+        SlackApiError("refused", {"ok": False, "error": "invalid_auth"})))
+    checks = {c.id: c.status for c in conn.adapter.doctor(conn, {})}
+    assert checks["slack:auth"] == "fail" and checks["slack:open_mode"] == "warn"
