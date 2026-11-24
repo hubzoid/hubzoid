@@ -107,6 +107,14 @@ def test_an_mcp_hub_on_a_plain_http_public_address_names_the_hub(tmp_path):
                      public_base="http://hub.example.com")
 
 
+def test_an_empty_mcp_address_line_in_the_hub_env_stops_the_plan(tmp_path):
+    # The hub's bridge loads its .env over the environment, so a planned
+    # address could never reach it past an empty line.
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP + "MCP_PUBLIC_URL=\n")
+    with pytest.raises(ValueError, match=r"MCP_PUBLIC_URL is empty in support/\.env.*https://hub\.example\.com/b/support/mcp"):
+        gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                     public_base="https://hub.example.com")
+
 def test_an_empty_mcp_address_says_it_is_not_set():
     from hubzoid.mcp_oauth import validate_public_url
 

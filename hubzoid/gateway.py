@@ -286,6 +286,12 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None, public_ba
             from urllib.parse import urlsplit
             from .mcp_oauth import validate_public_url
             base = (public_base or "").strip().rstrip("/")
+            if not mcp_public_url and "MCP_PUBLIC_URL" in _own_env(hub_dir):
+                # The bridge loads this .env over its environment, so an empty
+                # line would replace any address planned here.
+                raise ValueError(
+                    f"MCP_PUBLIC_URL is empty in {hub_dir.name}/.env. Remove the line to use "
+                    f"{base or '<public address>'}/b/{slug}/mcp, or set the full address.")
             if not mcp_public_url and not base:
                 raise ValueError(
                     f"{hub_dir.name} has MCP_SERVER=true but the deployment has no public address to "
