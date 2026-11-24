@@ -38,6 +38,8 @@ GRANT_SECONDS = 30 * 86400
 
 
 def validate_public_url(value):
+    if not (value or "").strip():
+        raise ValueError("MCP_PUBLIC_URL is not set")
     p = urlsplit(value)
     if p.scheme != "https" and not (
         p.scheme == "http" and p.hostname in {"localhost", "127.0.0.1", "::1"}

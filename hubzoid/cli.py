@@ -1352,6 +1352,7 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
                     name: str, data_dir: Path | None, df=None) -> None:
     """A deployment of one or more hubs, each its own supervised unit behind
     one edge, sharing one operational store (what `hubzoid gateway` ran)."""
+    from . import appmode
     from . import deployfile  # noqa: F401 - used when df is given
     from . import gateway as gateway_lib
 
@@ -1415,10 +1416,19 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
                           "HUBZOID_HUB_SECRET_NAME for a hub secret.")
 
     deployment_env = os.environ.copy()
+    # Where people reach the edge, as `pub` below: the public URL (also one a
+    # hub's .env still carries), else this machine's own address on a loopback
+    # bind. A hub with MCP on builds its MCP address from it.
+    ui_port = port or int(os.environ.get("PORT", "3080"))
+    _hub_inherited, _ = gateway_lib.inherited_deployment_env(hub_dirs, deployment_env)
+    edge_base = (public_url or os.environ.get("HUBZOID_PUBLIC_URL")
+                 or _hub_inherited.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
+    if not edge_base and appmode.is_loopback_host(host):
+        edge_base = _local_url(host, ui_port)
     try:
         # Files only: the gateway never fetches or holds a hub's secrets. Each
         # bridge fetches its own hub and restricted secrets.
-        gp = gateway_lib.plan(hub_dirs, load=partial(settingslib.load, secrets=False))
+        gp = gateway_lib.plan(hub_dirs, load=partial(settingslib.load, secrets=False), public_base=edge_base)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
@@ -1449,7 +1459,6 @@ def _run_deployment(hubs: list[Path], *, port: int | None, host: str, public_url
         console.print(f"[yellow]→ settings[/yellow]  hubs disagree on {key} ({', '.join(hub_names)}); "
                       "using the last hub listed.")
 
-    ui_port = port or int(os.environ.get("PORT", "3080"))
     pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     gw_data = (data_dir or _deployment_state_dir(df)).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")

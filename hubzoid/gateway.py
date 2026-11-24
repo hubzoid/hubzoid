@@ -215,12 +215,16 @@ def next_free(port: int, taken, *, is_free=None) -> int:
                      "Set BRIDGE_PORT in each hub's .env, or stop what uses those ports.")
 
 
-def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> GatewayPlan:
+def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None, public_base: str = "") -> GatewayPlan:
     """Build a GatewayPlan from hub directories.
 
     Reads each hub's `.env` for its bridge port + first bridge key + label.
     Slugs are de-duplicated so two hubs never collide on an artifact prefix.
     Raises ValueError if two hubs share a bridge port (they'd race).
+
+    `public_base` is where people reach the edge (its public URL, or its own
+    loopback address). A hub with MCP on and no MCP_PUBLIC_URL of its own gets
+    `<public_base>/b/<slug>/mcp`, as `run <hub> --behind` gives it.
     """
     from . import datadir
 
@@ -281,7 +285,18 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load, is_free=None) -> Gatewa
         if _mcp_enabled(hub_dir):
             from urllib.parse import urlsplit
             from .mcp_oauth import validate_public_url
-            mcp_public_url = validate_public_url(mcp_public_url)
+            base = (public_base or "").strip().rstrip("/")
+            if not mcp_public_url and not base:
+                raise ValueError(
+                    f"{hub_dir.name} has MCP_SERVER=true but the deployment has no public address to "
+                    f"build its MCP address from. Set public_url in hubzoid.yaml (or --public-url, or "
+                    f"HUBZOID_PUBLIC_URL), or set MCP_PUBLIC_URL=<public address>/b/{slug}/mcp in "
+                    f"{hub_dir.name}/.env.")
+            mcp_public_url = mcp_public_url or f"{base}/b/{slug}/mcp"
+            try:
+                mcp_public_url = validate_public_url(mcp_public_url)
+            except ValueError as exc:
+                raise ValueError(f"MCP address for {hub_dir.name} ({mcp_public_url}): {exc}") from None
             if urlsplit(mcp_public_url).path != f"/b/{slug}/mcp":
                 raise ValueError(f"MCP_PUBLIC_URL for {hub_dir.name} must end in /b/{slug}/mcp")
 
