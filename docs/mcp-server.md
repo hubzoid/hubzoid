@@ -35,7 +35,7 @@ Other clients need OAuth with PKCE and Streamable HTTP.
 | Setting | Default | What it does |
 |---|---|---|
 | `MCP_SERVER` | `false`. `hubzoid run` sets `true` when the public address is HTTPS or loopback, unless the key is already set | Serves the agent at `/mcp`. In a gateway it must be in that hub's own `.env`. |
-| `MCP_PUBLIC_URL` | `hubzoid run`: `<public address>/mcp`. Gateway: `<base>/b/<slug>/mcp` | The exact public URL, ending in `/mcp`. HTTPS is required. Plain HTTP works only on `localhost`, `127.0.0.1` and `::1`. Changing it means every assistant reconnects. |
+| `MCP_PUBLIC_URL` | `hubzoid run`: `<public address>/mcp`. Gateway, and a hub run with `--behind`: `<public_url>/b/<slug>/mcp`. With no public URL, a gateway on a loopback address uses its own address, and one on a network address stops and says what to set | The exact public URL, ending in `/mcp`. HTTPS is required. Plain HTTP works only on `localhost`, `127.0.0.1` and `::1`. Changing it means every assistant reconnects. |
 | `MCP_STATELESS` | `false` | Serves each request on its own, with no session. Use it behind several replicas without sticky sessions. Questions and approvals then fall back to the assistant asking. |
 | `HUBZOID_MCP_SIGNING_KEY` | unset | A PEM RSA private key that signs access tokens. When set, the database keys are not used. |
 | `HUBZOID_MCP_SIGNING_KEYS_PREVIOUS` | unset | Older PEM keys that still verify, used with `HUBZOID_MCP_SIGNING_KEY` during a rotation. |

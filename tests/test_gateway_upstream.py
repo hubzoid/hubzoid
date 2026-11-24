@@ -63,6 +63,66 @@ def test_an_inbound_hub_run_elsewhere_needs_its_inbound_address(tmp_path):
     assert hooks and hooks[0]["upstream"] == "http://support:8100"
 
 
+
+# -- the MCP address -------------------------------------------------------------------------
+
+_MCP_UP = "HUBZOID_BRIDGE_UPSTREAM=http://support:8000\nMCP_SERVER=true\n"
+
+
+def _mcp_url(gp, slug="support"):
+    return {b.slug: b for b in gp.backends}[slug].mcp_public_url
+
+
+def test_an_mcp_hub_without_its_own_address_gets_the_edges(tmp_path):
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP)
+    gp = gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                      public_base="https://hub.example.com/")
+    # The same address `run support --behind https://hub.example.com` gives it.
+    assert _mcp_url(gp) == "https://hub.example.com/b/support/mcp"
+    gp = gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                      public_base="http://127.0.0.1:3080")
+    assert _mcp_url(gp) == "http://127.0.0.1:3080/b/support/mcp"
+
+
+def test_an_mcp_hubs_own_address_wins(tmp_path):
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP + "MCP_PUBLIC_URL=https://other.example.com/b/support/mcp\n")
+    gp = gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                      public_base="https://hub.example.com")
+    assert _mcp_url(gp) == "https://other.example.com/b/support/mcp"
+
+
+def test_an_mcp_hub_with_no_address_to_build_from_says_what_to_set(tmp_path):
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP)
+    with pytest.raises(ValueError) as caught:
+        gateway.plan([local, remote], load=load, is_free=lambda p: True)
+    said = str(caught.value)
+    assert "support" in said and "public_url" in said and "MCP_PUBLIC_URL=" in said
+    assert "HTTPS" not in said
+
+
+def test_an_mcp_hub_on_a_plain_http_public_address_names_the_hub(tmp_path):
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP)
+    with pytest.raises(ValueError, match=r"support .*http://hub\.example\.com/b/support/mcp.*HTTPS"):
+        gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                     public_base="http://hub.example.com")
+
+
+def test_an_empty_mcp_address_line_in_the_hub_env_stops_the_plan(tmp_path):
+    # The hub's bridge loads its .env over the environment, so a planned
+    # address could never reach it past an empty line.
+    local, remote, load = _two_hubs(tmp_path, _MCP_UP + "MCP_PUBLIC_URL=\n")
+    with pytest.raises(ValueError, match=r"MCP_PUBLIC_URL is empty in support/\.env.*https://hub\.example\.com/b/support/mcp"):
+        gateway.plan([local, remote], load=load, is_free=lambda p: True,
+                     public_base="https://hub.example.com")
+
+def test_an_empty_mcp_address_says_it_is_not_set():
+    from hubzoid.mcp_oauth import validate_public_url
+
+    for empty in ("", "  ", None):
+        with pytest.raises(ValueError, match="MCP_PUBLIC_URL is not set"):
+            validate_public_url(empty)
+
+
 # -- the supervisor ---------------------------------------------------------------------------
 
 def _external(tmp_path, probe):
